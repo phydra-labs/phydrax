@@ -312,8 +312,8 @@ class BatteryOEDSupport(StrictModule, NonTrainableState):
         ):
             raise ValueError("Battery OED current bounds must be finite and real.")
         try_shape = np.broadcast_shapes(lower_input.shape, upper_input.shape)
-        lower_host = np.broadcast_to(lower_input, try_shape).astype(float)
-        upper_host = np.broadcast_to(upper_input, try_shape).astype(float)
+        lower_host = np.broadcast_to(lower_input, try_shape).astype("float64")
+        upper_host = np.broadcast_to(upper_input, try_shape).astype("float64")
         if np.any(lower_host > upper_host):
             raise ValueError("Battery OED current bounds must be ordered.")
         if not isinstance(stoichiometry, Mapping) or not stoichiometry:
@@ -508,7 +508,7 @@ class PreparedBatteryOED(StrictModule):
         )
         calibration.plan.parameter_space.constrain(point)
         flat_point, _ = ravel_pytree(point)
-        parameter_count = int(flat_point.size)
+        parameter_count = flat_point.size
         if parameter_count == 0:
             raise ValueError(
                 "Battery OED requires at least one local parameter coordinate."
@@ -536,16 +536,16 @@ class PreparedBatteryOED(StrictModule):
 
         lower, upper = support.current_bounds(protocol.current_step_count)
         durations = np.asarray(
-            tuple(step.duration_s for step in protocol.steps), dtype=float
+            tuple(step.duration_s for step in protocol.steps), dtype=np.float64
         )
         duration_valid = bool(
             np.all(durations >= support.duration_lower_s)
             and np.all(durations <= support.duration_upper_s)
         )
         if prior_information is None:
-            prior = np.zeros((parameter_count, parameter_count), dtype=float)
+            prior = np.zeros((parameter_count, parameter_count), dtype=np.float64)
         else:
-            prior = np.asarray(prior_information, dtype=float)
+            prior = np.asarray(prior_information, dtype=np.float64)
         if prior.shape != (parameter_count, parameter_count):
             raise ValueError(
                 "prior_information must be square in local parameter coordinates."
@@ -606,7 +606,7 @@ class PreparedBatteryOED(StrictModule):
             raise ValueError(
                 "Battery OED amplitudes must match the fixed current-step count."
             )
-        values = values.astype(jnp.result_type(values, float))
+        values = values.astype(jnp.result_type(values, jnp.float64))
         finite = jnp.all(jnp.isfinite(values))
         safe = jnp.where(jnp.isfinite(values), values, 0.0)
         supported = (
@@ -690,9 +690,9 @@ class PreparedBatteryOED(StrictModule):
         values = outputs.values
         output_valid = jnp.all(outputs.valid) & jnp.all(jnp.isfinite(values))
         simulation_valid = (
-            jnp.asarray(run.successful, dtype=bool)
+            jnp.asarray(run.successful, dtype=jnp.bool_)
             & output_valid
-            & ~jnp.asarray(run.termination.terminated, dtype=bool)
+            & ~jnp.asarray(run.termination.terminated, dtype=jnp.bool_)
         )
         experiment = self.calibration.plan.experiments[self.experiment_index]
         ledger_valid = experiment._ledger_is_successful(run.ledger)
@@ -786,7 +786,7 @@ class BatteryOEDCandidateSet(StrictModule, NonTrainableState):
         )
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("Battery OED candidate amplitudes must be unique.")
-        self.amplitudes_a = jax.lax.stop_gradient(jnp.asarray(host, dtype=float))
+        self.amplitudes_a = jax.lax.stop_gradient(jnp.asarray(host, dtype=jnp.float64))
         self.candidate_ids = identifiers
         self.candidate_set_id = canonical_fingerprint(
             {

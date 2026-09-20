@@ -62,7 +62,7 @@ class SmoothedElasticityPlan(StrictModule, NonTrainableState):
         self.method = method
         self.layout = layout
         self.constitutive = constitutive_
-        self.global_node_count = int(mesh.coordinates.shape[0])
+        self.global_node_count = mesh.coordinates.shape[0]
         self.stabilization = stabilization_
         self.plan_id = canonical_fingerprint(
             {

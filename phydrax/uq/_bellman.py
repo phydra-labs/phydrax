@@ -240,7 +240,7 @@ def _minimize(
     max_steps: int,
 ) -> tuple[Array, Array, Array, Array, Array]:
     solver = optx.BFGS(rtol=rtol, atol=atol)
-    solution = optx.minimise(
+    solution = optx.minimize(
         lambda value, _: objective(value),
         solver,
         initial,

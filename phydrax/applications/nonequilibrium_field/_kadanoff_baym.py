@@ -155,9 +155,9 @@ class PreparedKadanoffBaym2PI(StrictModule, NonTrainableState):
     def __init__(self, plan: KadanoffBaym2PIPlan, frequencies: ArrayLike, /):
         if not isinstance(plan, KadanoffBaym2PIPlan):
             raise TypeError("plan must be KadanoffBaym2PIPlan.")
-        frequency = np.asarray(frequencies, dtype=float)
-        time_count = int(plan.grid.plan.time_nodes.size)
-        work = time_count * time_count * int(frequency.size) * 4
+        frequency = np.asarray(frequencies, dtype=np.float64)
+        time_count = plan.grid.plan.time_nodes.size
+        work = time_count * time_count * frequency.size * 4
         if (
             frequency.ndim != 1
             or frequency.size == 0
@@ -206,8 +206,8 @@ class PreparedKadanoffBaym2PI(StrictModule, NonTrainableState):
             raise ValueError(
                 "Occupations must provide one value per Kadanoff--Baym mode."
             )
-        time_count = int(self.plan.grid.plan.time_nodes.size)
-        mode_count = int(self.frequencies.size)
+        time_count = self.plan.grid.plan.time_nodes.size
+        mode_count = self.frequencies.size
         dt = self.plan.time_step
         statistical = jnp.zeros(
             (time_count, time_count, mode_count), dtype=occupation.dtype

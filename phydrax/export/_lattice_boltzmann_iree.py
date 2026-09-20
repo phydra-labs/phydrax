@@ -143,7 +143,7 @@ def prepare_lattice_boltzmann_iree_contract(
         raise ValueError("IREE LBM export requires positive step_count and step_size.")
     if not math.isfinite(initial_time):
         raise ValueError("IREE LBM initial time must be finite.")
-    shapes = tuple(tuple(int(size) for size in value.shape) for value in arrays)
+    shapes = tuple(tuple(value.shape) for value in arrays)
     dtypes = tuple(np.dtype(value.dtype).str for value in arrays)
     vjp_inputs = (*names, "cotangent_final_populations")
     vjp_outputs = tuple(f"cotangent_{name}" for name in selected)

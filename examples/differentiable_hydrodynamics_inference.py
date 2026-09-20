@@ -102,7 +102,7 @@ def main() -> None:
         {
             "initial_log_density": float(value),
             "gradient_norm": float(jnp.linalg.norm(gradient)),
-            "observation_count": int(observations.size),
+            "observation_count": observations.size,
         }
     )
 

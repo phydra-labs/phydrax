@@ -60,7 +60,7 @@ def _spatial_points(
     data = jnp.asarray(points)
     shape = _spatial_shape(discretization)
     if data.shape[: len(dims)] != shape:
-        if data.ndim < 1 or int(data.shape[0]) != discretization.num_points:
+        if data.ndim < 1 or data.shape[0] != discretization.num_points:
             raise ValueError(
                 "Spatial points do not match the discretization physical shape."
             )
@@ -85,8 +85,7 @@ def spatial_measure(
         (AbstractStrongFormDiscretization, TensorSpectralDiscretization),
     ):
         raise TypeError(
-            "discretization must provide a prepared strong-form or tensor spectral "
-            "spatial measure."
+            "discretization must provide a prepared strong-form or tensor spectral spatial measure."
         )
     dims = _spatial_dims(discretization, spatial_dims)
     coordinate_dim = str(coordinate_dim)
@@ -104,12 +103,11 @@ def spatial_measure(
     if mask is None or isinstance(mask, cx.AxisArray):
         resolved_mask = mask
     else:
-        mask_data = jnp.asarray(mask, dtype=bool)
+        mask_data = jnp.asarray(mask, dtype=jnp.bool_)
         expected_shape = _spatial_shape(discretization)
         if mask_data.shape != expected_shape:
             raise ValueError(
-                "Spatial masks must have the discretization physical shape "
-                f"{expected_shape}; got {mask_data.shape}."
+                f"Spatial masks must have the discretization physical shape {expected_shape}; got {mask_data.shape}."
             )
         resolved_mask = cx.AxisArray(mask_data, dims=dims)
     return DiscreteMeasureTarget(

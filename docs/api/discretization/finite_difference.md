@@ -278,7 +278,7 @@ positivity policies belong to the [structured finite-volume API](finite_volume.m
 ## AMR and distributed execution
 
 `PreparedFDAMRHierarchy` prepares host topology selection, field-specific
-conservative topology transitions, source-classified cell-centred FillPatch routes,
+conservative topology transitions, source-classified cell-centered FillPatch routes,
 and stencil-footprint validation. It does not advance solver time. FillPatch reads
 caller-supplied coarse old/new states and times; physical boundary values remain
 caller-owned and are exposed as explicit requests.

@@ -214,7 +214,7 @@ def test_graph_dataset_domain_layout_preserves_graph_model_results():
         def __call__(self, graph):
             assert graph.node_mask is not None
             assert graph.nodes.shape == (6, 1)
-            nodes = graph.nodes + graph.node_mask.astype(float)[:, None]
+            nodes = graph.nodes + graph.node_mask.astype("float64")[:, None]
             return graph.replace(nodes=nodes, validate=False)
 
     u = domain.GraphModel(AddValidNodeMask())

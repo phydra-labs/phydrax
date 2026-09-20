@@ -42,7 +42,7 @@ def _target(states, probabilities, provenance):
 def _kernel(matrix):
     def sample(key, state, _t0, _t1, _context):
         probability = matrix[jnp.asarray(state, dtype=jnp.int32)]
-        return jr.categorical(key, jnp.log(probability)).astype(float)
+        return jr.categorical(key, jnp.log(probability)).astype("float64")
 
     def log_prob(next_state, state, _t0, _t1, _context):
         probability = matrix[
@@ -61,7 +61,7 @@ def _kernel(matrix):
 
 
 def _problem(num_states, num_steps):
-    states = jnp.arange(num_states, dtype=float)
+    states = jnp.arange(num_states, dtype="float64")
     indices = jnp.arange(num_states)
     distance = jnp.abs(indices[:, None] - indices[None, :])
     matrix = jnp.where(distance == 0, 0.7, jnp.where(distance == 1, 0.15, 0.0))

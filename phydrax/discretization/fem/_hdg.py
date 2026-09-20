@@ -30,7 +30,7 @@ class HDGTraceSpace(StrictModule, NonTrainableState):
         if isinstance(connectivity, PolygonalConnectivity):
             width = int(np.max(np.asarray(connectivity.cell_kinds)))
             routes = np.asarray(connectivity.cell_edges, dtype=np.int32)[:, :width]
-            valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)[:, :width]
+            valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)[:, :width]
             if not np.all(
                 valid
                 == (
@@ -39,15 +39,15 @@ class HDGTraceSpace(StrictModule, NonTrainableState):
                 )
             ):
                 raise ValueError("Polygonal trace validity is inconsistent.")
-            count = int(connectivity.edges.shape[0])
+            count = connectivity.edges.shape[0]
         elif isinstance(connectivity, TetrahedralConnectivity):
             routes = np.asarray(connectivity.cell_faces, dtype=np.int32)
-            count = int(connectivity.faces.shape[0])
+            count = connectivity.faces.shape[0]
         else:
             raise TypeError("Unsupported HDG mesh connectivity.")
         self.cell_trace_dofs = jnp.asarray(routes)
         self.trace_valid = jnp.asarray(
-            np.ones_like(routes, dtype=bool)
+            np.ones_like(routes, dtype=np.bool_)
             if not isinstance(connectivity, PolygonalConnectivity)
             else valid
         )
@@ -83,7 +83,7 @@ class HDGCondensationPlan(StrictModule, NonTrainableState):
         interior = int(interior_dof_count)
         if interior <= 0:
             raise ValueError("interior_dof_count must be positive.")
-        local_trace = int(trace_space.cell_trace_dofs.shape[1])
+        local_trace = trace_space.cell_trace_dofs.shape[1]
         retained = np.arange(interior, interior + local_trace, dtype=np.int32)
         elimination = LocalEliminationPlan(
             interior + local_trace,

@@ -107,7 +107,7 @@ class PreparedProteinQualification(StrictModule):
         factor = float(
             conversion_factor(bounds_unit, system.plan.units.scale.length_unit)
         )
-        bounds = np.asarray(bond_bounds, dtype=float)
+        bounds = np.asarray(bond_bounds, dtype=np.float64)
         bonds = np.asarray(system.topology.bond_indices)
         if (
             bounds.shape != (len(bonds), 2)
@@ -246,7 +246,7 @@ class PreparedProteinQualification(StrictModule):
         peptide_valid = (
             jnp.stack(tuple(value.successful for value in peptide))
             if peptide
-            else jnp.ones((0,), dtype=bool)
+            else jnp.ones((0,), dtype=jnp.bool_)
         )
         planar = peptide_valid & (
             jnp.abs(jnp.sin(angles)) <= jnp.sin(self.peptide_tolerance)
@@ -260,7 +260,7 @@ class PreparedProteinQualification(StrictModule):
         torsion_numeric = (
             jnp.stack(tuple(value.successful for value in torsion))
             if torsion
-            else jnp.ones((0,), dtype=bool)
+            else jnp.ones((0,), dtype=jnp.bool_)
         )
         torsion_valid = torsion_numeric & jnp.where(
             self.torsion_wraps,

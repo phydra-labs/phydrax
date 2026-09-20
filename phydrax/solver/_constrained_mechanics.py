@@ -81,7 +81,7 @@ class SHAKERATTLEPlan:
             canonical_fingerprint(
                 {
                     "kind": "shake-rattle-plan",
-                    "dimension": int(inverse_mass_.size),
+                    "dimension": inverse_mass_.size,
                     "maximum_projection_steps": steps,
                     "constraint_tolerance": tolerance,
                 }
@@ -146,9 +146,9 @@ class SHAKERATTLEPlan:
         configuration, _, iterations = self._position_projection(trial, args)
         second_force = jnp.asarray(self.potential_gradient(configuration, args))
         trial_momentum = half_momentum - 0.5 * step * second_force
-        jacobian = jax.jacfwd(
-            lambda value: jnp.atleast_1d(self.constraint(value, args))
-        )(configuration)
+        jacobian = jax.jacfwd(lambda value: jnp.atleast_1d(self.constraint(value, args)))(
+            configuration
+        )
         gram = (jacobian * self.inverse_mass[None, :]) @ jacobian.T
         velocity_defect = jacobian @ (self.inverse_mass * trial_momentum)
         multiplier = jnp.linalg.solve(gram, velocity_defect)
@@ -156,9 +156,7 @@ class SHAKERATTLEPlan:
         position_residual = jnp.linalg.norm(
             jnp.atleast_1d(self.constraint(configuration, args))
         )
-        velocity_residual = jnp.linalg.norm(
-            jacobian @ (self.inverse_mass * momentum)
-        )
+        velocity_residual = jnp.linalg.norm(jacobian @ (self.inverse_mass * momentum))
         finite = jnp.all(jnp.isfinite(configuration)) & jnp.all(jnp.isfinite(momentum))
         accepted = (
             finite

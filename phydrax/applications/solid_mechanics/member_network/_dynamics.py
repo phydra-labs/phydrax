@@ -156,7 +156,7 @@ def member_energy_work_evidence(
         value.shape != interval_shape for value in (damping, material_contact, external)
     ):
         raise ValueError("Work histories must contain one value per accepted interval.")
-    accepted_ = jnp.asarray(accepted, dtype=bool)
+    accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
     epoch_values = tuple(
         jnp.asarray(value)
         for value in (

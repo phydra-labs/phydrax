@@ -168,14 +168,14 @@ def _solve_evosax_distribution(
                         isinstance(leaf, (jax.Array, jcore.Tracer))
                         and len(leaf.shape) > 0
                     ):
-                        popsize = int(leaf.shape[0])
+                        popsize = leaf.shape[0]
                         break
                 if popsize is None:
                     raise ValueError(
                         "Could not infer population size from evosax population."
                     )
 
-                iter_ = jnp.asarray(epoch + 1, dtype=float)
+                iter_ = jnp.asarray(epoch + 1, dtype=jnp.float64)
                 functions_snapshot = combine_trainable(
                     control.selected(params),
                     non_trainable,
@@ -241,11 +241,11 @@ def _solve_evosax_distribution(
                 train_data_metrics: tuple[dict[str, Any], ...] = tuple(
                     {} for _ in self.terms
                 )
-                eval_terms = jnp.zeros((0,), dtype=float)
+                eval_terms = jnp.zeros((0,), dtype=jnp.float64)
                 eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
                     {} for _ in self.evaluation_terms
                 )
-                values_arr = jnp.zeros((0,), dtype=float)
+                values_arr = jnp.zeros((0,), dtype=jnp.float64)
                 train_term_values = values_arr[: len(term_names)]
                 train_model_loss_terms = values_arr[len(term_names) :]
                 if log_terms_ and report_step:
@@ -255,7 +255,7 @@ def _solve_evosax_distribution(
                             non_trainable,
                             prepared,
                         ),
-                        dtype=float,
+                        dtype=jnp.float64,
                     )
                     train_term_values = values_arr[: len(term_names)]
                     train_model_loss_terms = values_arr[len(term_names) :]

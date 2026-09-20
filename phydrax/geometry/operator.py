@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..graph._operator_topology import OperatorTopology
 from ..nn.operator.data import FunctionSamples, OperatorAxis
@@ -26,14 +27,14 @@ RegionalGeometryMode = Literal["fixed", "farthest_point"]
 
 
 def _shape_tuple(shape: Sequence[int], /) -> tuple[int, ...]:
-    result = tuple(int(size) for size in shape)
+    result = tuple(shape)
     if not result or any(size <= 1 for size in result):
         raise ValueError("Latent tensor dimensions must each be greater than one.")
     return result
 
 
 def _bounds_array(bounds: Any, coord_dim: int, /) -> Array:
-    result = jnp.asarray(bounds, dtype=float)
+    result = jnp.asarray(bounds, dtype=jnp.float64)
     if result.shape != (int(coord_dim), 2):
         raise ValueError(
             f"Latent bounds must have shape {(coord_dim, 2)}; got {result.shape}."
@@ -46,10 +47,10 @@ def _bounds_array(bounds: Any, coord_dim: int, /) -> Array:
 
 
 def _canonical_nodes(size: int, /) -> Array:
-    return (jnp.arange(int(size), dtype=float) + 0.5) / float(size)
+    return (jnp.arange(int(size), dtype=jnp.float64) + 0.5) / float(size)
 
 
-class TensorGridLatentGeometry(eqx.Module, NonTrainableState):
+class TensorGridLatentGeometry(StrictModule, NonTrainableState):
     """Persisted structured latent geometry for grid-based processors."""
 
     global_bounds: Array
@@ -139,21 +140,20 @@ class TensorGridLatentGeometry(eqx.Module, NonTrainableState):
             )
         if source_coordinates is None:
             raise ValueError("case_bbox latent geometry requires source_coordinates.")
-        coordinates = jnp.asarray(source_coordinates, dtype=float)
+        coordinates = jnp.asarray(source_coordinates, dtype=jnp.float64)
         expected_prefix = case_shape
-        if tuple(int(size) for size in coordinates.shape[:-2]) != expected_prefix:
+        if tuple(coordinates.shape[:-2]) != expected_prefix:
             raise ValueError(
                 "source_coordinates case shape does not match the operator batch."
             )
-        if int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
-                f"Expected source coordinate dimension {self.coord_dim}; "
-                f"got {coordinates.shape[-1]}."
+                f"Expected source coordinate dimension {self.coord_dim}; got {coordinates.shape[-1]}."
             )
         mask = (
-            jnp.ones(coordinates.shape[:-1], dtype=bool)
+            jnp.ones(coordinates.shape[:-1], dtype=jnp.bool_)
             if source_mask is None
-            else jnp.asarray(source_mask, dtype=bool)
+            else jnp.asarray(source_mask, dtype=jnp.bool_)
         )
         if mask.shape != coordinates.shape[:-1]:
             raise ValueError("source_mask must match the source point shape.")
@@ -184,7 +184,7 @@ class TensorGridLatentGeometry(eqx.Module, NonTrainableState):
         flatten: bool = True,
     ) -> Array:
         """Materialize physical latent coordinates for every case."""
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         bounds = self._case_bounds(
             cases,
             source_coordinates=source_coordinates,
@@ -216,7 +216,7 @@ class TensorGridLatentGeometry(eqx.Module, NonTrainableState):
         flatten: bool = True,
     ) -> Array:
         """Return uniform cell measures summing to each latent box volume."""
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         bounds = self._case_bounds(
             cases,
             source_coordinates=source_coordinates,
@@ -232,7 +232,7 @@ class TensorGridLatentGeometry(eqx.Module, NonTrainableState):
         return weights.reshape(cases + self.shape)
 
 
-class RegionalPointLatentGeometry(eqx.Module, NonTrainableState):
+class RegionalPointLatentGeometry(StrictModule, NonTrainableState):
     """Fixed-size regional point geometry for graph latent processors."""
 
     fixed_points: Array
@@ -258,7 +258,7 @@ class RegionalPointLatentGeometry(eqx.Module, NonTrainableState):
         if mode == "fixed":
             if fixed_points is None:
                 raise ValueError("fixed regional geometry requires fixed_points.")
-            points = jnp.asarray(fixed_points, dtype=float)
+            points = jnp.asarray(fixed_points, dtype=jnp.float64)
             if points.shape != (count, dimension):
                 raise ValueError(
                     f"fixed_points must have shape {(count, dimension)}; got {points.shape}."
@@ -268,7 +268,7 @@ class RegionalPointLatentGeometry(eqx.Module, NonTrainableState):
         elif fixed_points is not None:
             raise ValueError("fixed_points are only used with mode='fixed'.")
         else:
-            points = jnp.zeros((count, dimension), dtype=float)
+            points = jnp.zeros((count, dimension), dtype=jnp.float64)
         self.fixed_points = points
         self.point_count = count
         self.coord_dim = dimension
@@ -281,19 +281,19 @@ class RegionalPointLatentGeometry(eqx.Module, NonTrainableState):
         /,
     ) -> Array:
         """Return fixed points or deterministic farthest-point samples per case."""
-        source = jnp.asarray(source_coordinates, dtype=float)
-        if source.ndim < 2 or int(source.shape[-1]) != self.coord_dim:
+        source = jnp.asarray(source_coordinates, dtype=jnp.float64)
+        if source.ndim < 2 or source.shape[-1] != self.coord_dim:
             raise ValueError("source_coordinates must end in (num_points, coord_dim).")
-        case_shape = tuple(int(size) for size in source.shape[:-2])
+        case_shape = tuple(source.shape[:-2])
         if self.mode == "fixed":
             return jnp.broadcast_to(
                 self.fixed_points,
                 case_shape + self.fixed_points.shape,
             )
         mask = (
-            jnp.ones(source.shape[:-1], dtype=bool)
+            jnp.ones(source.shape[:-1], dtype=jnp.bool_)
             if source_mask is None
-            else jnp.asarray(source_mask, dtype=bool)
+            else jnp.asarray(source_mask, dtype=jnp.bool_)
         )
         if mask.shape != source.shape[:-1]:
             raise ValueError("source_mask must match the source point shape.")
@@ -303,7 +303,7 @@ class RegionalPointLatentGeometry(eqx.Module, NonTrainableState):
             "Farthest-point regional geometry has fewer valid sources than latent points.",
         )
         cases = prod(case_shape) if case_shape else 1
-        point_count = int(source.shape[-2])
+        point_count = source.shape[-2]
         flattened = source.reshape((cases, point_count, self.coord_dim))
         valid = mask.reshape((cases, point_count))
         mass = jnp.sum(valid, axis=-1, keepdims=True)
@@ -347,7 +347,7 @@ class RegionalPointLatentGeometry(eqx.Module, NonTrainableState):
 
     def quadrature(self, source_weights: Array, /) -> Array:
         """Distribute each case's source measure uniformly over regional nodes."""
-        weights = jnp.asarray(source_weights, dtype=float)
+        weights = jnp.asarray(source_weights, dtype=jnp.float64)
         if weights.ndim < 1:
             raise ValueError("source_weights must have a source point axis.")
         total = jnp.sum(weights, axis=-1, keepdims=True)
@@ -385,13 +385,13 @@ def function_samples_from_geometry(
         measure = geometry.boundary_measure_value
     else:
         raise ValueError("component must be 'interior' or 'boundary'.")
-    coordinates = jnp.asarray(coordinates, dtype=float)
+    coordinates = jnp.asarray(coordinates, dtype=jnp.float64)
     if coordinates.shape != (count, int(geometry.spatial_dim)):
         raise ValueError(
             "Geometry sampler returned an unexpected coordinate shape: "
             f"expected {(count, int(geometry.spatial_dim))}, got {coordinates.shape}."
         )
-    weights = jnp.full((count,), jnp.asarray(measure, dtype=float) / float(count))
+    weights = jnp.full((count,), jnp.asarray(measure, dtype=jnp.float64) / float(count))
     return FunctionSamples(
         values=values,
         coordinates=coordinates,
@@ -412,15 +412,15 @@ def _point_cloud_topology(
     from ..graph._geometry import point_cloud_to_graph
     from ..graph._ir import batch_graphs
 
-    points = np.asarray(coordinates, dtype=float)
-    case_shape = tuple(int(size) for size in points.shape[:-2])
-    width = int(points.shape[-2])
-    flattened = points.reshape((-1, width, int(points.shape[-1])))
+    points = np.asarray(coordinates, dtype=np.float64)
+    case_shape = tuple(points.shape[:-2])
+    width = points.shape[-2]
+    flattened = points.reshape((-1, width, points.shape[-1]))
     valid = (
-        np.ones(flattened.shape[:-1], dtype=bool)
+        np.ones(flattened.shape[:-1], dtype=np.bool_)
         if mask is None
         else np.broadcast_to(
-            np.asarray(mask, dtype=bool),
+            np.asarray(mask, dtype=np.bool_),
             case_shape + (width,),
         ).reshape(flattened.shape[:-1])
     )
@@ -464,12 +464,12 @@ def function_samples_from_point_cloud(
     radius: float | None = None,
 ) -> FunctionSamples:
     """Build operator samples and native topology from point-cloud data."""
-    points = jnp.asarray(coordinates, dtype=float)
-    if points.ndim < 2 or int(points.shape[-2]) <= 0 or int(points.shape[-1]) <= 0:
+    points = jnp.asarray(coordinates, dtype=jnp.float64)
+    if points.ndim < 2 or points.shape[-2] <= 0 or points.shape[-1] <= 0:
         raise ValueError(
             "coordinates must have shape case_shape + (num_points, coord_dim)."
         )
-    mask_array = None if mask is None else jnp.asarray(mask, dtype=bool)
+    mask_array = None if mask is None else jnp.asarray(mask, dtype=jnp.bool_)
     topology = _point_cloud_topology(
         points,
         mask_array,
@@ -486,7 +486,7 @@ def function_samples_from_point_cloud(
 
 
 def _mesh_vertex_weights(vertices: Array, faces: Array, coord_dim: int, /) -> Array:
-    coordinates = jnp.asarray(vertices, dtype=float)[:, :coord_dim]
+    coordinates = jnp.asarray(vertices, dtype=jnp.float64)[:, :coord_dim]
     triangles = coordinates[jnp.asarray(faces, dtype=jnp.int32)]
     first = triangles[:, 1] - triangles[:, 0]
     second = triangles[:, 2] - triangles[:, 0]
@@ -522,9 +522,9 @@ def function_samples_from_mesh(
         raise TypeError(
             "function_samples_from_mesh requires TriangleMesh, MeshRegion, or BRepModel."
         )
-    vertices = jnp.asarray(vertices, dtype=float)
+    vertices = jnp.asarray(vertices, dtype=jnp.float64)
     faces = jnp.asarray(faces, dtype=jnp.int32)
-    coord_dim = int(vertices.shape[1])
+    coord_dim = vertices.shape[1]
     coordinates = vertices
     weights = _mesh_vertex_weights(vertices, faces, coord_dim)
     if topology_kind == "graph":
@@ -546,7 +546,7 @@ def function_samples_from_mesh(
 
         complex_graph = triangle_mesh_to_simplicial_graph(
             faces,
-            num_vertices=int(vertices.shape[0]),
+            num_vertices=vertices.shape[0],
             vertex_features=coordinates,
         )
         topology = OperatorTopology.from_simplicial(complex_graph, site="vertex")

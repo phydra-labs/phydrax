@@ -78,7 +78,7 @@ def main() -> None:
             "shape": shape,
             "warmup": arguments.warmup,
             "repeats": arguments.repeats,
-            "operator": "weighted-cell-centred-second-order-negative-laplacian",
+            "operator": "weighted-cell-centered-second-order-negative-laplacian",
         },
         "identity": prepared.prepared_id,
         "compilation": {

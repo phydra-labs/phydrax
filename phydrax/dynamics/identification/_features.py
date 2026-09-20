@@ -21,7 +21,7 @@ from ..._numerics import (
     normalize_anisotropy,
     weighted_total_degree_indices,
 )
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from .._layout import InputLayout, StateLayout
 
 
@@ -37,10 +37,10 @@ class FeatureEvaluation(StrictModule):
 class AbstractFeatureLibrary(StrictModule):
     """A fixed ordered dictionary over explicit state and input layouts."""
 
-    state_layout: AbstractAttribute[StateLayout]
-    input_layout: AbstractAttribute[InputLayout | None]
-    feature_names: AbstractAttribute[tuple[str, ...]]
-    library_id: AbstractAttribute[str]
+    state_layout: eqx.AbstractVar[StateLayout]
+    input_layout: eqx.AbstractVar[InputLayout | None]
+    feature_names: eqx.AbstractVar[tuple[str, ...]]
+    library_id: eqx.AbstractVar[str]
 
     @property
     def num_features(self) -> int:
@@ -70,8 +70,7 @@ def _batch_variables(
         state_rank and tuple(state_values.shape[-state_rank:]) != state_layout.shape
     ):
         raise ValueError(
-            f"states must end in state layout shape {state_layout.shape}; "
-            f"got {state_values.shape}."
+            f"states must end in state layout shape {state_layout.shape}; got {state_values.shape}."
         )
     batch_shape = (
         state_values.shape if state_rank == 0 else state_values.shape[:-state_rank]
@@ -202,8 +201,7 @@ class PolynomialFeatureLibrary(AbstractFeatureLibrary):
             raise ValueError("Polynomial library must contain at least one feature.")
         if count > maximum:
             raise ValueError(
-                f"Polynomial library would contain {count} features; "
-                f"max_features={maximum}."
+                f"Polynomial library would contain {count} features; max_features={maximum}."
             )
         sparse_indices = weighted_total_degree_indices(
             dimension, resolved_degree + 1, weights
@@ -307,8 +305,7 @@ class OperatorInferenceFeatureLibrary(AbstractFeatureLibrary):
         count = 1 + state_size + input_size + len(pairs)
         if count > int(max_features):
             raise ValueError(
-                f"Operator-inference library would contain {count} features; "
-                f"max_features={int(max_features)}."
+                f"Operator-inference library would contain {count} features; max_features={int(max_features)}."
             )
         state_names = tuple(f"state:{name}" for name in state_layout.component_names)
         input_names = (
@@ -422,11 +419,10 @@ class FourierFeatureLibrary(AbstractFeatureLibrary):
         bias = bool(include_bias)
         if not sine and not cosine and not bias:
             raise ValueError("At least one Fourier feature must be enabled.")
-        count = int(bias) + int(values.shape[0]) * (int(sine) + int(cosine))
+        count = int(bias) + values.shape[0] * (int(sine) + int(cosine))
         if count > int(max_features):
             raise ValueError(
-                f"Fourier library would contain {count} features; "
-                f"max_features={int(max_features)}."
+                f"Fourier library would contain {count} features; max_features={int(max_features)}."
             )
         variable_names = _variable_names(state_layout, input_layout)
         mode_names = tuple(
@@ -638,8 +634,7 @@ class TensorProductFeatureLibrary(AbstractFeatureLibrary):
         count = left.num_features * right.num_features
         if count > int(max_features):
             raise ValueError(
-                f"Tensor-product library would contain {count} features; "
-                f"max_features={int(max_features)}."
+                f"Tensor-product library would contain {count} features; max_features={int(max_features)}."
             )
         names = tuple(
             f"({left_name}) * ({right_name})"

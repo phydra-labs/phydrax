@@ -71,7 +71,7 @@ def _finite_scalar(
     lower_open: bool = False,
     upper_open: bool = False,
 ) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim != 0:
         raise ValueError(f"{owner} must be scalar.")
     host = float(np.asarray(jax.device_get(array)))
@@ -87,7 +87,7 @@ def _finite_scalar(
 
 
 def _vector(value: ArrayLike | Sequence[float], size: int, /, *, owner: str) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim == 0 and size == 1:
         array = array.reshape((1,))
     if array.shape != (size,):
@@ -98,7 +98,7 @@ def _vector(value: ArrayLike | Sequence[float], size: int, /, *, owner: str) -> 
 
 
 def _covariance(value: ArrayLike, size: int, /, *, owner: str) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim == 0:
         array = array * jnp.eye(size, dtype=array.dtype)
     if array.shape != (size, size):
@@ -407,12 +407,12 @@ class RegressionComponent(AbstractStructuralComponent):
         process_covariance: ArrayLike = 0.0,
     ):
         resolved = _name(name, owner="name")
-        coefficients = jnp.asarray(initial_coefficients, dtype=float)
-        if coefficients.ndim != 1 or int(coefficients.size) <= 0:
+        coefficients = jnp.asarray(initial_coefficients, dtype=jnp.float64)
+        if coefficients.ndim != 1 or coefficients.size <= 0:
             raise ValueError("initial_coefficients must be a non-empty vector.")
         if bool(jnp.any(~jnp.isfinite(coefficients))):
             raise ValueError("initial_coefficients must be finite.")
-        size = int(coefficients.size)
+        size = coefficients.size
         if callable(design):
             resolved_design = cast(
                 Callable[[Array, StateSpaceStepContext], ArrayLike], design
@@ -421,8 +421,7 @@ class RegressionComponent(AbstractStructuralComponent):
             resolved_design = _vector(design, size, owner="design")
             if bool(jnp.all(resolved_design == 0.0)):
                 raise ValueError(
-                    "An identically zero fixed regression design is structurally "
-                    "unidentifiable."
+                    "An identically zero fixed regression design is structurally unidentifiable."
                 )
             if size > 1:
                 raise ValueError(
@@ -477,12 +476,12 @@ class AutoregressiveComponent(AbstractStructuralComponent):
         initial_covariance: ArrayLike = 1.0,
     ):
         resolved = _name(name, owner="name")
-        coefficient_array = jnp.asarray(coefficients, dtype=float)
-        if coefficient_array.ndim != 1 or int(coefficient_array.size) <= 0:
+        coefficient_array = jnp.asarray(coefficients, dtype=jnp.float64)
+        if coefficient_array.ndim != 1 or coefficient_array.size <= 0:
             raise ValueError("coefficients must be a non-empty vector.")
         if bool(jnp.any(~jnp.isfinite(coefficient_array))):
             raise ValueError("coefficients must be finite.")
-        size = int(coefficient_array.size)
+        size = coefficient_array.size
         mean = jnp.zeros((size,)) if initial_mean is None else initial_mean
         self.initial_mean = _vector(mean, size, owner="initial_mean")
         self.initial_covariance = _covariance(
@@ -540,12 +539,12 @@ class DeterministicTransitionComponent(AbstractStructuralComponent):
         transition_id: str = "provided-deterministic-transition",
     ):
         resolved = _name(name, owner="name")
-        mean = jnp.asarray(initial_mean, dtype=float)
-        if mean.ndim != 1 or int(mean.size) <= 0:
+        mean = jnp.asarray(initial_mean, dtype=jnp.float64)
+        if mean.ndim != 1 or mean.size <= 0:
             raise ValueError("initial_mean must be a non-empty vector.")
         if bool(jnp.any(~jnp.isfinite(mean))):
             raise ValueError("initial_mean must be finite.")
-        size = int(mean.size)
+        size = mean.size
         resolved_transition: TransitionValue
         if callable(transition):
             resolved_transition = cast(
@@ -638,7 +637,7 @@ class ProcessNoiseComponent(AbstractStructuralComponent):
 
 
 def _covariance_like_matrix(value: ArrayLike, size: int, /, *, owner: str) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape != (size, size):
         raise ValueError(f"{owner} must have shape {(size, size)}.")
     if bool(jnp.any(~jnp.isfinite(array))):
@@ -698,7 +697,7 @@ class _ScalarObservationParameter(StrictModule):
 
     def __call__(self, time, context, /):
         resolved = _resolve_observation(self.value, time, context)
-        array = jnp.asarray(resolved, dtype=float)
+        array = jnp.asarray(resolved, dtype=jnp.float64)
         if array.ndim == 0:
             return (
                 array.reshape((1, 1))
@@ -785,7 +784,7 @@ def compile_structural_state_space(
     """
     resolved_components = tuple(components)
     _validate_components(resolved_components)
-    cases = tuple(int(size) for size in case_shape)
+    cases = tuple(case_shape)
     if any(size <= 0 for size in cases):
         raise ValueError("case_shape dimensions must be positive.")
     limit = int(max_state_size)
@@ -856,7 +855,7 @@ def compile_structural_state_space(
             Callable[[Array, StateSpaceStepContext], ArrayLike], observation_variance
         )
     else:
-        variance_array = jnp.asarray(observation_variance, dtype=float)
+        variance_array = jnp.asarray(observation_variance, dtype=jnp.float64)
         if variance_array.ndim == 0:
             _finite_scalar(variance_array, owner="observation_variance", lower=0.0)
         else:
@@ -868,7 +867,7 @@ def compile_structural_state_space(
             Callable[[Array, StateSpaceStepContext], ArrayLike], observation_offset
         )
     else:
-        offset_array = jnp.asarray(observation_offset, dtype=float)
+        offset_array = jnp.asarray(observation_offset, dtype=jnp.float64)
         if offset_array.ndim == 0:
             _finite_scalar(offset_array, owner="observation_offset")
         elif offset_array.shape != (1,) or bool(jnp.any(~jnp.isfinite(offset_array))):

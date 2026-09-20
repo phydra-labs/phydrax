@@ -47,7 +47,7 @@ class FiniteElementPatchPlan(StrictModule, NonTrainableState):
         /,
     ):
         routes = jnp.asarray(gathers, dtype=jnp.int32)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         weights = jnp.asarray(partition_weights)
         size = int(global_size)
         if (
@@ -116,16 +116,16 @@ def one_ring_patch_plan(
     for block_index, block in enumerate(discretization.mesh.blocks):
         block_by_cell.extend((block_index,) * block.cell_count)
         local_by_cell.extend(range(block.cell_count))
-    neighbours = [set((cell,)) for cell in range(cell_count)]
-    for owner, neighbour in zip(
+    neighbors = [set((cell,)) for cell in range(cell_count)]
+    for owner, neighbor in zip(
         np.asarray(discretization.interior_facet_domain.owner_cells),
-        np.asarray(discretization.interior_facet_domain.neighbour_cells),
+        np.asarray(discretization.interior_facet_domain.neighbor_cells),
         strict=True,
     ):
-        neighbours[int(owner)].add(int(neighbour))
-        neighbours[int(neighbour)].add(int(owner))
+        neighbors[int(owner)].add(int(neighbor))
+        neighbors[int(neighbor)].add(int(owner))
     patches = []
-    for cells in neighbours:
+    for cells in neighbors:
         dofs = set()
         for cell in sorted(cells):
             block = block_by_cell[cell]
@@ -134,7 +134,7 @@ def one_ring_patch_plan(
         patches.append(tuple(sorted(dofs)))
     width = max(len(patch) for patch in patches)
     routes = np.zeros((cell_count, width), dtype=np.int32)
-    valid = np.zeros((cell_count, width), dtype=bool)
+    valid = np.zeros((cell_count, width), dtype=np.bool_)
     for patch, values in enumerate(patches):
         routes[patch, : len(values)] = values
         valid[patch, : len(values)] = True
@@ -180,9 +180,7 @@ class FiniteElementPatchPreconditioner(AbstractPreconditioner):
                 raise ValueError(
                     "Patch local actions must contain one preconditioner per patch."
                 )
-            patch_sizes = tuple(
-                int(value) for value in np.sum(np.asarray(plan.valid), axis=1)
-            )
+            patch_sizes = tuple(np.sum(np.asarray(plan.valid), axis=1))
             if any(
                 solver.space.size != patch_size
                 for solver, patch_size in zip(solvers, patch_sizes, strict=True)
@@ -413,8 +411,7 @@ class FiniteElementPatchPreconditionerBuilder(AbstractPreconditionerBuilder):
                 or self.properties.positive_definite
             ):
                 raise ValueError(
-                    "Weighted restricted Schwarz cannot certify the supplied "
-                    "preconditioner properties."
+                    "Weighted restricted Schwarz cannot certify the supplied preconditioner properties."
                 )
             return self.properties
         return PreconditionerProperties(

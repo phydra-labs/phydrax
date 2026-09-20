@@ -83,7 +83,7 @@ class _StochasticProblemContract(Protocol):
     def additive_noise(self) -> bool: ...
 
 
-class _VectorizedDenseInterpolation(eqx.Module):
+class _VectorizedDenseInterpolation(StrictModule):
     """Dense Diffrax interpolation over shared arbitrarily shaped query times."""
 
     interpolation: dfx.DenseInterpolation
@@ -99,7 +99,7 @@ class _VectorizedDenseInterpolation(eqx.Module):
         state_adapter: _PreparedDiffraxStateAdapter,
         /,
     ):
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         batch_shape = tuple(jnp.shape(interpolation.t0_if_trivial))
         if batch_shape != samples:
             raise ValueError(
@@ -336,8 +336,7 @@ def _validate_wiener_representation(
         and not state_adapter.active
     ):
         raise ValueError(
-            "Structured Wiener coefficients on nontrivial geometry require "
-            "explicit real coordinates."
+            "Structured Wiener coefficients on nontrivial geometry require explicit real coordinates."
         )
 
 
@@ -357,23 +356,22 @@ def _validate_geometric_real_coordinates(
         or coordinate_evidence.norm_relation != "isometry"
     ):
         raise ValueError(
-            "Geometric real-coordinate execution requires a full-domain "
-            "isometric coordinate map."
+            "Geometric real-coordinate execution requires a full-domain isometric coordinate map."
         )
     backend_state = state_adapter.pack_state(problem.initial_state)
-    backend_membership = jnp.asarray(solver.geometry.contains(backend_state), dtype=bool)
+    backend_membership = jnp.asarray(
+        solver.geometry.contains(backend_state), dtype=jnp.bool_
+    )
     if backend_membership.shape != () or not bool(backend_membership):
         raise ValueError(
-            "Geometric solver state geometry is incompatible with backend "
-            "real-coordinate storage."
+            "Geometric solver state geometry is incompatible with backend real-coordinate storage."
         )
     backend_tangent = jnp.asarray(
         solver.geometry.project_tangent(backend_state, jnp.zeros_like(backend_state))
     )
     if backend_tangent.shape != backend_state.shape:
         raise ValueError(
-            "Geometric solver tangent storage is incompatible with backend "
-            "real coordinates."
+            "Geometric solver tangent storage is incompatible with backend real coordinates."
         )
 
 
@@ -387,8 +385,7 @@ def _validated_stochastic_solver(
     is_stratonovich = isinstance(solver, dfx.AbstractStratonovichSolver)
     if not is_ito and not is_stratonovich:
         raise ValueError(
-            "A stochastic problem requires a Diffrax solver explicitly marked as "
-            "Itô or Stratonovich."
+            "A stochastic problem requires a Diffrax solver explicitly marked as Itô or Stratonovich."
         )
     if not problem.additive_noise:
         if problem.interpretation == "ito" and not is_ito:
@@ -462,7 +459,7 @@ def _requires_geometric_solver(
         return True
     if not isinstance(problem, DifferentialProblem):
         return False
-    point_shape = tuple(int(size) for size in problem.initial_state.shape)
+    point_shape = tuple(problem.initial_state.shape)
     return problem.local_shape != point_shape or problem.tangent_shape != point_shape
 
 
@@ -487,8 +484,7 @@ def _validated_state_geometry_solver(
         )
     if geometric and solver.geometry.geometry_id != geometry.geometry_id:
         raise ValueError(
-            "Geometric solver and DifferentialProblem must carry the same "
-            "state_geometry_id."
+            "Geometric solver and DifferentialProblem must carry the same state_geometry_id."
         )
     if problem.stochastic and requires_geometric:
         if problem.interpretation == "ito":
@@ -685,8 +681,7 @@ def _resolved_controller(
         solver, dfx.AbstractAdaptiveSolver
     ):
         raise ValueError(
-            f"{type(solver).__name__} does not provide an error estimate required "
-            "by an adaptive step-size controller."
+            f"{type(solver).__name__} does not provide an error estimate required by an adaptive step-size controller."
         )
     return resolved
 
@@ -844,8 +839,7 @@ def _native_solution(
             resolved_dt0 = eqx.error_if(
                 resolved_dt0,
                 jnp.abs(resolved_dt0) <= realization.tolerance,
-                "WienerRealization tolerance must be strictly smaller than the "
-                "fixed integration step.",
+                "WienerRealization tolerance must be strictly smaller than the fixed integration step.",
             )
         real_dtype = jnp.asarray(resolved_initial_state).real.dtype
         brownian, signed_path = _realized_wiener_path(
@@ -964,10 +958,9 @@ def _reshape_native_sample_shape(native: Any, sample_shape: tuple[int, ...], /) 
 
     def reshape(value):
         if eqx.is_array(value):
-            if value.ndim == 0 or int(value.shape[0]) != count:
+            if value.ndim == 0 or value.shape[0] != count:
                 raise ValueError(
-                    "Vectorized Diffrax output does not align with the realization "
-                    f"sample shape {sample_shape}."
+                    f"Vectorized Diffrax output does not align with the realization sample shape {sample_shape}."
                 )
             return value.reshape(sample_shape + value.shape[1:])
         return value
@@ -1002,7 +995,7 @@ def _attach_diffrax_iteration(
     sample_shape = solution.times.shape[:-1]
     zero_status = jnp.zeros(sample_shape, dtype=jnp.int32)
     initial_time = jnp.broadcast_to(jnp.asarray(problem.t0), sample_shape)
-    initial_valid = jnp.ones(sample_shape, dtype=bool)
+    initial_valid = jnp.ones(sample_shape, dtype=jnp.bool_)
     initial = IterationRecord(
         IterationCoordinates(
             IterationPhase.START,
@@ -1013,8 +1006,8 @@ def _attach_diffrax_iteration(
         DifferentialIterationMetrics(
             initial_time,
             initial_valid,
-            jnp.ones(sample_shape, dtype=bool),
-            jnp.zeros(sample_shape, dtype=bool),
+            jnp.ones(sample_shape, dtype=jnp.bool_),
+            jnp.zeros(sample_shape, dtype=jnp.bool_),
         ),
     )
     state = initialize_iteration(iteration, initial)
@@ -1111,8 +1104,7 @@ def solve_diffrax(
             raise ValueError("Stochastic problems require a WienerRealization.")
         if realization.sample_shape:
             raise ValueError(
-                "solve_diffrax requires a scalar realization; use "
-                "solve_diffrax_ensemble for a realization batch."
+                "solve_diffrax requires a scalar realization; use solve_diffrax_ensemble for a realization batch."
             )
     elif realization is not None:
         raise ValueError("Deterministic problems do not accept a WienerRealization.")
@@ -1279,8 +1271,7 @@ def solve_diffrax_ensemble(
         ensemble_initials = jnp.asarray(initial_states)
         if tuple(ensemble_initials.shape) != expected_initial_shape:
             raise ValueError(
-                f"initial_states must have shape {expected_initial_shape}; "
-                f"got {ensemble_initials.shape}."
+                f"initial_states must have shape {expected_initial_shape}; got {ensemble_initials.shape}."
             )
         if ensemble_initials.dtype != problem.initial_state.dtype:
             raise TypeError(
@@ -1293,7 +1284,7 @@ def solve_diffrax_ensemble(
         membership = jax.vmap(problem.state_geometry.contains)(flat_initials)
         ensemble_initials = eqx.error_if(
             ensemble_initials,
-            jnp.any(~jnp.asarray(membership, dtype=bool)),
+            jnp.any(~jnp.asarray(membership, dtype=jnp.bool_)),
             "At least one ensemble initial state lies outside state_geometry.",
         )
     times = validate_save_times(problem.t0, problem.t1, save_times)

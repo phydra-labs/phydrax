@@ -14,6 +14,11 @@ import numpy as np
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
+from .._tree_math import (
+    tree_allfinite as _tree_allfinite,
+    tree_norm as _tree_norm,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ..linalg import (
     DifferentiationPolicy,
     FunctionLinearOperator,
@@ -32,9 +37,6 @@ from ._iterative._base import (
     AbstractScalarIterativeMethod,
 )
 from ._iterative._types import (
-    _tree_allfinite,
-    _tree_norm,
-    _validate_real_inexact_tree,
     MinimizationProblem,
     NonlinearLeastSquaresProblem,
     OptimizationTermination,
@@ -470,9 +472,9 @@ def implicit_constrained_minimize(
     )
     flat_initial, unravel = ravel_pytree(initial)
     layout = _constraint_layout(problem, initial, args)
-    parameter_size = int(flat_initial.size)
-    equality_size = int(layout.equality_indices.size)
-    inequality_size = int(layout.lower_indices.size + layout.upper_indices.size)
+    parameter_size = flat_initial.size
+    equality_size = layout.equality_indices.size
+    inequality_size = layout.lower_indices.size + layout.upper_indices.size
     root_size = parameter_size + equality_size + inequality_size
     root_spec = jax.ShapeDtypeStruct((root_size,), flat_initial.dtype)
     active_spec = jax.ShapeDtypeStruct((inequality_size,), flat_initial.dtype)

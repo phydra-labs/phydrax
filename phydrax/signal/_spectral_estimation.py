@@ -26,7 +26,7 @@ class WelchSpectrumResult(StrictModule):
 
 
 def _median_bias(count: int, dtype, /) -> Array:
-    pairs = 2.0 * np.arange(1, (int(count) - 1) // 2 + 1, dtype=float)
+    pairs = 2.0 * np.arange(1, (int(count) - 1) // 2 + 1, dtype=np.float64)
     bias = 1.0 + np.sum(1.0 / (pairs + 1.0) - 1.0 / pairs)
     return jnp.asarray(bias, dtype=dtype)
 
@@ -138,7 +138,7 @@ class WelchSpectrumPlan(StrictModule, NonTrainableState):
             jnp.mean(density, axis=-2)
             if self.average == "mean"
             else jnp.median(density, axis=-2)
-            / _median_bias(int(framed.shape[-2]), density.dtype)
+            / _median_bias(framed.shape[-2], density.dtype)
         )
         frequencies = jnp.fft.rfftfreq(
             self.segment_length, d=self.sample_interval

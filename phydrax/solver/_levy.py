@@ -33,7 +33,7 @@ LevySDEScheme: TypeAlias = Literal["euler", "tamed_euler"]
 LevySmallJumpApproximation: TypeAlias = Literal["truncate", "gaussian"]
 
 
-class _IdentityLevyDispersion(eqx.Module):
+class _IdentityLevyDispersion(StrictModule):
     dimension: int = eqx.field(static=True)
 
     def __call__(self, time, state, args):
@@ -78,11 +78,11 @@ class LevySDEProblem(StrictModule):
         if not isinstance(driver, AbstractLevyProcess):
             raise TypeError("driver must implement AbstractLevyProcess.")
         state = jnp.asarray(initial_state)
-        state_shape = tuple(int(size) for size in state.shape)
+        state_shape = tuple(state.shape)
         if not state_shape or any(size <= 0 for size in state_shape):
             raise ValueError("initial_state must have a non-empty positive shape.")
-        start = jnp.asarray(t0, dtype=float)
-        end = jnp.asarray(t1, dtype=float)
+        start = jnp.asarray(t0, dtype=jnp.float64)
+        end = jnp.asarray(t1, dtype=jnp.float64)
         if start.shape != () or end.shape != ():
             raise ValueError("t0 and t1 must be scalar.")
         if not bool(jnp.isfinite(start) & jnp.isfinite(end) & (end > start)):
@@ -106,8 +106,7 @@ class LevySDEProblem(StrictModule):
         expected_dispersion = state_shape + (driver.dimension,)
         if dispersion_value.shape != expected_dispersion:
             raise ValueError(
-                f"dispersion must return shape {expected_dispersion}; "
-                f"got {dispersion_value.shape}."
+                f"dispersion must return shape {expected_dispersion}; got {dispersion_value.shape}."
             )
         identifier = (
             f"{driver.process_id}:levy-sde" if problem_id is None else str(problem_id)
@@ -149,11 +148,11 @@ class LevySDESolverDiagnostics(StrictModule):
         scheme: LevySDEScheme,
         small_jump_approximation: LevySmallJumpApproximation,
     ):
-        complete = jnp.asarray(complete_above_cutoff, dtype=bool)
+        complete = jnp.asarray(complete_above_cutoff, dtype=jnp.bool_)
         counts = jnp.asarray(num_large_jumps, dtype=jnp.int32)
-        radii = jnp.asarray(smallest_radius, dtype=float)
-        covariance = jnp.asarray(small_jump_covariance, dtype=float)
-        threshold = jnp.asarray(cutoff, dtype=float)
+        radii = jnp.asarray(smallest_radius, dtype=jnp.float64)
+        covariance = jnp.asarray(small_jump_covariance, dtype=jnp.float64)
+        threshold = jnp.asarray(cutoff, dtype=jnp.float64)
         if counts.shape != complete.shape or radii.shape != complete.shape:
             raise ValueError("Per-path Lévy diagnostics must have matching shapes.")
         if covariance.ndim != 2 or covariance.shape[0] != covariance.shape[1]:
@@ -297,12 +296,12 @@ def _step_schedule(
     max_step: float,
     /,
 ) -> tuple[Array, Array, Array, Array]:
-    saved = np.asarray(save_times, dtype=float)
+    saved = np.asarray(save_times, dtype=np.float64)
     if saved.ndim != 1 or saved.size <= 0:
         raise ValueError("save_times must be a non-empty rank-1 array.")
     if np.any(~np.isfinite(saved)) or np.any(np.diff(saved) <= 0.0):
         raise ValueError("save_times must be finite and strictly increasing.")
-    tolerance = 100.0 * np.finfo(float).eps * max(1.0, abs(start), abs(end))
+    tolerance = 100.0 * np.finfo(np.float64).eps * max(1.0, abs(start), abs(end))
     if float(saved[0]) < start - tolerance or float(saved[-1]) > end + tolerance:
         raise ValueError("save_times must lie in the problem interval.")
     current = start
@@ -323,12 +322,12 @@ def _step_schedule(
         boundaries[-1] = target_value
         current = target_value
         save_indices.append(len(boundaries) - 1)
-    boundary_values = jnp.asarray(boundaries, dtype=float)
+    boundary_values = jnp.asarray(boundaries, dtype=jnp.float64)
     return (
         boundary_values[:-1],
         boundary_values[1:],
         jnp.asarray(save_indices, dtype=jnp.int32),
-        jnp.asarray(saved, dtype=float),
+        jnp.asarray(saved, dtype=jnp.float64),
     )
 
 
@@ -399,7 +398,7 @@ def solve_levy_sde(
         step_limit,
     )
     steps = ends - starts
-    num_steps = int(steps.size)
+    num_steps = steps.size
     series = realization.series(problem.driver)
     complete = series.complete_above(threshold)
     if throw and not bool(jnp.all(complete)):
@@ -469,7 +468,7 @@ def solve_levy_sde(
             (realization.num_paths, num_steps, problem.driver.dimension)
         )
         states = jax.vmap(one_path)(flat_increments).reshape(
-            realization.sample_shape + (int(saved.size),) + problem.state_shape
+            realization.sample_shape + (saved.size,) + problem.state_shape
         )
     else:
         states = one_path(driver_increments)

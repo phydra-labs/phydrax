@@ -377,8 +377,7 @@ def polynomial_eigensolve(
                 operator.operator_id for operator in prepared.problem.coefficients
             ),
             linearization=(
-                "homogeneous first Frobenius companion; physical right vector "
-                "selected from the largest companion block"
+                "homogeneous first Frobenius companion; physical right vector selected from the largest companion block"
             ),
             numeric_version=prepared.numeric_version,
         ),
@@ -508,7 +507,7 @@ def _extract_physical_right_coordinates(
     vectors = []
     blocks = []
     norms = []
-    for index in range(int(general.alpha.size)):
+    for index in range(general.alpha.size):
         candidates = coordinates[:, :, index]
         candidate_norms = jnp.stack(
             tuple(
@@ -532,7 +531,7 @@ def _original_residuals(
     right_coordinates: Array,
     /,
 ) -> tuple[Array, Array, Array]:
-    count = int(alpha.size)
+    count = alpha.size
     residuals = []
     relatives = []
     scales = []

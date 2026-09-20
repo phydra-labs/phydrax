@@ -63,11 +63,14 @@ class CompleteVortexRemeshPlan(StrictModule, NonTrainableState):
         obstacle_clearance=None,
         obstacle_id: str | None = None,
     ):
-        lower_, upper_ = np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)
+        lower_, upper_ = (
+            np.asarray(lower, dtype=np.float64),
+            np.asarray(upper, dtype=np.float64),
+        )
         shape_, degree_, dimension = (
-            tuple(int(value) for value in shape),
+            tuple(shape),
             int(degree),
-            int(lower_.size),
+            lower_.size,
         )
         periodic_ = (
             (False,) * dimension
@@ -172,7 +175,7 @@ class CompleteVortexRemeshPlan(StrictModule, NonTrainableState):
             )
         if self.periodic[axis]:
             indices = jnp.mod(indices, count)
-            support = jnp.ones(indices.shape, dtype=bool)
+            support = jnp.ones(indices.shape, dtype=jnp.bool_)
         else:
             support = (indices >= 0) & (indices < count)
             indices = jnp.clip(indices, 0, count - 1)
@@ -231,7 +234,7 @@ class CompleteVortexRemeshPlan(StrictModule, NonTrainableState):
             / jnp.maximum(target_volume, jnp.finfo(target_volume.dtype).tiny)
         )
         obstacle_violation = (
-            jnp.zeros((self.capacity,), dtype=bool)
+            jnp.zeros((self.capacity,), dtype=jnp.bool_)
             if self.obstacle_clearance is None
             else target_active
             & (jax.vmap(self.obstacle_clearance)(self.grid_position) <= 0.0)
@@ -311,7 +314,7 @@ class CompleteVortexRemeshPlan(StrictModule, NonTrainableState):
         )
         nonperiodic_axis = jnp.asarray(
             tuple(not value for value in self.periodic),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         first_moment_defect = jnp.max(
             jnp.abs(

@@ -34,7 +34,7 @@ def _compiled(
     system = phx.equations.EulerSystem(2)
     plan = _mesh(system)
     discretization = plan.prepare()
-    internal_faces = np.where(np.asarray(discretization.neighbour_cells) >= 0)[0]
+    internal_faces = np.where(np.asarray(discretization.neighbor_cells) >= 0)[0]
     face_id = int(internal_faces[0])
     face_points = np.asarray(discretization.face_quadrature_points)[face_id : face_id + 1]
     unit_normal = np.asarray(discretization.area_vectors)[face_id] / float(
@@ -117,14 +117,14 @@ def test_donor_traces_and_accepted_correction_are_jit_safe_and_conservative():
     block = result.accepted_flux_integrals.blocks[-1]
     assert block.block_kind == "overset-correction"
     np.testing.assert_array_equal(np.asarray(block.owner_cells), np.asarray((0,)))
-    np.testing.assert_array_equal(np.asarray(block.neighbour_cells), np.asarray((1,)))
+    np.testing.assert_array_equal(np.asarray(block.neighbor_cells), np.asarray((1,)))
     scattered = np.zeros(
         (discretization.cell_count, system.component_count),
         dtype=np.asarray(block.flux_integral).dtype,
     )
     np.add.at(scattered, np.asarray(block.owner_cells), -np.asarray(block.flux_integral))
     np.add.at(
-        scattered, np.asarray(block.neighbour_cells), np.asarray(block.flux_integral)
+        scattered, np.asarray(block.neighbor_cells), np.asarray(block.flux_integral)
     )
     assert scattered[0, 0] > 0.0
     assert scattered[1, 0] < 0.0
@@ -170,7 +170,7 @@ def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl():
         np.add.at(scattered, np.asarray(block.owner_cells), -np.asarray(flux_rate))
         np.add.at(
             scattered,
-            np.asarray(block.neighbour_cells),
+            np.asarray(block.neighbor_cells),
             np.asarray(flux_rate),
         )
         assert scattered[donor_cell, 0] > 0.0
@@ -192,7 +192,7 @@ def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl():
 
 def test_holes_cannot_be_donors_and_fail_closed():
     with pytest.raises(ValueError, match="ineligible|hole"):
-        _compiled(hole_mask=np.asarray((True, False), dtype=bool))
+        _compiled(hole_mask=np.asarray((True, False), dtype="bool"))
 
 
 def test_overset_map_epoch_and_geometry_are_compiler_identities():
@@ -214,7 +214,7 @@ def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes()
         phx.equations.StiffenedGasMaterial(4.4, 2.0, 1.0),
     )
     system = phx.equations.TwoMaterialVOFSystem(2, eos=eos)
-    vertices = np.asarray([(i, j) for j in range(3) for i in range(3)], dtype=float)
+    vertices = np.asarray([(i, j) for j in range(3) for i in range(3)], dtype="float64")
     plan = phx.discretization.UnstructuredFiniteVolumePlan(
         vertices,
         quadrilaterals=np.asarray(
@@ -224,7 +224,7 @@ def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes()
         component_names=system.component_names,
     )
     discretization = plan.prepare()
-    internal_face = int(np.where(np.asarray(discretization.neighbour_cells) >= 0)[0][0])
+    internal_face = int(np.where(np.asarray(discretization.neighbor_cells) >= 0)[0][0])
     points = np.asarray(discretization.face_quadrature_points)[
         internal_face : internal_face + 1
     ]
@@ -313,7 +313,7 @@ def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes()
     np.add.at(scattered, np.asarray(block.owner_cells), -np.asarray(block.flux_integral))
     np.add.at(
         scattered,
-        np.asarray(block.neighbour_cells),
+        np.asarray(block.neighbor_cells),
         np.asarray(block.flux_integral),
     )
     np.testing.assert_allclose(scattered.sum(axis=0), 0.0, atol=1.0e-12)

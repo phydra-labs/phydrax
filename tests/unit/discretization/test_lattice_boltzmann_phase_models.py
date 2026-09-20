@@ -7,8 +7,8 @@ import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
 
-from phydrax.discretization.lattice_boltzmann._colour_gradient import (
-    recolour_populations,
+from phydrax.discretization.lattice_boltzmann._color_gradient import (
+    recolor_populations,
 )
 from phydrax.discretization.lattice_boltzmann._free_energy import (
     phase_field_equilibrium,
@@ -35,7 +35,7 @@ from phydrax.equations import (
 )
 
 
-def test_recolouring_is_label_symmetric_and_conserves_required_moments():
+def test_recoloring_is_label_symmetric_and_conserves_required_moments():
     lattice = D2Q9()
     weights = jnp.asarray(lattice.weights)
     red = jnp.asarray([[0.7, 0.3], [0.4, 0.8]], dtype=jnp.float64)
@@ -43,8 +43,8 @@ def test_recolouring_is_label_symmetric_and_conserves_required_moments():
     total = jnp.broadcast_to(weights, (*red.shape, lattice.population_count))
     normal = jnp.broadcast_to(jnp.asarray((0.6, 0.8), dtype=jnp.float64), (*red.shape, 2))
 
-    split = recolour_populations(total, red, blue, normal, lattice, 0.7)
-    swapped = recolour_populations(total, blue, red, -normal, lattice, 0.7)
+    split = recolor_populations(total, red, blue, normal, lattice, 0.7)
+    swapped = recolor_populations(total, blue, red, -normal, lattice, 0.7)
 
     np.testing.assert_allclose(
         split.red_populations, swapped.blue_populations, atol=1e-14
@@ -70,10 +70,10 @@ def test_csf_circle_has_laplace_curvature_and_label_symmetry():
     x, y = jnp.meshgrid(coordinates, coordinates, indexing="ij")
     radius = 24.0
     distance = jnp.sqrt(x**2 + y**2)
-    colour = jnp.tanh((radius - distance) / 3.0)
+    color = jnp.tanh((radius - distance) / 3.0)
 
-    fields = continuum_surface_force(colour, lattice, 0.04)
-    swapped = continuum_surface_force(-colour, lattice, 0.04)
+    fields = continuum_surface_force(color, lattice, 0.04)
+    swapped = continuum_surface_force(-color, lattice, 0.04)
     interface = jnp.abs(distance - radius) < 1.0
 
     np.testing.assert_allclose(

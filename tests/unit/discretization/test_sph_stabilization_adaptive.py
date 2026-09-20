@@ -14,7 +14,7 @@ def _context(count=8):
     ).prepare()
     box = phx.discretization.ParticleBox([0.0], [1.0])
     kernel = phx.discretization.WendlandC2SPHKernel(1)
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     position = position + 0.002 * jnp.sin(2.0 * jnp.pi * position)
     neighborhood = (
         phx.discretization.DenseParticleNeighborhoodPlan(

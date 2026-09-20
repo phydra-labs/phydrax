@@ -146,7 +146,7 @@ def prepare_ilqr(
             f"initial_controls must have shape {expected}; got {controls.shape}."
         )
     if not jnp.issubdtype(controls.dtype, jnp.inexact):
-        controls = controls.astype(float)
+        controls = controls.astype("float64")
     flow, discretization_id, backend_id = _flow_map(problem, differential_flow)
     prepared_id = canonical_fingerprint(
         {
@@ -465,7 +465,7 @@ def _select_transition_evidence(
 
 
 def _backward(model, regularization):
-    state_size = model.dynamics_state.shape[-1]
+    model.dynamics_state.shape[-1]
     control_size = model.dynamics_control.shape[-1]
     identity = jnp.eye(control_size, dtype=model.terminal_hessian.dtype)
 
@@ -765,7 +765,7 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
             cost_converged = found & (
                 actual <= plan.cost_tolerance * jnp.maximum(1.0, jnp.abs(objective_))
             )
-            converged = gradient_converged | cost_converged
+            gradient_converged | cost_converged
             next_active = (
                 backward_valid & (~gradient_converged) & found & (~cost_converged)
             )

@@ -159,9 +159,7 @@ def test_negative_entropy_divergence_and_dual_translation_are_exact_and_jittable
     right = jnp.asarray([0.7, 0.8, 1.1])
     displacement = jnp.asarray([-0.2, 0.4, -0.1])
 
-    expected_divergence = jnp.sum(
-        left * jnp.log(left / right) - left + right
-    )
+    expected_divergence = jnp.sum(left * jnp.log(left / right) - left + right)
     assert jnp.allclose(
         geometry.bregman_divergence(left, right),
         expected_divergence,

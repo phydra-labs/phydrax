@@ -173,7 +173,7 @@ def test_zero_valid_mass_is_rejected():
         return RandomizedResidualSamples(
             jnp.ones((2, 3)),
             sample_shape=(3,),
-            mask=jnp.zeros((3,), dtype=bool),
+            mask=jnp.zeros((3,), dtype="bool"),
         )
 
     objective = RandomizedResidualTerm(

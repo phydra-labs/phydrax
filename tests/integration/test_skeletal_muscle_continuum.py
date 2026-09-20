@@ -55,9 +55,6 @@ def test_exact_mixed_taylor_hood_manufactured_rest_solves_and_commits():
     assert bool(qualified.qualification.valid)
     assert commit.committed
     assert bool(commit.evidence.valid)
-    assert (
-        commit.evidence.final_residual_norm
-        <= commit.evidence.initial_residual_norm
-    )
+    assert commit.evidence.final_residual_norm <= commit.evidence.initial_residual_norm
     assert jnp.linalg.norm(commit.state[0]) == 0.0
     assert jnp.linalg.norm(commit.state[1]) == 0.0

@@ -36,7 +36,7 @@ def _identity_quadratic_mixer(aliasing):
 
 
 def _grid_batch(*, periodic=True, mask=None):
-    nodes = jnp.arange(8, dtype=float) / 8.0
+    nodes = jnp.arange(8, dtype="float64") / 8.0
     axis = phx.nn.operator.OperatorAxis("x", nodes, basis="fourier", periodic=periodic)
     source = phx.nn.operator.FunctionSamples(
         values=jnp.stack(
@@ -56,7 +56,7 @@ def _grid_batch(*, periodic=True, mask=None):
 
 
 def test_dealiased_projected_product_removes_folded_retained_mode():
-    nodes = jnp.arange(16, dtype=float) / 16.0
+    nodes = jnp.arange(16, dtype="float64") / 16.0
     values = jnp.cos(2.0 * jnp.pi * 7.0 * nodes)[:, None]
     collocation = _identity_quadratic_mixer("collocation")(values)[:, 0]
     dealiased = _identity_quadratic_mixer("dealiased")(values)[:, 0]
@@ -69,7 +69,7 @@ def test_dealiased_projected_product_removes_folded_retained_mode():
 
 
 def test_dealiased_resampling_preserves_even_grid_nyquist_mode():
-    values = ((-1.0) ** jnp.arange(16, dtype=float))[:, None]
+    values = ((-1.0) ** jnp.arange(16, dtype="float64"))[:, None]
     oversampled = _dealiased_spectral_resample(values, (21,))
     restored = _dealiased_spectral_resample(oversampled, (16,))
 
@@ -80,7 +80,7 @@ def test_dealiased_resampling_preserves_even_grid_nyquist_mode():
 @pytest.mark.parametrize("ndim", (1, 2, 3))
 def test_hofno_has_finite_nd_output_and_parameter_gradients(ndim):
     size = 6
-    nodes = jnp.arange(size, dtype=float) / size
+    nodes = jnp.arange(size, dtype="float64") / size
     values = jr.normal(jr.key(10 + ndim), (size,) * ndim)
     model = phx.nn.operator.architectures.HOFNO(
         n_modes=(2,) * ndim,
@@ -103,7 +103,7 @@ def test_hofno_has_finite_nd_output_and_parameter_gradients(ndim):
 
 
 def test_hofno_scan_matches_loop_under_jit():
-    nodes = jnp.arange(8, dtype=float) / 8.0
+    nodes = jnp.arange(8, dtype="float64") / 8.0
     x, y = jnp.meshgrid(nodes, nodes, indexing="ij")
     values = jnp.sin(2.0 * jnp.pi * x) + jnp.cos(2.0 * jnp.pi * y)
     options = dict(
@@ -156,7 +156,7 @@ def test_hofno_runtime_and_registry_enforce_periodic_all_valid_contract():
     with pytest.raises(ValueError, match="requires periodic"):
         model(nonperiodic)
 
-    mask = jnp.ones((2, 8), dtype=bool).at[0, 0].set(False)
+    mask = jnp.ones((2, 8), dtype="bool").at[0, 0].set(False)
     with pytest.raises(eqx.EquinoxRuntimeError, match="all-valid source masks"):
         model(_grid_batch(mask=mask))
     with pytest.raises(ValueError, match="requires domain_padding=0"):

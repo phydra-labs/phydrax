@@ -97,7 +97,7 @@ def test_three_dimensional_o3_adapter_preserves_reflection_action():
         algebra,
         (1, 1, 1, 1),
     )
-    values = jnp.arange(8, dtype=float)
+    values = jnp.arange(8, dtype="float64")
     assert jnp.array_equal(representation.from_o3(representation.to_o3(values)), values)
 
     reflection = jnp.diag(jnp.asarray([-1.0, 1.0, 1.0]))

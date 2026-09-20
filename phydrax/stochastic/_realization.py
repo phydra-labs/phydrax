@@ -93,8 +93,7 @@ class CompositeStochasticRealization(StrictModule):
             for value in values
         ):
             raise TypeError(
-                "Composite components must be Wiener, OU, Poisson, Lévy, or "
-                "fractional Gaussian realizations."
+                "Composite components must be Wiener, OU, Poisson, Lévy, or fractional Gaussian realizations."
             )
         sample_shape = values[0].sample_shape
         support = values[0].support

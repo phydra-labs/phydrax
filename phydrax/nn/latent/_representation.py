@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 
 
 class LatentPosterior(StrictModule):
@@ -32,10 +32,10 @@ class DecodedDistribution(StrictModule):
 
 
 class AbstractLatentRepresentation(StrictModule):
-    data_event_shape: AbstractAttribute[tuple[int, ...]]
-    latent_event_shape: AbstractAttribute[tuple[int, ...]]
-    representation_id: AbstractAttribute[str]
-    density_capability: AbstractAttribute[str]
+    data_event_shape: eqx.AbstractVar[tuple[int, ...]]
+    latent_event_shape: eqx.AbstractVar[tuple[int, ...]]
+    representation_id: eqx.AbstractVar[str]
+    density_capability: eqx.AbstractVar[str]
 
     @abstractmethod
     def encode(self, value: ArrayLike, /, *, key: Key[Array, ""]) -> LatentPosterior:
@@ -69,8 +69,8 @@ class CallableLatentRepresentation(AbstractLatentRepresentation):
     ):
         if not callable(encoder) or not callable(decoder):
             raise TypeError("encoder and decoder must be callable.")
-        data_shape = tuple(int(size) for size in data_event_shape)
-        latent_shape = tuple(int(size) for size in latent_event_shape)
+        data_shape = tuple(data_event_shape)
+        latent_shape = tuple(latent_event_shape)
         if not data_shape or not latent_shape:
             raise ValueError("Data and latent event shapes must be non-empty.")
         if density_capability not in ("decoder-likelihood", "sample-only"):
@@ -100,7 +100,9 @@ class CallableLatentRepresentation(AbstractLatentRepresentation):
         if not isinstance(result, DecodedDistribution):
             raise TypeError("decoder must return DecodedDistribution.")
         if result.density_kind != self.density_capability:
-            raise ValueError("Decoder density kind contradicts the representation capability.")
+            raise ValueError(
+                "Decoder density kind contradicts the representation capability."
+            )
         if self.density_capability == "decoder-likelihood" and result.law is None:
             raise ValueError("Decoder-likelihood capability requires a probability law.")
         if result.law is not None and result.law.event_shape != self.data_event_shape:
@@ -161,18 +163,22 @@ class LatentDiffusion(StrictModule):
         self.model_id = identifier
 
     def sample(self, key: Key[Array, ""], sample_shape, /) -> LatentDiffusionSample:
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
         latent_key, decode_key = jax.random.split(key)
         latent = jnp.asarray(self.latent_sampler(latent_key, samples))
         expected = samples + self.representation.latent_event_shape
         if latent.shape != expected:
-            raise ValueError(f"Latent sampler must return shape {expected}; got {latent.shape}.")
+            raise ValueError(
+                f"Latent sampler must return shape {expected}; got {latent.shape}."
+            )
         decoded = self.representation.decode(latent, key=decode_key)
         event_axes = tuple(range(len(samples), latent.ndim))
         finite = jnp.all(jnp.isfinite(latent), axis=event_axes)
-        decoded_valid = jnp.broadcast_to(jnp.asarray(decoded.valid, dtype=bool), samples)
+        decoded_valid = jnp.broadcast_to(
+            jnp.asarray(decoded.valid, dtype=jnp.bool_), samples
+        )
         valid = decoded_valid & finite
         return LatentDiffusionSample(
             latent,

@@ -73,9 +73,7 @@ class TensorBSplineJetPlan(StrictModule):
                 raise ValueError("maximum_order must be a nonnegative integer.")
             indices = _complete_multi_indices(dimension, int(maximum_order))
         else:
-            indices = tuple(
-                tuple(int(order) for order in value) for value in multi_indices
-            )
+            indices = tuple(tuple(value) for value in multi_indices)
             if not indices:
                 raise ValueError("Tensor B-spline multi_indices must be non-empty.")
             if any(
@@ -83,8 +81,7 @@ class TensorBSplineJetPlan(StrictModule):
                 for value in indices
             ):
                 raise ValueError(
-                    "Each tensor B-spline multi-index must be nonnegative and match "
-                    "the parameter dimension."
+                    "Each tensor B-spline multi-index must be nonnegative and match the parameter dimension."
                 )
             if len(set(indices)) != len(indices):
                 raise ValueError("Tensor B-spline multi_indices must be unique.")
@@ -149,7 +146,7 @@ class TensorBSplineJetPlan(StrictModule):
 
     def basis(self, multi_index: Sequence[int], /) -> Array:
         """Materialize one local tensor basis derivative in row-major local order."""
-        derivative = tuple(int(order) for order in multi_index)
+        derivative = tuple(multi_index)
         if len(derivative) != self.dimension or any(order < 0 for order in derivative):
             raise ValueError("Tensor B-spline derivative multi-index is invalid.")
         if any(
@@ -184,8 +181,7 @@ class TensorBSplineJetPlan(StrictModule):
         coefficients_ = jnp.asarray(coefficients)
         if (
             coefficients_.ndim < self.dimension
-            or tuple(int(size) for size in coefficients_.shape[: self.dimension])
-            != self.source_shape
+            or tuple(coefficients_.shape[: self.dimension]) != self.source_shape
         ):
             raise ValueError(
                 f"Tensor B-spline coefficients must begin with {self.source_shape}."
@@ -200,8 +196,7 @@ class TensorBSplineJetPlan(StrictModule):
         route_shape = self.query_shape + (self.local_size,)
         if (
             values.ndim < len(route_shape)
-            or tuple(int(size) for size in values.shape[: len(route_shape)])
-            != route_shape
+            or tuple(values.shape[: len(route_shape)]) != route_shape
         ):
             raise ValueError(
                 "Local tensor values must begin with query_shape + (local_size,)."
@@ -221,13 +216,12 @@ class TensorBSplineJetPlan(StrictModule):
         coefficients_ = jnp.asarray(coefficients)
         if (
             coefficients_.ndim < self.dimension
-            or tuple(int(size) for size in coefficients_.shape[: self.dimension])
-            != self.source_shape
+            or tuple(coefficients_.shape[: self.dimension]) != self.source_shape
         ):
             raise ValueError(
                 f"Tensor B-spline coefficients must begin with {self.source_shape}."
             )
-        derivative = tuple(int(order) for order in multi_index)
+        derivative = tuple(multi_index)
         if len(derivative) != self.dimension:
             raise ValueError("Tensor B-spline derivative multi-index is invalid.")
 
@@ -253,14 +247,13 @@ class TensorBSplineJetPlan(StrictModule):
         /,
     ) -> Array:
         """Apply the exact coefficient transpose of one tensor derivative."""
-        derivative = tuple(int(order) for order in multi_index)
+        derivative = tuple(multi_index)
         if len(derivative) != self.dimension:
             raise ValueError("Tensor B-spline derivative multi-index is invalid.")
         result = jnp.asarray(messages)
         if (
             result.ndim < len(self.query_shape)
-            or tuple(int(size) for size in result.shape[: len(self.query_shape)])
-            != self.query_shape
+            or tuple(result.shape[: len(self.query_shape)]) != self.query_shape
         ):
             raise ValueError(
                 f"Tensor B-spline messages must begin with {self.query_shape}."
@@ -310,7 +303,7 @@ class TensorBSplineJetPlan(StrictModule):
         expected = self.query_shape + (len(self.multi_indices),)
         if (
             messages_.ndim < len(expected)
-            or tuple(int(size) for size in messages_.shape[: len(expected)]) != expected
+            or tuple(messages_.shape[: len(expected)]) != expected
         ):
             raise ValueError("Tensor jet messages have incompatible query and jet axes.")
         result = None

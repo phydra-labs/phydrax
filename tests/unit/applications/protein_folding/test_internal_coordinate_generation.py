@@ -93,7 +93,7 @@ def _cis_proline_fixture(*, unsupported_ring=False, glycine=False, aromatic=Fals
         *side_chain_coordinates,
         (1.5, 0.5, 0.5),
     )
-    coordinates = np.asarray((*first_coordinates, *second_coordinates), dtype=float)
+    coordinates = np.asarray((*first_coordinates, *second_coordinates), dtype="float64")
     numbers = tuple(
         1 if key.atom_name == "H" else {"C": 6, "N": 7, "O": 8}[key.atom_name[0]]
         for key in keys
@@ -201,7 +201,7 @@ def _cis_proline_fixture(*, unsupported_ring=False, glycine=False, aromatic=Fals
         masses,
         units,
         topology=topology,
-        molecule_ids=np.zeros(len(keys), dtype=int),
+        molecule_ids=np.zeros(len(keys), dtype="int64"),
     )
     lengths = np.sqrt(
         np.sum((coordinates[routes[:, 0]] - coordinates[routes[:, 1]]) ** 2, axis=-1)

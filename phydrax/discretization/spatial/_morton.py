@@ -80,8 +80,8 @@ class MortonAddressPlan(StrictModule):
             raise ValueError("Morton addressing supports dimensions 1, 2, and 3.")
         if len(upper_tuple) != len(lower_tuple):
             raise ValueError("Morton lower and upper bounds must have equal length.")
-        lower_array = np.asarray(lower_tuple, dtype=float)
-        upper_array = np.asarray(upper_tuple, dtype=float)
+        lower_array = np.asarray(lower_tuple, dtype=np.float64)
+        upper_array = np.asarray(upper_tuple, dtype=np.float64)
         if not np.all(np.isfinite(lower_array)) or not np.all(np.isfinite(upper_array)):
             raise ValueError("Morton bounds must be finite.")
         if np.any(upper_array <= lower_array):
@@ -91,8 +91,7 @@ class MortonAddressPlan(StrictModule):
         maximum_supported = _MAX_CODE_BITS // dimension
         if depth < 1 or depth > maximum_supported:
             raise ValueError(
-                f"maximum_depth must lie in [1, {maximum_supported}] for "
-                f"dimension {dimension}."
+                f"maximum_depth must lie in [1, {maximum_supported}] for dimension {dimension}."
             )
         if periodic_axes is None:
             periodic_tuple = (False,) * dimension
@@ -127,13 +126,12 @@ class MortonAddressPlan(StrictModule):
         values = jnp.asarray(points)
         if values.ndim < 1 or values.shape[-1] != self.dimension:
             raise ValueError(
-                f"points must have trailing dimension {self.dimension}; got "
-                f"shape {values.shape}."
+                f"points must have trailing dimension {self.dimension}; got shape {values.shape}."
             )
         lower = jnp.asarray(self.lower, dtype=values.dtype)
         upper = jnp.asarray(self.upper, dtype=values.dtype)
         extent = upper - lower
-        periodic = jnp.asarray(self.periodic_axes, dtype=bool)
+        periodic = jnp.asarray(self.periodic_axes, dtype=jnp.bool_)
         finite_components = jnp.isfinite(values)
         finite = jnp.all(finite_components, axis=-1)
         safe = jnp.where(finite_components, values, lower)
@@ -267,7 +265,7 @@ def canonical_morton_order(
     """Return a deterministic valid-first Morton ordering."""
     code_values = jnp.asarray(codes, dtype=jnp.uint64)
     id_values = jnp.asarray(stable_ids)
-    valid_values = jnp.asarray(valid, dtype=bool)
+    valid_values = jnp.asarray(valid, dtype=jnp.bool_)
     if code_values.ndim != 1 or id_values.shape != code_values.shape:
         raise ValueError("codes and stable_ids must be rank-one arrays with equal shape.")
     if valid_values.shape != code_values.shape:
@@ -298,9 +296,9 @@ def _canonical_morton_point_order(
             f"points must have shape {expected_shape}; got {positions.shape}."
         )
     if active_mask is None:
-        active = jnp.ones((capacity,), dtype=bool)
+        active = jnp.ones((capacity,), dtype=jnp.bool_)
     else:
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if active.shape != (capacity,):
             raise ValueError("active_mask must match point_capacity.")
     if stable_ids is None:

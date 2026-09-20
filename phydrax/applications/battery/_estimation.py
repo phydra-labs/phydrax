@@ -63,7 +63,7 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -95,7 +95,7 @@ def _covariance_matrix(
         raise ValueError(f"{name} must have shape ({size}, {size}).")
     source_host = _host_finite(array, name)
     epsilon = np.finfo(source_host.dtype).eps
-    host = source_host.astype(float, copy=False)
+    host = source_host.astype("float64", copy=False)
     tolerance = 64.0 * epsilon * max(1.0, float(np.max(np.abs(host))))
     if not np.allclose(host, host.T, rtol=0.0, atol=tolerance):
         raise ValueError(f"{name} must be symmetric.")
@@ -208,15 +208,15 @@ def _qualify_global_extension(
         raise ValueError(f"{owner} must use value unit {expected_unit!r}.")
     if global_law.quantity != physical_law.quantity:
         raise ValueError(f"{owner} quantity must match the thermal ECM property.")
-    bounds = np.asarray(interval, dtype=float)
-    support = np.asarray(physical_law.support_bounds, dtype=float)
+    bounds = np.asarray(interval, dtype=np.float64)
+    support = np.asarray(physical_law.support_bounds, dtype=np.float64)
     if bounds[0] < support[0] or bounds[1] > support[1]:
         raise ValueError(
             f"The thermal ECM {owner} does not support the physical interval."
         )
     if isinstance(physical_law, TabulatedPropertyLaw):
-        nodes = np.asarray(physical_law.nodes, dtype=float)
-        mask = np.asarray(physical_law.source_mask, dtype=bool)
+        nodes = np.asarray(physical_law.nodes, dtype=np.float64)
+        mask = np.asarray(physical_law.source_mask, dtype=np.bool_)
         overlaps = (nodes[:-1] < bounds[1]) & (nodes[1:] > bounds[0])
         if not np.any(overlaps) or np.any(overlaps & ~(mask[:-1] & mask[1:])):
             raise ValueError(f"The thermal ECM {owner} has a physical support gap.")
@@ -225,16 +225,15 @@ def _qualify_global_extension(
     else:
         coordinates = bounds
     queries = jnp.asarray(coordinates, dtype=interval.dtype)
-    physical = np.asarray(physical_law.evaluate(queries).values, dtype=float)
-    extension = np.asarray(global_law.evaluate(queries).values, dtype=float)
+    physical = np.asarray(physical_law.evaluate(queries).values, dtype=np.float64)
+    extension = np.asarray(global_law.evaluate(queries).values, dtype=np.float64)
     epsilon = np.finfo(np.asarray(physical_law.evaluate(queries).values).dtype).eps
     scale = max(1.0, float(np.max(np.abs(physical))), float(np.max(np.abs(extension))))
     if not np.allclose(
         physical, extension, rtol=64.0 * epsilon, atol=64.0 * epsilon * scale
     ):
         raise ValueError(
-            f"The global {owner} does not agree with the thermal ECM on the "
-            "declared physical SOC interval."
+            f"The global {owner} does not agree with the thermal ECM on the declared physical SOC interval."
         )
     return jnp.stack((global_law.intercept, global_law.slope))
 
@@ -344,7 +343,7 @@ def _observation_offset(time_s: Array, context: StateSpaceStepContext, /) -> Arr
 def _observation_covariance(time_s: Array, context: StateSpaceStepContext, /) -> Array:
     del time_s
     prepared = _prepared_args(context)
-    return prepared.voltage_variance_v2.reshape((1, 1))
+    return prepared.voltage_variance_squared.reshape((1, 1))
 
 
 class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
@@ -423,7 +422,7 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
         open_circuit_voltage: GloballyAffineSOCPropertyLaw,
         entropic_coefficient: GloballyAffineSOCPropertyLaw,
         process_noise_covariance_rate: ArrayLike | None = None,
-        voltage_variance_v2: ArrayLike,
+        voltage_variance_squared: ArrayLike,
     ) -> PreparedExactAffineECMEstimation:
         """Qualify one constant-parameter ECM and retain its dynamic array leaves.
 
@@ -463,7 +462,9 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
                 "process_noise_covariance_rate",
             )
         )
-        voltage_variance = _positive_scalar(voltage_variance_v2, "voltage_variance_v2")
+        voltage_variance = _positive_scalar(
+            voltage_variance_squared, "voltage_variance_squared"
+        )
         identity = array_tree_fingerprint(
             {
                 "series_resistance_ohm": parameters.series_resistance_ohm,
@@ -474,7 +475,7 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
                 "ocv_coefficients_v": ocv_coefficients,
                 "entropic_coefficients_v_per_k": entropic_coefficients,
                 "process_noise_covariance_rate": process_covariance,
-                "voltage_variance_v2": voltage_variance,
+                "voltage_variance_squared": voltage_variance,
             }
         )
         prepared_id = canonical_fingerprint(
@@ -497,7 +498,7 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
             ocv_coefficients_v=ocv_coefficients,
             entropic_coefficients_v_per_k=entropic_coefficients,
             process_noise_covariance_rate=process_covariance,
-            voltage_variance_v2=voltage_variance,
+            voltage_variance_squared=voltage_variance,
             prepared_id=prepared_id,
         )
 
@@ -514,7 +515,7 @@ class PreparedExactAffineECMEstimation(StrictModule):
     ocv_coefficients_v: Array
     entropic_coefficients_v_per_k: Array
     process_noise_covariance_rate: Array
-    voltage_variance_v2: Array
+    voltage_variance_squared: Array
     branch_count: int = eqx.field(static=True)
     state_names: tuple[str, ...] = eqx.field(static=True)
     state_units: tuple[str, ...] = eqx.field(static=True)
@@ -532,7 +533,7 @@ class PreparedExactAffineECMEstimation(StrictModule):
         ocv_coefficients_v: Array,
         entropic_coefficients_v_per_k: Array,
         process_noise_covariance_rate: Array,
-        voltage_variance_v2: Array,
+        voltage_variance_squared: Array,
         prepared_id: str,
     ):
         self.plan = plan
@@ -544,7 +545,7 @@ class PreparedExactAffineECMEstimation(StrictModule):
         self.ocv_coefficients_v = ocv_coefficients_v
         self.entropic_coefficients_v_per_k = entropic_coefficients_v_per_k
         self.process_noise_covariance_rate = process_noise_covariance_rate
-        self.voltage_variance_v2 = voltage_variance_v2
+        self.voltage_variance_squared = voltage_variance_squared
         self.branch_count = plan.branch_count
         self.state_names = ("state_of_charge",) + tuple(
             f"polarization_voltage_{index}_v" for index in range(plan.branch_count)
@@ -610,7 +611,7 @@ class PreparedExactAffineECMEstimation(StrictModule):
         if np.any(temperature_host <= 0.0):
             raise ValueError("known_temperature_k must be positive.")
 
-        case_shape = tuple(int(size) for size in times.shape[:-1])
+        case_shape = tuple(times.shape[:-1])
         axes = (
             tuple(f"case_{axis}" for axis in range(len(case_shape)))
             if case_axes is None
@@ -630,14 +631,14 @@ class PreparedExactAffineECMEstimation(StrictModule):
             raise ValueError("case_ids must contain one ID per physical case.")
 
         valid = (
-            jnp.ones(times.shape, dtype=bool)
+            jnp.ones(times.shape, dtype=jnp.bool_)
             if step_valid is None
-            else jnp.broadcast_to(jnp.asarray(step_valid, dtype=bool), times.shape)
+            else jnp.broadcast_to(jnp.asarray(step_valid, dtype=jnp.bool_), times.shape)
         )
         mask = (
             valid
             if voltage_mask is None
-            else jnp.broadcast_to(jnp.asarray(voltage_mask, dtype=bool), times.shape)
+            else jnp.broadcast_to(jnp.asarray(voltage_mask, dtype=jnp.bool_), times.shape)
         )
         inputs = jnp.stack((current, temperature), axis=-1)
         input_identity = array_tree_fingerprint(
@@ -694,7 +695,7 @@ class PreparedExactAffineECMEstimation(StrictModule):
         if mean.shape != expected_mean_shape:
             raise ValueError(f"prior_mean must have shape {expected_mean_shape}.")
         mean_host = _host_finite(mean, "prior_mean")
-        bounds = np.asarray(self.state_of_charge_interval, dtype=float)
+        bounds = np.asarray(self.state_of_charge_interval, dtype=np.float64)
         if np.any((mean_host[..., 0] < bounds[0]) | (mean_host[..., 0] > bounds[1])):
             raise ValueError("Initial mean SOC is outside the declared affine interval.")
         covariance = _real_array(prior_covariance, "prior_covariance")
@@ -843,7 +844,7 @@ class ExactAffineECMEstimationResult(StrictModule):
         return self.filter_result.innovations[..., 0]
 
     @property
-    def innovation_covariances_v2(self) -> Array:
+    def innovation_covariances_squared(self) -> Array:
         return self.filter_result.innovation_covariances[..., 0, 0]
 
     @property
@@ -907,7 +908,7 @@ def estimate_exact_affine_ecm(
     support_prefix = jnp.cumprod(
         jnp.where(step_valid, local_support, True).astype(jnp.int32),
         axis=-1,
-    ).astype(bool)
+    ).astype("bool")
     likelihood_valid = step_valid & filtered.valid & smoothed.valid
     valid = likelihood_valid & support_prefix
 

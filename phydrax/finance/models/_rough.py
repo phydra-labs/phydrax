@@ -16,7 +16,7 @@ from ..._strict import StrictModule
 
 
 def _scalar(value: ArrayLike, name: str, /, *, positive: bool = False) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape != ():
         raise ValueError(f"{name} must be scalar.")
     invalid = ~jnp.isfinite(array) | ((array <= 0.0) if positive else False)
@@ -33,8 +33,8 @@ def _rho(value: ArrayLike) -> Array:
 
 
 def _curve(times: ArrayLike, values: ArrayLike, /) -> tuple[Array, Array]:
-    times_ = jnp.asarray(times, dtype=float)
-    values_ = jnp.asarray(values, dtype=float)
+    times_ = jnp.asarray(times, dtype=jnp.float64)
+    values_ = jnp.asarray(values, dtype=jnp.float64)
     if times_.ndim != 1 or times_.size < 2 or values_.shape != times_.shape:
         raise ValueError(
             "forward variance times and values must be aligned vectors with at least two nodes."
@@ -104,10 +104,10 @@ class RoughBergomiModel(StrictModule):
         self.correlation = _rho(correlation)
         self.forward_variance_times = times
         self.forward_variance_values = values
-        self.curve_size = int(times.size)
+        self.curve_size = times.size
 
     def forward_variance(self, time: ArrayLike, /) -> Array:
-        time_ = jnp.asarray(time, dtype=float)
+        time_ = jnp.asarray(time, dtype=jnp.float64)
         time_ = eqx.error_if(
             time_,
             jnp.any(~jnp.isfinite(time_)) | jnp.any(time_ < 0.0),

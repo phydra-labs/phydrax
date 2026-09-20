@@ -92,7 +92,7 @@ class VariableEliminationMethod(StrictModule):
     ):
         if ordering not in ("min-fill", "min-degree", "given"):
             raise ValueError("Unknown elimination ordering policy.")
-        resolved = None if order is None else tuple(int(value) for value in order)
+        resolved = None if order is None else tuple(order)
         if ordering == "given" and resolved is None:
             raise ValueError("A given elimination order is required.")
         if ordering != "given" and resolved is not None:
@@ -235,7 +235,7 @@ def _factor_tables(graph: DiscreteFactorGraph, evidence: Array):
     for group_index, scope in enumerate(graph.factor_scopes):
         tables = factor_group_dense_tables(graph, group_index)
         for factor, row in enumerate(np.asarray(scope, dtype=np.int32)):
-            factors.append((tuple(int(value) for value in row), tables[factor]))
+            factors.append((tuple(row), tables[factor]))
     offsets = np.asarray(graph.variable_state_offsets)
     for variable in range(graph.num_variables):
         factors.append(
@@ -255,7 +255,7 @@ def _eliminate(
     mode: Literal["sum", "max"],
 ) -> Array:
     graph = plan.graph
-    cards_by_variable = tuple(int(value) for value in np.asarray(graph.cardinalities))
+    cards_by_variable = tuple(np.asarray(graph.cardinalities))
     factors = _factor_tables(graph, evidence)
     constants: list[Array] = []
     for variable in plan.order:
@@ -573,7 +573,7 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
         )
 
     def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
-        count = prod(tuple(int(size) for size in sample_shape)) if sample_shape else 1
+        count = prod(tuple(sample_shape)) if sample_shape else 1
         keys = jr.split(key, count)
 
         def one_sample(sample_key):

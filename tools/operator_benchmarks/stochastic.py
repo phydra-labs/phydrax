@@ -184,11 +184,10 @@ class LinearGaussianReferenceOperator(phx.nn.operator.AbstractProbabilisticOpera
         durations = batch.input("duration").values
         if states is None or durations is None:
             raise ValueError("Reference transitions require state and duration values.")
-        size = int(self.drift_eigenvalues.shape[0])
+        size = self.drift_eigenvalues.shape[0]
         if states.shape != batch.case_shape + (size,):
             raise ValueError(
-                "Reference transition state shape must be "
-                f"{batch.case_shape + (size,)}; got {states.shape}."
+                f"Reference transition state shape must be {batch.case_shape + (size,)}; got {states.shape}."
             )
         flat_states = states.reshape((-1, size))
         flat_durations = durations[..., 0].reshape((-1,))
@@ -369,7 +368,7 @@ def allen_cahn_transition_data(
             t1=duration,
             kappa=float(diffusivity),
             reaction=lambda t, state, args: state - state**3,
-            reaction_id="allen-cahn-cubic-reaction-v1",
+            reaction_id="allen-cahn-cubic-reaction",
             noise_basis=noise_basis,
         )
         realization = spde.wiener_realization(
@@ -523,7 +522,7 @@ def run_stochastic_heat_gaussian_benchmark(
         num_cases=1,
         num_realizations=2,
         duration=dataset.duration,
-        noise_rank=int(_metadata(dataset, "noise_matrix").shape[-1]),
+        noise_rank=_metadata(dataset, "noise_matrix").shape[-1],
         dt0=min(dataset.duration / 10.0, 5e-3),
     )
     fine_covariance = _metadata(fine_data, "analytic_covariance")
@@ -830,12 +829,12 @@ def _fit_allen_cahn_trial(
     flow_final_nll = heldout_nll(fitted_flow)
     gaussian_samples = fitted_gaussian.sample(
         evaluation_batch,
-        num_samples=int(reference.shape[0]),
+        num_samples=reference.shape[0],
         key=jr.key(seed + 20),
     )
     flow_samples = fitted_flow.sample(
         evaluation_batch,
-        num_samples=int(reference.shape[0]),
+        num_samples=reference.shape[0],
         key=jr.key(seed + 21),
     )
     reference_predictive = _operator_predictive(reference, evaluation_batch, "reference")
@@ -878,7 +877,7 @@ def run_allen_cahn_flow_benchmark(
 ) -> AllenCahnFlowBenchmarkResult:
     """Train Gaussian and conditional-flow transitions on stochastic Allen--Cahn data."""
     dataset = allen_cahn_transition_data(key) if data is None else data
-    resolved_seeds = tuple(int(seed) for seed in seeds)
+    resolved_seeds = tuple(seeds)
     if not resolved_seeds:
         raise ValueError("At least one benchmark seed is required.")
     trials = tuple(

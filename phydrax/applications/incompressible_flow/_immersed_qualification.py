@@ -77,7 +77,7 @@ class ImmersedReferenceCaseEvidence(StrictModule, NonTrainableState):
         subjects = _identifiers(subject_ids, "subject ID")
         artifacts = _identifiers(raw_artifact_ids, "raw artifact ID")
         value = jnp.asarray(error)
-        certified = jnp.asarray(qualified, dtype=bool)
+        certified = jnp.asarray(qualified, dtype=jnp.bool_)
         if value.shape != () or certified.shape != ():
             raise ValueError(
                 "Reference error and qualification predicate must be scalar."

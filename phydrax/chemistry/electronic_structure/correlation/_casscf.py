@@ -53,7 +53,7 @@ class CASSCFResult(StrictModule, NonTrainableState):
         self.macro_energies = energies
         self.orbital_gradient_norms = gradients
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
             {
@@ -98,7 +98,7 @@ class CASSCFPlan(StrictModule, NonTrainableState):
         weights = (
             np.full((casci.root_count,), 1.0 / casci.root_count)
             if state_weights is None
-            else np.asarray(state_weights, dtype=float)
+            else np.asarray(state_weights, dtype=np.float64)
         )
         iterations = int(maximum_macro_iterations)
         tolerance = float(orbital_gradient_tolerance)
@@ -207,9 +207,9 @@ class CASSCFPlan(StrictModule, NonTrainableState):
                 np.sum(np.asarray(self.state_weights) * np.asarray(final_casci.energies))
             )
             energies.append(state_average)
-            gradient = np.zeros((len(pairs),), dtype=float)
+            gradient = np.zeros((len(pairs),), dtype=np.float64)
             for index, (active, external) in enumerate(pairs):
-                generator = np.zeros((orbital_count, orbital_count), dtype=float)
+                generator = np.zeros((orbital_count, orbital_count), dtype=np.float64)
                 generator[external, active] = self.finite_difference_step
                 generator[active, external] = -self.finite_difference_step
                 plus = self.casci.evaluate(self._rotate_store(current, generator))
@@ -228,7 +228,7 @@ class CASSCFPlan(StrictModule, NonTrainableState):
             if norm <= self.orbital_gradient_tolerance:
                 converged = True
                 break
-            update = np.zeros((orbital_count, orbital_count), dtype=float)
+            update = np.zeros((orbital_count, orbital_count), dtype=np.float64)
             for value, (active, external) in zip(gradient, pairs, strict=True):
                 update[external, active] = -self.descent_step * value
                 update[active, external] = self.descent_step * value

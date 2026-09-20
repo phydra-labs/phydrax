@@ -125,8 +125,7 @@ class FlowStateSchema(StrictModule, NonTrainableState):
         array = jnp.asarray(values)
         if array.ndim < 1 or array.shape[-1] != self.component_count:
             raise ValueError(
-                f"{owner} must end with {self.component_count} components; "
-                f"got shape {array.shape}."
+                f"{owner} must end with {self.component_count} components; got shape {array.shape}."
             )
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             raise TypeError(f"{owner} must use an inexact dtype.")

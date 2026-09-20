@@ -71,13 +71,13 @@ class ReactiveParticleTemplatePlan(StrictModule, NonTrainableState):
         radius_ = float(radius)
         mass_ = float(mass)
         material = int(material_id)
-        velocity_ = np.asarray(velocity, dtype=float)
-        angular_ = np.asarray(angular_velocity, dtype=float)
-        energy = np.asarray(internal_energy, dtype=float)
-        species = np.asarray(species_amount, dtype=float)
-        pore = np.asarray(porosity, dtype=float)
-        area = np.asarray(internal_surface_area, dtype=float)
-        front = np.asarray(reaction_front, dtype=float)
+        velocity_ = np.asarray(velocity, dtype=np.float64)
+        angular_ = np.asarray(angular_velocity, dtype=np.float64)
+        energy = np.asarray(internal_energy, dtype=np.float64)
+        species = np.asarray(species_amount, dtype=np.float64)
+        pore = np.asarray(porosity, dtype=np.float64)
+        area = np.asarray(internal_surface_area, dtype=np.float64)
+        front = np.asarray(reaction_front, dtype=np.float64)
         scale = radius_ if outer_scale is None else float(outer_scale)
         if (
             not np.isfinite(radius_)
@@ -153,7 +153,7 @@ class ReactiveParticleTemplateDistributionPlan(StrictModule, NonTrainableState):
 
     def __init__(self, templates, probabilities: ArrayLike, /):
         values = tuple(templates)
-        probability = np.asarray(probabilities, dtype=float)
+        probability = np.asarray(probabilities, dtype=np.float64)
         if not values or any(
             not isinstance(value, ReactiveParticleTemplatePlan) for value in values
         ):
@@ -211,8 +211,8 @@ class ParticleInsertionPlan(StrictModule, NonTrainableState):
         maximum_attempts: int = 32,
         all_inside: bool = True,
     ):
-        lower_ = np.asarray(lower, dtype=float)
-        upper_ = np.asarray(upper, dtype=float)
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
         count = int(requested_count)
         attempts = int(maximum_attempts)
         if (
@@ -285,7 +285,7 @@ def insert_reactive_particles(
         raise ValueError("molar_masses must have internal species shape.")
     inactive = dynamics.bodies.particles.active_mask & ~dem_state.body_properties.active
     if available_mask is not None:
-        available = jnp.asarray(available_mask, dtype=bool)
+        available = jnp.asarray(available_mask, dtype=jnp.bool_)
         if available.shape != inactive.shape:
             raise ValueError("available_mask must have particle-capacity shape.")
         inactive = inactive & available
@@ -325,7 +325,7 @@ def insert_reactive_particles(
     outer_scale = internal_state.outer_scale
     front = internal_state.reaction_front
     internal_active = internal_state.active
-    inserted = jnp.zeros((plan.requested_count,), dtype=bool)
+    inserted = jnp.zeros((plan.requested_count,), dtype=jnp.bool_)
     selected_attempt = -jnp.ones((plan.requested_count,), dtype=jnp.int32)
     for insertion_index in range(plan.requested_count):
         slot = jnp.maximum(slots[insertion_index], 0)
@@ -568,7 +568,7 @@ def _grow_internal_batch(
             jnp.zeros((extra, batch.front_count), dtype=state.reaction_front.dtype),
         )
     )
-    active = jnp.concatenate((state.active, jnp.zeros((extra,), dtype=bool)))
+    active = jnp.concatenate((state.active, jnp.zeros((extra,), dtype=jnp.bool_)))
     return prepared, ParticleInternalBatchState(
         energy,
         species,
@@ -698,7 +698,7 @@ def fragment_particle_with_growth(
     *,
     args=None,
 ) -> ParticleEpochFragmentationResult:
-    valid = jnp.asarray(child_valid, dtype=bool)
+    valid = jnp.asarray(child_valid, dtype=jnp.bool_)
     required = int(np.count_nonzero(np.asarray(valid)))
     available = ~epoch.ever_occupied & ~epoch.retired
     free = int(np.count_nonzero(np.asarray(available)))
@@ -857,8 +857,8 @@ class ParticleRegionPlan(StrictModule, NonTrainableState):
     def __init__(
         self, lower: ArrayLike, upper: ArrayLike, /, *, region_id: str | None = None
     ):
-        lower_ = np.asarray(lower, dtype=float)
-        upper_ = np.asarray(upper, dtype=float)
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
         if lower_.shape != upper_.shape or lower_.ndim != 1 or np.any(upper_ <= lower_):
             raise ValueError("Particle region bounds are invalid.")
         self.lower = jnp.asarray(lower_)
@@ -909,8 +909,8 @@ class MassFlowSurfacePlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, point: ArrayLike, normal: ArrayLike, /):
-        point_ = np.asarray(point, dtype=float)
-        normal_ = np.asarray(normal, dtype=float)
+        point_ = np.asarray(point, dtype=np.float64)
+        normal_ = np.asarray(normal, dtype=np.float64)
         norm = np.linalg.norm(normal_)
         if (
             point_.shape != normal_.shape
@@ -943,7 +943,9 @@ class MassFlowSurfacePlan(StrictModule, NonTrainableState):
         current = jnp.sum(
             (jnp.asarray(current_position) - self.point) * self.normal, axis=-1
         )
-        crossed = (previous < 0.0) & (current >= 0.0) & jnp.asarray(active, dtype=bool)
+        crossed = (
+            (previous < 0.0) & (current >= 0.0) & jnp.asarray(active, dtype=jnp.bool_)
+        )
         return jnp.sum(jnp.where(crossed, jnp.asarray(masses), 0.0))
 
 

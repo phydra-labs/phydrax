@@ -51,9 +51,9 @@ class BladeElementRotorPlan(StrictModule, NonTrainableState):
         density: float = 1.0,
     ):
         radius_, chord_, twist_ = (
-            jnp.asarray(radius, dtype=float),
-            jnp.asarray(chord, dtype=float),
-            jnp.asarray(twist, dtype=float),
+            jnp.asarray(radius, dtype=jnp.float64),
+            jnp.asarray(chord, dtype=jnp.float64),
+            jnp.asarray(twist, dtype=jnp.float64),
         )
         blades, density_ = int(blade_count), float(density)
         if (
@@ -82,7 +82,7 @@ class BladeElementRotorPlan(StrictModule, NonTrainableState):
         self.rotor_id = canonical_fingerprint(
             {
                 "kind": "blade-element-rotor",
-                "station_count": int(radius_.size),
+                "station_count": radius_.size,
                 "blade_count": blades,
                 "polar": polar.polar_id,
                 "density": density_,

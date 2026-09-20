@@ -18,9 +18,7 @@ def _periodic_problem(count=16, *, smooth_epsilon=0.0):
     system = phx.equations.ScalarConservationSystem(
         1,
         lambda state, axis, args: args["speed"] * state,
-        lambda left, right, axis, args: jnp.full(
-            left.shape[:-1], jnp.abs(args["speed"])
-        ),
+        lambda left, right, axis, args: jnp.full(left.shape[:-1], jnp.abs(args["speed"])),
         system_id="differentiable-advection",
     )
     problem = phx.equations.ConservationProblemIR(
@@ -45,9 +43,7 @@ def test_state_jvp_matches_centered_directional_difference():
     state = jnp.sin(2.0 * jnp.pi * x)[..., None]
     tangent = jnp.cos(4.0 * jnp.pi * x)[..., None]
     args = {"speed": jnp.asarray(0.7)}
-    _, jvp = jax.jvp(
-        lambda value: compiled(0.0, value, args), (state,), (tangent,)
-    )
+    _, jvp = jax.jvp(lambda value: compiled(0.0, value, args), (state,), (tangent,))
     epsilon = 1e-5
     finite_difference = (
         compiled(0.0, state + epsilon * tangent, args)
@@ -59,9 +55,7 @@ def test_state_jvp_matches_centered_directional_difference():
 
 def test_smooth_wave_speed_has_finite_parameter_gradient():
     compiled, grid = _periodic_problem(smooth_epsilon=1e-3)
-    state = jnp.sin(
-        2.0 * jnp.pi * grid.structured_axes[0].interval_centers
-    )[..., None]
+    state = jnp.sin(2.0 * jnp.pi * grid.structured_axes[0].interval_centers)[..., None]
 
     gradient = jax.grad(
         lambda speed: jnp.sum(compiled(0.0, state, {"speed": speed}) ** 2)
@@ -132,14 +126,10 @@ def test_mapped_cell_volume_is_differentiable_at_fixed_topology():
         )
         return jnp.sum(geometry[2])
 
-    value, tangent = jax.jvp(
-        total_volume, (jnp.asarray(1.3),), (jnp.asarray(1.0),)
-    )
+    value, tangent = jax.jvp(total_volume, (jnp.asarray(1.3),), (jnp.asarray(1.0),))
 
     np.testing.assert_allclose(value, 1.3, rtol=1e-12)
     np.testing.assert_allclose(tangent, 1.0, rtol=1e-12)
-
-
 
 
 def test_hard_limiter_reports_frozen_decision_semantics():

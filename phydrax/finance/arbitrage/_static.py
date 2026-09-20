@@ -40,10 +40,10 @@ class OptionCallSlice(StrictModule):
         numeraire_id: str,
         market_snapshot_id: str,
     ):
-        strikes_ = jnp.asarray(strikes, dtype=float)
-        calls = jnp.asarray(call_prices, dtype=float)
-        forward_ = jnp.asarray(forward, dtype=float)
-        discount = jnp.asarray(discount_factor, dtype=float)
+        strikes_ = jnp.asarray(strikes, dtype=jnp.float64)
+        calls = jnp.asarray(call_prices, dtype=jnp.float64)
+        forward_ = jnp.asarray(forward, dtype=jnp.float64)
+        discount = jnp.asarray(discount_factor, dtype=jnp.float64)
         if strikes_.ndim != 1 or strikes_.shape[0] < 2 or calls.shape != strikes_.shape:
             raise ValueError(
                 "An option call slice needs at least two strike/price pairs."

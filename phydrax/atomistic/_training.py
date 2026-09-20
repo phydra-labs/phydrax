@@ -339,9 +339,9 @@ def _energy_supervision(
     if energy.shape != (batch.case_count,):
         raise ValueError(f"{prefix}_energy must have shape (case,).")
     energy_mask = (
-        jnp.ones((batch.case_count,), dtype=bool)
+        jnp.ones((batch.case_count,), dtype=jnp.bool_)
         if mask is None
-        else jnp.asarray(mask, dtype=bool)
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     if energy_mask.shape != energy.shape:
         raise ValueError(f"{prefix}_energy_mask must have shape (case,).")
@@ -366,7 +366,7 @@ def _force_supervision(
     if forces.shape != batch.positions.shape:
         raise ValueError(f"{prefix}_forces must have shape (case, atom, 3).")
     active = jnp.broadcast_to(batch.atom_mask[:, :, None], forces.shape)
-    force_mask = active if mask is None else jnp.asarray(mask, dtype=bool) & active
+    force_mask = active if mask is None else jnp.asarray(mask, dtype=jnp.bool_) & active
     if force_mask.shape != forces.shape:
         raise ValueError(f"{prefix}_force_mask must have shape (case, atom, 3).")
     if not np.any(np.asarray(force_mask)):
@@ -386,7 +386,7 @@ def _normalization(
         values = np.asarray(problem.training_energy) / np.asarray(
             problem.training_batch.atom_counts
         )
-        mask = np.asarray(problem.training_energy_mask, dtype=bool)
+        mask = np.asarray(problem.training_energy_mask, dtype=np.bool_)
         selected = values[mask]
         if np.all(np.isfinite(selected)):
             energy_mean = float(np.mean(selected))
@@ -398,7 +398,7 @@ def _normalization(
         fitted_force_scale = 1.0
     else:
         values = np.asarray(problem.training_forces)
-        mask = np.asarray(problem.training_force_mask, dtype=bool)
+        mask = np.asarray(problem.training_force_mask, dtype=np.bool_)
         selected = values[mask]
         fitted_force_scale = (
             float(np.sqrt(np.mean(selected * selected)))
@@ -475,7 +475,7 @@ def _loss(
         count = batch.atom_counts.astype(predicted_energy.dtype)
         residual = (predicted_energy - energy_target) / count
         residual = residual / normalization.energy_per_atom_scale
-        mask = jnp.asarray(energy_mask, dtype=bool)
+        mask = jnp.asarray(energy_mask, dtype=jnp.bool_)
         residual = jnp.where(mask, residual, 0.0)
         energy_loss = jnp.sum(residual * residual) / jnp.sum(mask)
     force_loss = zero
@@ -485,7 +485,7 @@ def _loss(
                 "Force loss requested without a conservative force evaluation."
             )
         residual = (predicted_forces - force_target) / normalization.force_component_scale
-        mask = jnp.asarray(force_mask, dtype=bool)
+        mask = jnp.asarray(force_mask, dtype=jnp.bool_)
         residual = jnp.where(mask, residual, 0.0)
         force_loss = jnp.sum(residual * residual) / jnp.sum(mask)
     total = policy.energy_weight * energy_loss + policy.force_weight * force_loss
@@ -645,8 +645,7 @@ def fit_atomistic_potential(
             raise TypeError("continuation must be an AtomisticTrainingResult or None.")
         if not _same_potential_configuration(potential, continuation.potential):
             raise ValueError(
-                "Continuation potential must have the same concrete family and "
-                "configuration as the supplied potential."
+                "Continuation potential must have the same concrete family and configuration as the supplied potential."
             )
         if continuation.problem_id != problem.problem_id:
             raise ValueError(

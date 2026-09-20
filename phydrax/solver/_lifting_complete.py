@@ -146,7 +146,7 @@ class CompleteLiftingSystemPlan(StrictModule, NonTrainableState):
         columns = []
         for panel in range(self.surface.panel_count):
             start, end = self._segments(panel)
-            count = int(start.shape[0])
+            count = start.shape[0]
             columns.append(
                 regularized_filament_velocity_3d(
                     target,

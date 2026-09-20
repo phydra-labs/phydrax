@@ -17,7 +17,7 @@ def _sipg_discretization():
     return phx.discretization.FiniteElementPlan(mesh, field).prepare()
 
 
-def test_sipg_nitsche_reproduces_affine_solution_with_reversed_neighbour():
+def test_sipg_nitsche_reproduces_affine_solution_with_reversed_neighbor():
     discretization = _sipg_discretization()
     data = phx.equations.coefficient(
         lambda points, context: points[..., 0] + points[..., 1],

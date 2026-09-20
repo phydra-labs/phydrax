@@ -145,7 +145,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
     consistency_policy: ALEGeometryConsistencyPolicy
     connectivity: PolygonalConnectivity | TetrahedralConnectivity
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     owner_signs: Array
     face_vertices: Array
     face_quadrature_vertex_weights: Array
@@ -210,7 +210,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
                 "topology": base_plan.topology_id,
                 "face_ids": array_tree_fingerprint(base_block.face_ids),
                 "owner_cells": array_tree_fingerprint(prepared.owner_cells),
-                "neighbour_cells": array_tree_fingerprint(prepared.neighbour_cells),
+                "neighbor_cells": array_tree_fingerprint(prepared.neighbor_cells),
                 "boundary_policy_ids": array_tree_fingerprint(
                     base_block.boundary_patch_ids
                 ),
@@ -226,7 +226,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         face_layout = FiniteVolumeStageFaceLayout(
             face_ids=base_block.face_ids,
             owner_cells=prepared.owner_cells,
-            neighbour_cells=prepared.neighbour_cells,
+            neighbor_cells=prepared.neighbor_cells,
             boundary_policy_ids=base_block.boundary_patch_ids,
             boundary_policy_count=len(prepared.boundary_patch_names),
             active_mask=base_block.active_mask,
@@ -254,7 +254,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         self.consistency_policy = policy
         self.connectivity = connectivity
         self.owner_cells = jnp.asarray(prepared.owner_cells, dtype=jnp.int32)
-        self.neighbour_cells = jnp.asarray(prepared.neighbour_cells, dtype=jnp.int32)
+        self.neighbor_cells = jnp.asarray(prepared.neighbor_cells, dtype=jnp.int32)
         self.owner_signs = jnp.asarray(
             prepared.owner_signs, dtype=base_plan.vertices.dtype
         )
@@ -273,9 +273,9 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
                 "evidence_policy": policy.policy_id,
                 "ssprk33_abscissae": (0.0, 1.0, 0.5),
                 "ssprk33_gcl_rule": {
-                    "v1": "vn+dt*g1",
-                    "v2": "3/4*vn+1/4*(v1+dt*g2)",
-                    "vnew": "1/3*vn+2/3*(v2+dt*g3)",
+                    "stage_one": "vn+dt*g1",
+                    "stage_two": "3/4*vn+1/4*(stage_one+dt*g2)",
+                    "accepted": "1/3*vn+2/3*(stage_two+dt*g3)",
                 },
                 "stage_consistency_expected_order": 2,
                 "final_consistency_expected_order": 4,
@@ -289,7 +289,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
 
         time_ = jnp.asarray(time).reshape(())
         vertices = np.asarray(
-            self.motion(time_, self.base_plan.vertices, args), dtype=float
+            self.motion(time_, self.base_plan.vertices, args), dtype=np.float64
         )
         if vertices.shape != self.base_plan.vertices.shape:
             raise ValueError("Fixed-connectivity motion must preserve vertex shape.")
@@ -471,8 +471,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             raise ValueError("Fixed-connectivity motion must preserve vertex shape.")
         if vertex_velocity.shape != self.base_plan.vertices.shape:
             raise ValueError(
-                "The time derivative of fixed-connectivity motion must preserve "
-                "vertex shape."
+                "The time derivative of fixed-connectivity motion must preserve vertex shape."
             )
         coordinate_valid = self._coordinate_geometry_is_valid(
             vertices,
@@ -534,17 +533,17 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         cell_mesh_volume_rate = cell_mesh_volume_rate.at[self.owner_cells].add(
             face_mesh_volume_rate
         )
-        neighbour_active = self.neighbour_cells >= 0
-        safe_neighbours = jnp.where(neighbour_active, self.neighbour_cells, 0)
-        cell_mesh_volume_rate = cell_mesh_volume_rate.at[safe_neighbours].add(
-            jnp.where(neighbour_active, -face_mesh_volume_rate, 0.0)
+        neighbor_active = self.neighbor_cells >= 0
+        safe_neighbors = jnp.where(neighbor_active, self.neighbor_cells, 0)
+        cell_mesh_volume_rate = cell_mesh_volume_rate.at[safe_neighbors].add(
+            jnp.where(neighbor_active, -face_mesh_volume_rate, 0.0)
         )
         face_closure_reference = jnp.zeros_like(cell_volumes)
         face_closure_reference = face_closure_reference.at[self.owner_cells].add(
             face_measures
         )
-        face_closure_reference = face_closure_reference.at[safe_neighbours].add(
-            jnp.where(neighbour_active, face_measures, 0.0)
+        face_closure_reference = face_closure_reference.at[safe_neighbors].add(
+            jnp.where(neighbor_active, face_measures, 0.0)
         )
         return _InstantaneousALEGeometry(
             vertices=safe_vertices,
@@ -614,7 +613,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             & jnp.isfinite(closure)
             & jnp.isfinite(closure_reference)
         )
-        valid = jnp.broadcast_to(jnp.asarray(validity, dtype=bool), effective.shape)
+        valid = jnp.broadcast_to(jnp.asarray(validity, dtype=jnp.bool_), effective.shape)
         valid = valid & all_finite
         absolute = jnp.asarray(
             self.consistency_policy.absolute_tolerance,
@@ -676,7 +675,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             mesh_volume_rate=geometry.cell_mesh_volume_rate,
             vertices=geometry.vertices,
             cell_centers=geometry.cell_centers,
-            active_cell_mask=jnp.ones_like(geometry.cell_volumes, dtype=bool),
+            active_cell_mask=jnp.ones_like(geometry.cell_volumes, dtype=jnp.bool_),
             face_blocks=(face_block,),
             evidence=evidence,
         )
@@ -715,11 +714,10 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         if dtype.kind != "f":
             raise ValueError("ALE start_time and dt must have real floating dtype.")
         prior_volumes = jnp.asarray(prior_effective_cell_volumes)
-        expected_cell_shape = (int(self.base_plan.cell_global_ids.size),)
+        expected_cell_shape = (self.base_plan.cell_global_ids.size,)
         if prior_volumes.shape != expected_cell_shape:
             raise ValueError(
-                "prior_effective_cell_volumes must have exact shape "
-                f"{expected_cell_shape}."
+                f"prior_effective_cell_volumes must have exact shape {expected_cell_shape}."
             )
         if prior_volumes.dtype.kind not in "fiu":
             raise ValueError("prior_effective_cell_volumes must have real numeric dtype.")

@@ -112,7 +112,7 @@ class GRNeutrinoM1System(StrictModule, NonTrainableState):
                 "scale": scale.scale_id,
                 "convention": convention.convention_id,
                 "frequency_edges": array_tree_fingerprint(
-                    np.asarray(frequency_edges, dtype=float)
+                    np.asarray(frequency_edges, dtype=np.float64)
                 ),
                 "species": names,
                 "systems": [value.system_id for value in systems],

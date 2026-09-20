@@ -34,7 +34,7 @@ class FermionGrading(StrictModule):
     def __init__(self, group: AbelianGroup, generator_parities: Sequence[int], /):
         if not isinstance(group, AbelianGroup):
             raise TypeError("group must be AbelianGroup.")
-        parities = tuple(int(value) for value in generator_parities)
+        parities = tuple(generator_parities)
         if len(parities) != len(group.components) or any(
             value not in (0, 1) for value in parities
         ):

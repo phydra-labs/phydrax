@@ -18,9 +18,7 @@ from benchmarks._runtime import capture_environment
 
 def qualification():
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
-    equilibrium = np.asarray(
-        [[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]]
-    )
+    equilibrium = np.asarray([[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]])
     structure = phx.atomistic.AtomicStructure(
         [8, 1, 1],
         equilibrium + 0.02,
@@ -87,7 +85,9 @@ def qualification():
     )
     state = phx.chemistry.MolecularElectronicSectorPlan(0, 1)
     model = phx.chemistry.ElectronicModelChemistryPlan(
-        phx.chemistry.ExternalElectronicMethodPlan("analytic-dipole", phx.chemistry.ElectronicReferenceKind.RESTRICTED)
+        phx.chemistry.ExternalElectronicMethodPlan(
+            "analytic-dipole", phx.chemistry.ElectronicReferenceKind.RESTRICTED
+        )
     )
     dipole_calculation = phx.chemistry.ElectronicCalculationPlan(
         system,
@@ -116,12 +116,14 @@ def qualification():
             dipole=np.sum(charges[:, None] * coordinate, axis=0),
         )
 
-    capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state((
-        phx.chemistry.ElectronicProperty.ENERGY,
-        phx.chemistry.ElectronicProperty.FORCES,
-        phx.chemistry.ElectronicProperty.DIPOLE,
-    ),
-    (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),)
+    capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state(
+        (
+            phx.chemistry.ElectronicProperty.ENERGY,
+            phx.chemistry.ElectronicProperty.FORCES,
+            phx.chemistry.ElectronicProperty.DIPOLE,
+        ),
+        (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),
+    )
     prepared = phx.chemistry.CallableElectronicProvider(
         electronic, "qualified-dipole-provider", capabilities
     ).prepare(dipole_calculation)
@@ -142,10 +144,7 @@ def qualification():
         archive_roundtrip = restored.result_id == electronic_result.result_id
     hessian_error = float(
         np.max(
-            np.abs(
-                np.asarray(hessian.hessian).reshape((9, 9))
-                - stiffness * np.eye(9)
-            )
+            np.abs(np.asarray(hessian.hessian).reshape((9, 9)) - stiffness * np.eye(9))
         )
     )
     cases = {
@@ -171,7 +170,7 @@ def qualification():
             "passed": bool(thermochemistry.successful),
         },
         "infrared": {
-            "line_count": int(spectrum.wavenumbers.size),
+            "line_count": spectrum.wavenumbers.size,
             "maximum_intensity": float(jnp.max(spectrum.intensity)),
             "passed": bool(spectrum.successful)
             and bool(jnp.any(spectrum.line_strengths > 0.0)),

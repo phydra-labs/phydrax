@@ -55,7 +55,7 @@ class AlignedBinaryRemnantPlan(StrictModule, NonTrainableState):
         self.source_id = _UIB2016_SOURCE
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "aligned-binary-remnant-plan-v1",
+                "kind": "aligned-binary-remnant-plan",
                 "fit": _UIB2016_SOURCE,
                 "maximum_mass_ratio": ratio,
                 "maximum_spin_magnitude": spin,

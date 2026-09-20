@@ -334,7 +334,7 @@ def bind_biological_evidence(
             ],
         }
     )
-    matched_array = jnp.asarray(matched, dtype=bool)
+    matched_array = jnp.asarray(matched, dtype=jnp.bool_)
     return BiologicalEvidenceBinding(
         field_paths,
         target_units,

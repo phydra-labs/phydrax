@@ -59,8 +59,7 @@ class SPDESolutionSpec(StrictModule):
             "wiener_chaos",
         ):
             raise ValueError(
-                "concept must be 'strong', 'mild', 'variational', 'martingale', "
-                "or 'wiener_chaos'."
+                "concept must be 'strong', 'mild', 'variational', 'martingale', or 'wiener_chaos'."
             )
         if noise_regularization not in (
             "none",
@@ -104,8 +103,7 @@ class SPDESolutionSpec(StrictModule):
         if formulation == "wiener_chaos":
             return self.concept in ("strong", "wiener_chaos")
         raise ValueError(
-            "formulation must be 'pointwise_strong', 'mild', 'variational', "
-            "'martingale', or 'wiener_chaos'."
+            "formulation must be 'pointwise_strong', 'mild', 'variational', 'martingale', or 'wiener_chaos'."
         )
 
     def assert_supports(self, formulation: SPDEFormulation, /) -> None:
@@ -119,8 +117,7 @@ class SPDESolutionSpec(StrictModule):
                 "explicit finite-rank/trace-class cutoff with provenance."
             )
         raise ValueError(
-            f"Declared {self.concept!r} SPDE solutions do not support the "
-            f"{formulation!r} formulation."
+            f"Declared {self.concept!r} SPDE solutions do not support the {formulation!r} formulation."
         )
 
 

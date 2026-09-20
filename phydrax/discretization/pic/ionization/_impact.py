@@ -45,8 +45,8 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
         maximum_probability: float = 0.25,
         maximum_events: int,
     ):
-        energy = np.asarray(energy_grid, dtype=float)
-        section = np.asarray(cross_section, dtype=float)
+        energy = np.asarray(energy_grid, dtype=np.float64)
+        section = np.asarray(cross_section, dtype=np.float64)
         threshold = float(ionization_energy)
         scale = float(rate_scale)
         probability = float(maximum_probability)

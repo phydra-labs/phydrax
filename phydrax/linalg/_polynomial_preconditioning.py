@@ -122,8 +122,7 @@ class _SymmetricJacobiLinearOperator(AbstractLinearOperator):
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         if not self.capabilities.adjoint:
             raise LinearCapabilityError(
-                "The setup operator does not provide the transpose action needed for "
-                "an adjoint."
+                "The setup operator does not provide the transpose action needed for an adjoint."
             )
         return _generic_adjoint(self, vector)
 
@@ -217,7 +216,7 @@ class ChebyshevPreconditioner(AbstractPreconditioner):
         self.beta = beta_
         self.lower_bound = lower_
         self.upper_bound = upper_
-        self.degree = int(alpha_.size)
+        self.degree = alpha_.size
         self.scaling = scaling
         self.bounds_source = bounds_source
         self.builder_id = builder_id_
@@ -502,7 +501,7 @@ class ChebyshevPreconditionerBuilder(AbstractPreconditionerBuilder):
             storage = setup_operator.sparse_storage()
             index_itemsize = storage.indices.dtype.itemsize
             sparse_workspace = storage.values.size * (
-                index_itemsize + jnp.dtype(bool).itemsize
+                index_itemsize + jnp.dtype(jnp.bool_).itemsize
             ) + dimension * (2 * index_itemsize + itemsize)
         else:
             sparse_workspace = 0
@@ -536,10 +535,7 @@ class ChebyshevPreconditionerBuilder(AbstractPreconditionerBuilder):
                 "estimated bounds require a certified full-space self-adjoint estimate"
             )
         elif not diagonal_feasible:
-            reason = (
-                "symmetric-Jacobi diagonal extraction exceeds materialization "
-                "capabilities or policy limits"
-            )
+            reason = "symmetric-Jacobi diagonal extraction exceeds materialization capabilities or policy limits"
         else:
             reason = "fixed Chebyshev recurrence and optional symmetric-Jacobi scaling"
         return PreconditionerCostEstimate(
@@ -647,8 +643,7 @@ class ChebyshevPreconditionerBuilder(AbstractPreconditionerBuilder):
             )
         if not effective_operator.properties.certifies("self_adjoint"):
             raise ValueError(
-                "Estimated Chebyshev bounds require certified self-adjoint effective "
-                "operator structure."
+                "Estimated Chebyshev bounds require certified self-adjoint effective operator structure."
             )
         estimate = estimate_spectral_bounds(
             effective_operator,

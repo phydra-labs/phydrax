@@ -125,7 +125,7 @@ class PySCFMolecularCoupledClusterGradientProvider(
         )
 
     def evaluate(self, positions: ArrayLike, /) -> MolecularCoupledClusterGradientResult:
-        coordinate = np.asarray(positions, dtype=float)
+        coordinate = np.asarray(positions, dtype=np.float64)
         if (
             coordinate.ndim != 2
             or coordinate.shape[1] != 3

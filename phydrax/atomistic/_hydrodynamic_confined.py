@@ -119,7 +119,7 @@ class PreparedConfinedFIBMobility(AbstractPreparedHydrodynamicMobility):
     ):
         slots = _active_slots(plan.maximum_particles, system, active_slots)
         markers = plan.transfer.markers
-        if markers.active_count != int(slots.size):
+        if markers.active_count != slots.size:
             raise ValueError(
                 "Active atomistic particles and FIB markers must have equal counts."
             )
@@ -150,7 +150,7 @@ class PreparedConfinedFIBMobility(AbstractPreparedHydrodynamicMobility):
             )
         route_state = plan.transfer.route_state(reference_relation)
         space = ArraySpace(
-            (int(slots.size), 3),
+            (slots.size, 3),
             dtype=system.plan.coordinate_dtype,
             space_id=f"confined-fib:{plan.mobility_id}:coordinates",
         )

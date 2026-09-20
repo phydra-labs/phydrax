@@ -79,9 +79,7 @@ class DenseSiteClassificationBatch(StrictModule):
             raise TypeError("points must be a GridBatch.")
         index_array = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         target_array = jnp.asarray(target)
-        if target_array.ndim == 0 or int(target_array.shape[0]) != int(
-            index_array.shape[0]
-        ):
+        if target_array.ndim == 0 or target_array.shape[0] != index_array.shape[0]:
             raise ValueError("Dense targets must retain the sampled leading case axis.")
         if target_mask is None:
             mask_array = None
@@ -89,14 +87,12 @@ class DenseSiteClassificationBatch(StrictModule):
             mask_array = jnp.asarray(target_mask)
             if mask_array.dtype != jnp.bool_:
                 raise TypeError("target_mask must be Boolean.")
-            if mask_array.ndim == 0 or int(mask_array.shape[0]) != int(
-                index_array.shape[0]
-            ):
+            if mask_array.ndim == 0 or mask_array.shape[0] != index_array.shape[0]:
                 raise ValueError("target_mask must retain the sampled leading case axis.")
         if sample_weight is None:
             weight_array = None
         else:
-            weight_array = jnp.asarray(sample_weight, dtype=float).reshape((-1,))
+            weight_array = jnp.asarray(sample_weight, dtype=jnp.float64).reshape((-1,))
             if weight_array.shape != index_array.shape:
                 raise ValueError("sample_weight must have one value per sampled case.")
         self.points = points
@@ -210,7 +206,7 @@ def _class_count(schema: TargetSchema, /) -> int | None:
 def _objective_alpha(objective: ClassificationObjective, /) -> ArrayLike | float | None:
     if objective.alpha is None or isinstance(objective.alpha, float):
         return objective.alpha
-    return jnp.asarray(objective.alpha, dtype=float)
+    return jnp.asarray(objective.alpha, dtype=jnp.float64)
 
 
 def _validate_focal_alpha(
@@ -252,14 +248,13 @@ def _output_contract(
                 f"{schema.kind} logits require one unnamed terminal statistical axis."
             )
         expected = _class_count(schema)
-        if int(logits.shape[-1]) != expected:
+        if logits.shape[-1] != expected:
             raise ValueError(
-                f"{schema.kind} logits must end in {expected} coordinates; "
-                f"got {logits.shape}."
+                f"{schema.kind} logits must end in {expected} coordinates; got {logits.shape}."
             )
         observation_dims = dims[:-1]
     elif logits.ndim > 0 and dims[-1] is None:
-        if int(logits.shape[-1]) != 1:
+        if logits.shape[-1] != 1:
             raise ValueError(
                 f"{schema.kind} scalar logits can only have a singleton statistical axis."
             )
@@ -297,12 +292,11 @@ def _target_observation_mask(
             )
     elif target.shape != observation_shape:
         raise ValueError(
-            f"{schema.kind} targets must match the observation shape "
-            f"{observation_shape}; got {target.shape}."
+            f"{schema.kind} targets must match the observation shape {observation_shape}; got {target.shape}."
         )
 
     if target_mask is None:
-        full_mask = jnp.ones(target.shape, dtype=bool)
+        full_mask = jnp.ones(target.shape, dtype=jnp.bool_)
     else:
         if target_mask.shape == target.shape:
             full_mask = target_mask
@@ -466,7 +460,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         )
         if case_reduction not in ("mean", "sum"):
             raise ValueError("case_reduction must be 'mean' or 'sum'.")
-        term_weight = jnp.asarray(weight, dtype=float)
+        term_weight = jnp.asarray(weight, dtype=jnp.float64)
         if (
             term_weight.shape != ()
             or not bool(jnp.isfinite(term_weight))
@@ -592,7 +586,9 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
             for axis in batch.site_axes:
                 measure = measure * weights_by_axis[axis]
         combined = geometry_mask * modifier * measure
-        combined_data = jnp.asarray(combined.broadcast_like(reference).data, dtype=float)
+        combined_data = jnp.asarray(
+            combined.broadcast_like(reference).data, dtype=jnp.float64
+        )
         observed = jnp.broadcast_to(target_observed, reference.shape)
         active = observed & (combined_data != 0.0)
         return jnp.where(active, combined_data, 0.0)
@@ -758,13 +754,13 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         batch_ = self.sample(key=key) if batch is None else batch
 
         def zero_loss() -> Array:
-            return jnp.zeros((), dtype=jnp.result_type(self.weight, float))
+            return jnp.zeros((), dtype=jnp.result_type(self.weight, jnp.float64))
 
         def active_loss() -> Array:
             reduced = self._case_reduce(
                 self.per_case_loss(functions, batch_, key=key, **kwargs), batch_
             )
-            return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
+            return self.weight * jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
         return jax.lax.cond(self.weight == 0.0, zero_loss, active_loss)
 
@@ -775,8 +771,8 @@ def _categorical_statistics(
     support_weight: Array,
     /,
 ) -> tuple[Array, Array, Array]:
-    cases = int(probability.shape[0])
-    classes = int(probability.shape[-1])
+    cases = probability.shape[0]
+    classes = probability.shape[-1]
     flattened_probability = probability.reshape((cases, -1, classes))
     flattened_target = target.reshape((cases, -1))
     flattened_weight = support_weight.reshape((cases, -1))
@@ -1002,12 +998,12 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         batch_ = self.sample(key=key) if batch is None else batch
 
         def zero_loss() -> Array:
-            return jnp.zeros((), dtype=jnp.result_type(self.weight, float))
+            return jnp.zeros((), dtype=jnp.result_type(self.weight, jnp.float64))
 
         def active_loss() -> Array:
             per_case = 1.0 - self.per_case_score(functions, batch_, key=key, **kwargs)
             reduced = self._case_reduce(per_case, batch_)
-            return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
+            return self.weight * jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
         return jax.lax.cond(self.weight == 0.0, zero_loss, active_loss)
 

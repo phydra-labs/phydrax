@@ -27,7 +27,7 @@ from ._core import ParticleDiscretization, ParticleSetPlan
 
 
 class RigidBodySetPlan(StrictModule, NonTrainableState):
-    """Rigid-body material and COM-inertia data for COM-centred kinematics."""
+    """Rigid-body material and COM-inertia data for COM-centered kinematics."""
 
     material_ids: Array
     inertia_com: Array
@@ -71,9 +71,9 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
         if not np.all(valid_inertia) or np.any(material < 0):
             raise ValueError("Rigid-body COM inertia and material IDs are invalid.")
         fixed = (
-            np.zeros((count,), dtype=bool)
+            np.zeros((count,), dtype=np.bool_)
             if fixed_mask is None
-            else np.asarray(fixed_mask, dtype=bool)
+            else np.asarray(fixed_mask, dtype=np.bool_)
         )
         if fixed.shape != (count,):
             raise ValueError("fixed_mask must have body-capacity shape.")
@@ -105,7 +105,7 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
 
     @property
     def inertia_body(self) -> Array:
-        """Body-coordinate inertia about the centre of mass."""
+        """Body-coordinate inertia about the center of mass."""
 
         return self.inertia_com
 
@@ -114,9 +114,9 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
 
 
 class RigidBodyMassProperties(StrictModule, NonTrainableState):
-    """Prepared COM-centred mass properties shared by maximal and reduced paths.
+    """Prepared COM-centered mass properties shared by maximal and reduced paths.
 
-    Linear velocity is the centre-of-mass velocity, so the body-frame first
+    Linear velocity is the center-of-mass velocity, so the body-frame first
     moment is identically zero and ``inertia_com`` is the rotational block of
     the spatial inertia.
     """
@@ -196,7 +196,7 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
         fixed = plan.fixed_mask & active
         preparation = PreparationReport(
             diagnostics=(
-                "SO(2)/SO(3) COM-centred rigid-body pose",
+                "SO(2)/SO(3) COM-centered rigid-body pose",
                 "body-frame SPD COM inertia",
                 "world-frame angular velocity",
                 "zero body-frame first moment",
@@ -238,13 +238,13 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
 
     @property
     def inertia_body(self) -> Array:
-        """Body-coordinate inertia about the centre of mass."""
+        """Body-coordinate inertia about the center of mass."""
 
         return self.inertia_com
 
     @property
     def inverse_inertia_body(self) -> Array:
-        """Inverse body-coordinate inertia about the centre of mass."""
+        """Inverse body-coordinate inertia about the center of mass."""
 
         return self.inverse_inertia_com
 
@@ -294,7 +294,7 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
 
 
 class RigidBodyKinematics(StrictModule):
-    """Rigid-body pose and twist expressed at each centre of mass."""
+    """Rigid-body pose and twist expressed at each center of mass."""
 
     position: Array
     velocity: Array
@@ -303,7 +303,7 @@ class RigidBodyKinematics(StrictModule):
 
 
 class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
-    """Explicit old-body-origin to COM-centred reference-frame transfer."""
+    """Explicit old-body-origin to COM-centered reference-frame transfer."""
 
     center_of_mass_offsets: Array
     body_ids: Array
@@ -411,7 +411,7 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
         target: PreparedRigidBodySet,
         /,
     ) -> RigidBodyKinematics:
-        """Shift an old-origin pose/twist to the target centre of mass."""
+        """Shift an old-origin pose/twist to the target center of mass."""
 
         self._require_owners(source, target)
         if not isinstance(reference, RigidBodyKinematics):
@@ -462,8 +462,7 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
             or not np.all(np.isfinite(points_host))
         ):
             raise ValueError(
-                "Local points must be finite with leading body-capacity and "
-                "trailing spatial axes."
+                "Local points must be finite with leading body-capacity and trailing spatial axes."
             )
         offsets = self.center_of_mass_offsets.reshape(
             (source.capacity,) + (1,) * (points_host.ndim - 2) + (3,)

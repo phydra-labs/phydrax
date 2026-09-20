@@ -91,7 +91,7 @@ class FiniteElementSolveDiagnostics(StrictModule):
         energy_defect: ArrayLike = 0.0,
         status: str = "completed",
     ):
-        successful_ = jnp.asarray(successful, dtype=bool)
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_)
         residual = jnp.asarray(residual_norm)
         nonlinear = jnp.asarray(nonlinear_iterations, dtype=jnp.int32)
         linear = jnp.asarray(linear_iterations, dtype=jnp.int32)
@@ -181,7 +181,6 @@ def write_finite_element_result(path: str | Path, result: FiniteElementResult, /
     if not isinstance(result, FiniteElementResult):
         raise TypeError("result must be FiniteElementResult.")
     metadata = {
-        "schema_version": 1,
         "field_names": list(result.field_names),
         "prepared_id": result.prepared_id,
         "compilation_id": result.compilation_id,
@@ -213,8 +212,6 @@ def write_finite_element_result(path: str | Path, result: FiniteElementResult, /
 def read_finite_element_result(path: str | Path, /) -> FiniteElementResult:
     archive = np.load(Path(path), allow_pickle=False)
     metadata = json.loads(str(archive["metadata"]))
-    if int(metadata["schema_version"]) != 1:
-        raise ValueError("Unsupported finite-element result schema version.")
     diagnostics = FiniteElementSolveDiagnostics(
         archive["successful"],
         archive["residual_norm"],

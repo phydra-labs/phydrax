@@ -89,12 +89,12 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         if epsilon <= 0.0 or not np.isfinite(epsilon):
             raise ValueError("permittivity must be positive and finite.")
         cells = np.asarray(locator.cells, dtype=np.int32)
-        coordinates = np.asarray(locator.coordinates, dtype=float)
+        coordinates = np.asarray(locator.coordinates, dtype=np.float64)
         dimension = locator.dimension
         gradients = []
         measures = []
         vertex_count = coordinates.shape[0]
-        stiffness = np.zeros((vertex_count, vertex_count), dtype=float)
+        stiffness = np.zeros((vertex_count, vertex_count), dtype=np.float64)
         for cell in cells:
             vertices = coordinates[cell]
             jacobian = (vertices[1:] - vertices[0]).T
@@ -110,12 +110,12 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
             stiffness[np.ix_(cell, cell)] += local
             gradients.append(local_gradients)
             measures.append(measure)
-        boundary = np.asarray(dirichlet_vertices, dtype=bool)
+        boundary = np.asarray(dirichlet_vertices, dtype=np.bool_)
         if boundary.shape != (vertex_count,) or not np.any(boundary):
             raise ValueError("At least one Dirichlet vertex is required.")
         interior = ~boundary
         modified = interior[:, None] * stiffness * interior[None, :] + np.diag(
-            boundary.astype(float)
+            boundary.astype("float64")
         )
         operator = DenseLinearOperator(
             jnp.asarray(modified),
@@ -170,7 +170,7 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         charge = jnp.asarray(macrocharge)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         safe_cell = jnp.maximum(location.cell_ids, 0)
         cell_vertices = self.locator.cells[safe_cell]
         valid = active & location.inside

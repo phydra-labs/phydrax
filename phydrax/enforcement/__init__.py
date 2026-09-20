@@ -4,6 +4,8 @@
 
 """Exact condition transforms and their typed staged compiler."""
 
+from importlib import import_module
+
 from ._affine import (
     AbstractLinearCorrectionProvider,
     AffineBlockAssembly,
@@ -121,8 +123,6 @@ from ._linear_representation import (
     LinearRepresentationCertificate,
     ProductLinearRepresentation,
 )
-from ._polynomial_representation import *  # noqa: F403
-from ._polynomial_representation import __all__ as _polynomial_representation_all
 from ._nonlinear import (
     AbstractCorrectionChart,
     AdditiveCorrectionChart,
@@ -134,6 +134,7 @@ from ._nonlinear import (
     RetractionObjective,
 )
 from ._observation import ObservationActionEvidence, PointObservationAction
+from ._polynomial_representation import __all__ as _polynomial_representation_all
 from ._realization import (
     AbstractFieldRealization,
     ConditionEvaluationContext,
@@ -163,6 +164,23 @@ from ._trajectory import (
     RaggedTimeSeriesHardGate,
     RaggedTimeSeriesHardInterpolation,
 )
+
+
+_FACADE_EXPORT_MODULES = ("._polynomial_representation",)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

@@ -172,7 +172,7 @@ def test_feedback_and_feedforward_have_exact_jitted_gradients_through_coupled_so
 def test_one_player_game_matches_finite_horizon_lqr_on_shared_affine_domain():
     horizon = 3
     time_grid = phx.dynamics.TimeGrid(
-        jnp.arange(horizon + 1, dtype=float),
+        jnp.arange(horizon + 1, dtype="float64"),
         time_id="one-player-reduction",
     )
     a = jnp.asarray([[[1.0]], [[0.9]], [[1.1]]])
@@ -239,7 +239,7 @@ def test_multistage_policy_satisfies_unilateral_bellman_conditions_and_rolls_out
     horizon = 3
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     time_grid = phx.dynamics.TimeGrid(
-        jnp.arange(horizon + 1, dtype=float),
+        jnp.arange(horizon + 1, dtype="float64"),
         time_id="multistage-game",
     )
     a = jnp.asarray(
@@ -593,7 +593,7 @@ def test_structural_validation_rejects_shape_dtype_grid_and_tolerance_errors():
     )
     with pytest.raises(TypeError, match="real-valued"):
         finite_horizon_lq_feedback_nash(
-            values["dynamics_matrices"].astype(complex),
+            values["dynamics_matrices"].astype("complex128"),
             *required[1:],
             time_grid=values["time_grid"],
         )

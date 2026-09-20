@@ -67,8 +67,7 @@ def _physical_dims(
     dims = cases + query_dims + channel_dims
     if len(set(dims)) != len(dims):
         raise ValueError(
-            "Operator case, query, and reserved output dimensions must be unique; "
-            f"got {dims!r}."
+            f"Operator case, query, and reserved output dimensions must be unique; got {dims!r}."
         )
     return dims
 
@@ -79,11 +78,7 @@ def _expected_output_shape(
     case_shape: Sequence[int],
     /,
 ) -> tuple[int, ...]:
-    return (
-        tuple(int(size) for size in case_shape)
-        + query.sample_shape
-        + output_spec.channel_shape
-    )
+    return tuple(case_shape) + query.sample_shape + output_spec.channel_shape
 
 
 def _output_mask(
@@ -96,7 +91,7 @@ def _output_mask(
     if output_spec.channels != "scalar":
         mask = mask[..., None]
         mask = jnp.broadcast_to(mask, mask.shape[:-1] + output_spec.channel_shape)
-    return jnp.asarray(mask, dtype=bool)
+    return jnp.asarray(mask, dtype=jnp.bool_)
 
 
 def _output_weights(
@@ -128,8 +123,7 @@ def _broadcast_named(source: cx.AxisArray, target: cx.AxisArray, /) -> Array:
     unknown = tuple(dim for dim in source_dims if dim not in target_dims)
     if unknown:
         raise ValueError(
-            f"Cannot broadcast field dimensions {source.dims!r} to {target.dims!r}; "
-            f"unknown dimensions {unknown!r}."
+            f"Cannot broadcast field dimensions {source.dims!r} to {target.dims!r}; unknown dimensions {unknown!r}."
         )
     ordered = tuple(dim for dim in target_dims if dim in source_dims)
     permutation = tuple(source_dims.index(dim) for dim in ordered)
@@ -137,8 +131,7 @@ def _broadcast_named(source: cx.AxisArray, target: cx.AxisArray, /) -> Array:
     if permutation != tuple(range(data.ndim)):
         data = jnp.transpose(data, permutation)
     shape = tuple(
-        int(data.shape[ordered.index(dim)]) if dim in ordered else 1
-        for dim in target_dims
+        data.shape[ordered.index(dim)] if dim in ordered else 1 for dim in target_dims
     )
     try:
         return jnp.broadcast_to(data.reshape(shape), target.data.shape)
@@ -230,10 +223,9 @@ def _collapse_case_array(
     value = jnp.asarray(array)
     if value.ndim == sample_ndim:
         return value
-    if tuple(int(size) for size in value.shape[: len(case_shape)]) != case_shape:
+    if tuple(value.shape[: len(case_shape)]) != case_shape:
         raise ValueError(
-            f"{owner} must be shared or carry full case shape {case_shape}; "
-            f"got {value.shape}."
+            f"{owner} must be shared or carry full case shape {case_shape}; got {value.shape}."
         )
     current = value
     for position in sorted(positions, reverse=True):
@@ -342,26 +334,24 @@ def _sample_validity(
     )
     permutation = sample_positions + physical_positions
     data = jnp.asarray(samples.data)
-    mask = _broadcast_named(output_mask, samples).astype(bool)
+    mask = _broadcast_named(output_mask, samples).astype("bool")
     finite = jnp.isfinite(data) | ~mask
     if permutation != tuple(range(data.ndim)):
         finite = jnp.transpose(finite, permutation)
-    sample_shape = tuple(
-        int(samples.data.shape[position]) for position in sample_positions
-    )
+    sample_shape = tuple(samples.data.shape[position] for position in sample_positions)
     physical_count = 1
     for position in physical_positions:
-        physical_count *= int(samples.data.shape[position])
+        physical_count *= samples.data.shape[position]
     valid_data = jnp.all(finite.reshape(sample_shape + (physical_count,)), axis=-1)
-    validity_template = cx.AxisArray(jnp.ones(sample_shape, dtype=bool), dims=sample_dims)
+    validity_template = cx.AxisArray(
+        jnp.ones(sample_shape, dtype=jnp.bool_), dims=sample_dims
+    )
     if existing is not None:
         valid_data = valid_data & _broadcast_named(existing, validity_template).astype(
-            bool
+            "bool"
         )
     if policy == "raise" and not bool(jnp.all(valid_data)):
-        failed = tuple(
-            tuple(int(index) for index in row) for row in jnp.argwhere(~valid_data)
-        )
+        failed = tuple(tuple(row) for row in jnp.argwhere(~valid_data))
         raise FloatingPointError(
             f"Operator prediction produced invalid realizations at {failed!r}."
         )
@@ -463,7 +453,7 @@ class OperatorPredictiveField(StrictModule):
                 "values as real channels or observables."
             )
         axes = tuple(str(axis) for axis in case_axes)
-        shape = tuple(int(size) for size in case_shape)
+        shape = tuple(case_shape)
         if len(axes) != len(shape):
             raise ValueError("case_axes and case_shape ranks differ.")
         selected_field = str(field_name)
@@ -482,18 +472,17 @@ class OperatorPredictiveField(StrictModule):
             )
         physical_shape = _expected_output_shape(query, output_spec, shape)
         remaining_shape = tuple(
-            int(predictive.samples.data.shape[index])
+            predictive.samples.data.shape[index]
             for index, dim in enumerate(predictive.samples.dims)
             if dim not in sample_dims
         )
         if remaining_shape != physical_shape:
             raise ValueError(
-                f"Predictive physical shape must be {physical_shape}; got "
-                f"{remaining_shape}."
+                f"Predictive physical shape must be {physical_shape}; got {remaining_shape}."
             )
         mask_data = _output_mask(query, output_spec, shape)
         mask_field = cx.AxisArray(mask_data, dims=physical_dims)
-        sample_mask = _broadcast_named(mask_field, predictive.samples).astype(bool)
+        sample_mask = _broadcast_named(mask_field, predictive.samples).astype("bool")
         sample_values = jnp.asarray(predictive.samples.data)
         sample_data = jnp.where(
             sample_mask,
@@ -592,8 +581,7 @@ class OperatorPredictiveField(StrictModule):
         dims = _physical_dims(self.query, self.output_spec, self.case_axes)
         if field.dims != dims:
             raise ValueError(
-                f"Operator statistic must have physical dimensions {dims!r}; "
-                f"got {field.dims!r}."
+                f"Operator statistic must have physical dimensions {dims!r}; got {field.dims!r}."
             )
         values = jnp.asarray(field.data)
         mask = self.output_mask()
@@ -625,8 +613,7 @@ class OperatorPredictiveField(StrictModule):
         expected_dims = tuple(axis.dim for axis in remaining_axes) + physical_dims
         if field.dims != expected_dims:
             raise ValueError(
-                "Operator statistic retained unexpected dimensions: "
-                f"expected {expected_dims!r}, got {field.dims!r}."
+                f"Operator statistic retained unexpected dimensions: expected {expected_dims!r}, got {field.dims!r}."
             )
         return OperatorPredictiveField(
             PredictiveField(field, remaining_axes),
@@ -736,13 +723,9 @@ def operator_predictive_from_samples(
     selected_query = str(query_name)
     query = batch.query(selected_query)
     expected = output_spec.expected_shape(batch, query_name=selected_query)
-    if (
-        data.ndim < sample_rank
-        or tuple(int(size) for size in data.shape[sample_rank:]) != expected
-    ):
+    if data.ndim < sample_rank or tuple(data.shape[sample_rank:]) != expected:
         raise ValueError(
-            "Operator predictive samples must have shape sample_shape + "
-            f"{expected}; got {data.shape}."
+            f"Operator predictive samples must have shape sample_shape + {expected}; got {data.shape}."
         )
     dims = tuple(axis.dim for axis in axes) + _physical_dims(
         query, output_spec, batch.case_axes
@@ -759,8 +742,7 @@ def operator_predictive_from_samples(
             variance_field = cx.AxisArray(variance, dims=dims)
         else:
             raise ValueError(
-                "conditional_variance must match the physical output or predictive "
-                f"sample shape; got {variance.shape}."
+                f"conditional_variance must match the physical output or predictive sample shape; got {variance.shape}."
             )
     predictive = PredictiveField(
         sample_field,

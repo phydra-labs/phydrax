@@ -380,7 +380,7 @@ Point-cloud, planar, terrain, and LiDAR reconstruction are explicit pipelines:
 `reconstruct_dem_region`, and `reconstruct_lidar_region`. They return a
 `ReconstructedGeometrySource` carrying an immutable `ReconstructionReport` with
 input/output counts, algorithm parameters, watertightness, winding consistency,
-recentring, warnings, and an input digest. Invalid reconstruction raises
+recentering, warnings, and an input digest. Invalid reconstruction raises
 `ReconstructionFailure` with the same report; approximation is never hidden behind
 a primitive constructor.
 

@@ -311,14 +311,15 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         overset_mapping_id = coupling_.overset_mapping_id
         overset_epoch_id = coupling_.overset_epoch_id
         if overset is None:
-            overset_active_cell_mask = np.ones((discretization.cell_count,), dtype=bool)
+            overset_active_cell_mask = np.ones(
+                (discretization.cell_count,), dtype=np.bool_
+            )
             overset_effective_cell_volumes = jnp.asarray(discretization.cell_volumes)
         else:
-            donor_count = int(np.asarray(overset.donor_covered_measures).size)
+            donor_count = np.asarray(overset.donor_covered_measures).size
             if donor_count != discretization.cell_count:
                 raise ValueError(
-                    "Overset dynamics require donor and receptor cell layouts "
-                    "to share one single-device content axis."
+                    "Overset dynamics require donor and receptor cell layouts to share one single-device content axis."
                 )
             donor_active = np.asarray(overset.donor_active_mask)
             donor_hole = np.asarray(overset.donor_hole_mask)
@@ -361,22 +362,21 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             sliding_coupling = coupling_.sliding_coupling
             if sliding_coupling is None:
                 template_owner_cells = donor_indices
-                template_neighbour_cells = receptor_cells[receptor_routes]
+                template_neighbor_cells = receptor_cells[receptor_routes]
                 if overset.receptor_face_cells is not None:
                     certified_face_cells = np.asarray(
                         overset.receptor_face_cells,
                         dtype=np.int32,
                     )
                     if (
-                        certified_face_cells.shape != template_neighbour_cells.shape
+                        certified_face_cells.shape != template_neighbor_cells.shape
                         or not np.array_equal(
                             certified_face_cells,
-                            template_neighbour_cells,
+                            template_neighbor_cells,
                         )
                     ):
                         raise ValueError(
-                            "Non-sliding overset receptor faces must match mapped "
-                            "receptor routes in order."
+                            "Non-sliding overset receptor faces must match mapped receptor routes in order."
                         )
                 sliding_coupling_id = None
             else:
@@ -388,15 +388,15 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 right_routes = np.asarray(sliding_coupling.right_routes, dtype=np.int32)
                 face_cells = np.asarray(overset.receptor_face_cells, dtype=np.int32)
                 template_owner_cells = donor_indices[left_routes]
-                template_neighbour_cells = face_cells[right_routes]
+                template_neighbor_cells = face_cells[right_routes]
                 sliding_coupling_id = sliding_coupling.coupling_id
             route_active = (
                 donor_active[template_owner_cells]
                 & donor_eligible[template_owner_cells]
                 & ~donor_hole[template_owner_cells]
-                & overset_active_cell_mask[template_neighbour_cells]
-                & receptor_fringe[template_neighbour_cells]
-                & (template_owner_cells != template_neighbour_cells)
+                & overset_active_cell_mask[template_neighbor_cells]
+                & receptor_fringe[template_neighbor_cells]
+                & (template_owner_cells != template_neighbor_cells)
             )
             overset_rate_block_template = ConservationStageFluxRateBlock(
                 jnp.zeros(
@@ -404,7 +404,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     dtype=jnp.dtype(precision_.reduction_dtype),
                 ),
                 template_owner_cells,
-                template_neighbour_cells,
+                template_neighbor_cells,
                 route_active,
                 canonical_fingerprint(
                     {
@@ -435,8 +435,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     discretization.geometry_id,
                 ):
                     raise ValueError(
-                        "High-order mapped overset traces require current "
-                        "geometry-bound operators."
+                        "High-order mapped overset traces require current geometry-bound operators."
                     )
         if not isinstance(precision_, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be FiniteVolumePrecisionPolicy.")
@@ -480,13 +479,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     dtype=jnp.dtype(precision_.reduction_dtype),
                 ),
                 layout.owner_cells,
-                layout.neighbour_cells,
+                layout.neighbor_cells,
                 np.asarray(layout.active_mask)
                 & np.asarray(overset_active_cell_mask)[np.asarray(layout.owner_cells)]
                 & (
-                    (np.asarray(layout.neighbour_cells) < 0)
+                    (np.asarray(layout.neighbor_cells) < 0)
                     | np.asarray(overset_active_cell_mask)[
-                        np.maximum(np.asarray(layout.neighbour_cells), 0)
+                        np.maximum(np.asarray(layout.neighbor_cells), 0)
                     ]
                 ),
                 layout.block_id,
@@ -511,11 +510,11 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             )
             for patch_id in range(len(boundaries.patch_names))
         )
-        source_active_cell_mask = np.asarray(overset_active_cell_mask, dtype=bool)
+        source_active_cell_mask = np.asarray(overset_active_cell_mask, dtype=np.bool_)
         if coupling_.embedded_metrics is not None:
             source_active_cell_mask = source_active_cell_mask & np.asarray(
                 coupling_.embedded_metrics.active_fluid_cells,
-                dtype=bool,
+                dtype=np.bool_,
             )
         source_cell_indices = jnp.asarray(
             np.flatnonzero(source_active_cell_mask),
@@ -600,16 +599,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         active_cell_mask: Array,
         /,
     ) -> Array:
-        safe_neighbour = jnp.maximum(layout.neighbour_cells, 0)
+        safe_neighbor = jnp.maximum(layout.neighbor_cells, 0)
         return (
             layout.active_mask
             & self.overset_active_cell_mask[layout.owner_cells]
-            & (
-                (layout.neighbour_cells < 0)
-                | self.overset_active_cell_mask[safe_neighbour]
-            )
+            & ((layout.neighbor_cells < 0) | self.overset_active_cell_mask[safe_neighbor])
             & active_cell_mask[layout.owner_cells]
-            & ((layout.neighbour_cells < 0) | active_cell_mask[safe_neighbour])
+            & ((layout.neighbor_cells < 0) | active_cell_mask[safe_neighbor])
         )
 
     def _stage_rate_templates(
@@ -639,7 +635,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             zero_rate = eqx.error_if(
                 jnp.zeros_like(prepared.flux_rate),
                 jnp.any(layout.owner_cells != prepared.owner_cells)
-                | jnp.any(layout.neighbour_cells != prepared.neighbour_cells)
+                | jnp.any(layout.neighbor_cells != prepared.neighbor_cells)
                 | jnp.any(active & ~prepared.active_mask),
                 "Stage geometry face routes do not match the dynamics.",
             )
@@ -723,8 +719,8 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             layout = geometry_block.layout
             policy_indices = self.stage_boundary_face_indices[block_index]
             owner = layout.owner_cells
-            neighbour = layout.neighbour_cells
-            safe_neighbour = jnp.maximum(neighbour, 0)
+            neighbor = layout.neighbor_cells
+            safe_neighbor = jnp.maximum(neighbor, 0)
             route_active = self._stage_route_active(layout, metrics.active_cell_mask)
             points = self.precision.reconstruction(geometry_block.quadrature_points)
             if isinstance(reconstruction, PiecewiseConstantReconstruction):
@@ -734,7 +730,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     (layout.face_count, quadrature_count, state.shape[-1]),
                 )
                 right = jnp.broadcast_to(
-                    reconstruction_state[safe_neighbour, None, :],
+                    reconstruction_state[safe_neighbor, None, :],
                     left.shape,
                 )
             elif isinstance(reconstruction, PreparedCellPolynomialReconstruction):
@@ -755,7 +751,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     right = reconstruction.evaluate_coefficients(
                         reconstruction_state,
                         coefficients,
-                        safe_neighbour,
+                        safe_neighbor,
                         points,
                     )
                 else:
@@ -772,7 +768,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         coefficients,
                         stage_lengths,
                         metrics,
-                        safe_neighbour,
+                        safe_neighbor,
                         points,
                     )
             elif isinstance(reconstruction, PreparedUnstructuredWENOZReconstruction):
@@ -792,7 +788,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     right = reconstruction.optimal.evaluate_coefficients(
                         reconstruction_state,
                         coefficients,
-                        safe_neighbour,
+                        safe_neighbor,
                         points,
                     )
                 else:
@@ -809,14 +805,14 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         coefficients,
                         stage_lengths,
                         metrics,
-                        safe_neighbour,
+                        safe_neighbor,
                         points,
                     )
                 left = reconstruction._limit(reconstruction_state, left, owner)
                 right = reconstruction._limit(
                     reconstruction_state,
                     right,
-                    safe_neighbour,
+                    safe_neighbor,
                 )
             else:
                 raise TypeError("Unsupported prepared unstructured reconstruction.")
@@ -951,8 +947,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         face_cells = overset.receptor_face_cells
         if face_ids is None or face_cells is None or overset.face_artifact_id is None:
             raise ValueError(
-                "Overset correction requires a certified receptor-face artifact "
-                "with explicit physical face IDs."
+                "Overset correction requires a certified receptor-face artifact with explicit physical face IDs."
             )
         physical_blocks = tuple(
             block
@@ -978,8 +973,8 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             "Certified overset receptor face IDs are stale for this stage layout.",
         )
         physical_owners = layout.owner_cells[positions]
-        physical_neighbours = layout.neighbour_cells[positions]
-        incident = (physical_owners == cells) | (physical_neighbours == cells)
+        physical_neighbors = layout.neighbor_cells[positions]
+        incident = (physical_owners == cells) | (physical_neighbors == cells)
         points_array = eqx.error_if(
             points_array,
             jnp.any(~incident) | jnp.any(~layout.active_mask[positions]),
@@ -1154,7 +1149,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         )
         # The Riemann solve is receptor-left with a receptor-outward normal,
         # whereas the conservative ledger route is donor-owner to
-        # receptor-neighbour. Canonicalize to that opposite positive direction.
+        # receptor-neighbor. Canonicalize to that opposite positive direction.
         route_flux = -integrated_face_flux[route_right] * route_fraction[:, None]
         if self.coupling.vof is not None:
             from ...equations._multiphase import TwoMaterialVOFSystem
@@ -1462,19 +1457,19 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     full_total_mass, stage_plic
                 )[face_ids]
                 owner = layout.owner_cells
-                neighbour = layout.neighbour_cells
-                safe_neighbour = jnp.maximum(neighbour, 0)
+                neighbor = layout.neighbor_cells
+                safe_neighbor = jnp.maximum(neighbor, 0)
                 donor_left = total_mass_flux >= 0.0
-                boundary_inflow = (neighbour < 0) & ~donor_left
+                boundary_inflow = (neighbor < 0) & ~donor_left
                 rho0 = jnp.where(
                     donor_left,
                     primitive[owner, 0],
-                    primitive[safe_neighbour, 0],
+                    primitive[safe_neighbor, 0],
                 )
                 rho1 = jnp.where(
                     donor_left,
                     primitive[owner, 1],
-                    primitive[safe_neighbour, 1],
+                    primitive[safe_neighbor, 1],
                 )
                 mixture_density = (
                     donor_apertures[:, 0] * rho0 + donor_apertures[:, 1] * rho1
@@ -1565,8 +1560,8 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     alpha_flux
                 )
                 cell_volume_divergence = cell_volume_divergence.at[owner].add(volume_flux)
-                cell_volume_divergence = cell_volume_divergence.at[safe_neighbour].add(
-                    jnp.where(neighbour >= 0, -volume_flux, 0.0)
+                cell_volume_divergence = cell_volume_divergence.at[safe_neighbor].add(
+                    jnp.where(neighbor >= 0, -volume_flux, 0.0)
                 )
             face_rate = ein.contract(
                 "fq,fq->f",
@@ -1576,10 +1571,10 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             blocks.append(template.with_flux_rate(flux_rate))
             speeds.append(self.precision.decision(signal_speed))
             owner = layout.owner_cells
-            neighbour = layout.neighbour_cells
+            neighbor = layout.neighbor_cells
             cell_rate = cell_rate.at[owner].add(face_rate)
-            cell_rate = cell_rate.at[jnp.maximum(neighbour, 0)].add(
-                jnp.where(neighbour >= 0, face_rate, 0.0)
+            cell_rate = cell_rate.at[jnp.maximum(neighbor, 0)].add(
+                jnp.where(neighbor >= 0, face_rate, 0.0)
             )
         (
             overset_block,
@@ -1590,9 +1585,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             speeds.append(overset_speed)
             overset_face_rate = overset_speed * overset_route_measures
             cell_rate = cell_rate.at[overset_block.owner_cells].add(overset_face_rate)
-            cell_rate = cell_rate.at[jnp.maximum(overset_block.neighbour_cells, 0)].add(
+            cell_rate = cell_rate.at[jnp.maximum(overset_block.neighbor_cells, 0)].add(
                 jnp.where(
-                    overset_block.neighbour_cells >= 0,
+                    overset_block.neighbor_cells >= 0,
                     overset_face_rate,
                     0.0,
                 )
@@ -1797,14 +1792,14 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         self, time: Array, state: Array, args: Any, /
     ) -> tuple[Array, Array, Array]:
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         left = self.precision.reconstruction(state[owner])
-        right = self.precision.reconstruction(state[safe_neighbour])
+        right = self.precision.reconstruction(state[safe_neighbor])
         normal = (
             self.discretization.area_vectors / self.discretization.face_measures[:, None]
         )
-        boundary = neighbour < 0
+        boundary = neighbor < 0
         for patch_id, policy in enumerate(self.boundaries.boundaries):
             patch_mask = boundary & (self.discretization.boundary_patch_ids == patch_id)
             exterior = policy.exterior_state(
@@ -1835,12 +1830,12 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         left, right = reconstruction.reconstruct_at(
             self.precision.reconstruction(state), points
         )
-        neighbour = self.discretization.neighbour_cells
+        neighbor = self.discretization.neighbor_cells
         normal = (
             self.discretization.area_vectors / self.discretization.face_measures[:, None]
         )
         normal = jnp.broadcast_to(normal[:, None, :], points.shape)
-        boundary = neighbour < 0
+        boundary = neighbor < 0
         for patch_id, policy in enumerate(self.boundaries.boundaries):
             patch_mask = boundary & (self.discretization.boundary_patch_ids == patch_id)
             exterior = policy.exterior_state(
@@ -1909,15 +1904,15 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             self.discretization.face_measures[:, None]
         )
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         residual = jnp.zeros(
             self.discretization.state_shape,
             dtype=jnp.dtype(self.precision.reduction_dtype),
         )
         residual = residual.at[owner].add(-integrated)
-        residual = residual.at[safe_neighbour].add(
-            jnp.where((neighbour >= 0)[:, None], integrated, 0.0)
+        residual = residual.at[safe_neighbor].add(
+            jnp.where((neighbor >= 0)[:, None], integrated, 0.0)
         )
         return self.precision.storage(
             residual / self.precision.reduction(self.discretization.cell_volumes[:, None])
@@ -1954,9 +1949,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             dtype=jnp.dtype(self.precision.reduction_dtype),
         )
         rate = rate.at[self.discretization.owner_cells].add(weighted)
-        neighbour = self.discretization.neighbour_cells
-        rate = rate.at[jnp.maximum(neighbour, 0)].add(
-            jnp.where(neighbour >= 0, weighted, 0.0)
+        neighbor = self.discretization.neighbor_cells
+        rate = rate.at[jnp.maximum(neighbor, 0)].add(
+            jnp.where(neighbor >= 0, weighted, 0.0)
         )
         return self.precision.decision(
             rate / self.precision.reduction(self.discretization.cell_volumes)
@@ -1993,7 +1988,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         flux, speed = self.face_fluxes(time, state, args)
         source = self.source_value(time, state, args)
         residual = self(time, state, args)
-        boundary = self.discretization.neighbour_cells < 0
+        boundary = self.discretization.neighbor_cells < 0
         integrated = self.precision.reduction(flux) * self.precision.reduction(
             self.discretization.face_measures[:, None]
         )

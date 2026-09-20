@@ -295,7 +295,7 @@ class ThermalKernelArtifact(StrictModule, NonTrainableState):
         nt, nk, nw = temperature_.size, momentum_.size, frequency_.size
         if masses.ndim != 2 or masses.shape[1] != nt:
             raise ValueError("thermal_masses must have shape (species, temperature).")
-        species_count = int(masses.shape[0])
+        species_count = masses.shape[0]
         if species_count == 0 or widths_.shape != masses.shape:
             raise ValueError("widths must match a nonempty thermal-mass table.")
         expected_spectral = (species_count, nt, nk, nw)
@@ -333,8 +333,7 @@ class ThermalKernelArtifact(StrictModule, NonTrainableState):
             )
         if covariance.shape != (3 * nt, 3 * nt) or np.iscomplexobj(covariance):
             raise ValueError(
-                "eos_covariance must be a real covariance over concatenated "
-                "pressure/energy/entropy tables."
+                "eos_covariance must be a real covariance over concatenated pressure/energy/entropy tables."
             )
         thermodynamic_tol = float(thermodynamic_tolerance)
         covariance_tol = float(covariance_tolerance)
@@ -520,7 +519,7 @@ class ThermalKernelArtifact(StrictModule, NonTrainableState):
         self.source_artifact = source_artifact
         self.evidence = evidence
         self.species_count = species_count
-        self.rate_count = int(rates_.shape[0])
+        self.rate_count = rates_.shape[0]
         self.species_plan_ids = species_ids
         self.rate_channel_ids = channel_ids
         self.source_kind = source_kind_
@@ -753,14 +752,14 @@ class LPMIntegralPlan(StrictModule, NonTrainableState):
         rate_prefactor: float,
         residual_tolerance: float = 1.0e-9,
     ):
-        nodes = np.asarray(basis_nodes, dtype=float)
-        weights = np.asarray(quadrature_weights, dtype=float)
+        nodes = np.asarray(basis_nodes, dtype=np.float64)
+        weights = np.asarray(quadrature_weights, dtype=np.float64)
         collision = np.asarray(collision_matrix)
-        formation = np.asarray(formation_energies, dtype=float)
+        formation = np.asarray(formation_energies, dtype=np.float64)
         source_ = np.asarray(source)
         if nodes.ndim != 1 or nodes.size == 0 or np.any(~np.isfinite(nodes)):
             raise ValueError("basis_nodes must be a nonempty finite vector.")
-        size = int(nodes.size)
+        size = nodes.size
         if (
             weights.shape != (size,)
             or np.any(~np.isfinite(weights))
@@ -782,17 +781,17 @@ class LPMIntegralPlan(StrictModule, NonTrainableState):
         symmetric = 0.5 * (collision + collision.conj().T)
         collision_eigenvalues = np.linalg.eigvalsh(symmetric).real
         collision_scale = max(
-            float(np.max(np.abs(collision_eigenvalues))), np.finfo(float).tiny
+            float(np.max(np.abs(collision_eigenvalues))), np.finfo(np.float64).tiny
         )
-        numerical_tolerance = 64.0 * np.finfo(float).eps
+        numerical_tolerance = 64.0 * np.finfo(np.float64).eps
         if float(np.min(collision_eigenvalues)) < -numerical_tolerance * collision_scale:
             raise ValueError(
                 "LPM collision matrix Hermitian part must be positive semidefinite."
             )
-        combined = collision.astype(complex) + 1j * np.diag(formation)
+        combined = collision.astype("complex128") + 1j * np.diag(formation)
         singular_values = np.linalg.svd(combined, compute_uv=False)
         if float(np.min(singular_values)) <= numerical_tolerance * max(
-            float(np.max(singular_values)), np.finfo(float).tiny
+            float(np.max(singular_values)), np.finfo(np.float64).tiny
         ):
             raise ValueError(
                 "The collision-plus-formation LPM operator must be nonsingular."

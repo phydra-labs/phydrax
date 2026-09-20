@@ -367,7 +367,7 @@ def jump_compensator_diagnostics(
         (path_count, events.max_events) + events.state_shape
     )
     counts = events.counts.reshape((path_count,))
-    integrals = jnp.zeros((path_count, process.num_channels), dtype=float)
+    integrals = jnp.zeros((path_count, process.num_channels), dtype=jnp.float64)
     for segment in range(events.max_events + 1):
         active = segment <= counts
         if segment == 0:
@@ -395,7 +395,7 @@ def jump_compensator_diagnostics(
             )
         duration = jnp.maximum(segment_end - segment_start, 0.0)
         integrals = integrals + jnp.where(active[:, None], rates * duration[:, None], 0.0)
-    one_hot = jax.nn.one_hot(events.channels, process.num_channels, dtype=float)
+    one_hot = jax.nn.one_hot(events.channels, process.num_channels, dtype=jnp.float64)
     channel_counts = jnp.sum(one_hot * events.valid[..., None], axis=-2).reshape(
         (path_count, process.num_channels)
     )

@@ -19,11 +19,11 @@ def _target(
     mask=None,
     provenance="test-measure",
 ):
-    weight_field = cx.AxisArray(jnp.asarray(weights, dtype=float), dims=("atom",))
+    weight_field = cx.AxisArray(jnp.asarray(weights, dtype="float64"), dims=("atom",))
     mask_field = (
         None
         if mask is None
-        else cx.AxisArray(jnp.asarray(mask, dtype=bool), dims=("atom",))
+        else cx.AxisArray(jnp.asarray(mask, dtype="bool"), dims=("atom",))
     )
     point_values = points if isinstance(points, cx.AxisArray) else jnp.asarray(points)
     return phx.integration.discrete(

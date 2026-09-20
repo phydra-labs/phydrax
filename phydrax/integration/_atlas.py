@@ -115,7 +115,7 @@ class AtlasIntegrationResult(StrictModule):
         self.value = jnp.asarray(value)
         self.patch_values = jnp.asarray(patch_values)
         self.represented_weight = jnp.asarray(represented_weight)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.precision_evidence = precision_evidence

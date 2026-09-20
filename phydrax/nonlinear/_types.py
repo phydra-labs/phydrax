@@ -367,7 +367,8 @@ class NonlinearSystemProblem(StrictModule):
         return _domain_cond(
             finite,
             lambda _: jnp.asarray(
-                self.validity_function(state_, residual_, auxiliary, args), dtype=bool
+                self.validity_function(state_, residual_, auxiliary, args),
+                dtype=jnp.bool_,
             ),
             lambda _: jnp.asarray(False),
             operand=None,
@@ -625,7 +626,7 @@ class NonlinearDiagnostics(StrictModule):
             final_linear_condition_estimate
         )
         self.final_linear_residual_norm = jnp.asarray(final_linear_residual_norm)
-        self.final_linear_converged = jnp.asarray(final_linear_converged, dtype=bool)
+        self.final_linear_converged = jnp.asarray(final_linear_converged, dtype=jnp.bool_)
         self.counts_complete = bool(counts_complete)
 
 

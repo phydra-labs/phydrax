@@ -65,10 +65,10 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
         minimum_selected: int = 0,
         maximum_selected: int | None = None,
     ):
-        incidence_ = jnp.asarray(incidence, dtype=bool)
+        incidence_ = jnp.asarray(incidence, dtype=jnp.bool_)
         if incidence_.ndim != 2:
             raise ValueError("incidence must be a rank-2 candidate-by-resource array.")
-        candidates, resources = (int(size) for size in incidence_.shape)
+        candidates, resources = (size for size in incidence_.shape)
         if candidates <= 0:
             raise ValueError("set packing requires at least one candidate.")
         if capacities is None:
@@ -85,9 +85,9 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
             if bool(jnp.any(capacities_ < 0)):
                 raise ValueError("capacities must be non-negative.")
         if valid is None:
-            valid_ = jnp.ones((candidates,), dtype=bool)
+            valid_ = jnp.ones((candidates,), dtype=jnp.bool_)
         else:
-            valid_ = jnp.asarray(valid, dtype=bool)
+            valid_ = jnp.asarray(valid, dtype=jnp.bool_)
             if valid_.shape != (candidates,):
                 raise ValueError(
                     f"valid must have shape {(candidates,)}; got {valid_.shape}."
@@ -148,12 +148,12 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
         )
 
     def integral_feature_mask(self, /) -> Array:
-        return jnp.ones((self.candidate_count,), dtype=bool)
+        return jnp.ones((self.candidate_count,), dtype=jnp.bool_)
 
     def canonicalize(self, decision: SetPackingDecision, /) -> SetPackingDecision:
         if not isinstance(decision, SetPackingDecision):
             raise TypeError("set-packing decisions must be SetPackingDecision values.")
-        selected = jnp.asarray(decision.selected, dtype=bool)
+        selected = jnp.asarray(decision.selected, dtype=jnp.bool_)
         if selected.shape[-1:] != (self.candidate_count,):
             raise ValueError(
                 f"selected must end with shape {(self.candidate_count,)}; got {selected.shape}."
@@ -161,12 +161,12 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
         return SetPackingDecision(selected & self.valid)
 
     def encode(self, decision: SetPackingDecision, /) -> Array:
-        return self.canonicalize(decision).selected.astype(float)
+        return self.canonicalize(decision).selected.astype("float64")
 
     def audit(self, decision: SetPackingDecision, /) -> CombinatorialFeasibility:
         if not isinstance(decision, SetPackingDecision):
             raise TypeError("set-packing decisions must be SetPackingDecision values.")
-        selected = jnp.asarray(decision.selected, dtype=bool)
+        selected = jnp.asarray(decision.selected, dtype=jnp.bool_)
         if selected.shape[-1:] != (self.candidate_count,):
             raise ValueError(
                 f"selected must end with shape {(self.candidate_count,)}; got {selected.shape}."
@@ -183,7 +183,7 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
         else:
             capacity_residual = jnp.zeros(selected.shape[:-1], dtype=jnp.int32)
         residual = invalid_residual + lower_residual + upper_residual + capacity_residual
-        return CombinatorialFeasibility(residual == 0, residual.astype(float))
+        return CombinatorialFeasibility(residual == 0, residual.astype("float64"))
 
 
 def _prefer_selection(candidate: Array, incumbent: Array, /) -> Array:
@@ -211,7 +211,7 @@ def _packing_bound(
             used[None, :] + incidence.astype(jnp.int32) <= capacities[None, :], axis=-1
         )
     else:
-        capacity_ok = jnp.ones(costs.shape, dtype=bool)
+        capacity_ok = jnp.ones(costs.shape, dtype=jnp.bool_)
     available = remaining & valid & capacity_ok
     enough = count + jnp.sum(available) >= minimum_selected
     relaxation = value + jnp.sum(jnp.where(available & (costs < 0.0), costs, 0.0))
@@ -232,7 +232,7 @@ def _branch_and_bound_one(
     candidates = costs.shape[0]
     resources = incidence.shape[1]
     stack_capacity = candidates + 1
-    root_selected = jnp.zeros((candidates,), dtype=bool)
+    root_selected = jnp.zeros((candidates,), dtype=jnp.bool_)
     root_used = jnp.zeros((resources,), dtype=jnp.int32)
     root_bound = _packing_bound(
         costs,
@@ -247,7 +247,7 @@ def _branch_and_bound_one(
         maximum_selected,
     )
     stack_selected = (
-        jnp.zeros((stack_capacity, candidates), dtype=bool).at[0].set(root_selected)
+        jnp.zeros((stack_capacity, candidates), dtype=jnp.bool_).at[0].set(root_selected)
     )
     stack_used = (
         jnp.zeros((stack_capacity, resources), dtype=jnp.int32).at[0].set(root_used)
@@ -266,7 +266,7 @@ def _branch_and_bound_one(
         stack_value,
         stack_bound,
         jnp.asarray(1, dtype=jnp.int32),
-        jnp.zeros((candidates,), dtype=bool),
+        jnp.zeros((candidates,), dtype=jnp.bool_),
         jnp.asarray(jnp.inf, dtype=costs.dtype),
         jnp.asarray(False),
         jnp.asarray(False),
@@ -460,7 +460,7 @@ def _greedy_one(
     candidates = costs.shape[0]
     resources = incidence.shape[1]
     initial = (
-        jnp.zeros((candidates,), dtype=bool),
+        jnp.zeros((candidates,), dtype=jnp.bool_),
         jnp.zeros((resources,), dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
@@ -474,7 +474,7 @@ def _greedy_one(
                 axis=-1,
             )
         else:
-            capacity_ok = jnp.ones((candidates,), dtype=bool)
+            capacity_ok = jnp.ones((candidates,), dtype=jnp.bool_)
         available = valid & ~selected & capacity_ok & (count < maximum_selected)
         masked = jnp.where(available, costs, jnp.inf)
         index = jnp.argmin(masked)
@@ -683,7 +683,7 @@ class BranchAndBoundSetPacking(AbstractBoundableLinearCombinatorialMethod):
             absolute_gap=absolute_gap,
             relative_gap=relative_gap(absolute_gap, best_shaped, lower_shaped),
             tie_margin=jnp.where(tie_available, zero, jnp.nan),
-            dual_available=jnp.zeros(batch_shape, dtype=bool),
+            dual_available=jnp.zeros(batch_shape, dtype=jnp.bool_),
             gap_available=gap_available,
             tie_available=tie_available,
         )
@@ -855,9 +855,9 @@ class GreedySetPacking(AbstractLinearCombinatorialMethod):
             absolute_gap=absolute_gap,
             relative_gap=relative_gap(absolute_gap, best_shaped, lower),
             tie_margin=jnp.full(batch_shape, jnp.nan, dtype=raw_costs.dtype),
-            dual_available=jnp.zeros(batch_shape, dtype=bool),
+            dual_available=jnp.zeros(batch_shape, dtype=jnp.bool_),
             gap_available=valid_result,
-            tie_available=jnp.zeros(batch_shape, dtype=bool),
+            tie_available=jnp.zeros(batch_shape, dtype=jnp.bool_),
         )
         provenance = CombinatorialProvenance(
             problem_id=problem.problem_id,

@@ -45,7 +45,7 @@ forward_solution = phx.solver.solve_diffrax_ensemble(
 )
 paths = phx.stochastic.bsde_paths_from_differential_solution(
     forward_solution,
-    path_id="heat-forward-v1",
+    path_id="heat-forward",
     process_id="brownian",
 )
 ```
@@ -249,7 +249,7 @@ Fully nonlinear frozen sources must be explicit and matrix-free:
 def source_builder(context):
     return phx.solver.StructuredPicardSource(
         lambda t, x, ctx, args: 0.1 * ctx.covariance_trace(t, x),
-        source_id="trace-source-v1",
+        source_id="trace-source",
     )
 ```
 
@@ -306,7 +306,7 @@ coarse_paths = phx.stochastic.BSDEPathBatch(
     sample_shape=paths.sample_shape,
     state_shape=paths.state_shape,
     noise_shape=paths.noise_shape,
-    path_id="heat-forward-coarse-v1",
+    path_id="heat-forward-coarse",
     process_id=paths.process_id,
     valid=paths.valid[:, coarse_indices],
 )

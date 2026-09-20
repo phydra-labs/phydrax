@@ -41,7 +41,7 @@ def estimate_reactive_flux(
         raw_crossings.size == 0
         or np.iscomplexobj(crossing_host)
         or (
-            crossing_host.dtype != np.dtype(bool)
+            crossing_host.dtype != np.dtype(np.bool_)
             and (
                 not np.all(np.isfinite(crossing_host))
                 or not np.all((crossing_host == 0) | (crossing_host == 1))
@@ -51,11 +51,11 @@ def estimate_reactive_flux(
         raise ValueError(
             "Reactive crossings must be non-empty Boolean or finite binary indicators."
         )
-    crossings = raw_crossings.astype(bool).reshape((-1,))
+    crossings = raw_crossings.astype("bool").reshape((-1,))
     raw_exposure = jnp.asarray(observation_time)
     if raw_exposure.shape != () or jnp.iscomplexobj(raw_exposure):
         raise ValueError("Reactive flux requires one real scalar exposure.")
-    exposure = raw_exposure.astype(float)
+    exposure = raw_exposure.astype("float64")
     valid = jnp.isfinite(exposure) & (exposure > 0.0)
     count = jnp.sum(crossings, dtype=jnp.int32)
     flux = jnp.where(valid, count.astype(exposure.dtype) / exposure, jnp.nan)
@@ -87,7 +87,7 @@ def factorize_tis_rate(
         reactive_flux.flux
         if isinstance(reactive_flux, ReactiveFluxEstimate)
         else reactive_flux,
-        dtype=float,
+        dtype=jnp.float64,
     )
     probabilities = jnp.asarray(crossing_probabilities, dtype=flux.dtype)
     if probabilities.ndim != 1 or probabilities.size == 0 or flux.shape != ():
@@ -104,7 +104,7 @@ def factorize_tis_rate(
     log_rate = jnp.sum(log_factors)
     rate = jnp.where(valid, flux * jnp.prod(probabilities), jnp.nan)
     identity = factorization_id or canonical_fingerprint(
-        {"kind": "tis-rate-factorization-v1", "factor_count": int(probabilities.size)}
+        {"kind": "tis-rate-factorization", "factor_count": probabilities.size}
     )
     if not isinstance(identity, str) or not identity:
         raise ValueError("factorization_id must be non-empty.")
@@ -151,7 +151,7 @@ class CommittorFitPlan(StrictModule, NonTrainableState):
             raise ValueError("Committor fit controls are invalid.")
         identity = plan_id or canonical_fingerprint(
             {
-                "kind": "committor-logistic-fit-v1",
+                "kind": "committor-logistic-fit",
                 "feature_count": features,
                 "maximum_iterations": iterations,
                 "learning_rate": rate.hex(),
@@ -191,7 +191,7 @@ def fit_committor(
 
     if not isinstance(plan, CommittorFitPlan):
         raise TypeError("plan must be CommittorFitPlan.")
-    design = jnp.asarray(features, dtype=float)
+    design = jnp.asarray(features, dtype=jnp.float64)
     labels = jnp.asarray(outcomes, dtype=design.dtype)
     if (
         design.ndim != 2
@@ -300,7 +300,7 @@ class CorrelatedUncertainty(StrictModule, NonTrainableState):
 def integrated_autocorrelation_time(values: ArrayLike, /, *, maximum_lag: int) -> Array:
     """Estimate integrated autocorrelation time with a positive-sequence window."""
 
-    samples = jnp.asarray(values, dtype=float).reshape((-1,))
+    samples = jnp.asarray(values, dtype=jnp.float64).reshape((-1,))
     lag_count = int(maximum_lag)
     if samples.size < 2 or lag_count <= 0 or lag_count >= samples.size:
         raise ValueError("maximum_lag must lie in [1, sample_count).")
@@ -318,7 +318,7 @@ def integrated_autocorrelation_time(values: ArrayLike, /, *, maximum_lag: int) -
         )
 
     correlations = jax.vmap(correlation)(jnp.arange(1, lag_count + 1, dtype=jnp.int32))
-    positive_prefix = jnp.cumprod((correlations > 0.0).astype(jnp.int32)).astype(bool)
+    positive_prefix = jnp.cumprod((correlations > 0.0).astype(jnp.int32)).astype("bool")
     return jnp.maximum(
         1.0 + 2.0 * jnp.sum(jnp.where(positive_prefix, correlations, 0.0)), 1.0
     )
@@ -329,7 +329,7 @@ def block_mean_uncertainty(
 ) -> CorrelatedUncertainty:
     """Standard error from non-overlapping block means."""
 
-    samples = jnp.asarray(values, dtype=float).reshape((-1,))
+    samples = jnp.asarray(values, dtype=jnp.float64).reshape((-1,))
     size = int(block_size)
     block_count = samples.size // size if size > 0 else 0
     if size <= 0 or block_count < 2 or not bool(jnp.all(jnp.isfinite(samples))):
@@ -366,7 +366,7 @@ def autocorrelation_uncertainty(
     *,
     maximum_lag: int,
 ) -> CorrelatedUncertainty:
-    samples = jnp.asarray(values, dtype=float).reshape((-1,))
+    samples = jnp.asarray(values, dtype=jnp.float64).reshape((-1,))
     if not bool(jnp.all(jnp.isfinite(samples))):
         raise ValueError("Autocorrelation uncertainty requires finite samples.")
     tau = integrated_autocorrelation_time(samples, maximum_lag=maximum_lag)
@@ -396,7 +396,7 @@ def moving_block_bootstrap_uncertainty(
 ) -> CorrelatedUncertainty:
     """Circular moving-block bootstrap with fixed resample and block capacities."""
 
-    samples = jnp.asarray(values, dtype=float).reshape((-1,))
+    samples = jnp.asarray(values, dtype=jnp.float64).reshape((-1,))
     length, count = int(block_length), int(resamples)
     confidence_ = float(confidence)
     if (

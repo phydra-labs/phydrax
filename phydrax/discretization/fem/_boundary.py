@@ -51,9 +51,9 @@ def _subset_domain(
         exterior.support_id,
         exterior.entity_set_id,
         owner_cells=np.asarray(exterior.owner_cells)[positions],
-        neighbour_cells=np.asarray(exterior.neighbour_cells)[positions],
+        neighbor_cells=np.asarray(exterior.neighbor_cells)[positions],
         owner_local_entities=np.asarray(exterior.owner_local_entities)[positions],
-        neighbour_local_entities=np.asarray(exterior.neighbour_local_entities)[positions],
+        neighbor_local_entities=np.asarray(exterior.neighbor_local_entities)[positions],
         selection_id=selection_id,
     )
 
@@ -124,8 +124,8 @@ class FiniteElementPeriodicTransform(StrictModule, NonTrainableState):
         component_matrix=None,
         tolerance: float = 1.0e-10,
     ):
-        matrix = np.asarray(coordinate_matrix, dtype=float)
-        offset = np.asarray(coordinate_offset, dtype=float)
+        matrix = np.asarray(coordinate_matrix, dtype=np.float64)
+        offset = np.asarray(coordinate_offset, dtype=np.float64)
         if (
             matrix.ndim != 2
             or matrix.shape[0] != matrix.shape[1]
@@ -136,9 +136,9 @@ class FiniteElementPeriodicTransform(StrictModule, NonTrainableState):
         ):
             raise ValueError("Periodic coordinate transform is invalid.")
         components = (
-            np.eye(1, dtype=float)
+            np.eye(1, dtype=np.float64)
             if component_matrix is None
-            else np.asarray(component_matrix, dtype=float)
+            else np.asarray(component_matrix, dtype=np.float64)
         )
         if (
             components.ndim != 2
@@ -194,34 +194,34 @@ class FiniteElementPeriodicFacetPair(StrictModule, NonTrainableState):
     """One explicit pair of exterior facets forming a periodic interface."""
 
     owner_facet: int = eqx.field(static=True)
-    neighbour_facet: int = eqx.field(static=True)
+    neighbor_facet: int = eqx.field(static=True)
     transform: FiniteElementPeriodicTransform | None
     pair_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         owner_facet: int,
-        neighbour_facet: int,
+        neighbor_facet: int,
         /,
         *,
         transform: FiniteElementPeriodicTransform | None = None,
     ):
         owner = _facet_id(owner_facet, "owner_facet")
-        neighbour = _facet_id(neighbour_facet, "neighbour_facet")
-        if owner == neighbour:
+        neighbor = _facet_id(neighbor_facet, "neighbor_facet")
+        if owner == neighbor:
             raise ValueError("A periodic facet cannot be paired with itself.")
         if transform is not None and not isinstance(
             transform, FiniteElementPeriodicTransform
         ):
             raise TypeError("transform must be FiniteElementPeriodicTransform or None.")
         self.owner_facet = owner
-        self.neighbour_facet = neighbour
+        self.neighbor_facet = neighbor
         self.transform = transform
         self.pair_id = canonical_fingerprint(
             {
                 "kind": "finite-element-periodic-facet-pair",
                 "owner": owner,
-                "neighbour": neighbour,
+                "neighbor": neighbor,
                 "transform": (None if transform is None else transform.transform_id),
             }
         )
@@ -264,7 +264,7 @@ class FiniteElementBoundarySet(StrictModule, NonTrainableState):
 
         periodic_ids: list[int] = []
         for pair in pairs:
-            periodic_ids.extend((pair.owner_facet, pair.neighbour_facet))
+            periodic_ids.extend((pair.owner_facet, pair.neighbor_facet))
         if len(periodic_ids) != len(set(periodic_ids)):
             raise ValueError("Periodic exterior facets must be owned exactly once.")
         unknown_periodic = set(periodic_ids) - exterior_set
@@ -320,8 +320,7 @@ class FiniteElementBoundarySet(StrictModule, NonTrainableState):
         if owned != exterior_set:
             missing = tuple(sorted(exterior_set - owned))
             raise ValueError(
-                "Finite-element boundary ownership must be exhaustive; "
-                f"missing exterior facets {missing}."
+                f"Finite-element boundary ownership must be exhaustive; missing exterior facets {missing}."
             )
 
         self.patch_names = names

@@ -18,17 +18,7 @@ from ..._bounds import _static_bound_metadata, Bounds
 from ..._iteration import IterationEvidence
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
-from ..._tree_math import (  # noqa: F401
-    tree_add_scaled as _tree_add_scaled,
-    tree_all as _tree_all,
-    tree_allfinite as _tree_allfinite,
-    tree_inner as _tree_inner,
-    tree_negative as _tree_negative,
-    tree_norm as _tree_norm,
-    tree_scale as _tree_scale,
-    tree_where as _tree_where,
-    validate_real_inexact_tree as _validate_real_inexact_tree,
-)
+from ..._tree_math import validate_real_inexact_tree as _validate_real_inexact_tree
 
 
 class OptimizationStatus(IntEnum):
@@ -242,13 +232,11 @@ class MinimizationProblem(StrictModule):
             derivative_execution_ == "automatic-jax"
         ):
             raise ValueError(
-                "explicit-host execution requires explicit_value_and_gradient, "
-                "and automatic-jax forbids it."
+                "explicit-host execution requires explicit_value_and_gradient, and automatic-jax forbids it."
             )
         if derivative_execution_ == "explicit-host" and constraints_:
             raise ValueError(
-                "Explicit-host minimization currently supports bounds but not "
-                "differentiated nonlinear constraints."
+                "Explicit-host minimization currently supports bounds but not differentiated nonlinear constraints."
             )
         self.objective = objective
         self.explicit_value_and_gradient = explicit_value_and_gradient
@@ -267,13 +255,14 @@ class MinimizationProblem(StrictModule):
         /,
     ) -> tuple[tuple[Array, Any], PyTree[Array]]:
         if self.explicit_value_and_gradient is None:
-            raise RuntimeError("Minimization problem has no explicit derivative evaluator.")
+            raise RuntimeError(
+                "Minimization problem has no explicit derivative evaluator."
+            )
         output, raw_gradient = self.explicit_value_and_gradient(parameters, args)
         if self.has_aux:
             if not isinstance(output, tuple) or len(output) != 2:
                 raise TypeError(
-                    "An explicit evaluator with has_aux=True must return "
-                    "((value, auxiliary), gradient)."
+                    "An explicit evaluator with has_aux=True must return ((value, auxiliary), gradient)."
                 )
             raw_value, auxiliary = output
         else:
@@ -311,6 +300,7 @@ class MinimizationProblem(StrictModule):
     ) -> tuple[tuple[Array, Any], PyTree[Array]]:
         if self.explicit_value_and_gradient is not None:
             return self._explicit_evaluation(parameters, args)
+
         def value_with_aux(candidate):
             return self.value(candidate, args)
 
@@ -627,13 +617,13 @@ class IterativeStepMetrics(StrictModule):
         self.globalization_evaluations = jnp.asarray(
             globalization_evaluations, dtype=jnp.int32
         )
-        self.accepted = jnp.asarray(accepted, dtype=bool)
+        self.accepted = jnp.asarray(accepted, dtype=jnp.bool_)
         self.linear_iterations = jnp.asarray(linear_iterations, dtype=jnp.int32)
         self.linear_status = jnp.asarray(linear_status, dtype=jnp.int32)
         self.forcing = jnp.asarray(forcing, dtype=scalar_dtype)
         self.damping = jnp.asarray(damping, dtype=scalar_dtype)
         self.reduction_ratio = jnp.asarray(reduction_ratio, dtype=scalar_dtype)
-        self.direction_fallback = jnp.asarray(direction_fallback, dtype=bool)
+        self.direction_fallback = jnp.asarray(direction_fallback, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
 
 
@@ -824,7 +814,7 @@ class ConstrainedOptimalityCertificate(StrictModule):
         equality = jnp.asarray(equality_multipliers)
         inequality = jnp.asarray(inequality_multipliers)
         slacks_ = jnp.asarray(slacks)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if equality.ndim != 1 or inequality.ndim != 1 or slacks_.ndim != 1:
             raise ValueError("Canonical multipliers and slacks must be rank-one arrays.")
         if inequality.shape != slacks_.shape or inequality.shape != active.shape:

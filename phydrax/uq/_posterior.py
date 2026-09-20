@@ -44,10 +44,10 @@ class AbstractBijector(StrictModule):
 
 class _AbstractShapePreservingBijector(AbstractBijector):
     def forward_shape(self, raw_shape: tuple[int, ...], /) -> tuple[int, ...]:
-        return tuple(int(size) for size in raw_shape)
+        return tuple(raw_shape)
 
     def inverse_shape(self, physical_shape: tuple[int, ...], /) -> tuple[int, ...]:
-        return tuple(int(size) for size in physical_shape)
+        return tuple(physical_shape)
 
 
 class IdentityBijector(_AbstractShapePreservingBijector):
@@ -60,7 +60,7 @@ class IdentityBijector(_AbstractShapePreservingBijector):
         return jnp.asarray(value)
 
     def forward_log_det_jacobian(self, value: ArrayLike, /) -> Array:
-        return jnp.zeros_like(jnp.asarray(value), dtype=float)
+        return jnp.zeros_like(jnp.asarray(value), dtype=jnp.float64)
 
 
 class ExpBijector(_AbstractShapePreservingBijector):
@@ -76,7 +76,7 @@ class ExpBijector(_AbstractShapePreservingBijector):
         return jnp.log(array)
 
     def forward_log_det_jacobian(self, value: ArrayLike, /) -> Array:
-        return jnp.asarray(value, dtype=float)
+        return jnp.asarray(value, dtype=jnp.float64)
 
 
 class SigmoidIntervalBijector(_AbstractShapePreservingBijector):
@@ -86,8 +86,8 @@ class SigmoidIntervalBijector(_AbstractShapePreservingBijector):
     upper: Array
 
     def __init__(self, lower: ArrayLike, upper: ArrayLike):
-        lower_array = jnp.asarray(lower, dtype=float)
-        upper_array = jnp.asarray(upper, dtype=float)
+        lower_array = jnp.asarray(lower, dtype=jnp.float64)
+        upper_array = jnp.asarray(upper, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(lower_array))) or bool(
             jnp.any(~jnp.isfinite(upper_array))
         ):
@@ -129,14 +129,14 @@ class SimplexBijector(AbstractBijector):
         self.num_categories = categories
 
     def forward_shape(self, raw_shape: tuple[int, ...], /) -> tuple[int, ...]:
-        shape = tuple(int(size) for size in raw_shape)
+        shape = tuple(raw_shape)
         expected = self.num_categories - 1
         if not shape or shape[-1] != expected:
             raise ValueError(f"Simplex raw shape must end in {expected}; got {shape}.")
         return shape[:-1] + (self.num_categories,)
 
     def inverse_shape(self, physical_shape: tuple[int, ...], /) -> tuple[int, ...]:
-        shape = tuple(int(size) for size in physical_shape)
+        shape = tuple(physical_shape)
         if not shape or shape[-1] != self.num_categories:
             raise ValueError(
                 f"Simplex physical shape must end in {self.num_categories}; got {shape}."
@@ -147,7 +147,7 @@ class SimplexBijector(AbstractBijector):
         raw = jnp.asarray(value)
         if jnp.issubdtype(raw.dtype, jnp.complexfloating):
             raise TypeError("Simplex coordinates must be real-valued.")
-        if raw.ndim == 0 or int(raw.shape[-1]) != self.num_categories - 1:
+        if raw.ndim == 0 or raw.shape[-1] != self.num_categories - 1:
             raise ValueError(
                 "Simplex coordinates have an incompatible trailing dimension."
             )
@@ -159,7 +159,7 @@ class SimplexBijector(AbstractBijector):
         physical = jnp.asarray(value)
         if jnp.issubdtype(physical.dtype, jnp.complexfloating):
             raise TypeError("Simplex values must be real-valued.")
-        if physical.ndim == 0 or int(physical.shape[-1]) != self.num_categories:
+        if physical.ndim == 0 or physical.shape[-1] != self.num_categories:
             raise ValueError("Simplex values have an incompatible trailing dimension.")
         physical = physical.astype(jnp.result_type(physical, 0.0))
         tolerance = 64.0 * jnp.finfo(physical.dtype).eps * self.num_categories
@@ -337,7 +337,7 @@ class ParameterSpace(StrictModule):
             physical, self.physical_shapes, owner="Constrained position"
         )
         if self.custom_log_prior is not None:
-            value = jnp.asarray(self.custom_log_prior(physical), dtype=float)
+            value = jnp.asarray(self.custom_log_prior(physical), dtype=jnp.float64)
             if value.ndim != 0:
                 raise ValueError("Custom log_prior must return a scalar.")
             return value
@@ -384,8 +384,7 @@ class ParameterSpace(StrictModule):
             expected_shape = (count,) + physical_shape
             if samples.shape != expected_shape:
                 raise ValueError(
-                    "Prior sampling returned shape "
-                    f"{samples.shape}; expected {expected_shape}."
+                    f"Prior sampling returned shape {samples.shape}; expected {expected_shape}."
                 )
             return samples
 
@@ -420,8 +419,7 @@ class ParameterSpace(StrictModule):
                 or actual_shape[-len(expected_shape) :] != expected_shape
             ):
                 raise ValueError(
-                    f"{owner} leaf has trailing shape {actual_shape}; "
-                    f"expected {expected_shape}."
+                    f"{owner} leaf has trailing shape {actual_shape}; expected {expected_shape}."
                 )
 
 
@@ -497,7 +495,7 @@ class PosteriorProblem(StrictModule):
         return self.parameter_space.initial
 
     def log_likelihood(self, physical: PyTree[Any], /) -> Array:
-        value = jnp.asarray(self.log_likelihood_fn(physical), dtype=float)
+        value = jnp.asarray(self.log_likelihood_fn(physical), dtype=jnp.float64)
         if value.ndim != 0:
             raise ValueError("log_likelihood must return a scalar.")
         return value
@@ -551,7 +549,7 @@ class PosteriorProblem(StrictModule):
         if not jax.tree_util.tree_leaves(residual):
             raise ValueError("Gauss-Newton residuals must contain array leaves.")
         return jax.tree_util.tree_map(
-            lambda value: jnp.asarray(value, dtype=float),
+            lambda value: jnp.asarray(value, dtype=jnp.float64),
             residual,
         )
 
@@ -572,8 +570,8 @@ class PosteriorProblem(StrictModule):
 def _sum_tree(tree: PyTree[Any]) -> Array:
     leaves = jax.tree_util.tree_leaves(tree)
     if not leaves:
-        return jnp.zeros((), dtype=float)
-    return sum((jnp.asarray(leaf, dtype=float) for leaf in leaves), jnp.zeros(()))
+        return jnp.zeros((), dtype=jnp.float64)
+    return sum((jnp.asarray(leaf, dtype=jnp.float64) for leaf in leaves), jnp.zeros(()))
 
 
 __all__ = [

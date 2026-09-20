@@ -51,10 +51,14 @@ def test_bounded_execution_keeps_only_closures_and_preserves_transpose():
         "x",
         accuracy_order=4,
     )
-    reference = phx.discretization.FiniteDifferencePlan(
-        grid,
-        (request,),
-    ).prepare().operator("dx")
+    reference = (
+        phx.discretization.FiniteDifferencePlan(
+            grid,
+            (request,),
+        )
+        .prepare()
+        .operator("dx")
+    )
     execution = phx.discretization.lower_stencil_operator(reference)
     source = jnp.sin(2.0 * jnp.pi * grid.axes[0].nodes)
     target = jnp.cos(3.0 * jnp.pi * grid.axes[0].nodes)
@@ -62,7 +66,9 @@ def test_bounded_execution_keeps_only_closures_and_preserves_transpose():
     left = jnp.vdot(target, execution.mv(source))
     right = jnp.vdot(execution.transpose_mv(target), source)
 
-    np.testing.assert_allclose(execution.mv(source), reference.mv(source), rtol=2e-12, atol=2e-12)
+    np.testing.assert_allclose(
+        execution.mv(source), reference.mv(source), rtol=2e-12, atol=2e-12
+    )
     np.testing.assert_allclose(left, right, rtol=2e-12, atol=2e-12)
     assert execution.execution.report.closure_rows < 12
     assert execution.execution.report.interior_rows > 240
@@ -152,9 +158,7 @@ def test_distributed_physical_boundary_slots_are_zero_and_interior_is_explicit()
 
 
 def test_compact_metadata_is_independent_of_periodic_interior_size():
-    small = phx.discretization.lower_stencil_operator(
-        _periodic_fd(128).operator("d_x_2")
-    )
+    small = phx.discretization.lower_stencil_operator(_periodic_fd(128).operator("d_x_2"))
     large = phx.discretization.lower_stencil_operator(
         _periodic_fd(1024).operator("d_x_2")
     )

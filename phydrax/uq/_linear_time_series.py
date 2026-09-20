@@ -32,11 +32,11 @@ def _series(values: ArrayLike, mask: ArrayLike | None) -> tuple[Array, Array]:
     if data.shape[0] < 2:
         raise ValueError("values must contain at least two time points.")
     if not jnp.issubdtype(data.dtype, jnp.inexact):
-        data = data.astype(float)
+        data = data.astype("float64")
     valid = (
-        jnp.ones(data.shape, dtype=bool)
+        jnp.ones(data.shape, dtype=jnp.bool_)
         if mask is None
-        else jnp.asarray(mask, dtype=bool)
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     if valid.shape == (data.shape[0],) and data.ndim == 2:
         valid = jnp.broadcast_to(valid[:, None], data.shape)
@@ -59,7 +59,7 @@ def _difference(values: Array, valid: Array, order: int) -> tuple[Array, Array]:
 
 
 def _companion_radius(coefficients: Array) -> Array:
-    order = int(coefficients.shape[0])
+    order = coefficients.shape[0]
     if order == 0:
         return jnp.asarray(0.0, dtype=coefficients.dtype)
     companion = jnp.zeros((order, order), dtype=coefficients.dtype)
@@ -108,7 +108,7 @@ class ARIMAModel(StrictModule):
         ma = jnp.asarray(moving_average)
         if ar.ndim != 1 or ma.ndim != 1:
             raise ValueError("autoregressive and moving_average must be vectors.")
-        dtype = jnp.result_type(ar, ma, intercept, innovation_variance, float)
+        dtype = jnp.result_type(ar, ma, intercept, innovation_variance, jnp.float64)
         ar = ar.astype(dtype)
         ma = ma.astype(dtype)
         intercept_ = jnp.asarray(intercept, dtype=dtype)
@@ -137,9 +137,9 @@ class ARIMAModel(StrictModule):
         self.moving_average_radius = ma_radius
         self.stable = ar_radius < 1.0
         self.invertible = ma_radius < 1.0
-        self.p = int(ar.shape[0])
+        self.p = ar.shape[0]
         self.d = differencing_
-        self.q = int(ma.shape[0])
+        self.q = ma.shape[0]
 
     def forecast(
         self,
@@ -375,7 +375,7 @@ def augmented_dickey_fuller(
     masks = []
     if include_intercept:
         columns.append(jnp.ones_like(target))
-        masks.append(jnp.ones_like(target, dtype=bool))
+        masks.append(jnp.ones_like(target, dtype=jnp.bool_))
     columns.append(data[start - 1 : -1])
     masks.append(valid[start - 1 : -1])
     for lag in range(1, lags + 1):
@@ -458,14 +458,14 @@ class VARModel(StrictModule):
         covariance = jnp.asarray(innovation_covariance)
         if intercept_.ndim != 1:
             raise ValueError("intercept must have shape (variables,).")
-        dimension = int(intercept_.shape[0])
+        dimension = intercept_.shape[0]
         if matrices.ndim != 3 or matrices.shape[1:] != (dimension, dimension):
             raise ValueError("lag_matrices must have shape (lags, variables, variables).")
         if matrices.shape[0] < 1:
             raise ValueError("VAR requires at least one lag.")
         if covariance.shape != (dimension, dimension):
             raise ValueError("innovation_covariance must be square over variables.")
-        dtype = jnp.result_type(intercept_, matrices, covariance, float)
+        dtype = jnp.result_type(intercept_, matrices, covariance, jnp.float64)
         intercept_ = intercept_.astype(dtype)
         matrices = matrices.astype(dtype)
         covariance = covariance.astype(dtype)
@@ -475,7 +475,7 @@ class VARModel(StrictModule):
             | jnp.any(~jnp.isfinite(covariance))
         )
         intercept_ = eqx.error_if(intercept_, invalid, "VAR parameters must be finite.")
-        order = int(matrices.shape[0])
+        order = matrices.shape[0]
         companion = jnp.zeros((dimension * order, dimension * order), dtype=dtype)
         companion = companion.at[:dimension].set(
             jnp.concatenate(tuple(matrices[index] for index in range(order)), axis=-1)
@@ -577,7 +577,7 @@ def fit_var(
     masks = []
     if include_intercept:
         columns.append(jnp.ones((time_count - order_, 1), dtype=data.dtype))
-        masks.append(jnp.ones((time_count - order_,), dtype=bool))
+        masks.append(jnp.ones((time_count - order_,), dtype=jnp.bool_))
     for lag in range(1, order_ + 1):
         columns.append(data[order_ - lag : time_count - lag])
         masks.append(row_valid[order_ - lag : time_count - lag])
@@ -689,7 +689,7 @@ def test_cointegration(
     control_masks = []
     if deterministic == "constant":
         controls.append(jnp.ones((time_count - start, 1), dtype=data.dtype))
-        control_masks.append(jnp.ones((time_count - start,), dtype=bool))
+        control_masks.append(jnp.ones((time_count - start,), dtype=jnp.bool_))
     for lag in range(1, lags + 1):
         controls.append(difference[lags - lag : time_count - 1 - lag])
         control_masks.append(difference_valid[lags - lag : time_count - 1 - lag])
@@ -759,7 +759,7 @@ def test_cointegration(
             "critical_values must be finite and positive.",
         )
         rejected = trace_statistics > critical
-    sequential = jnp.cumprod(rejected.astype(jnp.int32)).astype(bool)
+    sequential = jnp.cumprod(rejected.astype(jnp.int32)).astype("bool")
     selected = jnp.sum(sequential).astype(jnp.int32)
     condition = s11_floor[-1] / s11_floor[0]
     valid_result = (
@@ -860,7 +860,7 @@ def fit_vecm(
     data, component_valid = _series(values, mask)
     if data.ndim != 2:
         raise ValueError("VECM values must have shape (time, variables).")
-    dimension = int(data.shape[1])
+    dimension = data.shape[1]
     rank_ = int(rank)
     lags = int(lag_differences)
     if not 1 <= rank_ < dimension:
@@ -886,7 +886,7 @@ def fit_vecm(
     masks = []
     if include_intercept:
         columns.append(jnp.ones((time_count - start, 1), dtype=data.dtype))
-        masks.append(jnp.ones((time_count - start,), dtype=bool))
+        masks.append(jnp.ones((time_count - start,), dtype=jnp.bool_))
     columns.append(lagged_level @ beta)
     masks.append(row_valid[start - 1 : time_count - 1])
     for lag in range(1, lags + 1):

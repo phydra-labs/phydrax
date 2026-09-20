@@ -188,10 +188,10 @@
       "sha256": "a88db7f8f92c0ddd460057a60acca5bb65cd7c9b5b6930aeb550bc4679c7f133",
       "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/geometry_with_aponeurosis.png"
     },
-    "other_resources/mg_fibres_active.png": {
+    "other_resources/mg_fibers_active.png": {
       "bytes": 1664456,
       "sha256": "bceaac022ad2992de518604a4af9a0b27cf3533f6dd53e2d939284c285ecab6e",
-      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/mg_fibres_active.png"
+      "url": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/mg_fibers_active.png"
     },
     "parameters.prm": {
       "bytes": 8490,

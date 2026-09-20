@@ -41,15 +41,15 @@ def _grid(nx: int = 7, ny: int = 7, oversampling: int = 3):
 def _operator_and_plic(kind: str = "circle"):
     discretization, gradient = _grid(oversampling=8 if kind == "circle" else 3)
     vof = UnstructuredVOFPlan(discretization, gradient)
-    centres = np.asarray(discretization.cell_centers)
+    centers = np.asarray(discretization.cell_centers)
     if kind == "planar":
         alpha = jnp.asarray(
-            np.clip(0.5 + 0.5 * (centres[:, 0] - 3.5), 0.0, 1.0),
+            np.clip(0.5 + 0.5 * (centers[:, 0] - 3.5), 0.0, 1.0),
             dtype=jnp.float32,
         )
     else:
         radius = 2.1
-        distance = np.sqrt((centres[:, 0] - 3.5) ** 2 + (centres[:, 1] - 3.5) ** 2)
+        distance = np.sqrt((centers[:, 0] - 3.5) ** 2 + (centers[:, 1] - 3.5) ** 2)
         alpha = jnp.asarray(np.clip(0.5 + radius - distance, 0.0, 1.0), dtype=jnp.float32)
     plic = vof.reconstruct(alpha)
     operator = BalancedCapillaryOperator(

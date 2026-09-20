@@ -368,7 +368,7 @@ def _soft_ranks(scores: Array, weights: Array, temperature: float) -> Array:
     comparison = jax.nn.sigmoid(
         (scores[..., None, :] - scores[..., :, None]) / float(temperature)
     )
-    identity = jnp.eye(scores.shape[-1], dtype=bool)
+    identity = jnp.eye(scores.shape[-1], dtype=jnp.bool_)
     comparison = jnp.where(identity | ~active[..., None, :], 0.0, comparison)
     return 1.0 + jnp.sum(comparison, axis=-1)
 

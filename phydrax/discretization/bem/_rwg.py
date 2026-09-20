@@ -85,7 +85,7 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
         )
         space_id = canonical_fingerprint(
             {
-                "kind": "rwg-surface-current-space-3d-v1",
+                "kind": "rwg-surface-current-space-3d",
                 "surface": surface.complex_id,
                 "layout": layout.layout_id,
                 "coefficient_dtype": dtype.str,
@@ -93,7 +93,7 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
         )
         pairing_id = canonical_fingerprint(
             {
-                "kind": "rwg-tangential-trace-pairing-3d-v1",
+                "kind": "rwg-tangential-trace-pairing-3d",
                 "space": space_id,
             }
         )
@@ -105,7 +105,7 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
             dtype=coefficient_space.dtype,
             space_id=canonical_fingerprint(
                 {
-                    "kind": "rwg-surface-divergence-range-3d-v1",
+                    "kind": "rwg-surface-divergence-range-3d",
                     "surface": surface.complex_id,
                     "coefficient_dtype": coefficient_space.dtype.str,
                 }

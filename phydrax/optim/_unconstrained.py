@@ -16,6 +16,15 @@ from jaxtyping import Array, PyTree
 from .._iteration import IterationPlan
 from .._linear_refresh import LinearRefreshState
 from .._strict import StrictModule
+from .._tree_math import (
+    tree_add_scaled as _tree_add_scaled,
+    tree_allfinite as _tree_allfinite,
+    tree_inner as _tree_inner,
+    tree_negative as _tree_negative,
+    tree_norm as _tree_norm,
+    tree_where as _tree_where,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ..linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -33,13 +42,6 @@ from ._iterative._globalization import (
     StrongWolfeLineSearch,
 )
 from ._iterative._types import (
-    _tree_add_scaled,
-    _tree_allfinite,
-    _tree_inner,
-    _tree_negative,
-    _tree_norm,
-    _tree_where,
-    _validate_real_inexact_tree,
     IterativeStepMetrics,
     MinimizationProblem,
     MinimizationResult,
@@ -613,7 +615,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
     def init(self, parameters: PyTree[Any], /) -> DenseNewtonDoglegState:
         parameters = _validate_real_inexact_tree(parameters, name="parameters")
         flat, _ = ravel_pytree(parameters)
-        if int(flat.size) > self.max_dense_dimension:
+        if flat.size > self.max_dense_dimension:
             raise ValueError(
                 f"DenseNewtonDogleg has {flat.size} variables, exceeding "
                 f"max_dense_dimension={self.max_dense_dimension}."
@@ -649,7 +651,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
         if not isinstance(state, DenseNewtonDoglegState):
             raise TypeError("state must be a DenseNewtonDoglegState.")
         flat_parameters, unravel = ravel_pytree(parameters)
-        if int(flat_parameters.size) > self.max_dense_dimension:
+        if flat_parameters.size > self.max_dense_dimension:
             raise ValueError(
                 f"DenseNewtonDogleg has {flat_parameters.size} variables, exceeding "
                 f"max_dense_dimension={self.max_dense_dimension}."

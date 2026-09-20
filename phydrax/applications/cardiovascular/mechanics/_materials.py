@@ -97,7 +97,7 @@ def _point_deformation(value: ArrayLike, /) -> Array:
     if deformation.shape != (3, 3):
         raise ValueError("Cardiac material-point deformation gradients must be 3x3.")
     if not jnp.issubdtype(deformation.dtype, jnp.inexact):
-        deformation = deformation.astype(float)
+        deformation = deformation.astype("float64")
     if jnp.issubdtype(deformation.dtype, jnp.complexfloating):
         raise TypeError("Cardiac deformation gradients must be real.")
     return deformation
@@ -136,7 +136,7 @@ def material_frame_evidence(
     if frame.shape != (3, 3):
         raise ValueError("A material frame must be one 3x3 array with basis columns.")
     if not jnp.issubdtype(frame.dtype, jnp.inexact):
-        frame = frame.astype(float)
+        frame = frame.astype("float64")
     if jnp.issubdtype(frame.dtype, jnp.complexfloating):
         raise TypeError("Material-frame vectors must be real.")
     gram = frame.T @ frame
@@ -171,8 +171,7 @@ def validate_material_frame(
     )
     if not bool(evidence.valid):
         raise ValueError(
-            "Material frame must be finite, orthonormal, and right-handed with "
-            "columns (fiber, sheet, sheet-normal)."
+            "Material frame must be finite, orthonormal, and right-handed with columns (fiber, sheet, sheet-normal)."
         )
     return jnp.asarray(material_frame)
 

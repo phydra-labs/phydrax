@@ -81,7 +81,7 @@ class LowRankBoundaryCorrectionPlan(StrictModule, NonTrainableState):
     ) -> Array:
         rhs = jnp.asarray(right_hand_side)
         boundary = jnp.asarray(boundary_values)
-        dimension = int(self.operator.shape[0])
+        dimension = self.operator.shape[0]
         if rhs.shape != (dimension,) or boundary.shape != self.boundary_indices.shape:
             raise ValueError(
                 "Boundary correction RHS or boundary values have wrong shape."

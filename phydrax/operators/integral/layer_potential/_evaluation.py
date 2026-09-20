@@ -67,15 +67,14 @@ class LayerEvaluationPlan2D(StrictModule, NonTrainableState):
         self.adaptive_plan = adaptive_plan_
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "layer-evaluation-plan-2d-v4",
+                "kind": "layer-evaluation-plan-2d",
                 "method": method,
                 "accuracy_clearance": clearance,
                 "near_ratio": ratio,
                 "qbx_order": order,
                 "qbx_radius_factor": radius_factor,
                 "adaptive_rule": (
-                    f"{type(adaptive_plan_.rule).__module__}."
-                    f"{type(adaptive_plan_.rule).__qualname__}"
+                    f"{type(adaptive_plan_.rule).__module__}.{type(adaptive_plan_.rule).__qualname__}"
                 ),
                 "adaptive_rule_data": array_tree_fingerprint(adaptive_plan_.rule),
                 "adaptive_max_intervals": adaptive_plan_.max_intervals,
@@ -137,14 +136,16 @@ class LayerEvaluationReport(StrictModule, NonTrainableState):
         self.error_estimate = jnp.asarray(error_estimate)
         self.error_kind = str(error_kind)
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
-        self.accuracy_supported = jnp.asarray(accuracy_supported, dtype=bool).reshape(())
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
+        self.accuracy_supported = jnp.asarray(
+            accuracy_supported, dtype=jnp.bool_
+        ).reshape(())
         self.near_panel_count = int(near_panel_count)
         self.far_panel_count = int(far_panel_count)
         self.failed_panel_count = int(failed_panel_count)
         self.evaluation_id = canonical_fingerprint(
             {
-                "kind": "layer-evaluation-report-v2",
+                "kind": "layer-evaluation-report",
                 "plan_id": self.plan_id,
                 "representation_id": self.representation_id,
                 "target_fingerprint": self.target_fingerprint,
@@ -215,7 +216,7 @@ def evaluate_layer_potential(
         raise TypeError("Layer evaluation requires a supported 2D layer representation.")
     if not isinstance(plan, LayerEvaluationPlan2D):
         raise TypeError("plan must be a LayerEvaluationPlan2D.")
-    targets_ = jnp.asarray(targets, dtype=float)
+    targets_ = jnp.asarray(targets, dtype=jnp.float64)
     single = targets_.ndim == 1
     if single:
         targets_ = targets_[None, :]
@@ -241,8 +242,7 @@ def evaluate_layer_potential(
             and bool(jnp.all(jnp.any(node_collision, axis=1)))
         ):
             raise ValueError(
-                "Boundary targets require QBX or adaptive single-layer "
-                "self correction at source nodes."
+                "Boundary targets require QBX or adaptive single-layer self correction at source nodes."
             )
     elif not bool(target_report.pde_membership_valid):
         raise ValueError("Layer evaluators require targets in the declared target side.")

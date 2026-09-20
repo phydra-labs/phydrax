@@ -33,9 +33,9 @@ def _prepared_bodies(count=1, *, dimension=2, fixed_mask=None):
         else jnp.broadcast_to(jnp.eye(3), (count, 3, 3))
     )
     fixed = (
-        jnp.zeros((count,), dtype=bool)
+        jnp.zeros((count,), dtype="bool")
         if fixed_mask is None
-        else jnp.asarray(fixed_mask, dtype=bool)
+        else jnp.asarray(fixed_mask, dtype="bool")
     )
     bodies = phx.discretization.RigidBodySetPlan(
         jnp.zeros((count,), dtype=jnp.int32),
@@ -79,7 +79,7 @@ def _geometry(
     valid=True,
     successful=True,
 ):
-    normal = jnp.asarray(normal, dtype=float).reshape((1, -1))
+    normal = jnp.asarray(normal, dtype="float64").reshape((1, -1))
     relative = jnp.asarray(relative_velocity, dtype=normal.dtype).reshape((1, -1))
     dimension = normal.shape[-1]
     left_arm = (

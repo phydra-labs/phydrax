@@ -143,7 +143,7 @@ class TensorNetworkInterchangeDataset(StrictModule, NonTrainableState):
         payload_sha256: str,
     ):
         name_ = _dataset_name(name)
-        shape_ = tuple(int(value) for value in shape)
+        shape_ = tuple(shape)
         if any(value < 0 for value in shape_):
             raise ValueError("Interchange dataset dimensions must be nonnegative.")
         dtype_ = np.dtype(_identifier(dtype, "dataset dtype"))
@@ -648,8 +648,8 @@ def _preflight_arrays(
             raise TensorNetworkInterchangeSecurityError(
                 f"interchange dataset {name!r} elements exceed capacity"
             )
-        total_elements += int(value.size)
-        total_bytes += int(value.nbytes)
+        total_elements += value.size
+        total_bytes += value.nbytes
         if total_elements > limits.maximum_total_elements:
             raise TensorNetworkInterchangeSecurityError(
                 "interchange total elements exceed capacity"
@@ -696,7 +696,7 @@ def make_tensor_network_interchange_manifest(
                 value.dtype.str,
                 axis_labels=axis_labels[name],
                 role=roles[name],
-                payload_bytes=int(value.nbytes),
+                payload_bytes=value.nbytes,
                 payload_sha256=_payload_digest(value),
             )
         )
@@ -740,7 +740,7 @@ def validate_tensor_network_interchange(
             mismatches.append(f"{name}:shape")
         if value.dtype.str != dataset.dtype:
             mismatches.append(f"{name}:dtype")
-        if int(value.nbytes) != dataset.payload_bytes:
+        if value.nbytes != dataset.payload_bytes:
             mismatches.append(f"{name}:bytes")
         if _payload_digest(value) != dataset.payload_sha256:
             mismatches.append(f"{name}:digest")

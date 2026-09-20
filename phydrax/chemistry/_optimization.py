@@ -124,7 +124,7 @@ class MolecularGeometryOptimizationResult(StrictModule, NonTrainableState):
         maximum = jnp.asarray(maximum_force).reshape(())
         rms = jnp.asarray(rms_force, dtype=maximum.dtype).reshape(())
         evaluations = jnp.asarray(provider_evaluations, dtype=jnp.int32).reshape(())
-        successful_ = jnp.asarray(successful, dtype=bool).reshape(())
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.initial_structure = initial_structure
         self.final_structure = final_structure
         self.final_evaluation = final_evaluation
@@ -226,7 +226,7 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
         initial = np.asarray(
             structure.positions, dtype=np.dtype(self.system.coordinate_dtype)
         )
-        mobile = np.asarray(self.system.mobile_mask, dtype=bool)
+        mobile = np.asarray(self.system.mobile_mask, dtype=np.bool_)
         if not np.any(mobile):
             raise ValueError("Geometry optimization requires at least one mobile atom.")
         cell = None if structure.cell is None else np.asarray(structure.cell)
@@ -315,7 +315,7 @@ def _require_structure_matches_system(
 ) -> None:
     if structure.scale.scale_id != system.units.scale.scale_id:
         raise ValueError("Structure and optimization system scales differ.")
-    active = np.asarray(system.active_mask, dtype=bool)
+    active = np.asarray(system.active_mask, dtype=np.bool_)
     comparisons = (
         np.array_equal(
             np.asarray(structure.particle_ids), np.asarray(system.particle_ids)
@@ -338,8 +338,8 @@ def _require_structure_matches_system(
             )
             and structure.periodic_axes is not None
             and np.array_equal(
-                np.asarray(structure.periodic_axes, dtype=bool),
-                np.asarray(system.cell.periodic_axes, dtype=bool),
+                np.asarray(structure.periodic_axes, dtype=np.bool_),
+                np.asarray(system.cell.periodic_axes, dtype=np.bool_),
             )
         )
     comparisons = (*comparisons, cell_matches)

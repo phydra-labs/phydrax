@@ -317,7 +317,7 @@ def _indices(values, variables, name):
         for value in original
     ):
         raise TypeError(f"{name}_indices must contain integers.")
-    resolved = tuple(int(value) for value in original)
+    resolved = tuple(original)
     if len(set(resolved)) != len(resolved) or any(
         value < 0 or value >= variables for value in resolved
     ):

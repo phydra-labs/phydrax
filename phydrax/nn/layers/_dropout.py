@@ -78,8 +78,7 @@ class Dropout(_AbstractBaseModel):
                 value.ndim < value_rank or value.shape[-value_rank:] != self._value_shape
             ):
                 raise ValueError(
-                    "Feature dropout expected trailing value shape "
-                    f"{self._value_shape}, got {value.shape}."
+                    f"Feature dropout expected trailing value shape {self._value_shape}, got {value.shape}."
                 )
             if value_rank:
                 mask_shape = (1,) * (value.ndim - value_rank) + self._value_shape

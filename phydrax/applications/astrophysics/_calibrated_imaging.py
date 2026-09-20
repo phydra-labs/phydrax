@@ -37,7 +37,7 @@ class ImagingCalibration(StrictModule, NonTrainableState):
         if any(value.shape != shape for value in arrays[1:]):
             raise ValueError("Imaging calibration arrays must share one shape.")
         self.bias, self.dark_rate, self.flat, self.gain, mask, self.saturation = arrays
-        self.bad_pixel_mask = mask.astype(bool)
+        self.bad_pixel_mask = mask.astype("bool")
         self.provenance = provenance
         self.calibration_id = canonical_fingerprint(
             {

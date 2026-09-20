@@ -121,7 +121,7 @@ class ClassicalYangMillsPlan(StrictModule, NonTrainableState):
         gauss_tolerance: float = 1.0e-8,
         courant_limit: float = 0.5,
     ):
-        shape = tuple(int(value) for value in lattice_shape)
+        shape = tuple(lattice_shape)
         spacing_ = tuple(float(value) for value in spacing)
         dimension = len(shape)
         electric = float(electric_coupling)

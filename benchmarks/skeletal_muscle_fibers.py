@@ -32,7 +32,7 @@ _SOLVER_STRUCTURE = {
 
 
 def _case(fiber_count: int, node_count: int) -> dict[str, object]:
-    mask = jnp.zeros((1, fiber_count, node_count), dtype=bool).at[0, :, 0].set(True)
+    mask = jnp.zeros((1, fiber_count, node_count), dtype="bool").at[0, :, 0].set(True)
     schedule = PrescribedFiberStimulusSchedule(
         jnp.asarray([0.0]),
         jnp.asarray([0.05]),

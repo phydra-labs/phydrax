@@ -819,7 +819,7 @@ def c2_binary_interface_profiles(
     hardware: LatticeBoltzmannHardwareTarget | None = None,
     dynamic_wetting: ConstitutiveDynamicWettingPlan | None = None,
 ) -> tuple[LatticeBoltzmannQualificationProfile, ...]:
-    """Return selected free-energy and colour-gradient binary-interface candidates."""
+    """Return selected free-energy and color-gradient binary-interface candidates."""
 
     precision_ = _selected_precision(precision)
     hardware_ = _selected_hardware(hardware)
@@ -833,13 +833,13 @@ def c2_binary_interface_profiles(
     for family, wetting_label in (
         ("binary-free-energy", "natural-cubic-wall-energy"),
         (
-            "binary-colour-gradient",
+            "binary-color-gradient",
             "static-contact-angle"
             if dynamic_wetting is None
             else dynamic_wetting.model_label,
         ),
     ):
-        selected_dynamic = dynamic_wetting if family == "binary-colour-gradient" else None
+        selected_dynamic = dynamic_wetting if family == "binary-color-gradient" else None
         claims = interface_claims + (
             (LatticeBoltzmannQualificationClaim.DYNAMIC_WETTING,)
             if selected_dynamic is not None
@@ -880,7 +880,7 @@ def c2_dynamic_wetting_profile(
     precision: LatticeBoltzmannPrecisionPolicy | None = None,
     hardware: LatticeBoltzmannHardwareTarget | None = None,
 ) -> LatticeBoltzmannQualificationProfile:
-    """Return only the colour-gradient tuple bound to a constitutive wetting law."""
+    """Return only the color-gradient tuple bound to a constitutive wetting law."""
 
     if not isinstance(dynamic_wetting, ConstitutiveDynamicWettingPlan):
         raise TypeError("dynamic_wetting must be ConstitutiveDynamicWettingPlan.")

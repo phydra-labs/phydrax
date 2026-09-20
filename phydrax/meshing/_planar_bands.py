@@ -146,8 +146,7 @@ class PlanarBandPlan:
             requested_sides = tuple(region for region, _ in control.side_schedules)
             if tuple(sorted(requested_sides)) != tuple(sorted(patch.adjacent_region_ids)):
                 raise ValueError(
-                    "Planar band side schedules must name every patch-adjacent region "
-                    "exactly once."
+                    "Planar band side schedules must name every patch-adjacent region exactly once."
                 )
             if len(patch.entity_ids) != 1:
                 raise ValueError(
@@ -265,10 +264,12 @@ def _curve_segment(edge: Any, embedding: PlanarEmbedding, /) -> np.ndarray:
         for parameter in (curve.FirstParameter(), curve.LastParameter())
     )
     world = np.asarray(
-        tuple((point.X(), point.Y(), point.Z()) for point in points), dtype=float
+        tuple((point.X(), point.Y(), point.Z()) for point in points), dtype=np.float64
     )
     tolerance = (
-        512.0 * np.finfo(float).eps * max(1.0, float(np.max(np.abs(world), initial=0.0)))
+        512.0
+        * np.finfo(np.float64).eps
+        * max(1.0, float(np.max(np.abs(world), initial=0.0)))
     )
     if np.max(np.abs(embedding.plane_residual(world)), initial=0.0) > tolerance:
         raise ValueError("A planar band patch lies outside the declared embedding.")
@@ -293,7 +294,7 @@ def _rectangle(
             segment[1] + upper * inward,
             segment[0] + upper * inward,
         ),
-        dtype=float,
+        dtype=np.float64,
     )
     signed_area = 0.5 * np.sum(
         points[:, 0] * np.roll(points[:, 1], -1)
@@ -348,7 +349,7 @@ def _rectangles_overlap(
     for polygon in (first, second):
         for index in range(2):
             edge = polygon[index + 1] - polygon[index]
-            normal = np.asarray((-edge[1], edge[0]), dtype=float)
+            normal = np.asarray((-edge[1], edge[0]), dtype=np.float64)
             normal /= np.linalg.norm(normal)
             axes.append(normal)
     for axis in axes:
@@ -488,7 +489,7 @@ def prepare_planar_bands(
         1.0,
         float(np.max(np.abs(np.asarray(source.model.mesh_vertices)), initial=0.0)),
     )
-    tolerance = 4096.0 * np.finfo(float).eps * scale
+    tolerance = 4096.0 * np.finfo(np.float64).eps * scale
     region_by_face = {
         entity.index: region.name
         for region in source.regions
@@ -568,7 +569,7 @@ def prepare_planar_bands(
                     "A planar band lacks unique collision-free clearance inside its adjacent region."
                 )
             inward = matching_normals[0]
-            cumulative = np.cumsum(np.asarray(schedule.thicknesses, dtype=float))
+            cumulative = np.cumsum(np.asarray(schedule.thicknesses, dtype=np.float64))
             lower = 0.0
             for layer_index, upper in enumerate(cumulative):
                 temporary = f"__planar_band__:{control_index}:{region_name}:{layer_index}"
@@ -580,11 +581,12 @@ def prepare_planar_bands(
                     temporary,
                 )
                 rectangle_shape = _face_from_mesh(rectangle, plan.embedding)
-                rectangle_points = np.asarray(rectangle.vertices, dtype=float)
+                rectangle_points = np.asarray(rectangle.vertices, dtype=np.float64)
                 for other_name, other_points, other_shape in occupied_rectangles:
-                    if _rectangles_overlap(
-                        rectangle_points, other_points, tolerance
-                    ) and _common_area(rectangle_shape, other_shape) > tolerance**2:
+                    if (
+                        _rectangles_overlap(rectangle_points, other_points, tolerance)
+                        and _common_area(rectangle_shape, other_shape) > tolerance**2
+                    ):
                         raise ValueError(
                             f"Planar bands {control.patch_name!r} and {other_name!r} collide."
                         )

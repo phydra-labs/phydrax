@@ -157,9 +157,9 @@ def test_discrete_interior_sensor_track_custom_weights_zero():
     def u(x, t):
         return 1.0
 
-    sensors = jnp.array([[0.2], [0.8]], dtype=float)
-    times = jnp.array([0.25, 0.5, 0.75], dtype=float)
-    sensor_values = jnp.ones((2, 3), dtype=float)
+    sensors = jnp.array([[0.2], [0.8]], dtype="float64")
+    times = jnp.array([0.25, 0.5, 0.75], dtype="float64")
+    sensor_values = jnp.ones((2, 3), dtype="float64")
     lengthscales = {"x": 0.3}
     assert sensors.shape == (2, 1)
     assert times.shape == (3,)
@@ -178,7 +178,7 @@ def test_pointset_constraint_weighted_sum():
     def u(x):
         return 1.0
 
-    points = {"x": jnp.array([[0.1], [0.4], [0.9]], dtype=float)}
+    points = {"x": jnp.array([[0.1], [0.4], [0.9]], dtype="float64")}
     condition = Residual("u", component, lambda field: field)
     source = _fixed_source(
         phx.integration.mean_over(condition.on),
@@ -232,7 +232,7 @@ def test_ode_constraints_relabel_nonuniform_times():
     continuous = ResidualPenalty(condition, _per_step(condition, 32))
     assert _jit_loss(continuous, {"u": u}) < 1e-6
 
-    times = jnp.array([0.0, 0.1, 0.4, 1.0], dtype=float)
+    times = jnp.array([0.0, 0.1, 0.4, 1.0], dtype="float64")
     discrete = ResidualPenalty(
         condition,
         _fixed_source(
@@ -295,11 +295,11 @@ def test_discrete_interior_sensor_track_coord_separable_multilabel():
         return 1.0
 
     sensors = {
-        "x": jnp.array([[0.2], [0.8]], dtype=float),
-        "y": jnp.array([[0.3], [0.7]], dtype=float),
+        "x": jnp.array([[0.2], [0.8]], dtype="float64"),
+        "y": jnp.array([[0.3], [0.7]], dtype="float64"),
     }
-    times = jnp.array([0.25, 0.75], dtype=float)
-    sensor_values = jnp.ones((2, 2), dtype=float)
+    times = jnp.array([0.25, 0.75], dtype="float64")
+    sensor_values = jnp.ones((2, 2), dtype="float64")
     assert sensors["x"].shape == sensors["y"].shape
     assert times.shape == (2,)
 
@@ -352,7 +352,7 @@ def test_coord_separable_div_diag_k_grad_jet_zero():
 
     @geom.Function("x")
     def k_vec(x):
-        return jnp.array([1.0], dtype=float)
+        return jnp.array([1.0], dtype="float64")
 
     condition = Residual(
         "u",

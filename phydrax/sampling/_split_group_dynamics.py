@@ -80,8 +80,8 @@ class SplitGroupTarget(StrictModule):
             raise ValueError("force_terms must contain between one and 64 terms.")
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("geometry must implement AbstractStateGeometry.")
-        point_shape = tuple(int(size) for size in configuration_shape)
-        local_shape = tuple(int(size) for size in local_coordinate_shape)
+        point_shape = tuple(configuration_shape)
+        local_shape = tuple(local_coordinate_shape)
         if (
             not point_shape
             or not local_shape
@@ -154,8 +154,7 @@ class SplitGroupDynamicsPlan(StrictModule):
             or depth > 20
         ):
             raise ValueError(
-                "Step size must be positive, trajectory_steps at most 1000000, "
-                "and maximum_tree_depth in [1, 20]."
+                "Step size must be positive, trajectory_steps at most 1000000, and maximum_tree_depth in [1, 20]."
             )
         if not 0.0 <= persistence < 1.0 or not np.isfinite(persistence):
             raise ValueError("momentum_persistence must lie in [0, 1).")
@@ -367,7 +366,7 @@ def prepare_split_group_dynamics(
     metric = (
         jnp.ones(target.local_coordinate_shape)
         if inverse_mass is None
-        else jnp.asarray(inverse_mass, dtype=float)
+        else jnp.asarray(inverse_mass, dtype=jnp.float64)
     )
     if metric.shape != target.local_coordinate_shape or jnp.iscomplexobj(metric):
         raise ValueError("inverse_mass must match the target local-coordinate shape.")
@@ -742,7 +741,7 @@ def _nuts_reference_transition(prepared, state, key):
             next_count = valid_count + leaf_valid.astype(jnp.int32)
             choose_key = derive_key(tree_key, _NUTS_ADDRESS, 2, depth, offset)
             choose = leaf_valid & (
-                jr.uniform(choose_key) < 1.0 / next_count.astype(float)
+                jr.uniform(choose_key) < 1.0 / next_count.astype("float64")
             )
             candidate_q = jnp.where(choose, next_q, candidate_q)
             candidate_p = jnp.where(choose, next_p, candidate_p)

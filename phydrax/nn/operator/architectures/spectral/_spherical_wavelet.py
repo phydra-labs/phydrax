@@ -64,12 +64,12 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(discretization, SphericalSpectralDiscretization):
             raise TypeError("discretization must be SphericalSpectralDiscretization.")
-        angles = jnp.asarray(orientations, dtype=float)
-        if angles.ndim != 2 or angles.shape[-1] != 3 or int(angles.shape[0]) == 0:
+        angles = jnp.asarray(orientations, dtype=jnp.float64)
+        if angles.ndim != 2 or angles.shape[-1] != 3 or angles.shape[0] == 0:
             raise ValueError("orientations must have shape (orientation, 3).")
         if bool(jnp.any(~jnp.isfinite(angles))):
             raise ValueError("orientations must be finite.")
-        scale_values = tuple(int(value) for value in scales)
+        scale_values = tuple(scales)
         if not scale_values or any(value < 0 for value in scale_values):
             raise ValueError("scales must be a nonempty tuple of nonnegative indices.")
         azimuthal = int(azimuthal_bandlimit)
@@ -83,7 +83,7 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
         if orientation_weights is None:
             weights = jnp.full((angles.shape[0],), 1.0 / angles.shape[0])
         else:
-            weights = jnp.asarray(orientation_weights, dtype=float)
+            weights = jnp.asarray(orientation_weights, dtype=jnp.float64)
             if weights.shape != (angles.shape[0],):
                 raise ValueError("orientation_weights must match the orientation count.")
             if (
@@ -100,16 +100,10 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
         limit = discretization.layout.bandlimit
         order_count = 2 * limit - 1
         wigner_bytes = (
-            int(angles.shape[0])
-            * limit
-            * order_count**2
-            * jnp.dtype(jnp.complex128).itemsize
+            angles.shape[0] * limit * order_count**2 * jnp.dtype(jnp.complex128).itemsize
         )
         analysis_bytes = (
-            int(angles.shape[0])
-            * limit
-            * order_count
-            * jnp.dtype(jnp.complex128).itemsize
+            angles.shape[0] * limit * order_count * jnp.dtype(jnp.complex128).itemsize
         )
         path_bytes = (
             order
@@ -117,7 +111,7 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
             * (2 * order * jnp.dtype(jnp.int32).itemsize + jnp.dtype(jnp.bool_).itemsize)
         )
         recursive_bytes = capacity * (
-            int(angles.shape[0]) * jnp.dtype(jnp.complex128).itemsize
+            angles.shape[0] * jnp.dtype(jnp.complex128).itemsize
             + limit * order_count * jnp.dtype(jnp.complex128).itemsize
             + order * jnp.dtype(jnp.float64).itemsize
         )
@@ -157,7 +151,7 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
             )
         path_indices = jnp.asarray(index_rows, dtype=jnp.int32)
         path_scales = jnp.asarray(scale_rows, dtype=jnp.int32)
-        path_mask = jnp.asarray(mask_rows, dtype=bool)
+        path_mask = jnp.asarray(mask_rows, dtype=jnp.bool_)
 
         rotation_plan = SphericalRotationPlan(
             discretization.layout,
@@ -183,7 +177,7 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
         full_column_count = discretization.layout.logical_mode_count
         lower_bound = (
             singular_values[-1] ** 2
-            if int(angles.shape[0]) >= full_column_count
+            if angles.shape[0] >= full_column_count
             else jnp.zeros((), dtype=upper_bound.dtype)
         )
         rank_tolerance = (
@@ -192,12 +186,11 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
             * singular_values[0]
         )
         if order > 1 and (
-            int(angles.shape[0]) < full_column_count
+            angles.shape[0] < full_column_count
             or not bool(singular_values[-1] > rank_tolerance)
         ):
             raise ValueError(
-                "Recursive orientation samples and weights must form a full-rank "
-                "weighted Wigner n=0 analysis frame."
+                "Recursive orientation samples and weights must form a full-rank weighted Wigner n=0 analysis frame."
             )
         self.discretization = discretization
         self.orientations = angles
@@ -289,22 +282,21 @@ class DirectionalSphericalWaveletLayer(StrictModule):
         return result.reshape(
             (
                 len(self.plan.scales),
-                int(self.plan.orientations.shape[0]),
+                self.plan.orientations.shape[0],
             )
             + payload_shape
         )
 
     def _project_orientation_payload(self, payload: Array, /) -> Array:
         """Apply the prepared weighted Wigner n=0 scalar S2 analysis."""
-        orientation_count = int(self.plan.orientations.shape[0])
+        orientation_count = self.plan.orientations.shape[0]
         if payload.ndim < 2 or payload.shape[-2] != orientation_count:
             raise ValueError(
-                "Directional samples must end in (orientation, channel) with "
-                f"orientation count {orientation_count}."
+                f"Directional samples must end in (orientation, channel) with orientation count {orientation_count}."
             )
         values = jnp.asarray(payload)
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         values = eqx.error_if(
             values,
             jnp.any(~jnp.isfinite(values)),
@@ -330,7 +322,7 @@ class DirectionalSphericalWaveletLayer(StrictModule):
     def project_orientation_samples(self, samples: ArrayLike, /) -> Array:
         """Project one declared orientation sample field to spherical coefficients."""
         values = jnp.asarray(samples)
-        orientation_count = int(self.plan.orientations.shape[0])
+        orientation_count = self.plan.orientations.shape[0]
         if values.ndim >= 1 and values.shape[-1] == orientation_count:
             return self._project_orientation_payload(values[..., None])[..., 0]
         if values.ndim >= 2 and values.shape[-2] == orientation_count:
@@ -364,7 +356,7 @@ class SphericalWaveletScattering(StrictModule):
         directional = jnp.abs(self.layer(coefficients))
         current = directional if channel_last else directional[..., None]
         scale_count = len(self.layer.plan.scales)
-        orientation_count = int(self.layer.plan.orientations.shape[0])
+        orientation_count = self.layer.plan.orientations.shape[0]
         capacity = self.layer.plan.path_capacity
         weights = self.layer.plan.orientation_weights
         features = []

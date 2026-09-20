@@ -174,7 +174,7 @@ def import_eqdsk(
         source_id=accounted.manifest.manifest_id,
         target_id=equilibrium.equilibrium_id,
         coordinate_mapping=(
-            "source R-Z coordinates preserved in metres",
+            "source R-Z coordinates preserved in meters",
             f"poloidal flux multiplied by {psi_factor:.17g}",
             f"toroidal field and F multiplied by {field_factor:.17g}",
             f"plasma current multiplied by {transform.plasma_current_factor:.17g}",
@@ -194,7 +194,7 @@ def import_eqdsk(
         ),
         assumptions=(
             "caller supplied the complete source magnetic convention",
-            "G-EQDSK coordinates are metres and pressure is pascals",
+            "G-EQDSK coordinates are meters and pressure is pascals",
             "no trailing producer-specific numeric extension is present",
         ),
     )

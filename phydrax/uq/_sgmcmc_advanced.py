@@ -81,9 +81,9 @@ class SGMCMCStepSchedule(StrictModule):
         return cls("polynomial", initial, offset=offset, exponent=exponent)
 
     def __call__(self, update: int | Array, /) -> Array:
-        index = jnp.asarray(update, dtype=float)
+        index = jnp.asarray(update, dtype=jnp.float64)
         if self.kind == "constant":
-            return jnp.asarray(self.initial, dtype=float)
+            return jnp.asarray(self.initial, dtype=jnp.float64)
         return self.initial * (self.offset + index) ** (-self.exponent)
 
 
@@ -267,7 +267,7 @@ def sample_sghmc(
         key=key,
         schedule=schedule,
         algorithm="sghmc",
-        friction=jnp.asarray(friction, dtype=float),
+        friction=jnp.asarray(friction, dtype=jnp.float64),
         geometry=None,
         num_chains=num_chains,
         num_burnin=num_burnin,
@@ -356,7 +356,7 @@ def _sample_advanced(
         raise ValueError("Online-all covariance requires a decreasing schedule.")
     reference = problem.initial_position if initial_position is None else initial_position
     flat_reference, unravel = ravel_pytree(reference)
-    dimension = int(flat_reference.size)
+    dimension = flat_reference.size
     if dimension == 0 or not jnp.issubdtype(flat_reference.dtype, jnp.floating):
         raise TypeError("Advanced SG-MCMC requires a nonempty real floating PyTree.")
     if continuation is not None:

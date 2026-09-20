@@ -15,7 +15,7 @@ def _plan(capacity: int = 64):
 
 
 def _refine(plan, topology, slot):
-    mask = jnp.zeros((plan.cell_capacity,), dtype=bool).at[slot].set(True)
+    mask = jnp.zeros((plan.cell_capacity,), dtype="bool").at[slot].set(True)
     return plan.adapt(topology, refine_mask=mask)
 
 
@@ -52,13 +52,13 @@ def test_dyadic_coarsening_requires_complete_requested_siblings() -> None:
     plan = _plan()
     refined = _refine(plan, plan.prepare(), 0).accepted
     leaves = np.flatnonzero(np.asarray(refined.leaf_active))
-    partial_mask = jnp.zeros((plan.cell_capacity,), dtype=bool).at[leaves[0]].set(True)
+    partial_mask = jnp.zeros((plan.cell_capacity,), dtype="bool").at[leaves[0]].set(True)
     partial = plan.adapt(refined, coarsen_mask=partial_mask)
     assert bool(partial.accepted_candidate)
     assert int(partial.evidence.accepted_coarsenings) == 0
     assert int(partial.accepted.evidence.active_leaves) == 4
 
-    complete_mask = jnp.zeros((plan.cell_capacity,), dtype=bool).at[leaves].set(True)
+    complete_mask = jnp.zeros((plan.cell_capacity,), dtype="bool").at[leaves].set(True)
     complete = plan.adapt(refined, coarsen_mask=complete_mask)
     assert bool(complete.accepted_candidate)
     assert int(complete.evidence.accepted_coarsenings) == 1

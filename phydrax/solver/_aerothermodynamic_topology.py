@@ -42,8 +42,8 @@ class HighEnthalpyAMRIndicatorPlan(StrictModule, NonTrainableState):
         /,
     ):
         names = tuple(str(value) for value in indicator_names)
-        refine = np.asarray(refine_thresholds, dtype=float)
-        coarsen = np.asarray(coarsen_thresholds, dtype=float)
+        refine = np.asarray(refine_thresholds, dtype=np.float64)
+        coarsen = np.asarray(coarsen_thresholds, dtype=np.float64)
         if (
             not names
             or len(set(names)) != len(names)
@@ -108,7 +108,7 @@ class AerothermodynamicALEPlan(StrictModule, NonTrainableState):
     def __init__(
         self, vertex_to_cell_volume: ArrayLike, /, *, minimum_volume: float = 1.0e-14
     ):
-        projection = np.asarray(vertex_to_cell_volume, dtype=float)
+        projection = np.asarray(vertex_to_cell_volume, dtype=np.float64)
         minimum = float(minimum_volume)
         if (
             projection.ndim != 2

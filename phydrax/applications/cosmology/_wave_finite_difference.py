@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Periodic, cell-centred finite-difference actions for complex wave matter."""
+"""Periodic, cell-centered finite-difference actions for complex wave matter."""
 
 from __future__ import annotations
 
@@ -258,7 +258,7 @@ class PeriodicWaveFiniteDifferencePlan(StrictModule, NonTrainableState):
                 "policy": policy_.policy_id,
                 "contact": None if contact is None else contact.plan_id,
                 "dtype": dtype_.str,
-                "stencil": "cell-centred-second-order-periodic",
+                "stencil": "cell-centered-second-order-periodic",
             }
         )
 
@@ -294,11 +294,12 @@ class PreparedPeriodicWaveFiniteDifference(StrictModule, NonTrainableState):
         if not 1 <= len(grid.shape) <= 3:
             raise ValueError("Periodic FD wave grids support one to three dimensions.")
         if any(axis.primary_entity != "interval" for axis in grid.structured_axes):
-            raise ValueError("Periodic FD waves require cell-centred interval axes.")
+            raise ValueError("Periodic FD waves require cell-centered interval axes.")
         if not all(axis.periodic for axis in grid.axes):
             raise ValueError("Periodic FD waves reject physical or isolated boundaries.")
         widths = tuple(
-            np.asarray(axis.interval_widths, dtype=float) for axis in grid.structured_axes
+            np.asarray(axis.interval_widths, dtype=np.float64)
+            for axis in grid.structured_axes
         )
         if any(
             values.size == 0
@@ -391,7 +392,7 @@ class PreparedPeriodicWaveFiniteDifference(StrictModule, NonTrainableState):
                 max_steps=plan.policy.maximum_solve_steps,
             ),
         )
-        self.coordinate_convention = "periodic-cell-centred-cartesian-code-length"
+        self.coordinate_convention = "periodic-cell-centered-cartesian-code-length"
         self.time_level_convention = "explicit-caller-coordinate-time"
         self.action_convention = (
             "drift_factor and kick_factor are caller-integrated code-time actions"

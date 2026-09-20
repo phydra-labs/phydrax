@@ -107,7 +107,7 @@ def _empty_grid(dynamics: PreparedMPMDynamics, dtype: Any, /) -> MPMGridState:
         vector,
         vector,
         vector,
-        jnp.zeros(scalar_shape, dtype=bool),
+        jnp.zeros(scalar_shape, dtype=jnp.bool_),
     )
 
 
@@ -393,7 +393,7 @@ class MPMSoftResolutionEvidence(StrictModule, NonTrainableState):
         active_particle_count = int(
             np.sum(np.asarray(dynamics.particles.active_mask, dtype=np.int64))
         )
-        grid_shape = tuple(int(size) for size in dynamics.splat.target_shape)
+        grid_shape = tuple(dynamics.splat.target_shape)
         grid_node_count = int(np.prod(grid_shape))
         field_count = int(dynamics.nodal_fields.field_count)
         route_count = int(dynamics.splat.route_count)
@@ -440,8 +440,7 @@ class MPMSoftResolutionEvidence(StrictModule, NonTrainableState):
         for name, expected, observed in checks:
             if expected is not None and expected != observed:
                 raise ValueError(
-                    f"MPM soft {name} requirement mismatch: expected {expected!r}, "
-                    f"prepared {observed!r}."
+                    f"MPM soft {name} requirement mismatch: expected {expected!r}, prepared {observed!r}."
                 )
         return self
 
@@ -823,7 +822,7 @@ class MPMSoftPlant(AbstractDiscretePlant, NonTrainableState):
             )
 
         payload = _apply_casewise(reset_one, len(case_shape), initial_time)
-        attempted = jnp.ones(case_shape, dtype=bool)
+        attempted = jnp.ones(case_shape, dtype=jnp.bool_)
         aligned = payload.runtime.time == initial_time
         successful = attempted & aligned
         status = jnp.where(aligned, 0, _INVALID_RUNTIME_METADATA).astype(jnp.int32)
@@ -878,7 +877,7 @@ class MPMSoftPlant(AbstractDiscretePlant, NonTrainableState):
                 parameter_cases,
                 context.duration,
             )
-            command_routed = jnp.zeros(case_shape, dtype=bool)
+            command_routed = jnp.zeros(case_shape, dtype=jnp.bool_)
         else:
             if not isinstance(commands, MPMSoftCommand):
                 raise TypeError("commands must be MPMSoftCommand.")
@@ -905,14 +904,14 @@ class MPMSoftPlant(AbstractDiscretePlant, NonTrainableState):
                 commands,
                 context.duration,
             )
-            command_routed = jnp.ones(case_shape, dtype=bool)
+            command_routed = jnp.ones(case_shape, dtype=jnp.bool_)
 
         aligned = (
             (source.runtime.time == context.source_time)
             & (source.runtime.accepted_step == context.step_index)
             & (source.runtime.topology_generation == 0)
         )
-        native_success = jnp.asarray(detail.successful, dtype=bool)
+        native_success = jnp.asarray(detail.successful, dtype=jnp.bool_)
         candidate_metadata_aligned = (
             (detail.candidate_state.time == context.target_time)
             & (detail.candidate_state.accepted_step == context.step_index + 1)
@@ -1081,7 +1080,7 @@ class MPMSoftPlant(AbstractDiscretePlant, NonTrainableState):
             )
 
         observed = (region, surface)
-        finite = jnp.ones(case_shape, dtype=bool)
+        finite = jnp.ones(case_shape, dtype=jnp.bool_)
         for leaf in jax.tree_util.tree_leaves(observed):
             axes = tuple(range(case_rank, leaf.ndim))
             finite = finite & jnp.all(jnp.isfinite(leaf), axis=axes)
@@ -1099,8 +1098,7 @@ class MPMSoftPlant(AbstractDiscretePlant, NonTrainableState):
             device=self.device,
             dtype=self.dtype,
             detail=(
-                "particle regions use fixed particle ownership and grid surfaces use "
-                "the last accepted nodal grid"
+                "particle regions use fixed particle ownership and grid surfaces use the last accepted nodal grid"
             ),
         )
         return MPMSoftObservation(

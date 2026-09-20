@@ -2,10 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Grey LTE longwave and hemispheric two-stream diffuse shortwave transfer.
+"""Gray LTE longwave and hemispheric two-stream diffuse shortwave transfer.
 
 Layers and interfaces are top-to-bottom. Optical masses are kg/m²; temperature
-is K; every flux and transfer is W/m². This is a declared grey reference model,
+is K; every flux and transfer is W/m². This is a declared gray reference model,
 not a spectral atmospheric radiation package or a direct-solar-beam solver.
 See ``docs/guides_column_radiation.md`` for equations and reference assumptions.
 """
@@ -28,7 +28,7 @@ _STEFAN_BOLTZMANN = 5.670374419e-8  # W m^-2 K^-4, SI blackbody constant.
 
 
 class ColumnOpticalProperties(StrictModule, NonTrainableState):
-    """Fixed, explicitly tagged grey mass coefficients, in m²/kg of each species.
+    """Fixed, explicitly tagged gray mass coefficients, in m²/kg of each species.
 
     Every vector is ordered ``(dry, vapor, liquid, ice)``. Dry means the entire
     non-water gas mixture: its coefficient is not a line-by-line CO₂ model.
@@ -58,10 +58,10 @@ class ColumnOpticalProperties(StrictModule, NonTrainableState):
         shortwave_asymmetry: ArrayLike = (0.0, 0.0, 0.0, 0.0),
     ):
         arrays = {
-            "shortwave_absorption": np.asarray(shortwave_absorption, dtype=float),
-            "shortwave_scattering": np.asarray(shortwave_scattering, dtype=float),
-            "longwave_absorption": np.asarray(longwave_absorption, dtype=float),
-            "shortwave_asymmetry": np.asarray(shortwave_asymmetry, dtype=float),
+            "shortwave_absorption": np.asarray(shortwave_absorption, dtype=np.float64),
+            "shortwave_scattering": np.asarray(shortwave_scattering, dtype=np.float64),
+            "longwave_absorption": np.asarray(longwave_absorption, dtype=np.float64),
+            "shortwave_asymmetry": np.asarray(shortwave_asymmetry, dtype=np.float64),
         }
         if not isinstance(reference_id, str) or not reference_id.strip():
             raise ValueError("Optical properties require a nonempty reference_id.")
@@ -85,7 +85,7 @@ class ColumnOpticalProperties(StrictModule, NonTrainableState):
         self.precipitation_optics = "transparent"
         self.optics_id = canonical_fingerprint(
             {
-                "kind": "grey-column-mass-optics",
+                "kind": "gray-column-mass-optics",
                 "species": ("dry", "vapor", "liquid", "ice"),
                 "coefficient_units": "m2/kg",
                 "reference_id": reference_id,
@@ -211,7 +211,7 @@ def _longwave_fluxes(absorption, temperature, surface_temperature, emissivity, i
 
 
 class ColumnRadiationPlan(StrictModule):
-    """Native differentiable grey column transfer with explicitly fixed optics.
+    """Native differentiable gray column transfer with explicitly fixed optics.
 
     Numeric calibration scales and surface parameters are trainable array leaves;
     ``optics`` is excluded by native ``partition_trainable``. Scales are scalar
@@ -239,7 +239,7 @@ class ColumnRadiationPlan(StrictModule):
         longwave_absorption_scale: ArrayLike = 1.0,
     ):
         scales = tuple(
-            np.asarray(x, dtype=float)
+            np.asarray(x, dtype=np.float64)
             for x in (
                 shortwave_absorption_scale,
                 shortwave_scattering_scale,
@@ -254,8 +254,8 @@ class ColumnRadiationPlan(StrictModule):
                     "Optical scales must be finite nonnegative scalars or four-species vectors."
                 )
         albedo, emissivity = (
-            np.asarray(surface_albedo, dtype=float),
-            np.asarray(surface_emissivity, dtype=float),
+            np.asarray(surface_albedo, dtype=np.float64),
+            np.asarray(surface_emissivity, dtype=np.float64),
         )
         for value in (albedo, emissivity):
             if not np.all(np.isfinite(value) & (value >= 0.0) & (value <= 1.0)):
@@ -268,11 +268,11 @@ class ColumnRadiationPlan(StrictModule):
         self.surface_emissivity = jnp.asarray(emissivity)
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "hemispheric-grey-column-radiation",
+                "kind": "hemispheric-gray-column-radiation",
                 "optics_id": optics.optics_id,
                 "layer_order": "top-to-bottom",
                 "shortwave_boundary": "diffuse-hemispheric",
-                "longwave": "grey-LTE-absorption-isothermal-layer",
+                "longwave": "gray-LTE-absorption-isothermal-layer",
                 "diffusivity": 2.0,
                 "stefan_boltzmann": _STEFAN_BOLTZMANN,
             }
@@ -318,7 +318,11 @@ class ColumnRadiationPlan(StrictModule):
             )
         )
         dtype = jnp.result_type(
-            *layers, *precipitation, *boundaries, self.shortwave_absorption_scale, float
+            *layers,
+            *precipitation,
+            *boundaries,
+            self.shortwave_absorption_scale,
+            jnp.float64,
         )
         layers = tuple(x.astype(dtype) for x in layers)
         precipitation = tuple(x.astype(dtype) for x in precipitation)

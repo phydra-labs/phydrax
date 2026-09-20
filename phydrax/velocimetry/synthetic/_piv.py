@@ -92,7 +92,7 @@ class PIVScenarioPlan(StrictModule, NonTrainableState):
     ):
         kind_ = PIVScenarioKind(kind)
         family = kind_.value if family_id is None else str(family_id)
-        shape = tuple(int(item) for item in image_shape)
+        shape = tuple(image_shape)
         if len(shape) != 2 or any(item < 4 for item in shape):
             raise ValueError(
                 "image_shape must contain two dimensions of at least four pixels."
@@ -306,8 +306,8 @@ class PIVSyntheticCase(StrictModule, NonTrainableState):
         self.truth = truth
         self.first_positions_rc = jnp.asarray(first_positions_rc)
         self.second_positions_rc = jnp.asarray(second_positions_rc)
-        self.first_active = jnp.asarray(first_active, dtype=bool)
-        self.second_active = jnp.asarray(second_active, dtype=bool)
+        self.first_active = jnp.asarray(first_active, dtype=jnp.bool_)
+        self.second_active = jnp.asarray(second_active, dtype=jnp.bool_)
         self.first_rasterization = first_rasterization
         self.second_rasterization = second_rasterization
         self.first_photometry = first_photometry
@@ -354,10 +354,10 @@ def _piv_displacement(plan: PIVScenarioPlan, positions_rc: Array, /) -> Array:
 
 def _sensor_mask(plan: PIVScenarioPlan, coordinates_rc: Array, /) -> Array:
     if plan.mask_fraction == 0.0:
-        return jnp.ones(plan.image_shape, dtype=bool)
+        return jnp.ones(plan.image_shape, dtype=jnp.bool_)
     side_fraction = math.sqrt(plan.mask_fraction)
-    center = 0.5 * (jnp.asarray(plan.image_shape, dtype=float) - 1.0)
-    half_extent = 0.5 * side_fraction * jnp.asarray(plan.image_shape, dtype=float)
+    center = 0.5 * (jnp.asarray(plan.image_shape, dtype=jnp.float64) - 1.0)
+    half_extent = 0.5 * side_fraction * jnp.asarray(plan.image_shape, dtype=jnp.float64)
     masked = jnp.all(jnp.abs(coordinates_rc - center) <= half_extent, axis=-1)
     return ~masked
 
@@ -365,8 +365,8 @@ def _sensor_mask(plan: PIVScenarioPlan, coordinates_rc: Array, /) -> Array:
 def _particle_positions(plan: PIVScenarioPlan, key: Array, /) -> Array:
     height, width = plan.image_shape
     margin = max(0.5, 1.5 * plan.particle_diameter)
-    lower = jnp.asarray((margin, margin), dtype=float)
-    upper = jnp.asarray((height - 1.0 - margin, width - 1.0 - margin), dtype=float)
+    lower = jnp.asarray((margin, margin), dtype=jnp.float64)
+    upper = jnp.asarray((height - 1.0 - margin, width - 1.0 - margin), dtype=jnp.float64)
     positions = jr.uniform(
         key,
         (plan.particle_capacity, 2),

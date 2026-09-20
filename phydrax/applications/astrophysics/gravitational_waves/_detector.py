@@ -28,7 +28,7 @@ SkyFrame = Literal["itrs", "gcrs"]
 
 
 def _unit_vector(value: ArrayLike, role: str, /) -> np.ndarray:
-    vector = np.asarray(value, dtype=float)
+    vector = np.asarray(value, dtype=np.float64)
     if vector.shape != (3,) or np.any(~np.isfinite(vector)):
         raise ValueError(f"{role} must be a finite three-vector.")
     norm = float(np.linalg.norm(vector))
@@ -62,7 +62,7 @@ class InterferometerGeometry(StrictModule, NonTrainableState):
     ):
         identifier = str(detector_id).strip()
         frame = str(frame_id).strip()
-        vertex = np.asarray(vertex_m, dtype=float)
+        vertex = np.asarray(vertex_m, dtype=np.float64)
         x = _unit_vector(x_arm, "x_arm")
         y = _unit_vector(y_arm, "y_arm")
         if not identifier or not frame:

@@ -47,9 +47,7 @@ def _data(clean, *, mask=None, independent=True):
 @pytest.mark.parametrize(
     "process",
     [
-        phx.stochastic.VariancePreservingDiffusion(
-            2, beta_minimum=0.2, beta_maximum=2.0
-        ),
+        phx.stochastic.VariancePreservingDiffusion(2, beta_minimum=0.2, beta_maximum=2.0),
         phx.stochastic.VarianceExplodingDiffusion(
             2, initial_scale=0.02, terminal_scale=2.0
         ),
@@ -116,7 +114,7 @@ def test_denoising_masks_invalid_samples_and_rejects_empty_mass():
 
     empty = phx.terms.DenoisingScoreMatchingTerm(
         "score",
-        _data(jnp.zeros((3, 1)), mask=jnp.zeros((3,), dtype=bool)),
+        _data(jnp.zeros((3, 1)), mask=jnp.zeros((3,), dtype="bool")),
         process,
         phx.terms.UniformTimeSamplingPolicy(0.05, 0.8),
     )

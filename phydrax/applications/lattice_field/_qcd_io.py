@@ -98,8 +98,7 @@ class GaugeIOPlan(StrictModule, NonTrainableState):
         if not isinstance(archive_limits, ArrayArchiveLimits):
             raise TypeError("archive_limits must be ArrayArchiveLimits.")
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_sites,
                 maximum_dimension,
                 maximum_colors,
@@ -160,7 +159,7 @@ class GaugeFieldRecord(StrictModule, NonTrainableState):
         source_format: str = "native",
         policy: GaugeIOPlan | None = None,
     ) -> None:
-        shape = tuple(int(value) for value in global_shape)
+        shape = tuple(global_shape)
         if not shape or any(value <= 0 for value in shape):
             raise ValueError("global_shape must contain positive extents.")
         array = np.asarray(links)
@@ -218,7 +217,7 @@ class GaugeFieldRecord(StrictModule, NonTrainableState):
         self.source_format = source
         self.site_count = site_count
         self.dimension = dimension
-        self.color_count = int(array.shape[2])
+        self.color_count = array.shape[2]
         self.field_id = canonical_fingerprint(
             {
                 "kind": "canonical-global-gauge-field",
@@ -324,7 +323,7 @@ def write_native_gauge_archive(
     plan = GaugeIOPlan() if policy is None else policy
     if not isinstance(plan, GaugeIOPlan):
         raise TypeError("policy must be GaugeIOPlan or None.")
-    array_bytes = int(field.links.size * field.links.dtype.itemsize)
+    array_bytes = field.links.size * field.links.dtype.itemsize
     estimated_member = array_bytes + plan.archive_limits.max_npy_header_bytes
     estimated_container = (
         estimated_member

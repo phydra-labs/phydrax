@@ -328,7 +328,7 @@ def coherent_pauli_expansion(
     value = jnp.asarray(operator)
     if value.ndim != 2 or value.shape[0] != value.shape[1] or value.shape[0] == 0:
         raise ValueError("operator must be one nonempty square matrix.")
-    dimension = int(value.shape[0])
+    dimension = value.shape[0]
     qubits = dimension.bit_length() - 1
     if 2**qubits != dimension:
         raise ValueError("operator dimension must be a power of two.")

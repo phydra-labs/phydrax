@@ -51,11 +51,11 @@ def test_scalar_thin_mask_acts_equally_on_scalar_and_tangential_fields():
 def test_jones_thin_action_uses_local_tangential_basis_order():
     space = _space()
     matrix = jnp.broadcast_to(
-        jnp.asarray([[0.0, 1.0j], [1.0, 0.0]], dtype=complex),
+        jnp.asarray([[0.0, 1.0j], [1.0, 0.0]], dtype="complex128"),
         space.shape + (2, 2),
     )
     action = JonesThinTransmission(space, matrix)
-    values = jnp.zeros(space.shape + (2,), dtype=complex)
+    values = jnp.zeros(space.shape + (2,), dtype="complex128")
     values = values.at[..., 0].set(2.0)
     field = TangentialPlaneField(space, values, 3.0, 0.0)
 

@@ -101,11 +101,15 @@ class HbtHeronsSidecar(StrictModule, NonTrainableState):
         values = tuple(
             jax.lax.stop_gradient(jnp.asarray(value)) for value in field_values
         )
-        mask = jax.lax.stop_gradient(jnp.asarray(row_mask, dtype=bool))
+        mask = jax.lax.stop_gradient(jnp.asarray(row_mask, dtype=jnp.bool_))
         bound = jax.lax.stop_gradient(jnp.asarray(bound_particle_ids, dtype=jnp.int64))
-        bound_mask = jax.lax.stop_gradient(jnp.asarray(bound_particle_mask, dtype=bool))
+        bound_mask = jax.lax.stop_gradient(
+            jnp.asarray(bound_particle_mask, dtype=jnp.bool_)
+        )
         source = jax.lax.stop_gradient(jnp.asarray(source_particle_ids, dtype=jnp.int64))
-        source_mask = jax.lax.stop_gradient(jnp.asarray(source_particle_mask, dtype=bool))
+        source_mask = jax.lax.stop_gradient(
+            jnp.asarray(source_particle_mask, dtype=jnp.bool_)
+        )
         if (
             not names
             or len(names) != len(values)
@@ -141,7 +145,7 @@ class HbtHeronsSidecar(StrictModule, NonTrainableState):
         )
 
     def field(self, name: str, /) -> Array:
-        """Return one retained producer column without semantic relabelling."""
+        """Return one retained producer column without semantic relabeling."""
         key = str(name).strip()
         if key not in self.field_names:
             raise KeyError(key)
@@ -192,7 +196,7 @@ def _memberships(
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     ids = np.full((halo_capacity, particle_capacity), -1, dtype=np.int64)
-    mask = np.zeros((halo_capacity, particle_capacity), dtype=bool)
+    mask = np.zeros((halo_capacity, particle_capacity), dtype=np.bool_)
     if dataset is None:
         return ids, mask
     if dataset.shape != (count,):
@@ -234,7 +238,7 @@ def read_hbt_herons_catalog(
     redistribution: bool = False,
     export: bool = False,
 ) -> HbtHeronsCatalogImport:
-    """Read one HBT-HERONS ``SubSnap`` catalogue and preserve producer fields."""
+    """Read one HBT-HERONS ``SubSnap`` catalog and preserve producer fields."""
 
     if isinstance(maximum_halos, bool) or int(maximum_halos) <= 0:
         raise ValueError("maximum_halos must be a positive integer.")
@@ -294,7 +298,7 @@ def read_hbt_herons_catalog(
             losses.append(
                 _loss(
                     "SubhaloParticles",
-                    "Bound membership was not written by the source catalogue.",
+                    "Bound membership was not written by the source catalog.",
                 )
             )
         if source_dataset is None:
@@ -322,7 +326,7 @@ def read_hbt_herons_catalog(
     track_values = np.asarray(records["TrackId"], dtype=np.int64)
     if np.any(track_values < 0) or len(set(track_values.tolist())) != count:
         raise ValueError("HBT-HERONS TrackId values must be unique and non-negative.")
-    row_mask = np.zeros(halo_capacity, dtype=bool)
+    row_mask = np.zeros(halo_capacity, dtype=np.bool_)
     row_mask[:count] = True
     tracks = np.full(halo_capacity, -1, dtype=np.int64)
     tracks[:count] = track_values
@@ -363,7 +367,7 @@ def read_hbt_herons_catalog(
             losses.append(
                 _loss(
                     "Subhalos.NestedParentTrackId",
-                    "Parent tracks absent from this bounded catalogue were retained only in the producer sidecar.",
+                    "Parent tracks absent from this bounded catalog were retained only in the producer sidecar.",
                 )
             )
 
@@ -404,19 +408,19 @@ def read_hbt_herons_catalog(
     )
 
     descendants = np.full((1, halo_capacity), -1, dtype=np.int64)
-    descendant_mask = np.zeros((1, halo_capacity), dtype=bool)
+    descendant_mask = np.zeros((1, halo_capacity), dtype=np.bool_)
     if "DescendantTrackId" in names:
         descendants[0, :count] = np.asarray(records["DescendantTrackId"], dtype=np.int64)
         descendant_mask[0, :count] = descendants[0, :count] >= 0
     sinks = np.full((1, halo_capacity), -1, dtype=np.int64)
-    sink_mask = np.zeros((1, halo_capacity), dtype=bool)
+    sink_mask = np.zeros((1, halo_capacity), dtype=np.bool_)
     if "SinkTrackId" in names:
         sinks[0, :count] = np.asarray(records["SinkTrackId"], dtype=np.int64)
         sink_mask[0, :count] = sinks[0, :count] >= 0
 
     tracer_ids = np.full((1, halo_capacity, 1), -1, dtype=np.int64)
     tracer_ranks = np.full((1, halo_capacity, 1), -1, dtype=np.int32)
-    tracer_present = np.zeros((1, halo_capacity, 1), dtype=bool)
+    tracer_present = np.zeros((1, halo_capacity, 1), dtype=np.bool_)
     if "MostBoundParticleId" in names:
         tracer_ids[0, :count, 0] = np.asarray(
             records["MostBoundParticleId"], dtype=np.int64
@@ -432,10 +436,10 @@ def read_hbt_herons_catalog(
         empty_rows,
         empty_rows,
         empty_rows,
-        np.empty((0, halo_capacity), dtype=float),
-        np.empty((0, halo_capacity), dtype=bool),
-        np.empty((0, halo_capacity), dtype=bool),
-        np.empty((0,), dtype=bool),
+        np.empty((0, halo_capacity), dtype=np.float64),
+        np.empty((0, halo_capacity), dtype=np.bool_),
+        np.empty((0, halo_capacity), dtype=np.bool_),
+        np.empty((0,), dtype=np.bool_),
     )
 
     event_capacity = max(1, 5 * halo_capacity)
@@ -443,8 +447,8 @@ def read_hbt_herons_catalog(
     event_snapshot = np.full(event_capacity, -1, dtype=np.int32)
     event_track = np.full(event_capacity, -1, dtype=np.int64)
     event_related = np.full(event_capacity, -1, dtype=np.int64)
-    event_active = np.zeros(event_capacity, dtype=bool)
-    event_success = np.zeros(event_capacity, dtype=bool)
+    event_active = np.zeros(event_capacity, dtype=np.bool_)
+    event_success = np.zeros(event_capacity, dtype=np.bool_)
     events: list[tuple[int, int, int, int]] = []
     births = (
         np.asarray(records["SnapshotOfBirth"], dtype=np.int32)

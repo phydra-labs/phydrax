@@ -25,7 +25,7 @@ def _lorenz_problem():
     )
     layout = phx.dynamics.StateLayout((3,), component_names=("x", "y", "z"))
     data = phx.dynamics.TrajectoryData(
-        jnp.arange(states.shape[0], dtype=float),
+        jnp.arange(states.shape[0], dtype="float64"),
         states,
         state_layout=layout,
         derivatives=derivatives,

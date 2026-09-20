@@ -25,7 +25,7 @@ runtime = phx.solver.CompatibleMaxwellPlan(
     observers=(probe, dft),
     pml=phx.solver.maxwell.MaxwellCPMLPlan(1),
 ).prepare()
-electric = jnp.sin(jnp.arange(n1, dtype=float) / 13.0)
+electric = jnp.sin(jnp.arange(n1, dtype="float64") / 13.0)
 displacement = runtime.constitutive.electric_displacement(electric, None)
 magnetic = bridge.exterior_derivative(1, electric)
 charge = -bridge.codifferential(1, displacement)

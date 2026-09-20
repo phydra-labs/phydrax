@@ -68,7 +68,7 @@ class DensityPorosityMorphologyPlan(StrictModule, NonTrainableState):
         maximum_scale: float = 1.0e12,
         plan_id: str | None = None,
     ):
-        densities = tuple(np.asarray(value, dtype=float) for value in solid_density)
+        densities = tuple(np.asarray(value, dtype=np.float64) for value in solid_density)
         skin = float(neighborhood_skin)
         minimum = float(minimum_scale)
         maximum = float(maximum_scale)
@@ -123,7 +123,7 @@ class DensityPorosityMorphologyPlan(StrictModule, NonTrainableState):
         owner_mass = jnp.zeros((capacity,), dtype=state.batches[0].internal_energy.dtype)
         owner_radius = jnp.zeros_like(owner_mass)
         owner_inertia = jnp.ones_like(owner_mass)
-        owner_active = jnp.zeros((capacity,), dtype=bool)
+        owner_active = jnp.zeros((capacity,), dtype=jnp.bool_)
         owner_volume = jnp.zeros_like(owner_mass)
         batch_states = []
         mass_residual = jnp.zeros((), dtype=owner_mass.dtype)
@@ -316,7 +316,7 @@ def fragment_particle_internal_batch(
         raise TypeError("plan must be ThermochemicalFragmentationPlan.")
     source = jnp.asarray(source_index, dtype=jnp.int32)
     children = jnp.asarray(child_indices, dtype=jnp.int32)
-    valid = jnp.asarray(child_valid, dtype=bool)
+    valid = jnp.asarray(child_valid, dtype=jnp.bool_)
     masses = jnp.asarray(child_masses, dtype=state.internal_energy.dtype)
     scales = jnp.asarray(child_outer_scale, dtype=state.outer_scale.dtype)
     molar = jnp.asarray(molar_masses, dtype=state.species_amount.dtype)

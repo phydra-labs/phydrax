@@ -38,14 +38,12 @@ def _boundary_modes(
     modes = (boundary,) * spatial_ndim if isinstance(boundary, str) else tuple(boundary)
     if len(modes) != spatial_ndim:
         raise ValueError(
-            f"boundary must provide one mode per spatial axis; expected "
-            f"{spatial_ndim}, got {len(modes)}."
+            f"boundary must provide one mode per spatial axis; expected {spatial_ndim}, got {len(modes)}."
         )
     invalid = tuple(mode for mode in modes if mode not in _VALID_BOUNDARY_MODES)
     if invalid:
         raise ValueError(
-            "boundary modes must be 'periodic', 'reflect', 'clamp', or "
-            f"'constant'; got {invalid}."
+            f"boundary modes must be 'periodic', 'reflect', 'clamp', or 'constant'; got {invalid}."
         )
     return cast(tuple[WarpBoundaryMode, ...], modes)
 
@@ -87,31 +85,29 @@ def _sample_regular_grid_linear(
         raise ValueError(
             "values must end in spatial dimensions followed by one channel axis."
         )
-    batch_shape = tuple(int(size) for size in array.shape[: -spatial_ndim - 1])
-    spatial_shape = tuple(int(size) for size in array.shape[-spatial_ndim - 1 : -1])
+    batch_shape = tuple(array.shape[: -spatial_ndim - 1])
+    spatial_shape = tuple(array.shape[-spatial_ndim - 1 : -1])
     if any(size < 2 for size in spatial_shape):
         raise ValueError("Every warped spatial axis must contain at least two nodes.")
 
-    coordinate_dtype = jnp.result_type(array.dtype, float)
+    coordinate_dtype = jnp.result_type(array.dtype, jnp.float64)
     query = jnp.asarray(coordinates, dtype=coordinate_dtype)
-    if query.ndim < len(batch_shape) + 2 or int(query.shape[-1]) != spatial_ndim:
+    if query.ndim < len(batch_shape) + 2 or query.shape[-1] != spatial_ndim:
         raise ValueError(
-            "coordinates must have shape batch_shape + query_shape + "
-            f"({spatial_ndim},); got {query.shape}."
+            f"coordinates must have shape batch_shape + query_shape + ({spatial_ndim},); got {query.shape}."
         )
-    if tuple(int(size) for size in query.shape[: len(batch_shape)]) != batch_shape:
+    if tuple(query.shape[: len(batch_shape)]) != batch_shape:
         raise ValueError(
-            f"Coordinate batch shape must be {batch_shape}; got "
-            f"{query.shape[: len(batch_shape)]}."
+            f"Coordinate batch shape must be {batch_shape}; got {query.shape[: len(batch_shape)]}."
         )
-    query_shape = tuple(int(size) for size in query.shape[len(batch_shape) : -1])
+    query_shape = tuple(query.shape[len(batch_shape) : -1])
     if not query_shape or any(size <= 0 for size in query_shape):
         raise ValueError("Regular-grid queries must contain at least one sample.")
 
     lower_indices: list[Array] = []
     upper_indices: list[Array] = []
     fractions: list[Array] = []
-    outside = jnp.zeros(batch_shape + query_shape, dtype=bool)
+    outside = jnp.zeros(batch_shape + query_shape, dtype=jnp.bool_)
 
     for axis, (size, mode) in enumerate(zip(spatial_shape, boundary, strict=True)):
         normalized = query[..., axis]
@@ -142,7 +138,7 @@ def _sample_regular_grid_linear(
 
     batch_count = prod(batch_shape) if batch_shape else 1
     query_count = prod(query_shape)
-    channels = int(array.shape[-1])
+    channels = array.shape[-1]
     flat_values = array.reshape((batch_count, prod(spatial_shape), channels))
     output = jnp.zeros(batch_shape + query_shape + (channels,), dtype=array.dtype)
 
@@ -284,16 +280,14 @@ class MultiheadWarp(StrictModule):
             raise ValueError(
                 "MultiheadWarp input must end in spatial dimensions and channels."
             )
-        if int(array.shape[-1]) != self.in_channels:
+        if array.shape[-1] != self.in_channels:
             raise ValueError(
                 f"Expected {self.in_channels} input channels, got {array.shape[-1]}."
             )
-        spatial_shape = tuple(
-            int(size) for size in array.shape[-self.spatial_ndim - 1 : -1]
-        )
+        spatial_shape = tuple(array.shape[-self.spatial_ndim - 1 : -1])
         if any(size < 2 for size in spatial_shape):
             raise ValueError("Every warped spatial axis must contain at least two nodes.")
-        case_shape = tuple(int(size) for size in array.shape[: -self.spatial_ndim - 1])
+        case_shape = tuple(array.shape[: -self.spatial_ndim - 1])
         return (
             array,
             case_shape,
@@ -328,14 +322,13 @@ class MultiheadWarp(StrictModule):
         expected_condition_shape = case_shape + (self.conditioning_size,)
         if condition_array.shape != expected_condition_shape:
             raise ValueError(
-                f"MultiheadWarp condition must have shape "
-                f"{expected_condition_shape}; got {condition_array.shape}."
+                f"MultiheadWarp condition must have shape {expected_condition_shape}; got {condition_array.shape}."
             )
         condition_hidden = self.displacement_condition(
             condition_array.astype(array.dtype)
         )
         condition_hidden = condition_hidden.reshape(
-            case_shape + (1,) * self.spatial_ndim + (int(condition_hidden.shape[-1]),)
+            case_shape + (1,) * self.spatial_ndim + (condition_hidden.shape[-1],)
         )
         return hidden + condition_hidden
 
@@ -366,7 +359,7 @@ class MultiheadWarp(StrictModule):
             lattice = _normalized_lattice(
                 spatial_shape,
                 self.boundary,
-                dtype=jnp.result_type(displacement.dtype, float),
+                dtype=jnp.result_type(displacement.dtype, jnp.float64),
             )
         else:
             lattice = normalized_lattice_from_nodes(axis_nodes)
@@ -397,7 +390,7 @@ class MultiheadWarp(StrictModule):
     ) -> Array | None:
         if source_mask is None:
             return None
-        mask = jnp.asarray(source_mask, dtype=bool)
+        mask = jnp.asarray(source_mask, dtype=jnp.bool_)
         if mask.shape == spatial_shape:
             mask = jnp.broadcast_to(mask, case_shape + spatial_shape)
         elif mask.shape != case_shape + spatial_shape:
@@ -425,8 +418,7 @@ class MultiheadWarp(StrictModule):
         expected = case_shape + spatial_shape + (self.num_heads, self.spatial_ndim)
         if displacement.shape != expected:
             raise ValueError(
-                f"MultiheadWarp displacement must have shape {expected}; "
-                f"got {displacement.shape}."
+                f"MultiheadWarp displacement must have shape {expected}; got {displacement.shape}."
             )
         projected = self.value_projection(array).reshape(
             case_shape + spatial_shape + (self.num_heads, head_channels)

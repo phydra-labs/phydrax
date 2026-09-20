@@ -96,8 +96,7 @@ class FourierModalResourcePolicy(StrictModule, NonTrainableState):
         workspace_bytes: int = 4 * 2**30,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 max_harmonics,
                 max_layers,
                 preparation_bytes,

@@ -122,7 +122,7 @@ def _scalar(value: ArrayLike, name: str, /) -> Array:
     if array.shape != () or jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise ValueError(f"{name} must be one real scalar.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -181,7 +181,7 @@ class BrosaPlanellaSpmeSeiParameters(StrictModule):
             )
         )
         thermodynamic_support = np.asarray(
-            thermodynamic_factor.support_bounds, dtype=float
+            thermodynamic_factor.support_bounds, dtype=np.float64
         )
         if (
             np.any(~np.isfinite(thermodynamic_support))
@@ -189,8 +189,12 @@ class BrosaPlanellaSpmeSeiParameters(StrictModule):
             or (
                 isinstance(thermodynamic_factor, TabulatedPropertyLaw)
                 and (
-                    not np.all(np.asarray(thermodynamic_factor.source_mask, dtype=bool))
-                    or np.any(np.asarray(thermodynamic_factor.nodes, dtype=float) <= 0.0)
+                    not np.all(
+                        np.asarray(thermodynamic_factor.source_mask, dtype=np.bool_)
+                    )
+                    or np.any(
+                        np.asarray(thermodynamic_factor.nodes, dtype=np.float64) <= 0.0
+                    )
                 )
             )
         ):
@@ -234,8 +238,7 @@ class BrosaPlanellaSpmeSeiParameters(StrictModule):
         rate = eqx.error_if(
             rate,
             ~valid,
-            "SEI kinetics, solvent transport, product, film, and stoichiometric "
-            "data must be finite and physical.",
+            "SEI kinetics, solvent transport, product, film, and stoichiometric data must be finite and physical.",
         )
         self.spme_parameters = spme_parameters
         self.sei_reaction_rate_m_s = rate
@@ -311,7 +314,7 @@ class BrosaPlanellaSpmeSeiState(StrictModule):
             base.positive_amount_mol,
             base.electrolyte_amount_mol,
             porosity,
-            float,
+            jnp.float64,
         )
         self.negative_amount_mol = base.negative_amount_mol.astype(dtype)
         self.positive_amount_mol = base.positive_amount_mol.astype(dtype)
@@ -624,7 +627,6 @@ def _local_electrolyte_transport(
     marquis = parameters.spme_parameters
     spm = marquis.spm_parameters
     leading_shape = state.electrolyte_amount_mol.shape[:-1]
-    negative_count = mesh.negative.cell_count
     separator_count = mesh.separator.cell_count
     positive_count = mesh.positive.cell_count
     separator_porosity = jnp.broadcast_to(
@@ -778,7 +780,7 @@ def _local_electrolyte_transport(
     collector_flux_residual = jnp.maximum(
         jnp.abs(total_flux[..., 0]), jnp.abs(total_flux[..., -1])
     )
-    current_split_residual = jnp.max(
+    jnp.max(
         jnp.abs(electrolyte_current + solid_current - paper_current_density[..., None]),
         axis=-1,
     )
@@ -961,7 +963,7 @@ def _evaluate(
     )
     reference_centers = prepared.through_cell.reference_cell_centers[:negative_count]
     physical_centers = reference_centers * spm.negative_electrode_thickness_m
-    safe_negative_porosity = jnp.where(
+    jnp.where(
         jnp.isfinite(state.negative_porosity)
         & (state.negative_porosity > 0.0)
         & (state.negative_porosity <= marquis.negative_electrolyte_porosity),
@@ -1112,7 +1114,7 @@ def _evaluate(
         * sei_overpotential
         / (_GAS_CONSTANT_J_MOL_K * spm.temperature_k)
     )
-    dtype = jnp.result_type(exponent, float)
+    dtype = jnp.result_type(exponent, jnp.float64)
     exponent_limit = jnp.log(jnp.asarray(jnp.finfo(dtype).max, dtype=dtype)) - 4.0
     exponent_domain = jnp.all(
         jnp.isfinite(exponent) & (exponent < exponent_limit), axis=-1
@@ -1578,8 +1580,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
             )
         if initial_state.electrolyte_amount_mol.shape != (expected_electrolyte,):
             raise ValueError(
-                "Initial electrolyte SPMe+SEI state must have shape "
-                f"({expected_electrolyte},)."
+                f"Initial electrolyte SPMe+SEI state must have shape ({expected_electrolyte},)."
             )
         if initial_state.negative_porosity.shape != (expected_porosity,):
             raise ValueError(
@@ -1638,8 +1639,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
             )
         if states.electrolyte_amount_mol.shape != expected_electrolyte:
             raise ValueError(
-                "Electrolyte SPMe+SEI observation state must have shape "
-                f"{expected_electrolyte}."
+                f"Electrolyte SPMe+SEI observation state must have shape {expected_electrolyte}."
             )
         if states.negative_porosity.shape != expected_porosity:
             raise ValueError(
@@ -1773,7 +1773,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
         states = native_solution.states
         if not isinstance(states, BrosaPlanellaSpmeSeiState):
             raise TypeError("SPMe+SEI native solution states have the wrong type.")
-        valid = jnp.asarray(native_solution.valid, dtype=bool)
+        valid = jnp.asarray(native_solution.valid, dtype=jnp.bool_)
         valid_count = jnp.sum(valid.astype(jnp.int32))
         final_index = jnp.maximum(valid_count - 1, 0)
         parameters = runtime_inputs.parameters

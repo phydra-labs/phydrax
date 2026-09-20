@@ -19,7 +19,7 @@ from ..stochastic._state_space import AbstractObservationModel, StateSpaceStepCo
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    resolved = tuple(int(size) for size in value)
+    resolved = tuple(value)
     if any(size <= 0 for size in resolved):
         raise ValueError(f"{owner} dimensions must be positive.")
     return resolved
@@ -102,7 +102,7 @@ class LikelihoodObservationModel(AbstractObservationModel):
         time_array = jnp.asarray(time)
         location = self.location(state_array, time_array, context)
         target = jnp.broadcast_to(jnp.asarray(value), location.shape)
-        active = jnp.broadcast_to(jnp.asarray(mask, dtype=bool), location.shape)
+        active = jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), location.shape)
         terms = jnp.asarray(
             self.likelihood.log_prob(
                 location,

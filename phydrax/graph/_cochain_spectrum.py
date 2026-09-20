@@ -35,8 +35,8 @@ def _restricted_boundary_matrix(
     boundary = complex_ir.incidences[degree - 1].scipy_matrix()
     if policy.kind == "absolute":
         return boundary
-    lower_active = np.asarray(complex_ir.active_mask(degree - 1, policy), dtype=bool)
-    upper_active = np.asarray(complex_ir.active_mask(degree, policy), dtype=bool)
+    lower_active = np.asarray(complex_ir.active_mask(degree - 1, policy), dtype=np.bool_)
+    upper_active = np.asarray(complex_ir.active_mask(degree, policy), dtype=np.bool_)
     return boundary[lower_active][:, upper_active].tocsr()
 
 
@@ -56,20 +56,20 @@ def _assemble_symmetric_hodge_laplacian(
     if component not in ("complete", "lower", "upper"):
         raise ValueError("component must be 'complete', 'lower', or 'upper'.")
     policy = CochainBoundaryPolicy(boundary_policy)
-    active = np.asarray(complex_ir.active_mask(resolved_degree, policy), dtype=bool)
-    metric = np.asarray(complex_ir.hodge_stars[resolved_degree], dtype=float)[active]
+    active = np.asarray(complex_ir.active_mask(resolved_degree, policy), dtype=np.bool_)
+    metric = np.asarray(complex_ir.hodge_stars[resolved_degree], dtype=np.float64)[active]
     active_count = int(np.count_nonzero(active))
-    laplacian = sp.csr_matrix((active_count, active_count), dtype=float)
+    laplacian = sp.csr_matrix((active_count, active_count), dtype=jnp.float64)
     inverse_sqrt_metric = sp.diags(1.0 / np.sqrt(metric))
     sqrt_metric = sp.diags(np.sqrt(metric))
 
     if component in ("complete", "lower") and resolved_degree > 0:
         boundary = _restricted_boundary_matrix(complex_ir, resolved_degree, policy)
         lower_active = np.asarray(
-            complex_ir.active_mask(resolved_degree - 1, policy), dtype=bool
+            complex_ir.active_mask(resolved_degree - 1, policy), dtype=np.bool_
         )
         lower_metric = np.asarray(
-            complex_ir.hodge_stars[resolved_degree - 1], dtype=float
+            complex_ir.hodge_stars[resolved_degree - 1], dtype=np.float64
         )[lower_active]
         transformed = sqrt_metric @ boundary.T @ sp.diags(1.0 / np.sqrt(lower_metric))
         laplacian = laplacian + transformed @ transformed.T
@@ -77,10 +77,10 @@ def _assemble_symmetric_hodge_laplacian(
     if component in ("complete", "upper") and resolved_degree < complex_ir.max_degree:
         boundary = _restricted_boundary_matrix(complex_ir, resolved_degree + 1, policy)
         upper_active = np.asarray(
-            complex_ir.active_mask(resolved_degree + 1, policy), dtype=bool
+            complex_ir.active_mask(resolved_degree + 1, policy), dtype=np.bool_
         )
         upper_metric = np.asarray(
-            complex_ir.hodge_stars[resolved_degree + 1], dtype=float
+            complex_ir.hodge_stars[resolved_degree + 1], dtype=np.float64
         )[upper_active]
         transformed = sp.diags(np.sqrt(upper_metric)) @ boundary.T @ inverse_sqrt_metric
         laplacian = laplacian + transformed.T @ transformed
@@ -97,7 +97,7 @@ def _ordered_eigenpairs(
     dense_threshold: int,
     solver_tolerance: float,
 ) -> tuple[np.ndarray, np.ndarray, bool]:
-    dimension = int(laplacian.shape[0])
+    dimension = laplacian.shape[0]
     compute_full = (
         requested_modes == dimension
         or dimension <= int(dense_threshold)
@@ -150,7 +150,7 @@ def cochain_laplacian_eigenbasis(
         component,
         boundary_policy,
     )
-    active_dimension = int(laplacian.shape[0])
+    active_dimension = laplacian.shape[0]
     if active_dimension == 0:
         raise ValueError("The selected boundary policy has no active cells.")
     requested = active_dimension if num_modes is None else int(num_modes)
@@ -191,17 +191,16 @@ def cochain_laplacian_eigenbasis(
     physical_active = (
         retained_vectors / np.sqrt(metric)[:, None] * np.sqrt(total_metric_mass)
     )
-    functions = np.zeros((complex_ir.cell_counts[int(degree)], requested), dtype=float)
+    functions = np.zeros(
+        (complex_ir.cell_counts[int(degree)], requested), dtype=np.float64
+    )
     functions[np.flatnonzero(active), :] = physical_active
-    probability_measure = np.zeros((functions.shape[0],), dtype=float)
+    probability_measure = np.zeros((functions.shape[0],), dtype=np.float64)
     probability_measure[active] = metric / total_metric_mass
     gram = physical_active.T @ (probability_measure[active, None] * physical_active)
     residual = float(np.max(np.abs(gram - np.eye(requested))))
     exact = requested == active_dimension
-    source_id = (
-        f"cochain:{complex_ir.fingerprint}:degree={int(degree)}:"
-        f"component={component}:boundary={boundary_policy}"
-    )
+    source_id = f"cochain:{complex_ir.fingerprint}:degree={int(degree)}:component={component}:boundary={boundary_policy}"
     method_id = "dense-eigh" if used_dense_solver else "sparse-eigsh"
     report = LaplacianEigenbasisReport(
         method_id=method_id,
@@ -219,10 +218,7 @@ def cochain_laplacian_eigenbasis(
         boundary_gap=boundary_gap,
         orthonormality_residual=residual,
     )
-    decomposition_id = (
-        f"{source_id}:rank={requested}:exact={int(exact)}:"
-        f"tail-certified={int(used_dense_solver or exact)}"
-    )
+    decomposition_id = f"{source_id}:rank={requested}:exact={int(exact)}:tail-certified={int(used_dense_solver or exact)}"
     return SpectralDecomposition(
         retained_values,
         functions,
@@ -264,10 +260,10 @@ def compute_harmonic_subspace(
             "complete",
             policy.kind,
         )
-        active_count = int(laplacian.shape[0])
+        active_count = laplacian.shape[0]
         if active_count == 0:
-            values = np.zeros((0,), dtype=float)
-            vectors = np.zeros((0, 0), dtype=float)
+            values = np.zeros((0,), dtype=np.float64)
+            vectors = np.zeros((0, 0), dtype=np.float64)
         else:
             requested = min(active_count, int(max_modes) + 1)
             values, vectors, _ = _ordered_eigenpairs(
@@ -285,13 +281,13 @@ def compute_harmonic_subspace(
                 "Harmonic nullspace exceeds max_modes or is not separated from nonzero modes."
             )
         physical_active = vectors[:, :rank] / np.sqrt(metric)[:, None]
-        physical = np.zeros((count, int(max_modes)), dtype=float)
+        physical = np.zeros((count, int(max_modes)), dtype=np.float64)
         if rank:
             physical[np.flatnonzero(active), :rank] = physical_active
             gram = physical_active.T @ (metric[:, None] * physical_active)
             if not np.allclose(gram, np.eye(rank), rtol=1e-7, atol=1e-9):
                 raise ValueError("Computed harmonic basis is not metric orthonormal.")
-        stored_values = np.full((int(max_modes),), np.inf, dtype=float)
+        stored_values = np.full((int(max_modes),), np.inf, dtype=np.float64)
         stored_values[: min(values.size, int(max_modes))] = values[: int(max_modes)]
         bases.append(jnp.asarray(physical))
         eigenvalues.append(jnp.asarray(stored_values))
@@ -360,21 +356,18 @@ def _hodge_sector_basis(
     boundary_policy: CochainBoundaryKind,
     /,
 ) -> SpectralDecomposition | None:
-    rank = int(values.size)
+    rank = values.size
     if rank == 0:
         return None
     total_mass = float(np.sum(metric))
     physical_active = vectors / np.sqrt(metric)[:, None] * np.sqrt(total_mass)
-    functions = np.zeros((complex_ir.cell_counts[int(degree)], rank), dtype=float)
+    functions = np.zeros((complex_ir.cell_counts[int(degree)], rank), dtype=np.float64)
     functions[np.flatnonzero(active), :] = physical_active
-    measure = np.zeros((functions.shape[0],), dtype=float)
+    measure = np.zeros((functions.shape[0],), dtype=np.float64)
     measure[active] = metric / total_mass
     gram = physical_active.T @ (measure[active, None] * physical_active)
     residual = float(np.max(np.abs(gram - np.eye(rank))))
-    source_id = (
-        f"cochain:{complex_ir.fingerprint}:degree={int(degree)}:"
-        f"sector={sector}:boundary={boundary_policy}"
-    )
+    source_id = f"cochain:{complex_ir.fingerprint}:degree={int(degree)}:sector={sector}:boundary={boundary_policy}"
     report = LaplacianEigenbasisReport(
         method_id="dense-hodge-sector",
         source_id=source_id,
@@ -438,7 +431,7 @@ def cochain_hodge_sector_spectra(
         or not np.array_equal(metric, upper_metric)
     ):
         raise ValueError("Hodge component assemblies disagree on their active metric.")
-    if int(complete.shape[0]) == 0:
+    if complete.shape[0] == 0:
         raise ValueError("The selected boundary policy has no active cells.")
     complete_values, complete_vectors = np.linalg.eigh(complete.toarray())
     lower_values, lower_vectors = np.linalg.eigh(lower.toarray())
@@ -456,8 +449,9 @@ def cochain_hodge_sector_spectra(
     harmonic_indices = np.flatnonzero(np.abs(complete_values) <= threshold)
     exact_indices = np.flatnonzero(lower_values > threshold)
     coexact_indices = np.flatnonzero(upper_values > threshold)
-    if harmonic_indices.size + exact_indices.size + coexact_indices.size != int(
-        complete.shape[0]
+    if (
+        harmonic_indices.size + exact_indices.size + coexact_indices.size
+        != complete.shape[0]
     ):
         raise ValueError("Hodge sector ranks do not span the active cochain space.")
     harmonic = _hodge_sector_basis(
@@ -465,7 +459,7 @@ def cochain_hodge_sector_spectra(
         degree,
         active,
         metric,
-        np.zeros((harmonic_indices.size,), dtype=float),
+        np.zeros((harmonic_indices.size,), dtype=np.float64),
         complete_vectors[:, harmonic_indices],
         "harmonic",
         boundary_policy,

@@ -175,8 +175,7 @@ class ValenciaGeometrySource(StrictModule, NonTrainableState):
             or spatial.shape != leading + (3, 3, 3)
         ):
             raise ValueError(
-                "Valencia source derivatives must have shapes S+(3,), "
-                "S+(3,3), and S+(3,3,3)."
+                "Valencia source derivatives must have shapes S+(3,), S+(3,3), and S+(3,3,3)."
             )
         self.geometry = geometry
         self.alpha_gradient = alpha
@@ -776,7 +775,7 @@ class ValenciaGRHDSystem(StrictModule, NonTrainableState):
                 "layout": layout.layout_id,
                 "density_floor": density_floor_,
                 "pressure_floor": pressure_floor_,
-                "source": "adm-valencia-eulerian-v1",
+                "source": "adm-valencia-eulerian",
             }
         )
 

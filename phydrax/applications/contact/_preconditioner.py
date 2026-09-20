@@ -30,7 +30,7 @@ class ContactGraphPlan(StrictModule, NonTrainableState):
         valid_values = []
         for batch in kinematics.batches:
             endpoints.extend(np.asarray(batch.vertex_indices).tolist())
-            valid_values.extend(np.asarray(batch.valid, dtype=bool).tolist())
+            valid_values.extend(np.asarray(batch.valid, dtype=np.bool_).tolist())
         route_count = len(endpoints)
         parent = list(range(route_count))
 

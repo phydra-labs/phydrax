@@ -223,7 +223,7 @@ def _assemble_p1_blocks(
     vertex_count = vertices.shape[0]
     double_layer = np.zeros(
         (faces.shape[0], vertex_count),
-        dtype=complex if kernel.family == "outgoing-helmholtz" else float,
+        dtype=np.complex128 if kernel.family == "outgoing-helmholtz" else np.float64,
     )
     normal_single = np.zeros((vertex_count, vertex_count), dtype=double_layer.dtype)
     maximum_defect = 0.0
@@ -316,13 +316,15 @@ def prepare_scalar_calderon_3d(
         policy=selected,
         numeric_version=numeric_version,
     )
-    vertices = np.asarray(region.triangle_mesh.vertices, dtype=float)
+    vertices = np.asarray(region.triangle_mesh.vertices, dtype=np.float64)
     faces = np.asarray(region.triangle_mesh.faces, dtype=np.int32)
-    face_areas = np.asarray(dp0.face_areas, dtype=float)
+    face_areas = np.asarray(dp0.face_areas, dtype=np.float64)
     dense_entries = faces.shape[0] * vertices.shape[0] + vertices.shape[0] ** 2
     dense_bytes = (
         dense_entries
-        * np.dtype(complex if family.family == "outgoing-helmholtz" else float).itemsize
+        * np.dtype(
+            np.complex128 if family.family == "outgoing-helmholtz" else np.float64
+        ).itemsize
     )
     if dense_bytes > selected.max_resident_bytes:
         raise ValueError("Conforming scalar blocks exceed max_resident_bytes.")
@@ -336,7 +338,7 @@ def prepare_scalar_calderon_3d(
         raise ValueError(
             "Conforming scalar pair quadrature did not meet the declared tolerance."
         )
-    cross_mass_matrix = np.zeros((faces.shape[0], vertices.shape[0]), dtype=float)
+    cross_mass_matrix = np.zeros((faces.shape[0], vertices.shape[0]), dtype=np.float64)
     for face_index, face in enumerate(faces):
         cross_mass_matrix[face_index, face] = face_areas[face_index] / 3.0
     correction_matrix = None

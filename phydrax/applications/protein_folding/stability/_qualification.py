@@ -465,8 +465,7 @@ def qualify_protein_stability(
         or not isinstance(baseline_fit.predictor, GlobalSubstitutionBaseline)
     ):
         raise ValueError(
-            "Baseline comparison must use the exact strongest prespecified baseline "
-            "selected on model-selection cases."
+            "Baseline comparison must use the exact strongest prespecified baseline selected on model-selection cases."
         )
     baseline_fit = model_selection.chosen_baseline_fit
     selected_fit = model_selection.chosen_fit
@@ -933,8 +932,7 @@ class DoubleMutantUncertainty:
             or coupling_variance < 0.0
         ):
             raise ValueError(
-                "Double-mutant variances/covariance must be finite and variances "
-                "non-negative."
+                "Double-mutant variances/covariance must be finite and variances non-negative."
             )
         if covariance * covariance > additive_variance * coupling_variance:
             raise ValueError("Double-mutant observation covariance must be PSD.")
@@ -1080,8 +1078,7 @@ def qualify_double_mutant_challenge(
             != double_measurement_by_case[key].record_id
         ):
             raise ValueError(
-                "Double-mutant uncertainty must bind its mapping key and exact "
-                "measurement record."
+                "Double-mutant uncertainty must bind its mapping key and exact measurement record."
             )
     if pair_model.single_model_id != single_predictor.model_id:
         raise ValueError(

@@ -218,7 +218,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, Array, Array]:
         flattened = cell_centers.reshape((-1, 3))
-        count = int(flattened.shape[0])
+        count = flattened.shape[0]
         chunk_capacity = min(256, count)
         chunk_count = (count + chunk_capacity - 1) // chunk_capacity
         padded_count = chunk_count * chunk_capacity
@@ -283,7 +283,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
     ) -> Array:
         centers = cell_centers.reshape((-1, 3))
         vectors = values.reshape((-1, 3))
-        count = int(centers.shape[0])
+        count = centers.shape[0]
         chunk_capacity = min(256, count)
         chunk_count = (count + chunk_capacity - 1) // chunk_capacity
         padded_count = chunk_count * chunk_capacity
@@ -435,7 +435,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             inverse = hydrodynamics.surface.inverse_hodge(geometry, covector)
             return gather(inverse.velocity)
 
-        marker_count = int(markers.shape[0])
+        marker_count = markers.shape[0]
         space = la.ArraySpace((marker_count,), dtype=markers.dtype)
         rigid_matrix = body_map @ body_inverse @ body_map.T
 

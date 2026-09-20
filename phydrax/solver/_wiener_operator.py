@@ -34,7 +34,7 @@ class WienerNoiseBlock(StrictModule):
     ):
         if not isinstance(name, str) or not name:
             raise ValueError("Wiener noise block name must be non-empty.")
-        resolved_shape = tuple(int(size) for size in shape)
+        resolved_shape = tuple(shape)
         if any(size <= 0 for size in resolved_shape):
             raise ValueError("Wiener noise block dimensions must be positive.")
         offset = int(start)

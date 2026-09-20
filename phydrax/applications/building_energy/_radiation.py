@@ -46,7 +46,7 @@ class RadiativeBasis(StrictModule):
             raise ValueError(
                 "Radiative basis requires unique nonempty sample and channel labels."
             )
-        w = np.asarray(weights, dtype=float)
+        w = np.asarray(weights, dtype=np.float64)
         if w.shape != (len(labels_),) or not np.all(np.isfinite(w) & (w > 0)):
             raise ValueError("Radiative measure weights must be finite and positive.")
         self.labels, self.channels = labels_, channels_

@@ -23,7 +23,8 @@ from phydrax.applications.cardiovascular.personalization._design import (
     SensitivitySVDPlan,
 )
 from phydrax.applications.cardiovascular.personalization._inverse import (
-    ElectrophysiologyInverseProblem,
+    CardiovascularInverseProblem,
+    ElectrophysiologyInverseRoute,
 )
 from phydrax.applications.cardiovascular.personalization._likelihood import (
     GaussianModelDiscrepancy,
@@ -219,9 +220,10 @@ def test_subsystem_inverse_recovers_synthetic_parameter_from_multiple_starts():
         (*base_schema.fields, fixed_field),
         schema_id="ep.synthetic.with-fixed-reference",
     )
-    inverse = ElectrophysiologyInverseProblem(
+    inverse = CardiovascularInverseProblem(
         schema,
         likelihood,
+        ElectrophysiologyInverseRoute(),
         lambda state, physical, args: state - physical[0],
         lambda state, physical, args: (state.reshape((1,)),),
         fixed_topology=lambda state, physical, args: jnp.asarray(True),
@@ -272,9 +274,10 @@ def test_inverse_routes_reject_monolithic_cross_subsystem_parameter_blocks():
     mechanics_schema = _scalar_schema(subsystem=CardiacSubsystem.PASSIVE_MECHANICS)
 
     with pytest.raises(ValueError, match="cannot own"):
-        ElectrophysiologyInverseProblem(
+        CardiovascularInverseProblem(
             mechanics_schema,
             likelihood,
+            ElectrophysiologyInverseRoute(),
             lambda state, physical, args: state - physical[0],
             lambda state, physical, args: (state.reshape((1,)),),
             fixed_topology=lambda state, physical, args: jnp.asarray(True),

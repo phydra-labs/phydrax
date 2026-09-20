@@ -60,7 +60,7 @@ class ContractionState(StrictModule):
         dtype: Any = jnp.float64,
         reference_stretch: float = 1.0,
     ) -> ContractionState:
-        shape_ = tuple(int(value) for value in shape)
+        shape_ = tuple(shape)
         if any(value <= 0 for value in shape_):
             raise ValueError("Contraction state shape entries must be positive.")
         zeros = jnp.zeros(shape_, dtype=dtype)

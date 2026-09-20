@@ -6,8 +6,8 @@ import pytest
 
 from phydrax.qualification import (
     core_candidate_profiles,
-    CoreQualificationObservation,
     core_portfolio_observation,
+    CoreQualificationObservation,
 )
 
 

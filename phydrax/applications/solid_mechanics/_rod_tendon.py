@@ -113,7 +113,7 @@ class RodMaterialStation(StrictModule, NonTrainableState):
         self.offset = jnp.asarray(offset_)
         self.segment_id = segment
         self.xi = coordinate
-        self.dimension = int(offset_.shape[0])
+        self.dimension = offset_.shape[0]
         self.station_id = canonical_fingerprint(
             {
                 "kind": "rod-material-tendon-station",

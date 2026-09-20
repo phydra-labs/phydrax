@@ -100,7 +100,9 @@ class CorporateActionAdjustmentResult(StrictModule):
 
 
 def _observation_count(observation_ids: Sequence[str], /) -> int:
-    active = np.asarray([bool(identifier) for identifier in observation_ids], dtype=bool)
+    active = np.asarray(
+        [bool(identifier) for identifier in observation_ids], dtype=np.bool_
+    )
     count = int(np.sum(active))
     if not np.array_equal(active, np.arange(active.size) < count):
         raise ValueError("market transform inputs require an observation prefix.")
@@ -241,7 +243,7 @@ def compute_returns(
     )
     edge_capacity = panel.capacity - 1
     values = jnp.zeros((panel.series_count, edge_capacity), dtype=prices.dtype)
-    valid = jnp.zeros((panel.series_count, edge_capacity), dtype=bool)
+    valid = jnp.zeros((panel.series_count, edge_capacity), dtype=jnp.bool_)
     status = jnp.zeros((panel.series_count, edge_capacity), dtype=jnp.int32)
     starts = jnp.zeros((panel.series_count, edge_capacity), dtype=jnp.int64)
     ends = jnp.zeros((panel.series_count, edge_capacity), dtype=jnp.int64)
@@ -365,7 +367,7 @@ def compute_realized_measures(
         raise ValueError("return capacity is smaller than the realized-measure window.")
     output_count = edge_count - definition.window + 1
     values = jnp.zeros((series_count, output_count), dtype=returns.values.dtype)
-    valid = jnp.zeros((series_count, output_count), dtype=bool)
+    valid = jnp.zeros((series_count, output_count), dtype=jnp.bool_)
     status = jnp.zeros((series_count, output_count), dtype=jnp.int32)
     counts = jnp.zeros((series_count, output_count), dtype=jnp.int32)
     measures = []

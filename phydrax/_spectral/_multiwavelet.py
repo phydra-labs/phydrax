@@ -22,7 +22,7 @@ from ._wavelet import WaveletBoundary
 
 
 def _canonical_columns(matrix: np.ndarray, /) -> np.ndarray:
-    result = np.asarray(matrix, dtype=float).copy()
+    result = np.asarray(matrix, dtype=np.float64).copy()
     for column in range(result.shape[1]):
         pivot = int(np.argmax(np.abs(result[:, column])))
         if result[pivot, column] < 0.0:
@@ -31,7 +31,7 @@ def _canonical_columns(matrix: np.ndarray, /) -> np.ndarray:
 
 
 def _discrete_legendre_analysis(order: int, /) -> np.ndarray:
-    nodes = (np.arange(order, dtype=float) + 0.5) / float(order)
+    nodes = (np.arange(order, dtype=np.float64) + 0.5) / float(order)
     vandermonde = np.polynomial.legendre.legvander(2.0 * nodes - 1.0, order - 1)
     orthogonal, _ = np.linalg.qr(vandermonde)
     return _canonical_columns(orthogonal).T
@@ -41,7 +41,7 @@ def _alpert_analysis(order: int, /) -> np.ndarray:
     quadrature = gauss_legendre_data(max(16, 4 * order))
     quadrature_nodes = np.asarray(quadrature.nodes)
     quadrature_weights = np.asarray(quadrature.weights)
-    low_rows = np.zeros((order, 2 * order), dtype=float)
+    low_rows = np.zeros((order, 2 * order), dtype=np.float64)
     for branch in range(2):
         lower = 0.5 * branch
         points = lower + 0.25 * (quadrature_nodes + 1.0)
@@ -121,7 +121,7 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
         self.boundary = boundary
         self.fingerprint = canonical_fingerprint(
             {
-                "kind": "alpert-multiwavelet-transform-v1",
+                "kind": "alpert-multiwavelet-transform",
                 "order": order_value,
                 "levels": level_count,
                 "boundary": boundary,
@@ -130,7 +130,7 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
         )
 
     def _pad(self, values: Array, padded_points: int, /) -> Array:
-        amount = padded_points - int(values.shape[-2])
+        amount = padded_points - values.shape[-2]
         if amount == 0:
             return values
         pads = [(0, 0)] * values.ndim
@@ -149,7 +149,7 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
         array = jnp.asarray(values)
         if array.ndim < 2:
             raise ValueError("Multiwavelet values require point and channel axes.")
-        num_points = int(array.shape[-2])
+        num_points = array.shape[-2]
         if num_points <= 1:
             raise ValueError("Multiwavelet point axes must contain at least two samples.")
         multiple = self.order * 2**self.levels
@@ -163,7 +163,7 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
         details: list[tuple[Array, ...]] = []
         shapes: list[tuple[int, ...]] = []
         for _ in range(self.levels):
-            cells = int(approximation.shape[-3])
+            cells = approximation.shape[-3]
             if cells % 2:
                 raise ValueError(
                     "Multiwavelet cell count must be divisible at every level."

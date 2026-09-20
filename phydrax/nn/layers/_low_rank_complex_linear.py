@@ -213,8 +213,7 @@ class LowRankComplexLinear(_AbstractBaseModel):
         if in_shape:
             if array.ndim < len(in_shape) or array.shape[-len(in_shape) :] != in_shape:
                 raise ValueError(
-                    f"LowRankComplexLinear expected trailing shape {in_shape}; "
-                    f"got {array.shape}."
+                    f"LowRankComplexLinear expected trailing shape {in_shape}; got {array.shape}."
                 )
             leading = array.shape[: -len(in_shape)]
             flattened = array.reshape(leading + (_get_size(in_shape),))
@@ -233,7 +232,7 @@ class LowRankComplexLinear(_AbstractBaseModel):
         out_shape = self._out_value_shape
         if out_shape:
             return output.reshape(leading + out_shape)
-        if int(output.shape[-1]) != 1:
+        if output.shape[-1] != 1:
             raise ValueError("Scalar LowRankComplexLinear output requires one feature.")
         return jnp.squeeze(output, axis=-1)
 

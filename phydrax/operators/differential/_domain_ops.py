@@ -169,21 +169,18 @@ def _factor_and_dim(
     coordinate = u.domain.coordinate(var)
     if not coordinate.differentiable:
         raise TypeError(
-            f"Differential operators are not defined for non-differentiable "
-            f"coordinate {var!r}."
+            f"Differential operators are not defined for non-differentiable coordinate {var!r}."
         )
     if coordinate.kind == "scalar":
         return coordinate, 1
     if coordinate.kind == "array" and coordinate.event_shape is not None:
         if len(coordinate.event_shape) != 1:
             raise TypeError(
-                f"Differential operators require a rank-one coordinate event, "
-                f"got {coordinate.event_shape} for {var!r}."
+                f"Differential operators require a rank-one coordinate event, got {coordinate.event_shape} for {var!r}."
             )
         return coordinate, int(coordinate.event_shape[0])
     raise TypeError(
-        f"Differential operators do not support coordinate kind "
-        f"{coordinate.kind!r} for var={var!r}."
+        f"Differential operators do not support coordinate kind {coordinate.kind!r} for var={var!r}."
     )
 
 
@@ -745,8 +742,8 @@ def grad(
         if backend == "ad" and ad_engine == "auto":
             plan = plan_derivative_execution(
                 (DerivativeRequest("__domain__", var, (None,)),),
-                output_size=int(jnp.size(y0)),
-                coordinate_size=int(jnp.size(x0)),
+                output_size=jnp.size(y0),
+                coordinate_size=jnp.size(x0),
             )
             jacobian = jax.jacfwd if plan.strategy == "forward" else jax.jacrev
         if jnp.iscomplexobj(y0):
@@ -4034,7 +4031,7 @@ def maxwell_stress(
 
         if E2 is not None:
             Ex = jnp.asarray(E2.func(*[args[i] for i in E_pos], key=key, **kwargs))
-            n = int(Ex.shape[-1])
+            n = Ex.shape[-1]
             I = jnp.eye(n)
             I = jnp.broadcast_to(I, Ex.shape[:-1] + (n, n))
             eps_v = jnp.asarray(eps2.func(*[args[i] for i in eps_pos], key=key, **kwargs))
@@ -4045,7 +4042,7 @@ def maxwell_stress(
         if H2 is not None:
             Hx = jnp.asarray(H2.func(*[args[i] for i in H_pos], key=key, **kwargs))
             if n is None:
-                n = int(Hx.shape[-1])
+                n = Hx.shape[-1]
             I = jnp.eye(int(n))
             I = jnp.broadcast_to(I, Hx.shape[:-1] + (int(n), int(n)))
             mu_v = jnp.asarray(mu2.func(*[args[i] for i in mu_pos], key=key, **kwargs))

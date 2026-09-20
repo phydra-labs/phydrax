@@ -92,7 +92,7 @@ def test_scenario_evaluation_reduction_and_reweighting_preserve_meaning():
         ),
         jnp.asarray((0.5, 0.25, 0.25)),
         jnp.asarray((0.0, 1.0)),
-        jnp.ones((3, 2), dtype=bool),
+        jnp.ones((3, 2), dtype="bool"),
         "physical",
         "factors",
         "returns",

@@ -42,11 +42,11 @@ def _pair_jastrow(
     ranges: Array,
     /,
 ) -> tuple[Array, Array]:
-    capacity = int(coordinates.shape[0])
+    capacity = coordinates.shape[0]
     pair = (
         active[:, None]
         & active[None, :]
-        & jnp.triu(jnp.ones((capacity, capacity), dtype=bool), k=1)
+        & jnp.triu(jnp.ones((capacity, capacity), dtype=jnp.bool_), k=1)
     )
     difference = coordinates[:, None, :] - coordinates[None, :, :]
     squared_distance = jnp.sum(difference * difference, axis=-1)
@@ -96,28 +96,28 @@ class BosonicJastrowAmplitude(StrictModule):
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
         center = (
-            np.zeros((space.species_count, space.dimension), dtype=float)
+            np.zeros((space.species_count, space.dimension), dtype=np.float64)
             if centers is None
-            else np.asarray(centers, dtype=float)
+            else np.asarray(centers, dtype=np.float64)
         )
         precision = np.broadcast_to(
-            np.asarray(precisions, dtype=float),
+            np.asarray(precisions, dtype=np.float64),
             (space.species_count, space.dimension),
         ).copy()
         momentum = (
-            np.zeros((space.species_count, space.dimension), dtype=float)
+            np.zeros((space.species_count, space.dimension), dtype=np.float64)
             if momenta is None
-            else np.asarray(momenta, dtype=float)
+            else np.asarray(momenta, dtype=np.float64)
         )
         cusp = np.broadcast_to(
             np.asarray(pair_cusp), (space.species_count, space.species_count)
         ).copy()
         ranges = np.broadcast_to(
-            np.asarray(pair_range, dtype=float),
+            np.asarray(pair_range, dtype=np.float64),
             (space.species_count, space.species_count),
         ).copy()
         sector = (
-            np.zeros((space.species_count, space.capacity + 1), dtype=complex)
+            np.zeros((space.species_count, space.capacity + 1), dtype=np.complex128)
             if sector_log_weights is None
             else np.asarray(sector_log_weights)
         )
@@ -253,31 +253,30 @@ class FermionicDeterminantJastrowAmplitude(StrictModule):
             space.dimension,
         ):
             raise ValueError(
-                "orbital_bias/weights require shapes (species,capacity) and "
-                "(species,capacity,dimension)."
+                "orbital_bias/weights require shapes (species,capacity) and (species,capacity,dimension)."
             )
         centers = (
-            np.zeros(orbital_shape + (space.dimension,), dtype=float)
+            np.zeros(orbital_shape + (space.dimension,), dtype=np.float64)
             if orbital_centers is None
-            else np.asarray(orbital_centers, dtype=float)
+            else np.asarray(orbital_centers, dtype=np.float64)
         )
         precisions = np.broadcast_to(
-            np.asarray(orbital_precisions, dtype=float), orbital_shape
+            np.asarray(orbital_precisions, dtype=np.float64), orbital_shape
         ).copy()
         momenta = (
-            np.zeros(orbital_shape + (space.dimension,), dtype=float)
+            np.zeros(orbital_shape + (space.dimension,), dtype=np.float64)
             if orbital_momenta is None
-            else np.asarray(orbital_momenta, dtype=float)
+            else np.asarray(orbital_momenta, dtype=np.float64)
         )
         cusp = np.broadcast_to(
             np.asarray(pair_cusp), (space.species_count, space.species_count)
         ).copy()
         ranges = np.broadcast_to(
-            np.asarray(pair_range, dtype=float),
+            np.asarray(pair_range, dtype=np.float64),
             (space.species_count, space.species_count),
         ).copy()
         sector = (
-            np.zeros((space.species_count, space.capacity + 1), dtype=complex)
+            np.zeros((space.species_count, space.capacity + 1), dtype=np.complex128)
             if sector_log_weights is None
             else np.asarray(sector_log_weights)
         )
@@ -294,7 +293,7 @@ class FermionicDeterminantJastrowAmplitude(StrictModule):
         ):
             raise ValueError("Fermionic determinant/Jastrow parameters are invalid.")
         dtype = np.result_type(
-            bias.dtype, weights.dtype, cusp.dtype, sector.dtype, complex
+            bias.dtype, weights.dtype, cusp.dtype, sector.dtype, np.complex128
         )
         identifier = (
             canonical_fingerprint(

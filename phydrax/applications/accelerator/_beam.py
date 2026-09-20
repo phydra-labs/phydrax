@@ -94,13 +94,13 @@ class AcceleratorBunch(StrictModule, NonTrainableState):
             or coordinates_.shape[0] < 1
         ):
             raise ValueError("Bunch coordinates must have shape (capacity, 6).")
-        capacity = int(coordinates_.shape[0])
+        capacity = coordinates_.shape[0]
         if weights_.shape != (capacity,) or identifiers.shape != (capacity,):
             raise ValueError("Bunch weights and identities must align with capacity.")
         active_ = (
-            jnp.ones((capacity,), dtype=bool)
+            jnp.ones((capacity,), dtype=jnp.bool_)
             if active is None
-            else jnp.asarray(active, dtype=bool)
+            else jnp.asarray(active, dtype=jnp.bool_)
         )
         if active_.shape != (capacity,):
             raise ValueError("active must align with bunch capacity.")
@@ -165,16 +165,16 @@ class BeamlinePlan(StrictModule, NonTrainableState):
         convention: AcceleratorConvention | None = None,
     ):
         kinds_ = np.asarray(kinds)
-        lengths_ = np.asarray(lengths, dtype=float)
-        strengths_ = np.asarray(strengths, dtype=float)
-        secondary = np.asarray(secondary_strengths, dtype=float)
+        lengths_ = np.asarray(lengths, dtype=np.float64)
+        strengths_ = np.asarray(strengths, dtype=np.float64)
+        secondary = np.asarray(secondary_strengths, dtype=np.float64)
         if (
             kinds_.ndim != 1
             or kinds_.size < 1
             or not np.issubdtype(kinds_.dtype, np.integer)
         ):
             raise ValueError("Beamline kinds must be a non-empty integer vector.")
-        count = int(kinds_.size)
+        count = kinds_.size
         if (
             lengths_.shape != (count,)
             or strengths_.shape != (count,)
@@ -191,9 +191,9 @@ class BeamlinePlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Beamline elements contain invalid kind or numeric values.")
         active_ = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if active is None
-            else np.asarray(active, dtype=bool)
+            else np.asarray(active, dtype=np.bool_)
         )
         ids = tuple(str(value).strip() for value in element_ids)
         if (
@@ -316,7 +316,7 @@ def track_beamline(plan: BeamlinePlan, bunch: AcceleratorBunch, /) -> BeamlineRe
             finite,
         )
 
-    indices = jnp.arange(plan.element_count, dtype=jnp.int32)
+    jnp.arange(plan.element_count, dtype=jnp.int32)
     (_, final_active, loss_indices, _), history = jax.lax.scan(
         one_element,
         (

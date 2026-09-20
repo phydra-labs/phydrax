@@ -100,8 +100,8 @@ class ObservationHistory(StrictModule, NonTrainableState):
             raise TypeError("configuration must be SensorConfiguration.")
         observations = jnp.asarray(values)
         coordinates = jnp.asarray(times)
-        mask = jnp.asarray(valid, dtype=bool)
-        resets = jnp.asarray(reset, dtype=bool)
+        mask = jnp.asarray(valid, dtype=jnp.bool_)
+        resets = jnp.asarray(reset, dtype=jnp.bool_)
         if observations.ndim != 2 or observations.shape[1] != len(
             configuration.channel_names
         ):

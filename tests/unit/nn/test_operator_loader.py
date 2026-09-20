@@ -40,7 +40,7 @@ def _dataset(
         nodes,
         quadrature_weights=weights,
     )
-    values = jnp.arange(cases, dtype=float)[:, None] + nodes[None, :] + input_offset
+    values = jnp.arange(cases, dtype="float64")[:, None] + nodes[None, :] + input_offset
     query_mask = jnp.arange(resolution) != resolution - 1 if masked else None
     return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},
@@ -52,7 +52,7 @@ def _dataset(
     )
 
 
-def _callback_source(*, size=8, safe=False, fail_at=None, fingerprint="cases-v1"):
+def _callback_source(*, size=8, safe=False, fail_at=None, fingerprint="cases"):
     metadata_reads = []
     case_reads = []
     reader_threads = []
@@ -179,7 +179,7 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
         baseline.targets,
         baseline.provenance,
         case_log_weights=jnp.zeros((baseline.size,)),
-        case_mask=jnp.ones((baseline.size,), dtype=bool),
+        case_mask=jnp.ones((baseline.size,), dtype="bool"),
     )
     changed_case_metadata = (
         replace(
@@ -616,7 +616,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
         "gradient_accumulation": 2,
         "seed": 17,
         "checkpoint_every": 1,
-        "configuration": {"test_contract": "lazy-exact-resume-v2"},
+        "configuration": {"test_contract": "lazy-exact-resume"},
     }
 
     uninterrupted_reads = []

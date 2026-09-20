@@ -159,7 +159,7 @@ def _surface_vertex_route(
         )
     candidates = fem_coordinates[boundary_vertices]
     route = np.full((surface_coordinates.shape[0],), -1, dtype=np.int32)
-    errors = np.zeros((surface_coordinates.shape[0],), dtype=float)
+    errors = np.zeros((surface_coordinates.shape[0],), dtype=np.float64)
     if tolerance == 0.0:
         exact = {
             tuple(float(value) for value in point): int(vertex)
@@ -176,7 +176,7 @@ def _surface_vertex_route(
         candidate_bins = np.floor((candidates - origin) / tolerance).astype(np.int64)
         buckets: dict[tuple[int, int, int], list[int]] = {}
         for local, key in enumerate(candidate_bins):
-            buckets.setdefault(tuple(int(value) for value in key), []).append(local)
+            buckets.setdefault(tuple(key), []).append(local)
         offsets = tuple(product((-1, 0, 1), repeat=3))
         for index, point in enumerate(surface_coordinates):
             key = np.floor((point - origin) / tolerance).astype(np.int64)
@@ -194,8 +194,7 @@ def _surface_vertex_route(
             )
             if len(accepted) != 1:
                 raise ValueError(
-                    "Surface coordinates do not bijectively match the FEM exterior "
-                    "vertices."
+                    "Surface coordinates do not bijectively match the FEM exterior vertices."
                 )
             local = accepted[0]
             route[index] = boundary_vertices[local]
@@ -292,8 +291,7 @@ def prepare_matching_scalar_interface_trace_3d(
         or field_space.shape != (mesh.coordinates.shape[0],)
     ):
         raise ValueError(
-            "The supported scalar trace envelope is nodal H1 Lagrange P1 on "
-            "affine tetrahedra."
+            "The supported scalar trace envelope is nodal H1 Lagrange P1 on affine tetrahedra."
         )
 
     block = mesh.blocks[0]
@@ -333,8 +331,7 @@ def prepare_matching_scalar_interface_trace_3d(
         or boundary_space.dtype != field_space.dtype
     ):
         raise ValueError(
-            "The DP0 boundary space must have one scalar per surface face and "
-            "the FEM scalar dtype."
+            "The DP0 boundary space must have one scalar per surface face and the FEM scalar dtype."
         )
 
     fem_coordinates = np.asarray(discretization.default_runtime.coordinates)
@@ -352,7 +349,7 @@ def prepare_matching_scalar_interface_trace_3d(
         raise ValueError("Interface coordinates/faces must be finite triangles in 3D.")
     tolerance, scale = _coordinate_tolerance(coordinate_tolerance, fem_coordinates)
     boundary_vertices = np.flatnonzero(
-        np.asarray(connectivity.boundary_vertices, dtype=bool)
+        np.asarray(connectivity.boundary_vertices, dtype=np.bool_)
     ).astype(np.int32)
     surface_to_fem, coordinate_error = _surface_vertex_route(
         fem_coordinates,
@@ -389,9 +386,9 @@ def prepare_matching_scalar_interface_trace_3d(
     if np.any(~np.isfinite(areas)) or np.any(areas <= 0.0):
         raise ValueError("Matching interface triangles must have positive finite area.")
     normals = area_vectors / areas[:, None]
-    face_centres = np.mean(triangles, axis=1)
-    cell_centres = np.mean(fem_coordinates[cells[owner_cells]], axis=1)
-    directions = face_centres - cell_centres
+    face_centers = np.mean(triangles, axis=1)
+    cell_centers = np.mean(fem_coordinates[cells[owner_cells]], axis=1)
+    directions = face_centers - cell_centers
     direction_norms = np.linalg.norm(directions, axis=1)
     orientation_cosines = np.sum(normals * directions, axis=1) / direction_norms
     orientation_tolerance = 128.0 * np.finfo(fem_coordinates.dtype).eps
@@ -531,13 +528,11 @@ def prepare_matching_scalar_interface_trace_3d(
         spatial_dimension=3,
         pde="scalar interior Poisson / homogeneous exterior Laplace",
         geometry_contract=(
-            "complete affine tetrahedral exterior matched bijectively to one closed "
-            "outward triangular surface"
+            "complete affine tetrahedral exterior matched bijectively to one closed outward triangular surface"
         ),
         formulation_role="exact P1 facet-average trace and outward P1 conormal to DP0",
         normal_convention=(
-            "normal points from the FEM interior into the exterior; both conormals "
-            "use this same geometric normal"
+            "normal points from the FEM interior into the exterior; both conormals use this same geometric normal"
         ),
         provider_ids=(
             discretization.prepared_id,

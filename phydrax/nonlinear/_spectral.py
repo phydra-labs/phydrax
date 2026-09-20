@@ -12,6 +12,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from phydrax._strict import StrictModule
+
 from .._tree_math import tree_allfinite
 from ..linalg import PyTreeSpace
 from ._precision import NonlinearPrecisionPolicy
@@ -42,7 +44,7 @@ def _coordinate_inner(
     return precision.decision(jnp.real(jnp.sum(jnp.conj(left_) * right_)))
 
 
-class _SpectralSearch(eqx.Module):
+class _SpectralSearch(StrictModule):
     state: Array
     residual: Array
     norm: Array
@@ -54,7 +56,7 @@ class _SpectralSearch(eqx.Module):
     nonfinite: Array
 
 
-class _SpectralRun(eqx.Module):
+class _SpectralRun(StrictModule):
     state: Array
     residual: Array
     initial_norm: Array

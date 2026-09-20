@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier as _canonical_identifier
 from .._spaces import DiscreteFieldSpace
 
 
@@ -22,12 +23,6 @@ if TYPE_CHECKING:
     from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 _INT32_INFO = np.iinfo(np.int32)
-
-
-def _canonical_identifier(value: object, name: str) -> str:
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical stripped string.")
-    return value
 
 
 def _normalized_int32_route(
@@ -54,17 +49,16 @@ def _validated_boundary_policy_count(value: object) -> int:
 
 
 def _validate_boundary_policy_routes(
-    neighbours: np.ndarray,
+    neighbors: np.ndarray,
     active: np.ndarray,
     policies: np.ndarray,
     boundary_policy_count: int,
 ) -> None:
-    active_boundary = active & (neighbours < 0)
-    active_interior = active & (neighbours >= 0)
+    active_boundary = active & (neighbors < 0)
+    active_interior = active & (neighbors >= 0)
     if np.any(active_boundary & ((policies < 0) | (policies >= boundary_policy_count))):
         raise ValueError(
-            "Active boundary face routes require an in-range nonnegative "
-            "boundary policy ID."
+            "Active boundary face routes require an in-range nonnegative boundary policy ID."
         )
     if np.any(active_interior & (policies != -1)):
         raise ValueError("Active interior face routes must use boundary policy ID -1.")
@@ -89,7 +83,7 @@ def _validated_static_shape(
         for item in shape
     ):
         raise ValueError(f"{name} must be a rank-{rank} shape with positive extents.")
-    return tuple(int(item) for item in shape)
+    return tuple(shape)
 
 
 def _dynamic_int32_scalar(
@@ -136,7 +130,7 @@ class FiniteVolumeFaceBlock(StrictModule, NonTrainableState):
 
     face_ids: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     boundary_patch_ids: Array
     face_centers: Array
     area_vectors: Array
@@ -150,7 +144,7 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
 
     face_ids: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     active_mask: Array
     boundary_policy_ids: Array
     boundary_policy_count: int = eqx.field(static=True)
@@ -164,7 +158,7 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
         *,
         face_ids: ArrayLike,
         owner_cells: ArrayLike,
-        neighbour_cells: ArrayLike,
+        neighbor_cells: ArrayLike,
         active_mask: ArrayLike,
         boundary_policy_ids: ArrayLike | None = None,
         boundary_policy_count: int,
@@ -177,7 +171,7 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
         policy_count = _validated_boundary_policy_count(boundary_policy_count)
         ids = np.asarray(face_ids)
         owners = np.asarray(owner_cells)
-        neighbours = np.asarray(neighbour_cells)
+        neighbors = np.asarray(neighbor_cells)
         policies = (
             np.full(ids.shape, -1, dtype=np.int32)
             if boundary_policy_ids is None
@@ -186,22 +180,21 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
         active = np.asarray(active_mask)
         if ids.ndim != 1 or ids.size == 0:
             raise ValueError("face_ids must be a non-empty rank-1 array.")
-        face_count = int(ids.size)
+        face_count = ids.size
         route_shape = (face_count,)
         if (
             owners.shape != route_shape
-            or neighbours.shape != route_shape
+            or neighbors.shape != route_shape
             or active.shape != route_shape
             or policies.shape != route_shape
         ):
             raise ValueError(
-                "Owner, neighbour, boundary-policy, and active routes must have "
-                "one entry per face."
+                "Owner, neighbor, boundary-policy, and active routes must have one entry per face."
             )
         if (
             ids.dtype.kind not in "iu"
             or owners.dtype.kind not in "iu"
-            or neighbours.dtype.kind not in "iu"
+            or neighbors.dtype.kind not in "iu"
             or policies.dtype.kind not in "iu"
         ):
             raise ValueError(
@@ -211,9 +204,9 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
             raise ValueError("active_mask must be a boolean array.")
         ids = _normalized_int32_route(ids, "face_ids", minimum=0)
         owners = _normalized_int32_route(owners, "owner_cells", minimum=0)
-        neighbours = _normalized_int32_route(
-            neighbours,
-            "neighbour_cells",
+        neighbors = _normalized_int32_route(
+            neighbors,
+            "neighbor_cells",
             minimum=-1,
         )
         policies = np.where(active, policies, -1)
@@ -225,16 +218,16 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
         if (
             np.unique(ids).size != face_count
             or np.any(owners < 0)
-            or np.any(neighbours < -1)
+            or np.any(neighbors < -1)
             or np.any(policies < -1)
         ):
             raise ValueError(
-                "Face IDs must be unique and nonnegative; owner/neighbour routes "
-                "must use nonnegative cells or -1 for a boundary neighbour; "
+                "Face IDs must be unique and nonnegative; owner/neighbor routes "
+                "must use nonnegative cells or -1 for a boundary neighbor; "
                 "boundary policy IDs must be at least -1."
             )
         _validate_boundary_policy_routes(
-            neighbours,
+            neighbors,
             active,
             policies,
             policy_count,
@@ -259,8 +252,8 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
             raise ValueError("block_kind must be 'physical' or 'cut'.")
         self.face_ids = jnp.asarray(ids, dtype=jnp.int32)
         self.owner_cells = jnp.asarray(owners, dtype=jnp.int32)
-        self.neighbour_cells = jnp.asarray(neighbours, dtype=jnp.int32)
-        self.active_mask = jnp.asarray(active, dtype=bool)
+        self.neighbor_cells = jnp.asarray(neighbors, dtype=jnp.int32)
+        self.active_mask = jnp.asarray(active, dtype=jnp.bool_)
         self.boundary_policy_ids = jnp.asarray(policies, dtype=jnp.int32)
         self.boundary_policy_count = policy_count
         self.spatial_shape = (spatial[0], spatial[1])
@@ -278,11 +271,10 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
         expected = _validated_boundary_policy_count(boundary_policy_count)
         if self.boundary_policy_count != expected:
             raise ValueError(
-                "Stage face layout boundary-policy count does not match "
-                "the bound boundary set."
+                "Stage face layout boundary-policy count does not match the bound boundary set."
             )
         _validate_boundary_policy_routes(
-            np.asarray(self.neighbour_cells),
+            np.asarray(self.neighbor_cells),
             np.asarray(self.active_mask),
             np.asarray(self.boundary_policy_ids),
             expected,
@@ -290,7 +282,7 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
 
     @property
     def face_count(self) -> int:
-        return int(self.face_ids.size)
+        return self.face_ids.size
 
     @property
     def spatial_dimension(self) -> int:
@@ -342,16 +334,14 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
         point_shape = (*layout.quadrature_shape, layout.spatial_dimension)
         if points.shape != point_shape:
             raise ValueError(
-                "quadrature_points must match the prepared layout quadrature and "
-                "spatial shapes."
+                "quadrature_points must match the prepared layout quadrature and spatial shapes."
             )
         if (
             weights.shape != layout.quadrature_shape
             or grid_velocity.shape != layout.quadrature_shape
         ):
             raise ValueError(
-                "Quadrature weights and grid-normal velocity must match the "
-                "prepared layout quadrature_shape."
+                "Quadrature weights and grid-normal velocity must match the prepared layout quadrature_shape."
             )
 
         centers = eqx.error_if(
@@ -364,7 +354,7 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
             | jnp.any(~jnp.isfinite(grid_velocity)),
             "Stage face geometry must be finite.",
         )
-        active = jnp.asarray(layout.active_mask, dtype=bool)
+        active = jnp.asarray(layout.active_mask, dtype=jnp.bool_)
         measures = eqx.error_if(
             measures,
             jnp.any(measures < 0.0),
@@ -545,8 +535,7 @@ class FiniteVolumeStageGeometryEvidence(StrictModule, NonTrainableState):
         passed_value = eqx.error_if(
             passed_value,
             passed_value != computed_pass,
-            "passed must equal the outcome implied by all geometry evidence defect "
-            "tolerances.",
+            "passed must equal the outcome implied by all geometry evidence defect tolerances.",
         )
         computed_status = jnp.where(
             computed_pass,
@@ -556,8 +545,7 @@ class FiniteVolumeStageGeometryEvidence(StrictModule, NonTrainableState):
         status_value = eqx.error_if(
             status_value,
             status_value != computed_status,
-            "status must equal the outcome implied by all geometry evidence defect "
-            "tolerances.",
+            "status must equal the outcome implied by all geometry evidence defect tolerances.",
         )
 
         self.coordinate_effective_volume_defect = coordinate_defect
@@ -575,7 +563,7 @@ class FiniteVolumeStageGeometryEvidence(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.coordinate_effective_volume_defect.size)
+        return self.coordinate_effective_volume_defect.size
 
 
 class ALEGeometryConsistencyPolicy(StrictModule, NonTrainableState):
@@ -607,15 +595,13 @@ class ALEGeometryConsistencyPolicy(StrictModule, NonTrainableState):
             or (absolute == 0.0 and relative == 0.0)
         ):
             raise ValueError(
-                "ALE absolute and relative tolerances must be finite, nonnegative, "
-                "and not both zero."
+                "ALE absolute and relative tolerances must be finite, nonnegative, and not both zero."
             )
         if not np.isfinite(safety) or safety <= 0.0 or safety > 1.0:
             raise ValueError("reduction_safety_factor must be a finite value in (0, 1].")
         if not np.isfinite(minimum) or minimum <= 0.0 or minimum > safety:
             raise ValueError(
-                "minimum_reduction_factor must be finite, positive, and no larger "
-                "than reduction_safety_factor."
+                "minimum_reduction_factor must be finite, positive, and no larger than reduction_safety_factor."
             )
 
         self.absolute_tolerance = absolute
@@ -787,7 +773,7 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
         volumes = jnp.asarray(effective_cell_volumes)
         if volumes.ndim != 1 or volumes.size == 0:
             raise ValueError("effective_cell_volumes must be a non-empty rank-1 array.")
-        cell_count = int(volumes.size)
+        cell_count = volumes.size
         coordinate = jnp.asarray(coordinate_effective_cell_volumes)
         volume_rate = jnp.asarray(mesh_volume_rate)
         vertices_ = jnp.asarray(vertices)
@@ -841,8 +827,7 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
         coordinate = eqx.error_if(
             coordinate,
             jnp.any(~jnp.isfinite(coordinate)) | jnp.any(coordinate < 0.0),
-            "coordinate_effective_cell_volumes must be finite and nonnegative "
-            "with shape (cell_count,).",
+            "coordinate_effective_cell_volumes must be finite and nonnegative with shape (cell_count,).",
         )
         coordinate = eqx.error_if(
             coordinate,
@@ -889,7 +874,7 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
                 jnp.any(sorted_face_ids[1:] == sorted_face_ids[:-1]),
                 "Stage face IDs must be unique across face blocks.",
             )
-        spatial_dimension = int(centers.shape[1])
+        spatial_dimension = centers.shape[1]
         for block in blocks:
             face_layout = block.layout
             if face_layout.spatial_dimension != spatial_dimension:
@@ -897,11 +882,11 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
                     "Face blocks and cell centers must have one spatial dimension."
                 )
             owners = face_layout.owner_cells
-            neighbours = face_layout.neighbour_cells
+            neighbors = face_layout.neighbor_cells
             face_active = face_layout.active_mask
             active = eqx.error_if(
                 active,
-                jnp.any(owners >= cell_count) | jnp.any(neighbours >= cell_count),
+                jnp.any(owners >= cell_count) | jnp.any(neighbors >= cell_count),
                 "Face block routes index outside the stage cell set.",
             )
             active = eqx.error_if(
@@ -909,12 +894,12 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
                 jnp.any(face_active & ~active[owners]),
                 "Every active face owner must be an active cell.",
             )
-            internal_active = face_active & (neighbours >= 0)
-            safe_neighbours = jnp.where(internal_active, neighbours, 0)
+            internal_active = face_active & (neighbors >= 0)
+            safe_neighbors = jnp.where(internal_active, neighbors, 0)
             active = eqx.error_if(
                 active,
-                jnp.any(internal_active & ~active[safe_neighbours]),
-                "Every active internal face neighbour must be an active cell.",
+                jnp.any(internal_active & ~active[safe_neighbors]),
+                "Every active internal face neighbor must be an active cell.",
             )
 
         self.topology_epoch_id = epoch
@@ -933,7 +918,7 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.effective_cell_volumes.size)
+        return self.effective_cell_volumes.size
 
 
 def lower_static_unstructured_stage_metrics(
@@ -962,7 +947,7 @@ def lower_static_unstructured_stage_metrics(
             layout=FiniteVolumeStageFaceLayout(
                 face_ids=block.face_ids,
                 owner_cells=block.owner_cells,
-                neighbour_cells=block.neighbour_cells,
+                neighbor_cells=block.neighbor_cells,
                 boundary_policy_ids=block.boundary_patch_ids,
                 boundary_policy_count=len(discretization.boundary_patch_names),
                 active_mask=block.active_mask,
@@ -977,7 +962,7 @@ def lower_static_unstructured_stage_metrics(
                         "topology_epoch": epoch,
                         "face_ids": array_tree_fingerprint(block.face_ids),
                         "owner_cells": array_tree_fingerprint(block.owner_cells),
-                        "neighbour_cells": array_tree_fingerprint(block.neighbour_cells),
+                        "neighbor_cells": array_tree_fingerprint(block.neighbor_cells),
                         "boundary_policy_ids": array_tree_fingerprint(
                             block.boundary_patch_ids
                         ),
@@ -1013,7 +998,7 @@ def lower_static_unstructured_stage_metrics(
                 {
                     "face_ids": array_tree_fingerprint(block.face_ids),
                     "owner_cells": array_tree_fingerprint(block.owner_cells),
-                    "neighbour_cells": array_tree_fingerprint(block.neighbour_cells),
+                    "neighbor_cells": array_tree_fingerprint(block.neighbor_cells),
                     "active_mask": array_tree_fingerprint(block.active_mask),
                     "boundary_policy_ids": array_tree_fingerprint(
                         block.boundary_patch_ids
@@ -1082,7 +1067,7 @@ def lower_static_unstructured_stage_metrics(
         mesh_volume_rate=jnp.zeros_like(discretization.cell_volumes),
         vertices=discretization.vertices,
         cell_centers=discretization.cell_centers,
-        active_cell_mask=jnp.ones((discretization.cell_count,), dtype=bool),
+        active_cell_mask=jnp.ones((discretization.cell_count,), dtype=jnp.bool_),
         face_blocks=stage_blocks,
         evidence=evidence,
     )
@@ -1108,7 +1093,7 @@ class PreparedFiniteVolumeGeometry(Protocol):
 
 @runtime_checkable
 class ExplicitFaceBlockGeometry(PreparedFiniteVolumeGeometry, Protocol):
-    """FV geometry exposing owner/neighbour face blocks."""
+    """FV geometry exposing owner/neighbor face blocks."""
 
     face_blocks: tuple[FiniteVolumeFaceBlock, ...]
 

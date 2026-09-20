@@ -32,7 +32,7 @@ from phydrax.ml.ensemble import (
 
 
 def _result(model, batch, method):
-    valid = jnp.ones(batch.case_shape or (), dtype=bool)
+    valid = jnp.ones(batch.case_shape or (), dtype="bool")
     status = jnp.zeros(batch.case_shape or (), dtype=jnp.int32)
     diagnostics = FitDiagnostics(
         valid=valid,
@@ -56,7 +56,7 @@ class _ConstantModel(AbstractArrayModel):
     out_size: int = eqx.field(static=True)
 
     def __init__(self, value, in_size):
-        self.value = jnp.asarray(value, dtype=float)
+        self.value = jnp.asarray(value, dtype="float64")
         self.in_size = int(in_size)
         self.out_size = 1
 
@@ -101,7 +101,7 @@ class _GateModel(AbstractArrayModel):
     def __init__(self, logits, in_size):
         self.logits = jnp.asarray(logits)
         self.in_size = int(in_size)
-        self.out_size = int(self.logits.shape[0])
+        self.out_size = self.logits.shape[0]
 
     def __call__(self, x, /, *, key=None):
         del key

@@ -519,8 +519,8 @@ class ShockResolvingPolicy(StrictModule, NonTrainableState):
         /,
     ) -> ShockRouteLedger:
         sensor_ = jnp.asarray(sensor)
-        admissible = jnp.asarray(primary_admissible, dtype=bool)
-        successful = jnp.asarray(primary_successful, dtype=bool)
+        admissible = jnp.asarray(primary_admissible, dtype=jnp.bool_)
+        successful = jnp.asarray(primary_successful, dtype=jnp.bool_)
         shape = jnp.broadcast_shapes(sensor_.shape, admissible.shape, successful.shape)
         sensor_ = jnp.broadcast_to(sensor_, shape)
         admissible = jnp.broadcast_to(admissible, shape)

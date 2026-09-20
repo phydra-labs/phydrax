@@ -140,7 +140,7 @@ def torsion_probe(repeats):
     system = AtomisticSystemPlan(
         ids, [6] * len(ids), [12.0] * len(ids), units, atom_type_ids=[0] * len(ids)
     ).prepare()
-    parameter = jnp.arange(len(ids), dtype=float)
+    parameter = jnp.arange(len(ids), dtype="float64")
     positions = jnp.stack(
         (jnp.cos(parameter), jnp.sin(parameter), 0.2 * parameter), axis=-1
     )

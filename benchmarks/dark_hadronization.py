@@ -31,7 +31,7 @@ from phydrax.particle_physics._hadronization import (
     fission_dark_cluster,
     fragment_dark_string_chain,
 )
-from phydrax.particle_physics._identity import ParticleCatalogueReference
+from phydrax.particle_physics._identity import ParticleCatalogReference
 from phydrax.particle_physics._species import ParticleSpeciesTable
 from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 from phydrax.units import COULOMB
@@ -92,7 +92,7 @@ def _profiles(chain_capacity: int):
         species_revision_id="d" * 64,
         topology_revision_id="e" * 64,
     )
-    catalogue = ParticleCatalogueReference(
+    catalog = ParticleCatalogReference(
         source_id="benchmark-hadrons",
         provider_release="test",
         checksum="checksum",
@@ -102,7 +102,7 @@ def _profiles(chain_capacity: int):
         jnp.asarray((100, -100, 101, 200, -200, 201, -201)),
         jnp.asarray((0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0)),
         jnp.asarray((1.0, -1.0, 0.0, 1.0, -1.0, 1.0, -1.0)),
-        catalogue=catalogue,
+        catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
     )
@@ -208,12 +208,10 @@ def benchmark_case(chain_capacity: int):
         "resources": {
             "event_slots": 2,
             "fragmentation_cascade_nodes": int(jnp.sum(active))
-            + int(string_result.output_pdg_ids.shape[0]),
-            "string_output_products": int(string_result.output_pdg_ids.shape[0]),
-            "cluster_output_products": int(cluster_result.output_pdg_ids.shape[0]),
-            "fission_output_clusters": int(
-                fission_result.daughter_rest_energies.shape[0]
-            ),
+            + string_result.output_pdg_ids.shape[0],
+            "string_output_products": string_result.output_pdg_ids.shape[0],
+            "cluster_output_products": cluster_result.output_pdg_ids.shape[0],
+            "fission_output_clusters": fission_result.daughter_rest_energies.shape[0],
             "logical_bytes": logical_array_bytes(
                 (string_result, cluster_result, fission_result)
             ),

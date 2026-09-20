@@ -156,7 +156,7 @@ capacity is masked before arithmetic and is not advertised as a modal field spac
 meaning, exact sampling realization, and recursive versus precomputed execution.
 
 `SphericalSpectralDiscretization.evaluate_angles(coefficients, theta, phi, /,
-frame_angle=0)` evaluates in the longitude-labelled tangent frame
+frame_angle=0)` evaluates in the longitude-labeled tangent frame
 
 ```text
 east = e_phi

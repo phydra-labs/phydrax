@@ -142,13 +142,13 @@ class PreparedTransformDiagonalSolve(StrictModule, NonTrainableState):
         self.nullspace_mask = nullspace
         self.nullspace_basis = basis
         self.zero_mean_denominator = denominator
-        self.nullspace_dimension = int(null_indices.size)
+        self.nullspace_dimension = null_indices.size
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-transform-diagonal-solve",
                 "plan": plan.plan_id,
                 "representation": plan.representation.representation_id,
-                "nullspace_dimension": int(null_indices.size),
+                "nullspace_dimension": null_indices.size,
             }
         )
 

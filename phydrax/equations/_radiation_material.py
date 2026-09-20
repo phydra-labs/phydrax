@@ -74,8 +74,8 @@ class SpectralFrequencyGrid(StrictModule, NonTrainableState):
         quadrature_weight: ArrayLike,
         /,
     ) -> None:
-        values = np.asarray(frequency, dtype=float)
-        weights = np.asarray(quadrature_weight, dtype=float)
+        values = np.asarray(frequency, dtype=np.float64)
+        weights = np.asarray(quadrature_weight, dtype=np.float64)
         if (
             values.ndim != 1
             or values.size < 2
@@ -124,9 +124,9 @@ class RadiationCoefficientTable(StrictModule, NonTrainableState):
         *,
         provenance: str,
     ) -> None:
-        temperature = np.asarray(temperature_axis, dtype=float)
-        pressure = np.asarray(pressure_axis, dtype=float)
-        values = np.asarray(coefficient, dtype=float)
+        temperature = np.asarray(temperature_axis, dtype=np.float64)
+        pressure = np.asarray(pressure_axis, dtype=np.float64)
+        values = np.asarray(coefficient, dtype=np.float64)
         source = str(provenance)
         if not isinstance(frequency_grid, SpectralFrequencyGrid):
             raise TypeError("frequency_grid must be SpectralFrequencyGrid.")

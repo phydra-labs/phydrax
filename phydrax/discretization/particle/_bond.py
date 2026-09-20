@@ -189,13 +189,13 @@ class PreparedFixedBondGraph(StrictModule, NonTrainableState):
 
     @property
     def capacity(self) -> int:
-        return int(self.left_indices.shape[0])
+        return self.left_indices.shape[0]
 
     def initialize_state(self, dtype: np.dtype | None = None) -> DEMBondState:
         dtype_ = self.bodies.particles.safe_masses.dtype if dtype is None else dtype
         count = self.capacity
         return DEMBondState(
-            jnp.ones((count,), dtype=bool),
+            jnp.ones((count,), dtype=jnp.bool_),
             jnp.zeros((count,), dtype=dtype_),
             jnp.zeros((count,), dtype=dtype_),
             -jnp.ones((count,), dtype=jnp.int32),

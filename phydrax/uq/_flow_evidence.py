@@ -61,7 +61,7 @@ class FlowNUTSEvidenceResult(StrictModule):
         self.jackknife_standard_error = jnp.asarray(jackknife_standard_error).reshape(())
         self.nonfinite_count = jnp.asarray(nonfinite_count, dtype=jnp.int32).reshape(())
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        self.valid = jnp.asarray(valid, dtype=bool).reshape(())
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_).reshape(())
         self.status = str(status)
         self.block_length = int(block_length)
         self.num_posterior_samples = int(num_posterior_samples)
@@ -357,12 +357,12 @@ def _blocked_jackknife_standard_error(
     estimates = []
     for block in range(block_count):
         p_mask = (
-            jnp.ones((posterior_log_f.size,), dtype=bool)
+            jnp.ones((posterior_log_f.size,), dtype=jnp.bool_)
             .at[block * block_length : (block + 1) * block_length]
             .set(False)
         )
         q_mask = (
-            jnp.ones((proposal_log_f.size,), dtype=bool)
+            jnp.ones((proposal_log_f.size,), dtype=jnp.bool_)
             .at[block * block_length : (block + 1) * block_length]
             .set(False)
         )

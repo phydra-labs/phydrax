@@ -126,7 +126,7 @@ class PreparedCalabiYauModuliSamples(StrictModule):
             raise TypeError("measure must be ProjectiveMeasureTarget.")
         values = jnp.asarray(representatives)
         yukawa = jnp.asarray(yukawa_density, dtype=values.dtype)
-        sample_count = int(measure.normalized_weights.shape[0])
+        sample_count = measure.normalized_weights.shape[0]
         if values.ndim < 3 or values.shape[:2] != (
             sample_count,
             plan.modulus_count,

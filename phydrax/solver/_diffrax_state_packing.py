@@ -38,8 +38,7 @@ class DiffraxComplexStatePolicy(StrictModule, NonTrainableState):
     def __init__(self, strategy: DiffraxComplexStateStrategy = "real_coordinates", /):
         if strategy not in ("real_coordinates", "native", "reject"):
             raise ValueError(
-                "Diffrax complex-state strategy must be 'real_coordinates', "
-                "'native', or 'reject'."
+                "Diffrax complex-state strategy must be 'real_coordinates', 'native', or 'reject'."
             )
         self.strategy = strategy
         self.policy_id = canonical_fingerprint(
@@ -88,7 +87,7 @@ def _unpack_complex_tree(tree: Any, /) -> Any:
     )
 
 
-class _PackedEventCondition(eqx.Module):
+class _PackedEventCondition(StrictModule):
     condition: Any
     state_adapter: "_PreparedDiffraxStateAdapter"
 
@@ -123,7 +122,7 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
         evidence: RealCoordinateEvidence | None,
         coordinates: AbstractRealCoordinateMap | None = None,
     ):
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("Diffrax state shape must contain positive dimensions.")
         if mode not in ("real_coordinates", "native"):
@@ -143,13 +142,13 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
                     "Diffrax real-coordinate backends require one flat array target."
                 )
             if tree_mode:
-                backend_shape = tuple(int(size) for size in coordinate_spec.shape)
+                backend_shape = tuple(coordinate_spec.shape)
             else:
                 if tuple(source_spec.shape) != shape:
                     raise ValueError(
                         "The coordinate-map source shape does not match the state."
                     )
-                backend_shape = tuple(int(size) for size in coordinate_spec.shape)
+                backend_shape = tuple(coordinate_spec.shape)
             if not jnp.issubdtype(coordinate_spec.dtype, jnp.floating):
                 raise TypeError(
                     "Diffrax backend coordinates must be real floating arrays."
@@ -179,8 +178,7 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
         array = jnp.asarray(value)
         if tuple(array.shape) != self.state_shape:
             raise ValueError(
-                f"{owner} must have public state shape {self.state_shape}; "
-                f"got {array.shape}."
+                f"{owner} must have public state shape {self.state_shape}; got {array.shape}."
             )
         return array.astype(jnp.dtype(self.public_dtype))
 
@@ -217,8 +215,7 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
         array = jnp.asarray(value)
         if tuple(array.shape) != self.backend_shape:
             raise ValueError(
-                f"Packed backend state must have shape {self.backend_shape}; "
-                f"got {array.shape}."
+                f"Packed backend state must have shape {self.backend_shape}; got {array.shape}."
             )
         return self.coordinates.from_real_coordinates(array)
 
@@ -231,7 +228,7 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
         owner: str = "Tangent",
     ) -> Array:
         array = jnp.asarray(value)
-        expected = tuple(int(size) for size in tangent_shape)
+        expected = tuple(tangent_shape)
         if tuple(array.shape) != expected:
             raise ValueError(
                 f"{owner} must have public tangent shape {expected}; got {array.shape}."
@@ -251,13 +248,12 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
         tangent_shape: tuple[int, ...],
         /,
     ) -> Array:
-        expected = tuple(int(size) for size in tangent_shape)
+        expected = tuple(tangent_shape)
         if self.coordinates is None:
             array = jnp.asarray(value)
             if tuple(array.shape) != expected:
                 raise ValueError(
-                    f"Packed backend tangent must have shape {expected}; "
-                    f"got {array.shape}."
+                    f"Packed backend tangent must have shape {expected}; got {array.shape}."
                 )
             return array.astype(jnp.dtype(self.public_dtype))
         if expected != self.state_shape:
@@ -275,7 +271,7 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         rank = int(sample_rank)
-        expected = tuple(int(size) for size in tangent_shape)
+        expected = tuple(tangent_shape)
         array = jnp.asarray(value)
         if rank < 0 or rank > array.ndim:
             raise ValueError("sample_rank lies outside the tangent value rank.")
@@ -305,17 +301,12 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
                 "PyTree stochastic diffusion requires a declared tree noise layout."
             )
         array = jnp.asarray(value)
-        trailing = tuple(int(size) for size in noise_shape)
-        leading = (
-            self.state_shape
-            if output_shape is None
-            else tuple(int(size) for size in output_shape)
-        )
+        trailing = tuple(noise_shape)
+        leading = self.state_shape if output_shape is None else tuple(output_shape)
         expected = leading + trailing
         if tuple(array.shape) != expected:
             raise ValueError(
-                f"Diffusion must have public tangent-plus-noise shape {expected}; "
-                f"got {array.shape}."
+                f"Diffusion must have public tangent-plus-noise shape {expected}; got {array.shape}."
             )
         array = array.astype(jnp.dtype(self.public_dtype))
         if self.coordinates is None:
@@ -421,7 +412,7 @@ def _prepare_diffrax_state_adapter(
             "PyTree Diffrax states require an explicit PreparedRealCoordinateTree."
         )
     if state_is_array:
-        shape = tuple(int(size) for size in state.shape)
+        shape = tuple(state.shape)
         public_dtype = precision_dtype_name(leaves[0].dtype)
     else:
         assert state_coordinates is not None
@@ -493,7 +484,7 @@ def _prepare_diffrax_state_adapter(
         ),
         validated,
     )
-    coordinate_spec = coordinates.coordinate_space.structure()
+    coordinates.coordinate_space.structure()
     coordinate_leaves = tuple(
         jnp.asarray(leaf)
         for leaf in jax.tree.leaves(coordinates.to_real_coordinates(validated))

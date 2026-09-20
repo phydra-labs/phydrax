@@ -22,7 +22,7 @@ def _point_batch(domain: Interval1d, coordinates) -> PointBatch:
     structure = SampleLayout((("x",),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
-    points = jnp.asarray(coordinates, dtype=float).reshape((-1, 1))
+    points = jnp.asarray(coordinates, dtype="float64").reshape((-1, 1))
     return PointBatch(
         points=frozendict({"x": cx.AxisArray(points, dims=(axis_names[0], None))}),
         structure=structure,

@@ -125,7 +125,7 @@ def _validate_populations(
 def _validate_scalar(name: str, value: Array, /, *, boolean: bool = False) -> None:
     if not eqx.is_array(value) or value.shape != ():
         raise TypeError(f"LBM execution {name} must be a scalar array.")
-    if boolean and value.dtype != jnp.dtype(bool):
+    if boolean and value.dtype != jnp.dtype(jnp.bool_):
         raise TypeError(f"LBM execution {name} must be Boolean.")
 
 

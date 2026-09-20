@@ -45,8 +45,8 @@ class EquivariantOperatorState(StrictModule):
         self.values = jnp.asarray(values)
         self.coordinates = jnp.asarray(coordinates)
         self.weights = jnp.asarray(weights)
-        self.mask = jnp.asarray(mask, dtype=bool)
-        self.case_shape = tuple(int(size) for size in case_shape)
+        self.mask = jnp.asarray(mask, dtype=jnp.bool_)
+        self.case_shape = tuple(case_shape)
 
 
 class EquivariantGeometryOperator(AbstractEncodedOperatorModel):
@@ -147,7 +147,7 @@ class EquivariantGeometryOperator(AbstractEncodedOperatorModel):
         if self.input_representation.packed_size == 1 and values.shape == scalar_shape:
             values = values[..., None]
         expected = scalar_shape + (self.input_representation.packed_size,)
-        if tuple(int(size) for size in values.shape) != expected:
+        if tuple(values.shape) != expected:
             raise ValueError(
                 f"Equivariant source values must have shape {expected}; got {values.shape}."
             )
@@ -156,7 +156,7 @@ class EquivariantGeometryOperator(AbstractEncodedOperatorModel):
         coordinates = source.coordinates_array(
             case_shape=batch.case_shape, flatten=True
         ).reshape((cases, count, -1))
-        if int(coordinates.shape[-1]) != 3:
+        if coordinates.shape[-1] != 3:
             raise ValueError(
                 "Equivariant geometry coordinates must be three-dimensional."
             )
@@ -200,7 +200,7 @@ class EquivariantGeometryOperator(AbstractEncodedOperatorModel):
         coordinates = query.coordinates_array(
             case_shape=state.case_shape, flatten=True
         ).reshape((cases, query_count, -1))
-        if int(coordinates.shape[-1]) != 3:
+        if coordinates.shape[-1] != 3:
             raise ValueError("Equivariant query coordinates must be three-dimensional.")
         query_mask = query.mask_array(case_shape=state.case_shape).reshape(
             (cases, query_count)

@@ -20,10 +20,10 @@ def _svec(matrix):
 
 def _free_neuron(base, features, *, eigen_index=0, in_size=None):
     feature_matrices = jnp.asarray(features)
-    feature_count = int(feature_matrices.shape[0])
+    feature_count = feature_matrices.shape[0]
     model = phx.nn.layers.SpectralNeuron(
         in_size=feature_count if in_size is None else in_size,
-        matrix_size=int(base.shape[-1]),
+        matrix_size=base.shape[-1],
         eigen_index=eigen_index,
         dtype=jnp.float64,
         key=jr.key(0),

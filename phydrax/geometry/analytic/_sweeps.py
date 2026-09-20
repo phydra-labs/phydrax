@@ -90,13 +90,13 @@ class Extrusion(GeometrySource):
     ):
         if not isinstance(profile, GeometrySource):
             raise TypeError("Extrusion.profile must be a GeometrySource.")
-        height_host = np.asarray(height, dtype=float)
+        height_host = np.asarray(height, dtype=np.float64)
         if height_host.shape != () or not np.isfinite(height_host):
             raise ValueError("Extrusion.height must be a finite scalar.")
         if float(height_host) <= 0.0:
             raise ValueError("Extrusion.height must be positive.")
         self.profile = profile
-        self.height = jnp.asarray(height_host, dtype=float)
+        self.height = jnp.asarray(height_host, dtype=jnp.float64)
         self.feature_id = _feature_id(feature_id, "extrusion")
 
     def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
@@ -286,7 +286,7 @@ class _ExtrusionKernel(GeometryKernel):
         cap_area = 2.0 * self.profile.measure(state)
         choose_side = jr.bernoulli(
             choose_key,
-            side_area / jnp.maximum(side_area + cap_area, jnp.finfo(float).eps),
+            side_area / jnp.maximum(side_area + cap_area, jnp.finfo(jnp.float64).eps),
             shape=(count,),
         )
         points = jnp.where(choose_side[:, None], side_points, cap_points)

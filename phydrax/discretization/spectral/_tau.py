@@ -50,7 +50,7 @@ class GeneralizedTauPlan(StrictModule, NonTrainableState):
         lift = jnp.asarray(lift_matrix)
         if constraints.ndim != 2 or lift.ndim != 2:
             raise ValueError("Tau constraint and lift matrices must be rank two.")
-        tau_count = int(constraints.shape[0])
+        tau_count = constraints.shape[0]
         if (
             tau_count <= 0
             or constraints.shape[1] != operator.source.size
@@ -66,7 +66,7 @@ class GeneralizedTauPlan(StrictModule, NonTrainableState):
             coordinate_dtype,
         )
         if not jnp.issubdtype(dtype, jnp.inexact):
-            dtype = jnp.dtype(float)
+            dtype = jnp.dtype(jnp.float64)
         constraints = constraints.astype(dtype)
         lift = lift.astype(dtype)
         maximum = int(maximum_augmented_dimension)
@@ -88,7 +88,7 @@ class GeneralizedTauPlan(StrictModule, NonTrainableState):
 
     @property
     def tau_count(self) -> int:
-        return int(self.constraint_matrix.shape[0])
+        return self.constraint_matrix.shape[0]
 
     def prepare(self, /) -> "PreparedTauSystem":
         tau_space = ArraySpace((self.tau_count,), dtype=self.lift_matrix.dtype)

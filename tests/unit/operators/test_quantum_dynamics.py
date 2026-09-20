@@ -9,9 +9,9 @@ import pytest
 import phydrax as phx
 
 
-SIGMA_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
-SIGMA_Y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype=complex)
-SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
+SIGMA_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
+SIGMA_Y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype="complex128")
+SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
 def test_two_level_schrodinger_residual_is_zero():
@@ -25,7 +25,7 @@ def test_two_level_schrodinger_residual_is_zero():
 
     residual = phx.operators.schrodinger_residual(state, hamiltonian)
     value = eqx.filter_jit(residual.func)(0.37)
-    assert jnp.allclose(value, jnp.zeros((2,), dtype=complex), atol=1e-11)
+    assert jnp.allclose(value, jnp.zeros((2,), dtype="complex128"), atol=1e-11)
 
 
 def test_heisenberg_spin_precession_residual_is_zero():
@@ -49,7 +49,7 @@ def test_von_neumann_density_evolution_preserves_structure():
     @time.Function("t")
     def density(t):
         return 0.5 * (
-            jnp.eye(2, dtype=complex)
+            jnp.eye(2, dtype="complex128")
             + jnp.cos(omega * t) * SIGMA_X
             + jnp.sin(omega * t) * SIGMA_Y
         )

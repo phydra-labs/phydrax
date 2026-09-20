@@ -24,7 +24,7 @@ axis = phx.nn.operator.OperatorAxis(
     quadrature_weights=jnp.ones_like(x) / x.size,
     periodic=True,
 )
-case = jnp.arange(12, dtype=float)[:, None]
+case = jnp.arange(12, dtype="float64")[:, None]
 source_values = jnp.sin(2.0 * jnp.pi * x[None, :] + 0.13 * case)
 source = phx.nn.operator.FunctionSamples(values=source_values, axes=(axis,))
 query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))

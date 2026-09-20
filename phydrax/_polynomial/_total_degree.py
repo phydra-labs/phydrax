@@ -48,8 +48,7 @@ class TotalDegreePolynomialFeatures(StrictModule, NonTrainableState):
         feature_count = math.comb(dimension_ + degree_, degree_) - 1
         if feature_count > maximum:
             raise ValueError(
-                f"Total-degree basis requires {feature_count} features, "
-                f"exceeding maximum_features={maximum}."
+                f"Total-degree basis requires {feature_count} features, exceeding maximum_features={maximum}."
             )
         exponent_rows: list[np.ndarray] = []
         for total_degree in range(1, degree_ + 1):
@@ -63,7 +62,7 @@ class TotalDegreePolynomialFeatures(StrictModule, NonTrainableState):
         exponents = np.asarray(exponent_rows, dtype=np.int32).reshape(
             (feature_count, dimension_)
         )
-        storage_bytes = int(exponents.nbytes)
+        storage_bytes = exponents.nbytes
         if storage_bytes > maximum_bytes:
             raise ValueError("Total-degree exponent data exceeds maximum_feature_bytes.")
         self.exponents = jnp.asarray(exponents)
@@ -73,7 +72,7 @@ class TotalDegreePolynomialFeatures(StrictModule, NonTrainableState):
         self.storage_bytes = storage_bytes
         self.feature_id = canonical_fingerprint(
             {
-                "kind": "total-degree-polynomial-features-v1",
+                "kind": "total-degree-polynomial-features",
                 "dimension": dimension_,
                 "degree": degree_,
                 "feature_count": feature_count,
@@ -89,8 +88,8 @@ class TotalDegreePolynomialFeatures(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, Array, Array]:
         """Evaluate the polynomial span after weighted affine standardization."""
-        values = jnp.asarray(points, dtype=float)
-        normalized_weights = jnp.asarray(weights, dtype=float).reshape((-1,))
+        values = jnp.asarray(points, dtype=jnp.float64)
+        normalized_weights = jnp.asarray(weights, dtype=jnp.float64).reshape((-1,))
         if values.ndim != 2 or values.shape[1] != self.dimension:
             raise ValueError(f"points must have shape (num_points, {self.dimension}).")
         if normalized_weights.shape != values.shape[:1]:

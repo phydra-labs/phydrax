@@ -64,8 +64,7 @@ def run(path: Path, /) -> dict[str, object]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate reviewed finance qualification records without invoking "
-            "external executables, feeds, or networks."
+            "Evaluate reviewed finance qualification records without invoking external executables, feeds, or networks."
         )
     )
     parser.add_argument("request", type=Path)

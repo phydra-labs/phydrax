@@ -4,6 +4,8 @@
 
 """Serializable, validated equation representations for physics-aware models."""
 
+from importlib import import_module
+
 from ..discretization.discrete_velocity._energy_equilibrium import (
     EnergyEquilibriumEvidence,
     EnergyEquilibriumResult,
@@ -165,7 +167,6 @@ from ._discrete_element import (
     CompiledDiscreteElementProblem,
     DiscreteElementProblemIR,
 )
-from ._discrete_velocity import *  # noqa: F403
 from ._discrete_velocity import __all__ as _discrete_velocity_all
 from ._dynamic_les import (
     AbstractBackscatterPolicy,
@@ -413,19 +414,14 @@ from ._lattice_boltzmann import (
     LatticeBoltzmannProblem,
     snapshot_lattice_boltzmann_geometry,
 )
-from ._lattice_boltzmann_colour_gradient import *  # noqa: F403
-from ._lattice_boltzmann_colour_gradient import (
-    __all__ as _lattice_boltzmann_colour_gradient_all,
+from ._lattice_boltzmann_color_gradient import (
+    __all__ as _lattice_boltzmann_color_gradient_all,
 )
-from ._lattice_boltzmann_free_energy import *  # noqa: F403
 from ._lattice_boltzmann_free_energy import (
     __all__ as _lattice_boltzmann_free_energy_all,
 )
-from ._lattice_boltzmann_profiles import *  # noqa: F403
 from ._lattice_boltzmann_profiles import __all__ as _lattice_boltzmann_profiles_all
-from ._lattice_boltzmann_species import *  # noqa: F403
 from ._lattice_boltzmann_species import __all__ as _lattice_boltzmann_species_all
-from ._lattice_boltzmann_thermal import *  # noqa: F403
 from ._lattice_boltzmann_thermal import __all__ as _lattice_boltzmann_thermal_all
 from ._learned_stress import (
     LEARNED_STRESS_FEATURE_NAME,
@@ -792,15 +788,15 @@ from ._relativistic_neutrino import (
     NeutrinoSpecies,
 )
 from ._relativistic_radiation import (
-    GRGreyM1ClosureEvaluation,
-    GRGreyM1RadiationSystem,
+    GRGrayM1ClosureEvaluation,
+    GRGrayM1RadiationSystem,
 )
 from ._relativistic_radiation_interaction import (
-    AbstractGRGreyOpacityPlan,
-    CompositeGRGreyOpacityPlan,
-    ConstantGRGreyOpacityPlan,
-    GRGreyOpacityEvaluation,
-    GRGreyRadiationInteractionPlan,
+    AbstractGRGrayOpacityPlan,
+    CompositeGRGrayOpacityPlan,
+    ConstantGRGrayOpacityPlan,
+    GRGrayOpacityEvaluation,
+    GRGrayRadiationInteractionPlan,
     GRRadiationMatterExchange,
 )
 from ._resistive_grmhd import (
@@ -1037,6 +1033,30 @@ from .vem import (
     VirtualElementReconstruction,
     VirtualElementRobinAction,
 )
+
+
+_FACADE_EXPORT_MODULES = (
+    "._discrete_velocity",
+    "._lattice_boltzmann_color_gradient",
+    "._lattice_boltzmann_free_energy",
+    "._lattice_boltzmann_profiles",
+    "._lattice_boltzmann_species",
+    "._lattice_boltzmann_thermal",
+)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [
@@ -1711,7 +1731,7 @@ __all__ += [
     name
     for name in (
         *_discrete_velocity_all,
-        *_lattice_boltzmann_colour_gradient_all,
+        *_lattice_boltzmann_color_gradient_all,
         *_lattice_boltzmann_free_energy_all,
         *_lattice_boltzmann_profiles_all,
         *_lattice_boltzmann_species_all,
@@ -1804,18 +1824,18 @@ __all__ += [
 
 __all__ += [
     "AbstractRelativisticEOS",
-    "AbstractGRGreyOpacityPlan",
-    "CompositeGRGreyOpacityPlan",
-    "ConstantGRGreyOpacityPlan",
+    "AbstractGRGrayOpacityPlan",
+    "CompositeGRGrayOpacityPlan",
+    "ConstantGRGrayOpacityPlan",
     "ForceFreeConstraintEvaluation",
     "ForceFreeCurrentEvaluation",
     "ForceFreeProjectionResult",
     "GammaLawEOS",
     "GRForceFreeSystem",
-    "GRGreyM1ClosureEvaluation",
-    "GRGreyOpacityEvaluation",
-    "GRGreyRadiationInteractionPlan",
-    "GRGreyM1RadiationSystem",
+    "GRGrayM1ClosureEvaluation",
+    "GRGrayOpacityEvaluation",
+    "GRGrayRadiationInteractionPlan",
+    "GRGrayM1RadiationSystem",
     "GRRadiationMatterExchange",
     "GRMultigroupM1ClosureEvaluation",
     "GRMultigroupM1RadiationSystem",

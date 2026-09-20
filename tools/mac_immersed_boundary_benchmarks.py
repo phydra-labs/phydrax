@@ -63,9 +63,7 @@ def run_mac_immersed_boundary_benchmark(
     transfer = phx.discretization.MACMarkerTransferPlan(operators, markers)
     prepared = transfer.prepare()
     relation = prepared.relation(position)
-    velocity = tuple(
-        jnp.zeros(layout.shape) for layout in finite_volume.face_layouts
-    )
+    velocity = tuple(jnp.zeros(layout.shape) for layout in finite_volume.face_layouts)
     marker_force = jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
     diagnostics = prepared.diagnostics(relation, velocity, marker_force)
     projection = phx.solver.MACImmersedBoundaryProjectionPlan(

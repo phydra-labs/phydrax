@@ -277,7 +277,7 @@ class PreparedIISPH(StrictModule, NonTrainableState):
             execution=self.execution,
             precision=self.precision,
         )
-        surface_mask = jnp.zeros((self.particles.capacity,), dtype=bool)
+        surface_mask = jnp.zeros((self.particles.capacity,), dtype=jnp.bool_)
         if self.free_surface is not None:
             surface_state = detect_free_surface(
                 self.free_surface,

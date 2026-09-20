@@ -18,7 +18,6 @@ import phydrax as phx
 
 @dataclass(frozen=True)
 class WCSPHBenchmarkRecord:
-    schema_version: int
     acoustic_particle_count: int
     acoustic_drift_parity_error: float
     acoustic_trajectory_parity_error: float
@@ -79,7 +78,7 @@ def _acoustic_problem(count, backend):
         method,
         neighborhood=neighborhood,
     )
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     position = position + 0.001 * jnp.sin(2.0 * jnp.pi * position)
     velocity = jnp.zeros_like(position)
     return compiled, position, velocity
@@ -102,7 +101,7 @@ def _shear_case(resolution):
     wave_number = 2.0 * jnp.pi
     amplitude = 0.05
     final_time = 0.01
-    axis = (jnp.arange(resolution, dtype=float) + 0.5) * spacing
+    axis = (jnp.arange(resolution, dtype="float64") + 0.5) * spacing
     x_grid, y_grid = jnp.meshgrid(axis, axis, indexing="ij")
     position = jnp.stack((x_grid.reshape(-1), y_grid.reshape(-1)), axis=-1)
     velocity = jnp.stack(
@@ -116,9 +115,12 @@ def _shear_case(resolution):
         jnp.arange(count), jnp.full((count,), spacing**2), ambient_dimension=2
     ).prepare()
     box = phx.discretization.ParticleBox([0.0, 0.0], [1.0, 1.0])
-    method = phx.discretization.WeaklyCompressibleSPHMethodPlan(phx.discretization.WendlandC2SPHKernel(2),
-    1.25 * spacing,
-    density=phx.discretization.ContinuityDensityPlan(), physical_viscosity=phx.discretization.MorrisViscosityPlan(viscosity), )
+    method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
+        phx.discretization.WendlandC2SPHKernel(2),
+        1.25 * spacing,
+        density=phx.discretization.ContinuityDensityPlan(),
+        physical_viscosity=phx.discretization.MorrisViscosityPlan(viscosity),
+    )
     compiled = phx.equations.compile_weakly_compressible_sph_problem(
         phx.equations.WeaklyCompressibleFluidProblemIR(
             "viscous-shear", phx.equations.TaitBarotropicMaterial(1.0, 10.0)
@@ -196,7 +198,6 @@ def run_wcsph_benchmark(acoustic_count=24, shear_resolution=8):
         )
     )
     return WCSPHBenchmarkRecord(
-        schema_version=1,
         acoustic_particle_count=int(acoustic_count),
         acoustic_drift_parity_error=float(values[0]),
         acoustic_trajectory_parity_error=float(values[1]),

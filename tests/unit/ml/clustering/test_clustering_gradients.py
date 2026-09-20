@@ -164,8 +164,8 @@ def test_each_smooth_clustering_family_honors_declared_hyperparameter_gradient(
 def test_density_soft_membership_has_declared_parameter_gradient():
     core_points = jnp.array([[0.0], [0.2], [3.0], [3.2]])
     core_labels = jnp.array([0, 0, 1, 1])
-    core_active = jnp.ones(4, dtype=bool)
-    cluster_active = jnp.ones(2, dtype=bool)
+    core_active = jnp.ones(4, dtype="bool")
+    cluster_active = jnp.ones(2, dtype="bool")
     point = jnp.array([0.1])
 
     def loss(points):

@@ -74,7 +74,7 @@ class MolecularGradientResult(StrictModule):
 
 
 def _hermitian_eigh(matrix: Array, count: int | None = None, /) -> tuple[Array, Array]:
-    dimension = int(matrix.shape[0])
+    dimension = matrix.shape[0]
     solve_ = eigensolve(
         Eigenproblem(
             DenseLinearOperator(
@@ -128,7 +128,7 @@ def _integer_occupations(
         raise ValueError("Electron count exceeds retained orbital capacity.")
     full = electron_count // int(round(maximum))
     remainder = electron_count - full * int(round(maximum))
-    values = jnp.zeros((orbital_count,), dtype=float)
+    values = jnp.zeros((orbital_count,), dtype=jnp.float64)
     values = values.at[:full].set(maximum)
     if remainder:
         values = values.at[full].set(float(remainder))
@@ -142,7 +142,7 @@ def _occupations(
     maximum: float,
     /,
 ) -> tuple[Array, Array, Array]:
-    orbital_count = int(energies.size)
+    orbital_count = energies.size
     if plan.kind in (
         ElectronicOccupationKind.INTEGER,
         ElectronicOccupationKind.MAXIMUM_OVERLAP,
@@ -951,7 +951,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         if self.occupations.kind is not ElectronicOccupationKind.INTEGER:
             raise ValueError("ROHF currently requires integer alpha/beta occupations.")
         _, coefficients = self._initial_coefficients(core, overlap, orthogonalizer)
-        orbital_count = int(coefficients.shape[1])
+        orbital_count = coefficients.shape[1]
         alpha_occupations = _integer_occupations(
             orbital_count, self.sector.alpha_electron_count, 1.0
         ).astype(core.real.dtype)
@@ -1321,13 +1321,8 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             self.basis, coordinate, charges
         )
         eri = electron_repulsion_tensor(self.basis, coordinate)
-        occupied = tuple(
-            int(value) for value in np.flatnonzero(np.asarray(state.occupations) > 1.0)
-        )
-        virtual = tuple(
-            int(value)
-            for value in np.flatnonzero(np.asarray(state.occupations) < 1.0e-12)
-        )
+        occupied = tuple(np.flatnonzero(np.asarray(state.occupations) > 1.0))
+        virtual = tuple(np.flatnonzero(np.asarray(state.occupations) < 1.0e-12))
         pairs = tuple(
             (virtual_, occupied_) for virtual_ in virtual for occupied_ in occupied
         )
@@ -1342,8 +1337,8 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 self.stability.plan_id,
                 state.state_id,
             )
-        orbital_count = int(state.coefficients.shape[1])
-        identity = jnp.eye(orbital_count, dtype=state.coefficients.dtype)
+        orbital_count = state.coefficients.shape[1]
+        jnp.eye(orbital_count, dtype=state.coefficients.dtype)
 
         def rotation(parameters, sign=1.0):
             generator = jnp.zeros(

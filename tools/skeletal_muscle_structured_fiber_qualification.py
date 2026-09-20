@@ -36,7 +36,7 @@ def qualify(substep_counts: tuple[int, ...]) -> dict[str, object]:
         jnp.asarray([0.0]),
         jnp.asarray([0.16]),
         jnp.asarray([150.0]),
-        jnp.zeros((1, 1, node_count), dtype=bool).at[0, 0, 0].set(True),
+        jnp.zeros((1, 1, node_count), dtype="bool").at[0, 0, 0].set(True),
     )
     dense = SkeletalFiberBundlePlan(
         ("oracle-fiber",),

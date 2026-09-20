@@ -72,7 +72,7 @@ def _case(packet_count: int, repetitions: int):
         weights,
         weights,
         weights[:, None] * 0.5 * velocity,
-        jnp.ones((packet_count,), dtype=bool),
+        jnp.ones((packet_count,), dtype="bool"),
         particles.particle_ids,
         jnp.full((packet_count,), -1, dtype=jnp.int64),
         jnp.zeros((packet_count,), dtype=jnp.int32),

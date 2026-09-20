@@ -1068,7 +1068,7 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
         target_faces = sum(prod(layout.shape) for layout in target.reference.face_layouts)
         cell_offsets = np.asarray(cell_target_offsets, dtype=np.int32)
         cell_indices = np.asarray(cell_source_indices, dtype=np.int32)
-        measures = np.asarray(cell_intersection_measures, dtype=float)
+        measures = np.asarray(cell_intersection_measures, dtype=np.float64)
         if (
             cell_offsets.shape != (target_cells + 1,)
             or cell_offsets[0] != 0
@@ -1083,8 +1083,8 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
             raise ValueError("Cell common-refinement CSR routes are invalid.")
         face_offsets = np.asarray(face_target_offsets, dtype=np.int32)
         face_indices = np.asarray(face_source_indices, dtype=np.int32)
-        flux_weights = np.asarray(face_flux_weights, dtype=float)
-        momentum_weights = np.asarray(face_momentum_weights, dtype=float)
+        flux_weights = np.asarray(face_flux_weights, dtype=np.float64)
+        momentum_weights = np.asarray(face_momentum_weights, dtype=np.float64)
         if (
             face_offsets.shape != (target_faces + 1,)
             or face_offsets[0] != 0

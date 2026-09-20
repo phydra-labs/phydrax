@@ -164,7 +164,7 @@ class FieldProjectionMetric(StrictModule):
             raise TypeError(
                 "Field projection requires a fixed point or separable integration batch."
             )
-        scale_ = jnp.asarray(scale, dtype=float)
+        scale_ = jnp.asarray(scale, dtype=jnp.float64)
         if scale_.shape != () or not bool(jnp.isfinite(scale_)) or float(scale_) <= 0.0:
             raise ValueError("scale must be a finite strictly positive scalar.")
         resolved_label = name if label is None else str(label)
@@ -227,8 +227,8 @@ class NeuralTangentSolvePolicy(StrictModule):
         ) and not isclose(
             preconditioner.shift,
             damping_,
-            rel_tol=32.0 * jnp.finfo(float).eps,
-            abs_tol=32.0 * jnp.finfo(float).eps,
+            rel_tol=32.0 * jnp.finfo(jnp.float64).eps,
+            abs_tol=32.0 * jnp.finfo(jnp.float64).eps,
         ):
             raise ValueError(
                 "Randomized Nyström shift must equal neural tangent damping."
@@ -503,7 +503,7 @@ def _checked_coefficient(coefficient: cx.AxisArray, /) -> cx.AxisArray:
     if jnp.iscomplexobj(data):
         raise TypeError("Projection coefficients must be real.")
     data = eqx.error_if(
-        data.astype(float),
+        data.astype("float64"),
         jnp.any(~jnp.isfinite(data)) | jnp.any(data < 0.0),
         "Projection coefficients must be finite and non-negative.",
     )
@@ -799,14 +799,14 @@ class NeuralFieldEvolutionResult(StrictModule):
     @property
     def successful(self) -> Array:
         return (
-            jnp.asarray(self.parameter_solution.backend_successful, dtype=bool)
+            jnp.asarray(self.parameter_solution.backend_successful, dtype=jnp.bool_)
             & jnp.all(self.parameter_solution.valid)
             & jnp.all(self.audit.accepted)
         )
 
     def functions_at(self, index: int, /) -> frozendict[str, DomainFunction]:
         node = int(index)
-        count = int(self.parameter_solution.states.shape[0])
+        count = self.parameter_solution.states.shape[0]
         if node < 0 or node >= count:
             raise IndexError("Neural field node index is out of range.")
         if not bool(self.parameter_solution.valid[node]) or not bool(

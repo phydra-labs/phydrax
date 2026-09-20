@@ -101,7 +101,9 @@ def test_bspline_refinement_uses_canonical_diagnosed_grid_transfer():
         (1,),
         parameterization_id="coarse",
     )
-    coefficients = jnp.sin(jnp.arange(old_grid.coefficient_count, dtype=float))[:, None]
+    coefficients = jnp.sin(jnp.arange(old_grid.coefficient_count, dtype="float64"))[
+        :, None
+    ]
 
     refinement = parameterization.refine(
         new_grid,

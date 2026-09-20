@@ -101,7 +101,7 @@ class FilterSpec(StrictModule, NonTrainableState):
         boundary: FilterBoundary = "periodic",
     ):
         kind_ = str(kind).strip()
-        widths_ = tuple(int(value) for value in widths)
+        widths_ = tuple(widths)
         sigma_ = tuple(float(value) for value in sigma)
         cutoff = float(cutoff_fraction)
         boundary_ = str(boundary).strip()
@@ -176,7 +176,7 @@ class PreparedFilter(StrictModule, NonTrainableState):
     def __init__(self, spec: FilterSpec, spatial_shape: tuple[int, ...], /):
         if not isinstance(spec, FilterSpec):
             raise TypeError("spec must be a FilterSpec.")
-        shape = tuple(int(value) for value in spatial_shape)
+        shape = tuple(spatial_shape)
         if not shape or any(value < 2 for value in shape):
             raise ValueError(
                 "Prepared filters require spatial dimensions of size at least two."
@@ -199,7 +199,7 @@ class PreparedFilter(StrictModule, NonTrainableState):
         else:
             kernels = ()
         if spec.kind == "spectral_cutoff":
-            mask = jnp.ones(shape, dtype=bool)
+            mask = jnp.ones(shape, dtype=jnp.bool_)
             for axis, size in enumerate(shape):
                 frequencies = jnp.abs(jnp.fft.fftfreq(size) * size)
                 maximum = max(1.0, float(size // 2))
@@ -208,7 +208,7 @@ class PreparedFilter(StrictModule, NonTrainableState):
                 axis_shape[axis] = size
                 mask = mask & axis_mask.reshape(tuple(axis_shape))
         else:
-            mask = jnp.ones((1,) * len(shape), dtype=bool)
+            mask = jnp.ones((1,) * len(shape), dtype=jnp.bool_)
         self.spec = spec
         self.kernels = kernels
         self.spectral_mask = mask
@@ -229,8 +229,7 @@ class PreparedFilter(StrictModule, NonTrainableState):
             or tuple(array.shape[: self.spatial_rank]) != self.spatial_shape
         ):
             raise ValueError(
-                f"{owner} must begin with spatial shape {self.spatial_shape}; "
-                f"got {array.shape}."
+                f"{owner} must begin with spatial shape {self.spatial_shape}; got {array.shape}."
             )
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             raise TypeError(f"{owner} must use an inexact dtype.")
@@ -253,9 +252,9 @@ class PreparedFilter(StrictModule, NonTrainableState):
             return filtered.astype(array.dtype)
         result = array
         for axis, kernel in enumerate(self.kernels):
-            radius = int(kernel.size) // 2
+            radius = kernel.size // 2
             filtered = jnp.zeros_like(result)
-            for kernel_index in range(int(kernel.size)):
+            for kernel_index in range(kernel.size):
                 offset = kernel_index - radius
                 shifted = _shift(result, axis, offset, self.spec.boundary)
                 filtered = filtered + kernel[kernel_index].astype(result.dtype) * shifted
@@ -415,7 +414,7 @@ class FilterRefinementReport(StrictModule, NonTrainableState):
         self.defect_norm = _norm(self.defect)
         self.fine_filter_id = str(fine_filter_id)
         self.coarse_filter_id = str(coarse_filter_id)
-        self.refinement_ratio = tuple(int(value) for value in refinement_ratio)
+        self.refinement_ratio = tuple(refinement_ratio)
         self.report_id = canonical_fingerprint(
             {
                 "kind": "filter-refinement-report",
@@ -470,7 +469,7 @@ def filter_refinement_commutation(
 ) -> FilterRefinementReport:
     from ._alignment import conservative_restrict
 
-    ratio = tuple(int(value) for value in refinement_ratio)
+    ratio = tuple(refinement_ratio)
     restricted = conservative_restrict(fine_values, ratio)
     restrict_then_filter = coarse_filter.apply(restricted)
     filter_then_restrict = conservative_restrict(fine_filter.apply(fine_values), ratio)

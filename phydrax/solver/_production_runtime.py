@@ -81,7 +81,7 @@ from ._runtime_lifecycle import (
 )
 
 
-RunStatus = Literal["ready", "running", "completed", "failed", "cancelled"]
+RunStatus = Literal["ready", "running", "completed", "failed", "canceled"]
 ProductionTriggerAction = Literal["checkpoint", "publish", "stop"]
 
 
@@ -983,11 +983,11 @@ class ArtifactCheckpointStore:
         /,
     ) -> tuple[dict[str, bytes], dict[str, Any]]:
         state_plaintext = sum(
-            int(value.size) * int(np.dtype(value.dtype).itemsize)
+            value.size * np.dtype(value.dtype).itemsize
             for value in envelope.archive_arrays.values()
         )
         outbox_plaintext = sum(
-            int(leaf.size) * int(np.dtype(leaf.dtype).itemsize)
+            leaf.size * np.dtype(leaf.dtype).itemsize
             for event in self._events
             for leaf in jax.tree.leaves(event.state)
         )
@@ -1380,11 +1380,11 @@ class ArtifactCheckpointStore:
             raise ValueError("Repository checkpoint outbox record limit exceeded.")
         canonical = _canonical_structured_state(state)
         candidate_bytes = sum(
-            int(leaf.size) * int(np.dtype(leaf.dtype).itemsize)
+            leaf.size * np.dtype(leaf.dtype).itemsize
             for event in self._events
             for leaf in jax.tree.leaves(event.state)
         ) + sum(
-            int(leaf.size) * int(np.dtype(leaf.dtype).itemsize)
+            leaf.size * np.dtype(leaf.dtype).itemsize
             for leaf in jax.tree.leaves(canonical)
         )
         if candidate_bytes > self.checkpoint_resources.maximum_outbox_bytes:
@@ -1716,7 +1716,7 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
         iteration_session_state: IterationSessionState | None = None,
         /,
     ):
-        if status not in ("completed", "failed", "cancelled"):
+        if status not in ("completed", "failed", "canceled"):
             raise ValueError("Terminal manifest status is not terminal.")
         if status == "failed":
             if not isinstance(failure, ProductionFailureRecord):
@@ -1796,8 +1796,8 @@ class ProductionTriggerBinding(StrictModule, NonTrainableState):
         moment_components: Sequence[int] = (),
     ):
         name_ = str(name)
-        indices = tuple(int(value) for value in moment_indices)
-        components = tuple(int(value) for value in moment_components)
+        indices = tuple(moment_indices)
+        components = tuple(moment_components)
         action_id_ = str(action_id)
         if (
             not name_
@@ -1854,10 +1854,10 @@ class ProductionIterationMetrics(StrictModule):
         self.time = jnp.asarray(time)
         self.accepted_step_size = jnp.asarray(accepted_step_size)
         self.retry_count = jnp.asarray(retry_count, dtype=jnp.int32)
-        self.method_successful = jnp.asarray(method_successful, dtype=bool)
-        self.accepted = jnp.asarray(accepted, dtype=bool)
-        self.output_due = jnp.asarray(output_due, dtype=bool)
-        self.checkpoint_due = jnp.asarray(checkpoint_due, dtype=bool)
+        self.method_successful = jnp.asarray(method_successful, dtype=jnp.bool_)
+        self.accepted = jnp.asarray(accepted, dtype=jnp.bool_)
+        self.output_due = jnp.asarray(output_due, dtype=jnp.bool_)
+        self.checkpoint_due = jnp.asarray(checkpoint_due, dtype=jnp.bool_)
 
 
 def _production_iteration_record(
@@ -2033,7 +2033,7 @@ class ProductionRunPlan(StrictModule, NonTrainableState):
                     binding.moment_components,
                     strict=True,
                 ):
-                    value_size = int(np.prod(moments_[index].value_shape, dtype=int))
+                    value_size = int(np.prod(moments_[index].value_shape, dtype=np.int64))
                     if component >= max(value_size, 1):
                         raise ValueError(
                             "Trigger component is outside its streaming moment."
@@ -2316,7 +2316,7 @@ class PreparedProductionRun:
 
             result = jax.lax.cond(active, advance, inactive, operand=None)
             valid = jnp.asarray(plan.validator(result.accepted_state))
-            if valid.shape != () or valid.dtype != jnp.dtype(bool):
+            if valid.shape != () or valid.dtype != jnp.dtype(jnp.bool_):
                 raise TypeError(
                     "Production validators must return a scalar Boolean array."
                 )
@@ -2515,7 +2515,7 @@ class PreparedProductionRun:
         state = self.iteration_session.snapshot()
         return (
             jnp.asarray(state.cursor, dtype=jnp.int64),
-            jnp.asarray(state.stop_requested, dtype=bool),
+            jnp.asarray(state.stop_requested, dtype=jnp.bool_),
         )
 
     def _envelope(self, state: ProductionRunState, /) -> RuntimeCheckpointEnvelope:
@@ -2831,13 +2831,13 @@ class PreparedProductionRun:
         records: _SegmentRecord,
         /,
     ) -> tuple[ProductionRunState, ProductionFailureRecord | None]:
-        attempted = np.asarray(records.attempted, dtype=bool)
-        accepted = np.asarray(records.accepted, dtype=bool)
-        method_successful = np.asarray(records.method_successful, dtype=bool)
-        output_due = np.asarray(records.output_due, dtype=bool)
-        checkpoint_due = np.asarray(records.checkpoint_due, dtype=bool)
+        attempted = np.asarray(records.attempted, dtype=np.bool_)
+        accepted = np.asarray(records.accepted, dtype=np.bool_)
+        method_successful = np.asarray(records.method_successful, dtype=np.bool_)
+        output_due = np.asarray(records.output_due, dtype=np.bool_)
+        checkpoint_due = np.asarray(records.checkpoint_due, dtype=np.bool_)
         trigger_fires = tuple(
-            np.asarray(value, dtype=bool) for value in records.trigger_fires
+            np.asarray(value, dtype=np.bool_) for value in records.trigger_fires
         )
         last_checkpoint = source.last_checkpoint_id
         event_cursor = int(np.asarray(source.output_cursor))
@@ -2964,7 +2964,7 @@ class PreparedProductionRun:
             tolerance = 32.0 * np.finfo(np.asarray(snapshot.time).dtype).eps
             terminal_status: RunStatus | None = None
             if host_stop or bool(np.asarray(snapshot_segment.stop_requested)):
-                terminal_status = "cancelled"
+                terminal_status = "canceled"
             elif float(np.asarray(snapshot.time)) >= self.plan.end_time - tolerance:
                 terminal_status = "completed"
             elif int(np.asarray(snapshot.step_index)) >= self.plan.maximum_steps:
@@ -2992,13 +2992,13 @@ class PreparedProductionRun:
                         last_checkpoint,
                     )
             if host_stop:
-                return _replace_run_metadata(snapshot, status="cancelled"), None
+                return _replace_run_metadata(snapshot, status="canceled"), None
         status: RunStatus
         tolerance = 32.0 * np.finfo(np.asarray(final_segment.time).dtype).eps
         if not bool(np.asarray(final_segment.running)):
             status = "failed"
         elif bool(np.asarray(final_segment.stop_requested)):
-            status = "cancelled"
+            status = "canceled"
         elif float(np.asarray(final_segment.time)) >= self.plan.end_time - tolerance:
             status = "completed"
         elif int(np.asarray(final_segment.step_index)) >= self.plan.maximum_steps:
@@ -3041,7 +3041,7 @@ class PreparedProductionRun:
         self, state: ProductionRunState, /
     ) -> tuple[ProductionRunState, RetriedFixedStepResult]:
         current, _failure, records = self._execute(state, one_step=True)
-        attempted = np.flatnonzero(np.asarray(records.attempted, dtype=bool))
+        attempted = np.flatnonzero(np.asarray(records.attempted, dtype=np.bool_))
         if attempted.size != 1:
             raise ValueError("Production state has already reached its horizon.")
         transition = self._index_tree(records.result, int(attempted[0]))
@@ -3073,7 +3073,7 @@ class PreparedProductionRun:
             if failure is not None or current.status in (
                 "completed",
                 "failed",
-                "cancelled",
+                "canceled",
             ):
                 break
         publication_failed = failure is not None and failure.category == "output-failed"

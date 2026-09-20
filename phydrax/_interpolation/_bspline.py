@@ -207,7 +207,7 @@ class BSplineJetStencil(StrictModule):
     ):
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         jets_ = jnp.asarray(jets)
-        support_ = jnp.asarray(support, dtype=bool)
+        support_ = jnp.asarray(support, dtype=jnp.bool_)
         if indices_.ndim == 0:
             raise ValueError("B-spline jet indices must include a local-support axis.")
         if jets_.shape != (
@@ -216,8 +216,7 @@ class BSplineJetStencil(StrictModule):
             indices_.shape[-1],
         ):
             raise ValueError(
-                "B-spline jets must have shape query_shape + "
-                "(maximum_order + 1, local_support)."
+                "B-spline jets must have shape query_shape + (maximum_order + 1, local_support)."
             )
         if support_.shape != indices_.shape[:-1]:
             raise ValueError("B-spline jet support must match the query shape.")
@@ -227,15 +226,15 @@ class BSplineJetStencil(StrictModule):
         self.source_size = int(source_size)
         self.degree = int(degree)
         self.maximum_order = int(maximum_order)
-        self.case_shape = tuple(int(size) for size in case_shape)
+        self.case_shape = tuple(case_shape)
 
     @property
     def query_shape(self) -> tuple[int, ...]:
-        return tuple(int(size) for size in self.indices.shape[:-1])
+        return tuple(self.indices.shape[:-1])
 
     @property
     def local_support(self) -> int:
-        return int(self.indices.shape[-1])
+        return self.indices.shape[-1]
 
     def derivative(self, order: int, /) -> GatherStencil:
         """Select one derivative order as a conventional gather stencil."""
@@ -285,24 +284,24 @@ def bspline_jet_stencil(
         jnp.complexfloating,
     ):
         raise TypeError("B-spline coordinates must be real-valued.")
-    dtype = jnp.result_type(knots_raw, query_raw, float)
+    dtype = jnp.result_type(knots_raw, query_raw, jnp.float64)
     knots_ = knots_raw.astype(dtype)
     query_ = query_raw.astype(dtype)
     if knots_.ndim != 1:
         raise ValueError("B-spline knots must be a rank-one array.")
 
-    control_count = int(knots_.shape[0]) - degree_ - 1
+    control_count = knots_.shape[0] - degree_ - 1
     if control_count <= degree_:
         raise ValueError(
             "B-spline knots must define at least degree + 1 control coefficients."
         )
-    if int(query_.size) == 0:
+    if query_.size == 0:
         raise ValueError("B-spline queries must be non-empty.")
 
-    cases = tuple(int(size) for size in case_shape)
+    cases = tuple(case_shape)
     if any(size <= 0 for size in cases):
         raise ValueError("B-spline case dimensions must be positive.")
-    if tuple(int(size) for size in query_.shape[: len(cases)]) != cases:
+    if tuple(query_.shape[: len(cases)]) != cases:
         raise ValueError(
             f"B-spline queries must begin with case_shape {cases}; got {query_.shape}."
         )
@@ -340,7 +339,7 @@ def bspline_jet_stencil(
         if bounds in ("clip", "fill")
         else query_
     )
-    support = ~outside if bounds == "fill" else jnp.ones(query_.shape, dtype=bool)
+    support = ~outside if bounds == "fill" else jnp.ones(query_.shape, dtype=jnp.bool_)
 
     if spans is None:
         spans_ = jnp.searchsorted(knots_, query_eval, side="right") - 1
@@ -458,20 +457,19 @@ def bspline_batched_evaluate(
         )
     if coefficients_.ndim < 3:
         raise ValueError(
-            "Batched B-spline coefficients must begin with "
-            "(output_count, num_grids, coefficient_count)."
+            "Batched B-spline coefficients must begin with (output_count, num_grids, coefficient_count)."
         )
     if query_.ndim < 2:
         raise ValueError(
             "Batched B-spline queries must begin with (output_count, num_grids)."
         )
-    output_count = int(coefficients_.shape[0])
-    num_grids = int(knots_.shape[0])
-    control_count = int(knots_.shape[1]) - int(degree) - 1
+    output_count = coefficients_.shape[0]
+    num_grids = knots_.shape[0]
+    control_count = knots_.shape[1] - int(degree) - 1
     if (
         output_count == 0
-        or int(coefficients_.shape[1]) != num_grids
-        or int(coefficients_.shape[2]) != control_count
+        or coefficients_.shape[1] != num_grids
+        or coefficients_.shape[2] != control_count
     ):
         raise ValueError("Batched B-spline coefficient axes do not match the knot bank.")
     if query_.shape[:2] != coefficients_.shape[:2]:

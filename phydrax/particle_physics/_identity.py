@@ -40,14 +40,14 @@ class ReproducibilityGrade(StrEnum):
     UNCONTROLLED = "uncontrolled"
 
 
-class ParticleCatalogueReference(StrictModule, NonTrainableState):
+class ParticleCatalogReference(StrictModule, NonTrainableState):
     """Immutable authority and checksum for integer particle identities."""
 
     source_id: str = eqx.field(static=True)
     provider_release: str = eqx.field(static=True)
     checksum: str = eqx.field(static=True)
     citation_url: str = eqx.field(static=True)
-    catalogue_id: str = eqx.field(static=True)
+    catalog_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -61,9 +61,9 @@ class ParticleCatalogueReference(StrictModule, NonTrainableState):
         self.provider_release = _identifier(provider_release, "Provider release")
         self.checksum = _identifier(checksum, "Checksum")
         self.citation_url = _identifier(citation_url, "Citation URL")
-        self.catalogue_id = canonical_fingerprint(
+        self.catalog_id = canonical_fingerprint(
             {
-                "kind": "particle-catalogue-reference",
+                "kind": "particle-catalog-reference",
                 "source": self.source_id,
                 "release": self.provider_release,
                 "checksum": self.checksum,
@@ -73,7 +73,7 @@ class ParticleCatalogueReference(StrictModule, NonTrainableState):
 
 
 __all__ = [
-    "ParticleCatalogueReference",
+    "ParticleCatalogReference",
     "ParticleRole",
     "ReproducibilityGrade",
 ]

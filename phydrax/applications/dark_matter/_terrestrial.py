@@ -90,7 +90,7 @@ class TerrestrialTransportResult(StrictModule):
 
 
 def _ray(position_m: ArrayLike, direction: ArrayLike, distance_m: ArrayLike, /):
-    position = jnp.asarray(position_m, dtype=float)
+    position = jnp.asarray(position_m, dtype=jnp.float64)
     direction_ = jnp.asarray(direction, dtype=position.dtype)
     distance = jnp.asarray(distance_m, dtype=position.dtype).reshape(())
     if position.shape != (3,) or direction_.shape != (3,):
@@ -274,7 +274,7 @@ def layered_analytic_optical_depth(
 
 def sample_target_from_partial_rates(key: Array, partial_rates: ArrayLike, /) -> Array:
     """Draw the target mark from explicit partial hazards, without total-rate bias."""
-    rates = jnp.asarray(partial_rates, dtype=float)
+    rates = jnp.asarray(partial_rates, dtype=jnp.float64)
     if rates.ndim != 1 or rates.size == 0:
         raise ValueError("partial_rates must be a non-empty vector.")
     valid = jnp.all(jnp.isfinite(rates) & (rates >= 0.0)) & (jnp.sum(rates) > 0.0)
@@ -395,7 +395,7 @@ class TerrestrialTransportPlan(StrictModule, NonTrainableState):
             raise TypeError("initial_paths must be a WeightedSampleBatch.")
         if not isinstance(poisson, PoissonClockRealization):
             raise TypeError("poisson must be a PoissonClockRealization.")
-        raw_states = jnp.asarray(initial_paths.samples, dtype=float)
+        raw_states = jnp.asarray(initial_paths.samples, dtype=jnp.float64)
         if raw_states.ndim != 2 or raw_states.shape[0] == 0 or raw_states.shape[1] != 6:
             raise ValueError("initial path samples must have nonempty shape (path, 6).")
         if initial_paths.sample_axes != (0,):
@@ -403,15 +403,15 @@ class TerrestrialTransportPlan(StrictModule, NonTrainableState):
         if jnp.asarray(initial_paths.log_weights).shape != (raw_states.shape[0],):
             raise ValueError("initial path log weights must match the trajectory axis.")
         path_mask = (
-            jnp.ones((raw_states.shape[0],), dtype=bool)
+            jnp.ones((raw_states.shape[0],), dtype=jnp.bool_)
             if initial_paths.mask is None
-            else jnp.asarray(initial_paths.mask, dtype=bool)
+            else jnp.asarray(initial_paths.mask, dtype=jnp.bool_)
         )
         path_support = (
-            jnp.ones((raw_states.shape[0],), dtype=bool)
+            jnp.ones((raw_states.shape[0],), dtype=jnp.bool_)
             if initial_paths.support_valid is None
             else jnp.broadcast_to(
-                jnp.asarray(initial_paths.support_valid, dtype=bool),
+                jnp.asarray(initial_paths.support_valid, dtype=jnp.bool_),
                 (raw_states.shape[0],),
             )
         )
@@ -427,7 +427,7 @@ class TerrestrialTransportPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Poisson clocks do not provide the plan's jump-event capacity."
             )
-        times = jnp.asarray(save_times_s, dtype=float)
+        times = jnp.asarray(save_times_s, dtype=jnp.float64)
         if times.ndim != 1 or times.size < 2:
             raise ValueError("save_times_s must contain at least two times.")
         problem = jump_differential_problem(
@@ -490,7 +490,7 @@ class TerrestrialTransportPlan(StrictModule, NonTrainableState):
             int(TransportOutcome.TRANSMITTED),
             int(TransportOutcome.UNRESOLVED),
         ).astype(jnp.int32)
-        one_hot = jax.nn.one_hot(outcomes, len(TransportOutcome), dtype=bool)
+        one_hot = jax.nn.one_hot(outcomes, len(TransportOutcome), dtype=jnp.bool_)
         return TerrestrialTransportResult(
             solution,
             collisions,

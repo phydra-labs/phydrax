@@ -325,7 +325,7 @@ class GroupLassoRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
     ):
-        groups = tuple(int(group) for group in feature_groups)
+        groups = tuple(feature_groups)
         if not groups:
             raise ValueError("feature_groups cannot be empty.")
         self.alpha = _positive_scalar(alpha, "alpha")
@@ -383,7 +383,7 @@ class SparseGroupLassoRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
     ):
-        groups = tuple(int(group) for group in feature_groups)
+        groups = tuple(feature_groups)
         if not groups:
             raise ValueError("feature_groups cannot be empty.")
         alpha_ = _positive_scalar(alpha, "alpha")

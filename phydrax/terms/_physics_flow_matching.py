@@ -61,7 +61,7 @@ class CallableFlowEndpointFunctional(AbstractFlowEndpointFunctional):
     ):
         if not callable(function):
             raise TypeError("function must be callable.")
-        shape = tuple(int(size) for size in event_shape)
+        shape = tuple(event_shape)
         identifier = str(functional_id).strip()
         if not shape or any(size <= 0 for size in shape) or not identifier:
             raise ValueError("Endpoint functional shape and identity are invalid.")
@@ -187,7 +187,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
             raise ValueError(
                 "Endpoint functional and interpolant event shapes must match."
             )
-        physics = jnp.asarray(physics_weight, dtype=float).reshape(())
+        physics = jnp.asarray(physics_weight, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(physics)) or float(physics) < 0.0:
             raise ValueError("physics_weight must be finite and nonnegative.")
         self.flow = FlowMatchingTerm(
@@ -400,7 +400,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
             physics_objective=physics,
             mean_endpoint_energy=jnp.sum(weights * safe),
             maximum_endpoint_energy=jnp.max(safe, initial=0.0),
-            terminal_valid_fraction=jnp.mean(valid.astype(float)),
+            terminal_valid_fraction=jnp.mean(valid.astype("float64")),
             active_steps=active_steps,
             finite=flow.finite & jnp.all(~valid | jnp.isfinite(energies)),
             endpoint_functional_id=self.endpoint_functional.functional_id,

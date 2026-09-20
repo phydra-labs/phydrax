@@ -51,7 +51,6 @@ def test_core_kdk_and_event_replay_adapters():
     np.testing.assert_allclose(completed.positions, [[1.5]])
     np.testing.assert_allclose(completed.momenta, [[1.0]])
 
-
     event = phx.events.FixedCapacityEventState(
         [1, 2],
         [3, 4],

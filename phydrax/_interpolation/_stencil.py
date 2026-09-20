@@ -38,14 +38,14 @@ class GatherStencil(StrictModule):
         )
         weights_ = jnp.asarray(weights)
         if not jnp.issubdtype(weights_.dtype, jnp.inexact):
-            weights_ = weights_.astype(float)
+            weights_ = weights_.astype("float64")
         if weights_.shape != relation.route_shape:
             raise ValueError("GatherStencil weights must match indices shape.")
 
         support_ = (
             jnp.any(relation.valid, axis=-1)
             if support is None
-            else jnp.asarray(support, dtype=bool)
+            else jnp.asarray(support, dtype=jnp.bool_)
         )
         if support_.shape != relation.output_shape:
             raise ValueError(
@@ -81,16 +81,12 @@ def gather_patches(
     """Gather source payloads with invalid indices made numerically inert."""
     array = jnp.asarray(values)
     expected = stencil.relation.input_shape
-    if (
-        array.ndim < len(expected)
-        or tuple(int(size) for size in array.shape[: len(expected)]) != expected
-    ):
+    if array.ndim < len(expected) or tuple(array.shape[: len(expected)]) != expected:
         raise ValueError(
-            f"Gather source values must begin with source shape {expected}; "
-            f"got {array.shape}."
+            f"Gather source values must begin with source shape {expected}; got {array.shape}."
         )
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return gather_routes(stencil.relation, array), stencil.valid
 
 
@@ -108,11 +104,10 @@ def apply_gather_stencil(
 
     patches, valid = gather_patches(values, stencil)
     if source_mask is not None:
-        mask = jnp.asarray(source_mask, dtype=bool)
+        mask = jnp.asarray(source_mask, dtype=jnp.bool_)
         if mask.shape != stencil.relation.input_shape:
             raise ValueError(
-                "source_mask must have shape "
-                f"{stencil.relation.input_shape}, got {mask.shape}."
+                f"source_mask must have shape {stencil.relation.input_shape}, got {mask.shape}."
             )
         if mask_mode == "reject":
             patches = eqx.error_if(

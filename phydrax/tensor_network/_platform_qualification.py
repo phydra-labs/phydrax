@@ -182,7 +182,7 @@ class TensorNetworkClaimEvidence(StrictModule, NonTrainableState):
             raise TypeError(
                 "Qualification observations must be nonempty numerical arrays."
             )
-        sample_count = sum(int(value.size) for value in arrays)
+        sample_count = sum(value.size for value in arrays)
         if sample_count <= 0 or sample_count > profile.maximum_samples_per_claim:
             raise ValueError("Qualification observation count exceeds its finite bound.")
         nonfinite_count = sum(

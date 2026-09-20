@@ -42,7 +42,7 @@ def _eigenspace_groups(eigenvalues: np.ndarray, tolerance: float, /) -> np.ndarr
 
 
 def _canonicalize_eigenvector_signs(vectors: np.ndarray, /) -> np.ndarray:
-    result = np.array(vectors, dtype=float, copy=True)
+    result = np.array(vectors, dtype=np.float64, copy=True)
     for mode in range(result.shape[1]):
         pivot = int(np.argmax(np.abs(result[:, mode])))
         if result[pivot, mode] < 0.0:
@@ -52,7 +52,7 @@ def _canonicalize_eigenvector_signs(vectors: np.ndarray, /) -> np.ndarray:
 
 def _finite_symmetric_matrix(value: Any, /, *, name: str):
     if scipy_sparse.issparse(value):
-        matrix = value.astype(float).tocsr(copy=True)
+        matrix = value.astype("float64").tocsr(copy=True)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
             raise ValueError(f"{name} must be a square matrix.")
         matrix.sum_duplicates()
@@ -68,7 +68,7 @@ def _finite_symmetric_matrix(value: Any, /, *, name: str):
         if error > 1e-10 * scale:
             raise ValueError(f"{name} must be symmetric.")
         return ((matrix + matrix.T) * 0.5).tocsr()
-    matrix = np.asarray(value, dtype=float)
+    matrix = np.asarray(value, dtype=np.float64)
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
         raise ValueError(f"{name} must be a square matrix.")
     if np.any(~np.isfinite(matrix)):
@@ -88,10 +88,10 @@ def _update_matrix_digest(digest: Any, matrix: Any, /) -> None:
         digest.update(np.asarray(csr.shape, dtype=np.int64).tobytes())
         digest.update(np.asarray(csr.indptr, dtype=np.int64).tobytes())
         digest.update(np.asarray(csr.indices, dtype=np.int64).tobytes())
-        digest.update(np.asarray(csr.data, dtype=float).tobytes())
+        digest.update(np.asarray(csr.data, dtype=np.float64).tobytes())
         return
     digest.update(b"dense")
-    digest.update(np.ascontiguousarray(np.asarray(matrix, dtype=float)).tobytes())
+    digest.update(np.ascontiguousarray(np.asarray(matrix, dtype=np.float64)).tobytes())
 
 
 def _byte_limit(value: int, /, *, estimate: int, context: str) -> int:
@@ -129,7 +129,7 @@ class ModalTransform(StrictModule, NonTrainableState):
     ):
         analysis_host = np.asarray(analysis)
         synthesis_host = np.asarray(synthesis)
-        weights_host = np.asarray(quadrature_weights, dtype=float).reshape((-1,))
+        weights_host = np.asarray(quadrature_weights, dtype=np.float64).reshape((-1,))
         if analysis_host.ndim != 2 or synthesis_host.ndim != 2:
             raise ValueError("Modal transforms require rank-2 analysis and synthesis.")
         mode_count, point_count = analysis_host.shape
@@ -138,9 +138,9 @@ class ModalTransform(StrictModule, NonTrainableState):
         if weights_host.shape != (point_count,):
             raise ValueError("quadrature_weights must contain one value per point.")
         active = (
-            np.ones((point_count,), dtype=bool)
+            np.ones((point_count,), dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != (point_count,):
             raise ValueError("active_mask must contain one value per point.")
@@ -196,11 +196,11 @@ class ModalTransform(StrictModule, NonTrainableState):
 
     @property
     def num_points(self) -> int:
-        return int(self.synthesis.shape[0])
+        return self.synthesis.shape[0]
 
     @property
     def num_modes(self) -> int:
-        return int(self.synthesis.shape[1])
+        return self.synthesis.shape[1]
 
     def analyze(self, values: ArrayLike, /) -> Array:
         array = jnp.asarray(values)
@@ -345,7 +345,7 @@ class OperatorSpectrum(StrictModule, NonTrainableState):
         )
         if groups.shape != values.shape or np.any(groups < 0):
             raise ValueError("group_ids must contain one non-negative ID per mode.")
-        unique = tuple(int(value) for value in np.unique(groups))
+        unique = tuple(np.unique(groups))
         if unique != tuple(range(len(unique))):
             raise ValueError("Operator spectrum group IDs must be contiguous.")
         tolerance = float(zero_tolerance)
@@ -354,7 +354,7 @@ class OperatorSpectrum(StrictModule, NonTrainableState):
         nullspace = (
             np.abs(values) <= tolerance
             if nullspace_mask is None
-            else np.asarray(nullspace_mask, dtype=bool)
+            else np.asarray(nullspace_mask, dtype=np.bool_)
         )
         if nullspace.shape != values.shape:
             raise ValueError("nullspace_mask must contain one value per mode.")
@@ -410,7 +410,7 @@ class OperatorSpectrum(StrictModule, NonTrainableState):
 
     @property
     def num_modes(self) -> int:
-        return int(self.modal_values.shape[0])
+        return self.modal_values.shape[0]
 
     @property
     def num_groups(self) -> int:
@@ -449,8 +449,6 @@ def trigonometric_modal_transform(
             }
         ),
     )
-
-
 
 
 class TensorModalTransform(StrictModule, NonTrainableState):
@@ -552,9 +550,9 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                 raise TypeError(
                     "Positional eigenbasis construction cannot mix transform keywords."
                 )
-            eigenvalues_host = np.asarray(eigenbasis[0], dtype=float).reshape((-1,))
-            synthesis_host = np.asarray(eigenbasis[1], dtype=float)
-            quadrature_host = np.asarray(eigenbasis[2], dtype=float).reshape((-1,))
+            eigenvalues_host = np.asarray(eigenbasis[0], dtype=np.float64).reshape((-1,))
+            synthesis_host = np.asarray(eigenbasis[1], dtype=np.float64)
+            quadrature_host = np.asarray(eigenbasis[2], dtype=np.float64).reshape((-1,))
             if synthesis_host.ndim != 2:
                 raise ValueError("eigenfunctions must have shape (entity, mode).")
             groups_host = _eigenspace_groups(eigenvalues_host, 1e-8)
@@ -574,17 +572,19 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                     "Transform construction requires analysis, synthesis, eigenvalues, "
                     "group_ids, and quadrature_weights."
                 )
-            analysis_host = np.asarray(analysis, dtype=float)
-            synthesis_host = np.asarray(synthesis, dtype=float)
-            eigenvalues_host = np.asarray(eigenvalues, dtype=float).reshape((-1,))
+            analysis_host = np.asarray(analysis, dtype=np.float64)
+            synthesis_host = np.asarray(synthesis, dtype=np.float64)
+            eigenvalues_host = np.asarray(eigenvalues, dtype=np.float64).reshape((-1,))
             groups_host = np.asarray(group_ids, dtype=np.int32).reshape((-1,))
-            quadrature_host = np.asarray(quadrature_weights, dtype=float).reshape((-1,))
-        modes = int(eigenvalues_host.size)
-        points = int(quadrature_host.size)
+            quadrature_host = np.asarray(quadrature_weights, dtype=np.float64).reshape(
+                (-1,)
+            )
+        modes = eigenvalues_host.size
+        points = quadrature_host.size
         active = (
-            np.ones((points,), dtype=bool)
+            np.ones((points,), dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != (points,):
             raise ValueError("active_mask must have one entry per spectral point.")
@@ -608,17 +608,15 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
             raise ValueError("Spectral bases must have points and modes.")
         if analysis_host.shape != (modes, points):
             raise ValueError(
-                f"Analysis matrix must have shape {(modes, points)}; "
-                f"got {analysis_host.shape}."
+                f"Analysis matrix must have shape {(modes, points)}; got {analysis_host.shape}."
             )
         if synthesis_host.shape != (points, modes):
             raise ValueError(
-                f"Synthesis matrix must have shape {(points, modes)}; "
-                f"got {synthesis_host.shape}."
+                f"Synthesis matrix must have shape {(points, modes)}; got {synthesis_host.shape}."
             )
         if groups_host.shape != (modes,) or np.any(groups_host < 0):
             raise ValueError("group_ids must contain one non-negative ID per mode.")
-        unique = tuple(int(value) for value in np.unique(groups_host))
+        unique = tuple(np.unique(groups_host))
         if unique != tuple(range(len(unique))):
             raise ValueError("Spectral eigenspace group IDs must be contiguous.")
         if (
@@ -769,11 +767,11 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
 
     @property
     def num_points(self) -> int:
-        return int(self.synthesis.shape[0])
+        return self.synthesis.shape[0]
 
     @property
     def num_modes(self) -> int:
-        return int(self.synthesis.shape[1])
+        return self.synthesis.shape[1]
 
     @property
     def num_groups(self) -> int:
@@ -856,9 +854,9 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
         decomposition_id: str | None = None,
         max_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
     ) -> "SpectralDecomposition":
-        values = np.asarray(eigenvalues, dtype=float).reshape((-1,))
-        vectors = np.asarray(eigenvectors, dtype=float)
-        weights = np.asarray(measure, dtype=float).reshape((-1,))
+        values = np.asarray(eigenvalues, dtype=np.float64).reshape((-1,))
+        vectors = np.asarray(eigenvectors, dtype=np.float64)
+        weights = np.asarray(measure, dtype=np.float64).reshape((-1,))
         estimate = values.nbytes + 3 * vectors.nbytes + weights.nbytes
         _byte_limit(
             max_construction_bytes,
@@ -911,7 +909,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
     ) -> "SpectralDecomposition":
         """Construct low modes of the generalized problem K v = λ M v."""
         stiffness_matrix = _finite_symmetric_matrix(stiffness, name="Stiffness")
-        count = int(stiffness_matrix.shape[0])
+        count = stiffness_matrix.shape[0]
         if count == 0:
             raise ValueError("Stiffness must not be empty.")
         diagonal_mass = False
@@ -919,20 +917,20 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
             mass_matrix = _finite_symmetric_matrix(mass, name="Mass")
             if mass_matrix.shape != (count, count):
                 raise ValueError("Mass matrix shape must match stiffness.")
-            measure = np.asarray(mass_matrix.diagonal(), dtype=float)
+            measure = np.asarray(mass_matrix.diagonal(), dtype=np.float64)
         else:
-            mass_array = np.asarray(mass, dtype=float)
+            mass_array = np.asarray(mass, dtype=np.float64)
             if mass_array.ndim == 1:
                 if mass_array.shape != (count,):
                     raise ValueError("Diagonal mass must have one entry per point.")
                 if np.any(~np.isfinite(mass_array)):
                     raise ValueError("Mass must be finite.")
-                measure = np.array(mass_array, dtype=float, copy=True)
+                measure = np.array(mass_array, dtype=np.float64, copy=True)
                 mass_matrix = scipy_sparse.diags(measure, format="csr")
                 diagonal_mass = True
             elif mass_array.shape == (count, count):
                 mass_matrix = _finite_symmetric_matrix(mass_array, name="Mass")
-                measure = np.asarray(np.diag(mass_matrix), dtype=float)
+                measure = np.asarray(np.diag(mass_matrix), dtype=np.float64)
             else:
                 raise ValueError("Mass must be diagonal entries or a square matrix.")
         if np.any(~np.isfinite(measure)) or np.any(measure <= 0.0):
@@ -973,9 +971,9 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
             )
         )
         estimate = (
-            4 * count * count * np.dtype(float).itemsize
+            4 * count * count * np.dtype(np.float64).itemsize
             if use_dense
-            else 8 * count * modes * np.dtype(float).itemsize
+            else 8 * count * modes * np.dtype(np.float64).itemsize
         )
         _byte_limit(
             max_construction_bytes,
@@ -1002,8 +1000,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                 )
             except np.linalg.LinAlgError as exc:
                 raise ValueError(
-                    "Generalized stiffness eigendecomposition failed; "
-                    "mass must be positive definite."
+                    "Generalized stiffness eigendecomposition failed; mass must be positive definite."
                 ) from exc
         else:
             stiffness_sparse = (
@@ -1029,9 +1026,9 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                     maxiter=500,
                 )
             stiffness_times_physical = np.asarray(
-                stiffness_sparse @ physical, dtype=float
+                stiffness_sparse @ physical, dtype=np.float64
             )
-            mass_times_physical = np.asarray(mass_sparse @ physical, dtype=float)
+            mass_times_physical = np.asarray(mass_sparse @ physical, dtype=np.float64)
             residual = (
                 stiffness_times_physical
                 - mass_times_physical * np.asarray(values)[None, :]
@@ -1044,7 +1041,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
             ) * vector_norm
             relative_residual = np.linalg.norm(residual, axis=0) / np.maximum(
                 denominator,
-                np.finfo(float).tiny,
+                np.finfo(np.float64).tiny,
             )
             if np.any(~np.isfinite(relative_residual)) or np.any(
                 relative_residual > 1e-7
@@ -1054,8 +1051,8 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                     f"maximum relative residual is {float(np.max(relative_residual))}."
                 )
         order = np.argsort(values, kind="stable")
-        values = np.asarray(values[order], dtype=float)
-        physical = np.asarray(physical[:, order], dtype=float)
+        values = np.asarray(values[order], dtype=np.float64)
+        physical = np.asarray(physical[:, order], dtype=np.float64)
         spectral_scale = max(
             1.0,
             float(np.max(np.abs(values))) if values.size else 0.0,
@@ -1063,17 +1060,16 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
         negative_tolerance = 1e-8 * spectral_scale
         if np.any(values < -negative_tolerance):
             raise ValueError(
-                "Stiffness must be positive semidefinite; "
-                f"smallest generalized eigenvalue is {float(values[0])}."
+                f"Stiffness must be positive semidefinite; smallest generalized eigenvalue is {float(values[0])}."
             )
         values = np.maximum(values, 0.0)
-        mass_times_physical = np.asarray(mass_matrix @ physical, dtype=float)
+        mass_times_physical = np.asarray(mass_matrix @ physical, dtype=np.float64)
         norms = np.sqrt(np.sum(physical * mass_times_physical, axis=0))
         if np.any(~np.isfinite(norms)) or np.any(norms <= 0.0):
             raise ValueError("Stiffness eigenvectors must have positive mass norm.")
         physical = physical / norms[None, :]
         physical = _canonicalize_eigenvector_signs(physical)
-        mass_times_physical = np.asarray(mass_matrix @ physical, dtype=float)
+        mass_times_physical = np.asarray(mass_matrix @ physical, dtype=np.float64)
         groups = _eigenspace_groups(values, float(group_tolerance))
         identifier = decomposition_id
         if identifier is None:
@@ -1094,7 +1090,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
 
 
 def _trapezoid_weights(nodes: Array, /) -> Array:
-    if int(nodes.shape[0]) == 1:
+    if nodes.shape[0] == 1:
         return jnp.ones_like(nodes)
     interior = 0.5 * (nodes[2:] - nodes[:-2])
     return jnp.concatenate(
@@ -1113,7 +1109,7 @@ def _normalized_nodes(
     /,
 ) -> Array:
     span = nodes[-1] - nodes[0]
-    if periodic and int(nodes.shape[0]) > 1:
+    if periodic and nodes.shape[0] > 1:
         span = (
             span + jnp.mean(jnp.diff(nodes))
             if quadrature_weights is None
@@ -1195,15 +1191,17 @@ class BasisTransformPlan(StrictModule, NonTrainableState):
         max_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
     ):
         nodes_value = tuple(
-            jnp.asarray(value, dtype=float).reshape((-1,)) for value in nodes
+            jnp.asarray(value, dtype=jnp.float64).reshape((-1,)) for value in nodes
         )
         quadrature_value = tuple(
-            None if value is None else jnp.asarray(value, dtype=float).reshape((-1,))
+            None
+            if value is None
+            else jnp.asarray(value, dtype=jnp.float64).reshape((-1,))
             for value in quadrature_weights
         )
         periodic_value = tuple(bool(value) for value in periodic)
         bases_value = tuple(bases)
-        modes_value = tuple(int(mode) for mode in n_modes)
+        modes_value = tuple(n_modes)
         count = len(nodes_value)
         if not count or any(
             len(values) != count
@@ -1218,12 +1216,12 @@ class BasisTransformPlan(StrictModule, NonTrainableState):
         for axis_nodes, weights, mode in zip(
             nodes_value, quadrature_value, modes_value, strict=True
         ):
-            if mode <= 0 or mode > int(axis_nodes.size):
+            if mode <= 0 or mode > axis_nodes.size:
                 raise ValueError("Basis mode counts must lie within available nodes.")
             if weights is not None and weights.shape != axis_nodes.shape:
                 raise ValueError("Quadrature weights must align with axis nodes.")
         estimate = sum(
-            2 * int(axis.size) * mode * np.dtype(float).itemsize
+            2 * axis.size * mode * np.dtype(np.float64).itemsize
             for axis, mode in zip(nodes_value, modes_value, strict=True)
         )
         _byte_limit(
@@ -1259,12 +1257,12 @@ class BasisTransformPlan(StrictModule, NonTrainableState):
         digest = array_tree_fingerprint((tuple(analysis), synthesis))["sha256"]
         self.analysis_matrices = tuple(analysis)
         self.synthesis_matrices = synthesis
-        self.sample_shape = tuple(int(axis.size) for axis in nodes_value)
+        self.sample_shape = tuple(axis.size for axis in nodes_value)
         self.bases = bases_value
         self.n_modes = modes_value
         self.fingerprint = canonical_fingerprint(
             {
-                "kind": "basis-transform-plan-v1",
+                "kind": "basis-transform-plan",
                 "sample_shape": self.sample_shape,
                 "bases": bases_value,
                 "n_modes": modes_value,

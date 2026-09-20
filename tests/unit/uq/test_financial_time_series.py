@@ -16,7 +16,7 @@ def test_arima_recovers_stable_ar_coefficient_with_irregular_mask():
     noise = generator.normal(scale=0.03, size=values.size)
     for index in range(1, values.size):
         values[index] = 0.72 * values[index - 1] + noise[index]
-    mask = np.ones(values.size, dtype=bool)
+    mask = np.ones(values.size, dtype="bool")
     mask[101] = False
 
     fit = fit_arima(values, p=1, mask=mask)
@@ -98,7 +98,7 @@ def test_garch_and_gjr_variance_recursions_match_hand_oracle():
 
 def test_har_requires_complete_trailing_windows():
     values = jnp.arange(1.0, 50.0)
-    mask = jnp.ones(values.shape, dtype=bool).at[20].set(False)
+    mask = jnp.ones(values.shape, dtype="bool").at[20].set(False)
 
     fit = fit_har(values, windows=(1, 5), mask=mask, ridge=1e-8)
 

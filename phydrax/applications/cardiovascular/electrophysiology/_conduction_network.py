@@ -74,7 +74,7 @@ class PurkinjeNetworkPlan(StrictModule, NonTrainableState):
         nodes = np.asarray(node_ids, dtype=np.int64)
         edges = np.asarray(edge_ids, dtype=np.int64)
         incidence = np.asarray(edge_nodes, dtype=np.int32)
-        delays = np.asarray(edge_delay_ms, dtype=float)
+        delays = np.asarray(edge_delay_ms, dtype=np.float64)
         if nodes.ndim != 1 or nodes.size == 0:
             raise ValueError("node_ids must be a non-empty fixed-capacity vector.")
         if edges.ndim != 1 or incidence.shape != (edges.size, 2):
@@ -116,7 +116,7 @@ class PurkinjeNetworkPlan(StrictModule, NonTrainableState):
             )
         if np.any(delays[~active_edges] != 0.0):
             raise ValueError("Inactive edge delays must be zero.")
-        refractory = np.asarray(refractory_period_ms, dtype=float)
+        refractory = np.asarray(refractory_period_ms, dtype=np.float64)
         if refractory.ndim == 0:
             refractory = np.full(nodes.shape, float(refractory))
             refractory[~active_nodes] = 0.0
@@ -247,7 +247,7 @@ def with_purkinje_edge_block(
     """Create a new state with an explicit block mask for the same topology epoch."""
 
     _validate_state(plan, state)
-    blocked = np.asarray(edge_blocked, dtype=bool)
+    blocked = np.asarray(edge_blocked, dtype=np.bool_)
     if blocked.shape != tuple(plan.edge_ids.shape):
         raise ValueError("edge_blocked must match the fixed edge capacity.")
     blocked = blocked | (np.asarray(plan.edge_ids) < 0)
@@ -274,7 +274,7 @@ def make_purkinje_stimulus_batch(
         raise TypeError("plan must be a PurkinjeNetworkPlan.")
     identifiers = np.asarray(event_ids, dtype=np.int64)
     nodes = np.asarray(node_indices, dtype=np.int32)
-    times = np.asarray(time_ms, dtype=float)
+    times = np.asarray(time_ms, dtype=np.float64)
     if (
         identifiers.ndim != 1
         or nodes.shape != identifiers.shape
@@ -300,7 +300,7 @@ def make_purkinje_stimulus_batch(
     padded_ids = np.full((capacity,), -1, dtype=np.int64)
     padded_nodes = np.full((capacity,), -1, dtype=np.int32)
     padded_times = np.zeros((capacity,), dtype=times.dtype)
-    active = np.zeros((capacity,), dtype=bool)
+    active = np.zeros((capacity,), dtype=np.bool_)
     padded_ids[: identifiers.size] = identifiers
     padded_nodes[: nodes.size] = nodes
     padded_times[: times.size] = times
@@ -361,12 +361,12 @@ def propagate_purkinje(
     incidence = np.asarray(plan.edge_nodes)
     delays = np.asarray(plan.edge_delay_ms)
     refractory_period = np.asarray(plan.refractory_period_ms)
-    edge_blocked = np.asarray(state.edge_blocked, dtype=bool).copy()
+    edge_blocked = np.asarray(state.edge_blocked, dtype=np.bool_).copy()
     latest = np.asarray(state.latest_activation_time_ms).copy()
     refractory_until = np.asarray(state.refractory_until_ms).copy()
     activation_count = np.asarray(state.activation_count).copy()
     prior_last_time = float(np.asarray(state.last_processed_time_ms))
-    active_stimuli = np.asarray(stimuli.active, dtype=bool)
+    active_stimuli = np.asarray(stimuli.active, dtype=np.bool_)
     input_ids = np.asarray(stimuli.event_ids)
     input_nodes = np.asarray(stimuli.node_indices)
     input_times = np.asarray(stimuli.time_ms)
@@ -405,12 +405,12 @@ def propagate_purkinje(
 
     output_id = np.full((plan.event_capacity,), -1, dtype=np.int64)
     output_kind = np.zeros((plan.event_capacity,), dtype=np.int32)
-    output_time = np.zeros((plan.event_capacity,), dtype=float)
+    output_time = np.zeros((plan.event_capacity,), dtype=np.float64)
     output_node = np.full((plan.event_capacity,), -1, dtype=np.int32)
     output_edge = np.full((plan.event_capacity,), -1, dtype=np.int32)
     output_source = np.full((plan.event_capacity,), -1, dtype=np.int32)
     output_parent = np.full((plan.event_capacity,), -1, dtype=np.int64)
-    output_active = np.zeros((plan.event_capacity,), dtype=bool)
+    output_active = np.zeros((plan.event_capacity,), dtype=np.bool_)
     output_count = 0
     last_processed = prior_last_time
 

@@ -13,7 +13,7 @@ import equinox as eqx
 import jax.random as jr
 
 from .._frozendict import frozendict
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._realization import (
     ConditionEvaluationContext,
     FieldRealizationResult,
@@ -135,8 +135,8 @@ class _SourceResolution(StrictModule):
 class AbstractRealizationSource(StrictModule):
     """Immutable declaration of when and how a realization input is refreshed."""
 
-    name: AbstractAttribute[str]
-    kind: AbstractAttribute[RealizationSourceKind]
+    name: eqx.AbstractVar[str]
+    kind: eqx.AbstractVar[RealizationSourceKind]
 
     @abstractmethod
     def needs_refresh(

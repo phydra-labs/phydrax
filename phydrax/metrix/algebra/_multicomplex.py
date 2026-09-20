@@ -99,7 +99,7 @@ class MulticomplexAlgebraSpec(AbstractFiniteRealAlgebraSpec):
             (1,) + (0,) * (dimension - 1),
             conjugation,
             convention={
-                "kind": "multicomplex-commuting-v1",
+                "kind": "multicomplex-commuting",
                 "rank": rank_,
                 "generator_square": -1,
             },

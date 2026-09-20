@@ -23,7 +23,7 @@ class ExplicitPolygonH1FieldSpec(StrictModule, NonTrainableState):
 
     def __init__(self, name: str, /, *, component_shape: Sequence[int] = ()):
         name_ = str(name)
-        shape = tuple(int(value) for value in component_shape)
+        shape = tuple(component_shape)
         if not name_:
             raise ValueError("Explicit polygon field name must be non-empty.")
         if any(value <= 0 for value in shape):
@@ -115,8 +115,7 @@ class ExplicitPolygonH1ResourceBudget(StrictModule, NonTrainableState):
         maximum_workspace_bytes: int = 1 << 30,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_cells,
                 maximum_arity,
                 maximum_retained_bytes,

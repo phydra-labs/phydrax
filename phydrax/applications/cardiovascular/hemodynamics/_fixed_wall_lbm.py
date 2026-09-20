@@ -323,7 +323,7 @@ class FixedWallLBMPlan(StrictModule, NonTrainableState):
         measurements = prepare_terminal_measurements(
             self.discretization, self.lumen, self.terminals
         )
-        mask = np.asarray(self.lumen.fluid_mask, dtype=bool)
+        mask = np.asarray(self.lumen.fluid_mask, dtype=np.bool_)
         cell_size = float(self.discretization.cell_size)
         signed_distance = np.where(mask, 0.5 * cell_size, -0.5 * cell_size)
         has_solid = bool(np.any(~mask))

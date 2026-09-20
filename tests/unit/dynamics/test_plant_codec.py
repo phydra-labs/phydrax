@@ -106,7 +106,7 @@ def test_mixed_pytree_state_and_control_round_trip_exactly():
         "feedforward": (jnp.asarray(0.75, dtype=jnp.float32),),
     }
     command_schema = ArrayPyTreeSchema.from_tree(
-        command, case_ndim=0, schema_id="complete-control-v1"
+        command, case_ndim=0, schema_id="complete-control"
     )
     control_codec = ControlVectorCodec(
         command_schema,

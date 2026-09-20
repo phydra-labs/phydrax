@@ -52,7 +52,7 @@ class FreeSurfaceBoundaryPlan(StrictModule, NonTrainableState):
         self.reference_pressure = reference
         self.layout_id = canonical_fingerprint(
             {
-                "kind": "free-surface-boundary-plan-v2",
+                "kind": "free-surface-boundary-plan",
                 "gas_pressure": gas,
                 "reference_pressure": reference,
                 "lateral": "periodic-or-closed",
@@ -119,7 +119,7 @@ class FreeSurfaceBoundaryPlan(StrictModule, NonTrainableState):
         )
         stage_id = canonical_fingerprint(
             {
-                "kind": "free-surface-boundary-stage-v2",
+                "kind": "free-surface-boundary-stage",
                 "layout": self.layout_id,
                 "surface": surface.surface_id,
                 "stage_tag": str(stage_tag),

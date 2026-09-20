@@ -134,7 +134,7 @@ def test_bc_dual_edge_flux_dofs_follow_coarse_edge_orientation():
     dual = prepare_buffa_christiansen_dual_3d(primal)
     surface = primal.surface
     refined_edge_ids = {
-        tuple(int(value) for value in edge): edge_id
+        tuple(edge): edge_id
         for edge_id, edge in enumerate(np.asarray(dual.barycentric_surface.edge_vertices))
     }
     flux_dofs = _oriented_refined_edge_flux_dofs(dual)

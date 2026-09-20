@@ -38,10 +38,10 @@ class CrossflowMembraneModule:
         permeate_pressure_pa: ArrayLike,
         /,
     ) -> CrossflowMembraneModule:
-        area = np.asarray(segment_area_m2, dtype=float)
-        permeance = np.asarray(species_permeance_mol_m2_s_pa, dtype=float)
-        feed_pressure = np.asarray(feed_pressure_pa, dtype=float)
-        permeate_pressure = np.asarray(permeate_pressure_pa, dtype=float)
+        area = np.asarray(segment_area_m2, dtype=np.float64)
+        permeance = np.asarray(species_permeance_mol_m2_s_pa, dtype=np.float64)
+        feed_pressure = np.asarray(feed_pressure_pa, dtype=np.float64)
+        permeate_pressure = np.asarray(permeate_pressure_pa, dtype=np.float64)
         if area.ndim != 1 or area.size == 0 or np.any(area <= 0):
             raise ValueError("Membrane segment areas must be a positive vector.")
         if permeance.ndim == 1:

@@ -187,7 +187,7 @@ def _checked_quadratic_coefficient(coefficient: cx.AxisArray, /) -> cx.AxisArray
     raw = jnp.asarray(coefficient.data)
     if jnp.iscomplexobj(raw):
         raise TypeError("KFAC residual reduction coefficients must be real.")
-    data = jnp.asarray(raw, dtype=float)
+    data = jnp.asarray(raw, dtype=jnp.float64)
     data = jnp.where(
         data < 0.0,
         jnp.where(data >= -1e-12, 0.0, data),
@@ -294,7 +294,7 @@ def _planned_residual(
     requests = trace_derivative_requests(condition.residual, functions)
     grouped: dict[tuple[str, str], list[Any]] = {}
     for request in requests:
-        for variable in request.variables:
+        for variable in sorted(request.variables):
             grouped.setdefault((request.field, variable), []).append(request)
     strategies = {
         (id(functions[field].func), variable): plan_derivative_execution(
@@ -341,7 +341,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         validate_condition_source(condition.on, source)
         if isinstance(source, AdaptiveIntegration):
             _validate_adaptive_source(source)
-        coefficient = jnp.asarray(scale, dtype=float)
+        coefficient = jnp.asarray(scale, dtype=jnp.float64)
         if coefficient.shape != ():
             raise ValueError("Term scale must be a scalar.")
         if not bool(jnp.isfinite(coefficient)) or float(coefficient) < 0.0:
@@ -551,7 +551,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             raise ValueError(
                 f"ResidualPenalty must reduce to a scalar Field, got dims={field.dims}."
             )
-        value = self.scale * jnp.asarray(field.data, dtype=float).reshape(())
+        value = self.scale * jnp.asarray(field.data, dtype=jnp.float64).reshape(())
         return TermEvaluation(value, diagnostics=estimate)
 
     def _quadratic_residual_data(
@@ -636,7 +636,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
 
         residuals: list[cx.AxisArray] = []
         checked_coefficients: list[cx.AxisArray] = []
-        total = jnp.asarray(0.0, dtype=float)
+        total = jnp.asarray(0.0, dtype=jnp.float64)
         for integration_batch, coefficient, term_key in zip(
             integration_batches,
             coefficients,
@@ -673,7 +673,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
                 )
             coefficient = _checked_quadratic_coefficient(self.scale * coefficient)
             weighted = coefficient * _squared_frobenius_field(residual)
-            total = total + jnp.sum(jnp.asarray(weighted.data, dtype=float))
+            total = total + jnp.sum(jnp.asarray(weighted.data, dtype=jnp.float64))
             residuals.append(residual)
             checked_coefficients.append(coefficient)
         return _QuadraticResidualData(
@@ -713,8 +713,8 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         )
         target_data = target.data if isinstance(target, cx.AxisArray) else target
         return supervised_data_metrics(
-            jnp.asarray(prediction_data, dtype=float),
-            jnp.asarray(target_data, dtype=float),
+            jnp.asarray(prediction_data, dtype=jnp.float64),
+            jnp.asarray(target_data, dtype=jnp.float64),
             eps=self.data_accuracy_eps,
         )
 

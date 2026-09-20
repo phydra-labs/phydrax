@@ -35,8 +35,7 @@ def main() -> None:
     state = commit_physical_relative_force_calibration(candidate, state)
     observation = prepared.observe(state, jnp.asarray([0.2, 0.8]))
     print(
-        "scale_newton_per_relative_force="
-        f"{float(state.scale_newton_per_relative_force):.6f}"
+        f"scale_newton_per_relative_force={float(state.scale_newton_per_relative_force):.6f}"
     )
     print(f"force_newton={observation.force_newton}")
     print(f"protocol_id={observation.protocol_id}")

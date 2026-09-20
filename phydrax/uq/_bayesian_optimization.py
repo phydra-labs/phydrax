@@ -72,7 +72,7 @@ class BayesianOptimizationDomain(StrictModule):
         if continuous_template is None:
             if lower_bounds is not None or upper_bounds is not None:
                 raise ValueError("Continuous bounds require a continuous_template.")
-            initial = jnp.empty((0,), dtype=float)
+            initial = jnp.empty((0,), dtype=jnp.float64)
             lower = initial
             upper = initial
             unravel = lambda _: None
@@ -114,7 +114,7 @@ class BayesianOptimizationDomain(StrictModule):
                 raise ValueError("continuous_template must lie inside its bounds.")
         if categorical is not None and not isinstance(categorical, FiniteProductSpace):
             raise TypeError("categorical must be a FiniteProductSpace or None.")
-        if int(initial.shape[0]) == 0 and categorical is None:
+        if initial.shape[0] == 0 and categorical is None:
             raise ValueError("A Bayesian-optimization domain cannot be empty.")
         self.continuous_template = continuous_template
         self.lower_bounds = lower_bounds
@@ -124,7 +124,7 @@ class BayesianOptimizationDomain(StrictModule):
         self.continuous_upper = upper
         self.categorical = categorical
         self._unravel = unravel
-        self.continuous_dimension = int(initial.shape[0])
+        self.continuous_dimension = initial.shape[0]
         self.categorical_dimension = (
             0 if categorical is None else len(categorical.product_shape)
         )
@@ -479,8 +479,7 @@ def bayesian_optimize(
         else:
             if not bool(jnp.any(separated)):
                 raise ValueError(
-                    "The BO candidate pool has no tuple separated from observations "
-                    "and pending points."
+                    "The BO candidate pool has no tuple separated from observations and pending points."
                 )
             selected = int(
                 _space_filling_tuple(encoded_tuples, occupied, eligible=separated)
@@ -641,8 +640,7 @@ def _initial_candidate_points(
         )
         if not bool(jnp.any(separated)):
             raise ValueError(
-                "The BO domain has too few separated points for the initial design "
-                "after accounting for pending points."
+                "The BO domain has too few separated points for the initial design after accounting for pending points."
             )
         index = int(jnp.argmax(separated))
         selected.append(index)
@@ -748,7 +746,7 @@ def _acquisition_scores(
     has_feasible = jnp.any(feasible)
     incumbent = jnp.min(jnp.where(feasible, objectives, jnp.inf))
     improvement = jnp.maximum(incumbent - jnp.min(objective_samples, axis=-1), 0.0)
-    sample_feasible = jnp.ones((plan.fantasy_count, tuple_count), dtype=bool)
+    sample_feasible = jnp.ones((plan.fantasy_count, tuple_count), dtype=jnp.bool_)
     usable = objective_usable
     for index, state in enumerate(plan.constraint_surrogates):
         means, covariance, child_usable = _pending_fantasy_posterior(
@@ -813,7 +811,7 @@ def _pending_fantasy_posterior(
     mean, covariance, usable = _gp_posterior(
         train_points, train_values, joint, valid, state
     )
-    pending_count = int(pending_points.shape[0])
+    pending_count = pending_points.shape[0]
     pending_mean = mean[:pending_count]
     query_mean = mean[pending_count:]
     pending_covariance = covariance[:pending_count, :pending_count]
@@ -855,7 +853,7 @@ def _separated_tuples(
     candidates: Array, occupied: Array, /, *, minimum_separation: float
 ) -> Array:
     if occupied.shape[0] == 0:
-        external = jnp.ones((candidates.shape[0],), dtype=bool)
+        external = jnp.ones((candidates.shape[0],), dtype=jnp.bool_)
     else:
         squared = jnp.sum(
             (candidates[:, :, None, :] - occupied[None, None, :, :]) ** 2,
@@ -867,7 +865,7 @@ def _separated_tuples(
     pairwise = jnp.sum(
         (candidates[:, :, None, :] - candidates[:, None, :, :]) ** 2, axis=-1
     )
-    diagonal = jnp.eye(candidates.shape[1], dtype=bool)[None, :, :]
+    diagonal = jnp.eye(candidates.shape[1], dtype=jnp.bool_)[None, :, :]
     internal = jnp.all(
         jnp.where(diagonal, jnp.inf, pairwise) > minimum_separation**2, axis=(1, 2)
     )

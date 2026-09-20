@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
     AbstractLinearOperator,
@@ -28,8 +28,8 @@ from ._system import PreparedAtomisticSystem
 
 
 class AbstractHydrodynamicMobilityPlan(StrictModule, NonTrainableState):
-    mobility_id: AbstractAttribute[str]
-    maximum_particles: AbstractAttribute[int]
+    mobility_id: eqx.AbstractVar[str]
+    maximum_particles: eqx.AbstractVar[int]
     __strict_abstract__ = True
 
     @abc.abstractmethod
@@ -40,12 +40,12 @@ class AbstractHydrodynamicMobilityPlan(StrictModule, NonTrainableState):
 
 
 class AbstractPreparedHydrodynamicMobility(StrictModule, NonTrainableState):
-    plan: AbstractAttribute[AbstractHydrodynamicMobilityPlan]
-    system: AbstractAttribute[PreparedAtomisticSystem]
-    active_slots: AbstractAttribute[Array]
-    coordinate_space: AbstractAttribute[ArraySpace]
-    prepared_id: AbstractAttribute[str]
-    route_id: AbstractAttribute[str]
+    plan: eqx.AbstractVar[AbstractHydrodynamicMobilityPlan]
+    system: eqx.AbstractVar[PreparedAtomisticSystem]
+    active_slots: eqx.AbstractVar[Array]
+    coordinate_space: eqx.AbstractVar[ArraySpace]
+    prepared_id: eqx.AbstractVar[str]
+    route_id: eqx.AbstractVar[str]
     __strict_abstract__ = True
 
     @abc.abstractmethod
@@ -100,7 +100,7 @@ class PreparedConstantIsotropicMobility(AbstractPreparedHydrodynamicMobility):
     ):
         slots = _active_slots(plan.maximum_particles, system, active_slots)
         space = ArraySpace(
-            (int(slots.size), 3),
+            (slots.size, 3),
             dtype=system.plan.coordinate_dtype,
             space_id=f"constant-mobility:{plan.mobility_id}:coordinates",
         )
@@ -208,7 +208,7 @@ class PreparedFreeSpaceRPYMobility(AbstractPreparedHydrodynamicMobility):
     ):
         slots = _active_slots(plan.maximum_particles, system, active_slots)
         space = ArraySpace(
-            (int(slots.size), 3),
+            (slots.size, 3),
             dtype=system.plan.coordinate_dtype,
             space_id=f"rpy:{plan.mobility_id}:coordinates",
         )
@@ -236,7 +236,7 @@ class PreparedFreeSpaceRPYMobility(AbstractPreparedHydrodynamicMobility):
         position = self.coordinate_space.validate(jnp.asarray(positions))
         displacement = position[:, None, :] - position[None, :, :]
         squared = jnp.sum(displacement * displacement, axis=-1)
-        distinct = ~jnp.eye(position.shape[0], dtype=bool)
+        distinct = ~jnp.eye(position.shape[0], dtype=jnp.bool_)
         return jnp.all(jnp.isfinite(position)) & jnp.all(
             jnp.where(distinct, squared > 0.0, True)
         )
@@ -245,10 +245,10 @@ class PreparedFreeSpaceRPYMobility(AbstractPreparedHydrodynamicMobility):
         position = self.coordinate_space.validate(jnp.asarray(positions))
         radius = jnp.asarray(self.plan.hydrodynamic_radius, dtype=position.dtype)
         viscosity = jnp.asarray(self.plan.dynamic_viscosity, dtype=position.dtype)
-        count = int(position.shape[0])
+        count = position.shape[0]
         displacement = position[:, None, :] - position[None, :, :]
         squared = jnp.sum(displacement * displacement, axis=-1)
-        identity_pair = jnp.eye(count, dtype=bool)
+        identity_pair = jnp.eye(count, dtype=jnp.bool_)
         configuration_valid = self.configuration_valid(position)
         distance = jnp.sqrt(squared)
         safe_distance = jnp.where(identity_pair | (distance <= 0.0), 1.0, distance)

@@ -55,7 +55,7 @@ class DSMCBoundaryFacePlan(StrictModule, NonTrainableState):
             or kind not in ("periodic", "specular", "surface", "open", "reservoir")
         ):
             raise ValueError("DSMC boundary face declaration is invalid.")
-        normal = np.zeros((cells.dimension,), dtype=float)
+        normal = np.zeros((cells.dimension,), dtype=np.float64)
         normal[axis_] = -1.0 if side == "lower" else 1.0
         lengths = np.asarray(cells.upper - cells.lower)
         measure = (
@@ -153,9 +153,9 @@ class DSMCReservoirFacePlan(StrictModule, NonTrainableState):
         maximum_injections_per_species: int,
         boltzmann_constant: float = 1.380649e-23,
     ) -> None:
-        density = np.asarray(number_densities, dtype=float)
-        velocity = np.asarray(tangential_bulk_velocity, dtype=float)
-        weights = np.asarray(simulator_weights, dtype=float)
+        density = np.asarray(number_densities, dtype=np.float64)
+        velocity = np.asarray(tangential_bulk_velocity, dtype=np.float64)
+        weights = np.asarray(simulator_weights, dtype=np.float64)
         temperature_ = float(temperature)
         capacity = int(maximum_injections_per_species)
         boltzmann = float(boltzmann_constant)

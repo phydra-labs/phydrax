@@ -18,9 +18,11 @@ def _paired_batch(domain, xs, ts):
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
+                jnp.asarray(xs, dtype="float64").reshape((-1, 1)), dims=(axis, None)
             ),
-            "t": cx.AxisArray(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
+            "t": cx.AxisArray(
+                jnp.asarray(ts, dtype="float64").reshape((-1,)), dims=(axis,)
+            ),
         }
     )
     return PointBatch(points=points, structure=structure)
@@ -38,19 +40,19 @@ def test_unified_interior_data_tracks_and_scattered():
     scattered = InteriorAnchors(
         "u",
         points={
-            "x": jnp.array([[0.2], [0.8]], dtype=float),
-            "t": jnp.array([0.3, 0.7], dtype=float),
+            "x": jnp.array([[0.2], [0.8]], dtype="float64"),
+            "t": jnp.array([0.3, 0.7], dtype="float64"),
         },
-        values=jnp.array([1.0, 2.0], dtype=float),
+        values=jnp.array([1.0, 2.0], dtype="float64"),
         use_envelope=True,
         envelope_scale=0.5,
     )
 
     tracks = InteriorAnchors(
         "u",
-        sensors=jnp.array([[0.5]], dtype=float),
-        times=jnp.array([0.2, 0.6], dtype=float),
-        sensor_values=jnp.array([[3.0, 4.0]], dtype=float),
+        sensors=jnp.array([[0.5]], dtype="float64"),
+        times=jnp.array([0.2, 0.6], dtype="float64"),
+        sensor_values=jnp.array([[3.0, 4.0]], dtype="float64"),
     )
 
     pipelines = EnforcementProgram.build(
@@ -59,9 +61,9 @@ def test_unified_interior_data_tracks_and_scattered():
     )
     u_enforced = pipelines.apply({"u": u})["u"]
 
-    xs = jnp.array([0.2, 0.8, 0.5, 0.5], dtype=float)
-    ts = jnp.array([0.3, 0.7, 0.2, 0.6], dtype=float)
-    expected = jnp.array([1.0, 2.0, 3.0, 4.0], dtype=float)
+    xs = jnp.array([0.2, 0.8, 0.5, 0.5], dtype="float64")
+    ts = jnp.array([0.3, 0.7, 0.2, 0.6], dtype="float64")
+    expected = jnp.array([1.0, 2.0, 3.0, 4.0], dtype="float64")
 
     batch = _paired_batch(domain, xs=xs, ts=ts)
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
@@ -79,9 +81,9 @@ def test_enforced_interior_data_hermite_track_matches_curve():
 
     tracks = InteriorAnchors(
         "u",
-        sensors=jnp.array([[0.5]], dtype=float),
-        times=jnp.array([0.0, 1.0], dtype=float),
-        sensor_values=jnp.array([[0.0, 1.0]], dtype=float),
+        sensors=jnp.array([[0.5]], dtype="float64"),
+        times=jnp.array([0.0, 1.0], dtype="float64"),
+        sensor_values=jnp.array([[0.0, 1.0]], dtype="float64"),
         time_interp="hermite",
     )
 
@@ -91,9 +93,9 @@ def test_enforced_interior_data_hermite_track_matches_curve():
     )
     u_enforced = pipelines.apply({"u": u})["u"]
 
-    xs = jnp.array([0.5, 0.5], dtype=float)
-    ts = jnp.array([0.0, 0.5], dtype=float)
-    expected = jnp.array([0.0, 0.5], dtype=float)
+    xs = jnp.array([0.5, 0.5], dtype="float64")
+    ts = jnp.array([0.0, 0.5], dtype="float64")
+    expected = jnp.array([0.0, 0.5], dtype="float64")
 
     batch = _paired_batch(domain, xs=xs, ts=ts)
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))

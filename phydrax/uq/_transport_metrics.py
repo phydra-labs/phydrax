@@ -227,7 +227,7 @@ def _operator_events(
 
 
 def _event_samples(value: ArrayLike, /, *, name: str) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if result.ndim != 2 or result.shape[0] < 1 or result.shape[1] < 1:
         raise ValueError(f"{name} must have shape (sample, event) with nonempty axes.")
     return eqx.error_if(

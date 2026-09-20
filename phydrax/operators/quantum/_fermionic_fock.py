@@ -56,7 +56,7 @@ class FermionModeOrder(StrictModule):
         """Sign induced by reordering the occupied exterior-product modes."""
 
         permutation = self.permutation(target)
-        values = tuple(int(value) for value in occupations)
+        values = tuple(occupations)
         if len(values) != self.mode_count or any(value not in (0, 1) for value in values):
             raise ValueError("occupations must contain one binary value per mode.")
         occupied_source = tuple(index for index, value in enumerate(values) if value)
@@ -88,7 +88,7 @@ class FermionicFockBasis(StrictModule):
         )
 
     def basis_index(self, occupations: Sequence[int], /) -> int:
-        values = tuple(int(value) for value in occupations)
+        values = tuple(occupations)
         if len(values) != self.mode_count or any(value not in (0, 1) for value in values):
             raise ValueError("occupations must contain one binary value per mode.")
         index = 0
@@ -110,8 +110,7 @@ class FermionicFockBasis(StrictModule):
         maximum = int(maximum_basis_states)
         if maximum <= 0 or self.dimension > maximum:
             raise ValueError(
-                f"Fock enumeration requires {self.dimension} basis states; "
-                f"capacity is {maximum}."
+                f"Fock enumeration requires {self.dimension} basis states; capacity is {maximum}."
             )
         indices = jnp.arange(self.dimension, dtype=jnp.uint32)
         shifts = jnp.arange(self.mode_count - 1, -1, -1, dtype=jnp.uint32)
@@ -215,8 +214,7 @@ class CARMonomial(StrictModule):
         maximum = int(maximum_elements)
         if maximum <= 0 or required > maximum:
             raise ValueError(
-                f"CAR monomial materialization requires {required} elements; "
-                f"capacity is {maximum}."
+                f"CAR monomial materialization requires {required} elements; capacity is {maximum}."
             )
         result = jnp.eye(dimension, dtype=jnp.complex128)
         basis = FermionicFockBasis(self.mode_order)
@@ -301,8 +299,7 @@ class CARPolynomial(StrictModule):
         maximum = int(maximum_elements)
         if maximum <= 0 or required > maximum:
             raise ValueError(
-                f"CAR polynomial materialization requires {required} elements; "
-                f"capacity is {maximum}."
+                f"CAR polynomial materialization requires {required} elements; capacity is {maximum}."
             )
         result = jnp.zeros((dimension, dimension), dtype=self.coefficients.dtype)
         for coefficient, monomial in zip(self.coefficients, self.monomials, strict=True):
@@ -367,8 +364,7 @@ def fermion_ladder_matrix(
     maximum = int(maximum_elements)
     if maximum <= 0 or required > maximum:
         raise ValueError(
-            f"Fermion ladder materialization requires {required} elements; "
-            f"capacity is {maximum}."
+            f"Fermion ladder materialization requires {required} elements; capacity is {maximum}."
         )
     columns = np.arange(basis.dimension, dtype=np.int64)
     bit_shift = basis.mode_count - index - 1
@@ -405,8 +401,7 @@ def fermion_mode_permutation_matrix(
     maximum = int(maximum_elements)
     if maximum <= 0 or required > maximum:
         raise ValueError(
-            f"Mode permutation materialization requires {required} elements; "
-            f"capacity is {maximum}."
+            f"Mode permutation materialization requires {required} elements; capacity is {maximum}."
         )
     matrix = np.zeros((basis.dimension, basis.dimension), dtype=np.float64)
     target_basis = FermionicFockBasis(target)
@@ -433,8 +428,7 @@ def car_evidence(
     required = (mode_order.mode_count + 4) * basis.dimension * basis.dimension
     if int(maximum_elements) <= 0 or required > int(maximum_elements):
         raise ValueError(
-            f"CAR evidence requires at most {required} resident elements; "
-            f"capacity is {int(maximum_elements)}."
+            f"CAR evidence requires at most {required} resident elements; capacity is {int(maximum_elements)}."
         )
     annihilation = tuple(
         fermion_ladder_matrix(

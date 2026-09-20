@@ -25,7 +25,7 @@ def _surrogate_plan(
         ],
         dtype=jnp.int32,
     )
-    active = jnp.ones((2, 2), dtype=bool)
+    active = jnp.ones((2, 2), dtype="bool")
     real = gw.PolynomialEmpiricalField(
         reconstruction,
         coefficients,
@@ -38,7 +38,7 @@ def _surrogate_plan(
         reconstruction,
         jnp.zeros((2, 1)),
         jnp.zeros((2, 1, 3), dtype=jnp.int32),
-        jnp.ones((2, 1), dtype=bool),
+        jnp.ones((2, 1), dtype="bool"),
         field_id="imaginary-22",
         resource_policy=resource_policy,
     )
@@ -251,7 +251,7 @@ def test_nr_surrogate_keeps_caller_provenance_unqualified_and_enforces_caps():
             jnp.ones((3, 2), dtype=jnp.float16),
             jnp.ones((2, 2), dtype=jnp.float16),
             jnp.zeros((2, 2, 3), dtype=jnp.int8),
-            jnp.ones((2, 2), dtype=bool),
+            jnp.ones((2, 2), dtype="bool"),
             field_id="normalized-byte-cap",
             resource_policy=normalized_byte_policy,
         )
@@ -293,7 +293,7 @@ def test_waveform_match_recovers_phase_and_sample_aligned_time_shift():
         sample_interval=sample_interval,
     )
     plan = gw.WaveformMatchPlan(psd)
-    first = jnp.exp(-(((frequency - 10.0) / 4.0) ** 2)).astype(complex)
+    first = jnp.exp(-(((frequency - 10.0) / 4.0) ** 2)).astype("complex128")
     lag = 5 * sample_interval
     second = first * jnp.exp(-2.0j * jnp.pi * frequency * lag + 0.7j)
 

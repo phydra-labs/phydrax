@@ -50,7 +50,7 @@ def _positive_rate(value: ArrayLike, owner: str, /) -> Array:
     raw = jnp.asarray(value)
     if raw.dtype == jnp.bool_:
         raise TypeError(f"{owner} must be numeric, not boolean.")
-    result = raw.astype(float)
+    result = raw.astype("float64")
     if result.shape != ():
         raise ValueError(f"{owner} must be scalar.")
     host = float(result)
@@ -145,7 +145,7 @@ class TelegraphFitTarget(StrictModule, NonTrainableState):
     target_id: str = eqx.field(static=True)
 
     def __init__(self, moments: ArrayLike, standard_errors: ArrayLike, /):
-        values = jnp.asarray(moments, dtype=float)
+        values = jnp.asarray(moments, dtype=jnp.float64)
         errors = jnp.asarray(standard_errors, dtype=values.dtype)
         if values.shape != (5,) or errors.shape != (5,):
             raise ValueError(
@@ -215,7 +215,7 @@ class CountMeasurementPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Capture probability and background rate must not be boolean."
             )
-        capture = capture_raw.astype(float)
+        capture = capture_raw.astype("float64")
         background = background_raw.astype(capture.dtype)
         if capture.shape != () or background.shape != ():
             raise ValueError("Capture probability and background rate must be scalar.")
@@ -268,7 +268,9 @@ class PreparedCountMeasurement(StrictModule, NonTrainableState):
         if not isinstance(plan, CountMeasurementPlan):
             raise TypeError("plan must be CountMeasurementPlan.")
         self.plan = plan
-        self.capture_indices = jnp.arange(plan.observation_capacity + 1, dtype=float)
+        self.capture_indices = jnp.arange(
+            plan.observation_capacity + 1, dtype=jnp.float64
+        )
         self.measurement_id = canonical_fingerprint(
             {"kind": "prepared-count-measurement", "plan": plan.plan_id}
         )
@@ -277,7 +279,8 @@ class PreparedCountMeasurement(StrictModule, NonTrainableState):
         self, observed: ArrayLike, latent_count: ArrayLike, /
     ) -> CountLikelihoodEvaluation:
         observed_value, latent_value = jnp.broadcast_arrays(
-            jnp.asarray(observed, dtype=float), jnp.asarray(latent_count, dtype=float)
+            jnp.asarray(observed, dtype=jnp.float64),
+            jnp.asarray(latent_count, dtype=jnp.float64),
         )
         valid_observation = (
             jnp.isfinite(observed_value)
@@ -538,7 +541,7 @@ class PreparedTelegraphGeneExpression(StrictModule, NonTrainableState):
             values
         )
         device_sensitivity = np.asarray(sensitivity)
-        host = device_sensitivity.astype(float)
+        host = device_sensitivity.astype("float64")
         singular_values = np.linalg.svd(host, compute_uv=False)
         threshold = (
             10.0

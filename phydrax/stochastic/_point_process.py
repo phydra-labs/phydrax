@@ -49,13 +49,13 @@ class PointProcessObservation(StrictModule):
     ):
         times_ = jnp.asarray(times)
         channels_ = jnp.asarray(channels, dtype=jnp.int32)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if times_.ndim != 1:
             raise ValueError("times must have shape (capacity,).")
         if channels_.shape != times_.shape or valid_.shape != times_.shape:
             raise ValueError("channels and valid must have the same shape as times.")
         if not jnp.issubdtype(times_.dtype, jnp.inexact):
-            times_ = times_.astype(float)
+            times_ = times_.astype("float64")
         channels_count = int(channel_count)
         if channels_count < 1:
             raise ValueError("channel_count must be positive.")
@@ -87,7 +87,7 @@ class PointProcessObservation(StrictModule):
         self.valid = valid_
         self.start_time = start
         self.end_time = end
-        self.capacity = int(times_.shape[0])
+        self.capacity = times_.shape[0]
         self.channel_count = channels_count
 
     @property
@@ -122,12 +122,12 @@ class ExponentialHawkesProcess(StrictModule):
         decay_ = jnp.asarray(decay)
         if baseline_.ndim != 1 or baseline_.shape[0] < 1:
             raise ValueError("baseline must have shape (channels,).")
-        channels = int(baseline_.shape[0])
+        channels = baseline_.shape[0]
         if excitation_.shape != (channels, channels):
             raise ValueError("excitation must have shape (channels, channels).")
         if decay_.shape not in ((), (channels, channels)):
             raise ValueError("decay must be scalar or have shape (channels, channels).")
-        dtype = jnp.result_type(baseline_, excitation_, decay_, float)
+        dtype = jnp.result_type(baseline_, excitation_, decay_, jnp.float64)
         baseline_ = baseline_.astype(dtype)
         excitation_ = excitation_.astype(dtype)
         decay_ = jnp.broadcast_to(decay_.astype(dtype), (channels, channels))

@@ -84,7 +84,7 @@ class BSplineGridBank(StrictModule, NonTrainableState):
 
     @property
     def num_grids(self) -> int:
-        return int(self.knots.shape[0])
+        return self.knots.shape[0]
 
     @property
     def active_interval(self) -> tuple[Array, Array]:
@@ -135,16 +135,16 @@ class TrainableBSplineGridBank(StrictModule):
             )
         if jnp.issubdtype(logits.dtype, jnp.complexfloating):
             raise TypeError("raw_span_logits must be real-valued.")
-        logits_host = np.asarray(logits, dtype=float)
+        logits_host = np.asarray(logits, dtype=np.float64)
         if not np.all(np.isfinite(logits_host)):
             raise ValueError("raw_span_logits must be finite.")
 
-        intervals_ = jnp.asarray(intervals, dtype=jnp.result_type(logits, float))
+        intervals_ = jnp.asarray(intervals, dtype=jnp.result_type(logits, jnp.float64))
         if intervals_.shape == (2,):
-            intervals_ = jnp.broadcast_to(intervals_, (int(logits.shape[0]), 2))
-        if intervals_.shape != (int(logits.shape[0]), 2):
+            intervals_ = jnp.broadcast_to(intervals_, (logits.shape[0], 2))
+        if intervals_.shape != (logits.shape[0], 2):
             raise ValueError("intervals must have shape (num_inputs, 2).")
-        intervals_host = np.asarray(intervals_, dtype=float)
+        intervals_host = np.asarray(intervals_, dtype=np.float64)
         extents = intervals_host[:, 1] - intervals_host[:, 0]
         if not np.all(np.isfinite(intervals_host)) or np.any(extents <= 0.0):
             raise ValueError(
@@ -152,23 +152,23 @@ class TrainableBSplineGridBank(StrictModule):
             )
 
         if minimum_spans is None:
-            minimum_host = extents / (1000.0 * int(logits.shape[1]))
+            minimum_host = extents / (1000.0 * logits.shape[1])
         else:
-            minimum_host = np.asarray(minimum_spans, dtype=float)
+            minimum_host = np.asarray(minimum_spans, dtype=np.float64)
             if minimum_host.ndim == 0:
-                minimum_host = np.broadcast_to(minimum_host, (int(logits.shape[0]),))
-        if minimum_host.shape != (int(logits.shape[0]),):
+                minimum_host = np.broadcast_to(minimum_host, (logits.shape[0],))
+        if minimum_host.shape != (logits.shape[0],):
             raise ValueError("minimum_spans must contain one value per input.")
         if (
             not np.all(np.isfinite(minimum_host))
             or np.any(minimum_host <= 0.0)
-            or np.any(int(logits.shape[1]) * minimum_host >= extents)
+            or np.any(logits.shape[1] * minimum_host >= extents)
         ):
             raise ValueError(
                 "minimum_spans must be positive and leave movable length in every row."
             )
 
-        dtype = jnp.result_type(logits, intervals_, float)
+        dtype = jnp.result_type(logits, intervals_, jnp.float64)
         self.raw_span_logits = logits.astype(dtype)
         self.degree = degree_
         self._intervals = tuple(
@@ -260,11 +260,11 @@ class TrainableBSplineGridBank(StrictModule):
 
     @property
     def num_grids(self) -> int:
-        return int(self.raw_span_logits.shape[0])
+        return self.raw_span_logits.shape[0]
 
     @property
     def num_intervals(self) -> int:
-        return int(self.raw_span_logits.shape[1])
+        return self.raw_span_logits.shape[1]
 
     @property
     def intervals(self) -> Array:

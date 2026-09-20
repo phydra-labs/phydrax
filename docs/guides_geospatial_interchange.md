@@ -16,7 +16,7 @@ silently interpreted as Cartesian distances.
 
 `require_compatible()` compares the qualified meanings of two coordinate systems.
 Unit equality alone is insufficient: ellipsoidal height, orthometric height, and depth
-may all be stored in metres while denoting different positions.
+may all be stored in meters while denoting different positions.
 
 `GeospatialTransform` remains the provenance record for an externally established
 operation. `CoordinateTransformPlan` additionally executes one explicit PROJ pipeline
@@ -51,7 +51,7 @@ resampling, seam repair, missing-value imputation, or CRS inference occurs.
 - explicit big- or little-endian selection;
 - explicit ASCII or EBCDIC cp500 textual encoding;
 - fixed-length IEEE binary32 traces;
-- metre or foot linear header coordinates;
+- meter or foot linear header coordinates;
 - source/group XY and positive-up elevation-minus-depth Z mapping;
 - seismic, pressure-sensor, and dead trace identifiers;
 - explicit pressure calibration and polarity when pressure units are claimed.
@@ -62,7 +62,7 @@ explicit padded invalid mask for variable trace lengths. It does not broaden the
 revision-1 class or alias the two profiles.
 
 Sequence gaps remain gaps. Dead or padded samples remain invalid. Source-relative
-clocks are not relabelled as UTC. Unsupported mute, angular-coordinate, transduction,
+clocks are not relabeled as UTC. Unsupported mute, angular-coordinate, transduction,
 or sample-format semantics fail closed. `ResourceLimits` account for bytes, decoded
 nodes, attributes, and losses before sample allocation.
 

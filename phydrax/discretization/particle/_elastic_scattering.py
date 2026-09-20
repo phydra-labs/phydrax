@@ -66,9 +66,9 @@ def scatter_elastic_pairs(
     first_mass_ = jnp.broadcast_to(first_mass_, leading_shape)
     second_mass_ = jnp.broadcast_to(second_mass_, leading_shape)
     selected = (
-        jnp.ones(leading_shape, dtype=bool)
+        jnp.ones(leading_shape, dtype=jnp.bool_)
         if mask is None
-        else jnp.asarray(mask, dtype=bool)
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     selected = jnp.broadcast_to(selected, leading_shape)
 

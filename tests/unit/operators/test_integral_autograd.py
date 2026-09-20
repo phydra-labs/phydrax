@@ -18,7 +18,7 @@ from phydrax.operators.integral import (
 
 
 def _interval_rule(count):
-    points = (jnp.arange(count, dtype=float) + 0.5) / count
+    points = (jnp.arange(count, dtype="float64") + 0.5) / count
     return {
         "points": points[:, None],
         "weights": jnp.full((count,), 1.0 / count),
@@ -26,7 +26,7 @@ def _interval_rule(count):
 
 
 def _square_rule(order):
-    axis = -0.5 + (jnp.arange(order, dtype=float) + 0.5) / order
+    axis = -0.5 + (jnp.arange(order, dtype="float64") + 0.5) / order
     first, second = jnp.meshgrid(axis, axis, indexing="ij")
     points = jnp.stack((first, second), axis=-1).reshape((-1, 2))
     return {

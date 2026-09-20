@@ -99,7 +99,7 @@ def _prepared(
     )
 
 
-def test_partition_and_pair_legality_preserve_labelled_identity():
+def test_partition_and_pair_legality_preserve_labeled_identity():
     first = StrandComplexPartition(("a", "b", "c"), (("c",), ("b", "a")))
     second = StrandComplexPartition(("a", "b", "c"), (("a", "b"), ("c",)))
     assert first == second
@@ -127,7 +127,7 @@ def test_partition_and_pair_legality_preserve_labelled_identity():
 @pytest.mark.parametrize(
     "rate_name", ["metropolis", "symmetric_barrier", "association_metropolis"]
 )
-def test_rate_ratios_and_labelled_combinatorics_match_partition_function(rate_name):
+def test_rate_ratios_and_labeled_combinatorics_match_partition_function(rate_name):
     system = _prepared(copies=2, alpha=7.0, rate_name=rate_name, pair_energy=-1.0)
     generator = system.generator()
     q = generator.matrix

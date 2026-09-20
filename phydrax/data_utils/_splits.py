@@ -107,7 +107,7 @@ def grouped_train_validation_test_split_indices(
         raise ValueError("train_fraction must lie strictly between zero and one.")
     if not 0.0 < validation < 1.0 or train + validation >= 1.0:
         raise ValueError("validation_fraction must leave a non-empty test fraction.")
-    groups = [tuple(int(index) for index in component) for component in components]
+    groups = [tuple(component) for component in components]
     if len(groups) < 3 or any(not component for component in groups):
         raise ValueError(
             "A grouped train/validation/test split requires at least three non-empty groups."

@@ -113,13 +113,11 @@ class DesignState(StrictModule):
         for spec, value in zip(schema.specs, values_, strict=True):
             if value.shape != spec.shape:
                 raise ValueError(
-                    f"Parameter {spec.parameter_id} must have shape {spec.shape}, "
-                    f"got {value.shape}."
+                    f"Parameter {spec.parameter_id} must have shape {spec.shape}, got {value.shape}."
                 )
             if str(value.dtype) != spec.dtype:
                 raise ValueError(
-                    f"Parameter {spec.parameter_id} must have dtype {spec.dtype}, "
-                    f"got {value.dtype}."
+                    f"Parameter {spec.parameter_id} must have dtype {spec.dtype}, got {value.dtype}."
                 )
         self.schema = schema
         self.values = values_
@@ -133,8 +131,7 @@ class DesignState(StrictModule):
         replacement = jnp.asarray(value, dtype=values[index].dtype)
         if replacement.shape != values[index].shape:
             raise ValueError(
-                f"Replacement shape {replacement.shape} does not match "
-                f"state shape {values[index].shape}."
+                f"Replacement shape {replacement.shape} does not match state shape {values[index].shape}."
             )
         values[index] = replacement
         return DesignState(self.schema, values)
@@ -188,7 +185,7 @@ class _ParameterCollector:
         bounds: tuple[float | None, float | None] = (None, None),
         trainable: bool = True,
     ) -> ParameterBinding:
-        array = jnp.asarray(value, dtype=float)
+        array = jnp.asarray(value, dtype=jnp.float64)
         spec = ParameterSpec(
             parameter_id=parameter_id,
             shape=array.shape,

@@ -133,8 +133,8 @@ def test_tensor_bspline_complete_hessian_multi_indices_have_exact_transposes():
         maximum_order=2,
     )
     plan = TensorBSplineJetPlan((u_stencil, v_stencil), maximum_order=2)
-    controls = jnp.arange(50, dtype=float).reshape((5, 5, 2)) / 13.0
-    messages = jnp.cos(jnp.arange(8, dtype=float)).reshape((2, 2, 2))
+    controls = jnp.arange(50, dtype="float64").reshape((5, 5, 2)) / 13.0
+    messages = jnp.cos(jnp.arange(8, dtype="float64")).reshape((2, 2, 2))
 
     assert plan.multi_indices == (
         (0, 0),
@@ -305,7 +305,7 @@ def test_bspline_explicit_derivatives_match_autodiff_at_endpoints():
 def test_bspline_custom_jvp_combines_query_and_coefficient_tangents():
     degree = 3
     knots = jnp.asarray(_open_knots(degree, 7))
-    coefficients = jnp.arange(14, dtype=float).reshape((7, 2)) / 9.0
+    coefficients = jnp.arange(14, dtype="float64").reshape((7, 2)) / 9.0
     coefficient_tangent = jnp.cos(coefficients)
     query = jnp.asarray(0.43)
     query_tangent = jnp.asarray(-0.7)
@@ -352,7 +352,7 @@ def test_bspline_case_shape_and_complex_payloads_are_preserved():
     degree = 2
     knots = np.asarray(_open_knots(degree, 6))
     query = jnp.asarray([[0.0, 0.4, 1.0], [0.1, 0.7, 0.9]])
-    real = jnp.arange(2 * 6 * 4, dtype=float).reshape((2, 6, 2, 2))
+    real = jnp.arange(2 * 6 * 4, dtype="float64").reshape((2, 6, 2, 2))
     controls = real + 1j * (real + 0.5)
     stencil = bspline_stencil(
         knots,
@@ -379,7 +379,7 @@ def test_bspline_case_shape_and_complex_payloads_are_preserved():
 def test_bspline_bounds_modes_are_explicit():
     degree = 2
     knots = np.asarray(_open_knots(degree, 6))
-    controls = jnp.arange(6, dtype=float)
+    controls = jnp.arange(6, dtype="float64")
     query = jnp.asarray([-0.2, 0.25, 1.2])
     oracle = SciPyBSpline(knots, np.asarray(controls), degree)
     clipped_expected = oracle(np.clip(np.asarray(query), 0.0, 1.0))

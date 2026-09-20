@@ -30,11 +30,11 @@ def _prepared_two_conductors():
 def _selections(prepared):
     left = phx.discretization.EntitySelection(
         prepared.surface_entities,
-        jnp.asarray([1, 1, 1, 1, 0, 0, 0, 0], dtype=bool),
+        jnp.asarray([1, 1, 1, 1, 0, 0, 0, 0], dtype="bool"),
     )
     right = phx.discretization.EntitySelection(
         prepared.surface_entities,
-        jnp.asarray([0, 0, 0, 0, 1, 1, 1, 1], dtype=bool),
+        jnp.asarray([0, 0, 0, 0, 1, 1, 1, 1], dtype="bool"),
     )
     return left, right
 
@@ -87,7 +87,7 @@ def test_capacitance_plan_rejects_invalid_partitions_and_supports_mathematical_a
     left, right = _selections(prepared)
     incomplete = phx.discretization.EntitySelection(
         prepared.surface_entities,
-        jnp.asarray([1, 1, 1, 0, 0, 0, 0, 0], dtype=bool),
+        jnp.asarray([1, 1, 1, 0, 0, 0, 0, 0], dtype="bool"),
     )
     with pytest.raises(ValueError, match="disjointly cover"):
         capacitance_solver.LaplaceCapacitancePlan3D(

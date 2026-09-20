@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..lifecycle import NumericRevision
 from ..linalg import DualSpace
@@ -44,10 +44,10 @@ class StabilityBoundEvaluation(StrictModule, NonTrainableState):
 
 
 class AbstractStabilityBoundEvaluator(StrictModule, NonTrainableState):
-    family_id: AbstractAttribute[str]
-    error_space_id: AbstractAttribute[str]
-    support_id: AbstractAttribute[str]
-    certificate_id: AbstractAttribute[str]
+    family_id: eqx.AbstractVar[str]
+    error_space_id: eqx.AbstractVar[str]
+    support_id: eqx.AbstractVar[str]
+    certificate_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def __call__(self, inputs: PyTree[Array], /) -> StabilityBoundEvaluation:
@@ -110,7 +110,7 @@ class ArrayAffineStabilityBound(AbstractStabilityBoundEvaluator):
         self.offset = offset_
         self.lower = lower_
         self.upper = upper_
-        self.input_size = int(weights_.size)
+        self.input_size = weights_.size
         self.family_id = family
         self.error_space_id = error_space
         self.support_id = support
@@ -170,7 +170,7 @@ class ResidualDualNormArtifact(StrictModule, NonTrainableState):
 
     @property
     def atom_count(self) -> int:
-        return int(self.factor.shape[1])
+        return self.factor.shape[1]
 
     def coefficients(
         self,

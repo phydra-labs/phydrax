@@ -26,12 +26,14 @@ from .._iteration import (
 )
 from .._linear_refresh import LinearRefreshState
 from .._strict import StrictModule
+from .._tree_math import (
+    tree_allfinite as _tree_allfinite,
+    tree_norm as _tree_norm,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ._iterative._base import AbstractScalarIterativeMethod
 from ._iterative._types import (
     _PreparedMinimizationValue,
-    _tree_allfinite,
-    _tree_norm,
-    _validate_real_inexact_tree,
     IterativeStepMetrics,
     MinimizationProblem,
     MinimizationResult,
@@ -303,8 +305,7 @@ def solve_scalar_iterative(
         raise TypeError("termination must be an OptimizationTermination.")
     if problem.bounds is not None or problem.constraints:
         raise ValueError(
-            "This scalar iterative method is unconstrained; use a bound or "
-            "nonlinear constrained method."
+            "This scalar iterative method is unconstrained; use a bound or nonlinear constrained method."
         )
     parameters = _validate_real_inexact_tree(
         initial_parameters,

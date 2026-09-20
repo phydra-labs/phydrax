@@ -33,17 +33,16 @@ def _validate_values(
     values: ArrayLike,
     /,
 ) -> Array:
-    array = jnp.asarray(values, dtype=float)
+    array = jnp.asarray(values, dtype=jnp.float64)
     if array.ndim < 2:
         raise ValueError("values must have shape (N, T, ...) with a time axis.")
-    if int(array.shape[0]) != domain.size:
+    if array.shape[0] != domain.size:
         raise ValueError(
             f"values leading axis must be N={domain.size}, got {array.shape[0]}."
         )
-    if int(array.shape[1]) < domain.max_length:
+    if array.shape[1] < domain.max_length:
         raise ValueError(
-            "values time axis must have at least "
-            f"{domain.max_length} entries, got {array.shape[1]}."
+            f"values time axis must have at least {domain.max_length} entries, got {array.shape[1]}."
         )
     return array
 
@@ -55,12 +54,12 @@ def _trajectory_series(
 ) -> SampledSeries:
     values_ = _validate_values(domain, values)
     if isinstance(domain, IrregularTrajectoryDatasetDomain):
-        capacity = int(domain.times.shape[1])
+        capacity = domain.times.shape[1]
         coordinates = domain.times
         values_ = values_[:, :capacity]
     else:
-        capacity = int(values_.shape[1])
-        coordinates = domain.start + domain.dt * jnp.arange(capacity, dtype=float)
+        capacity = values_.shape[1]
+        coordinates = domain.start + domain.dt * jnp.arange(capacity, dtype=jnp.float64)
     valid = jnp.arange(capacity)[None, :] < domain.lengths[:, None]
     support = SeriesSupport(
         coordinates,
@@ -127,7 +126,7 @@ class _SeriesTrajectorySignal(StrictModule, BatchEvaluator, NonTrainableState):
             values,
         )
         evaluation = reconstruction.evaluate(
-            jnp.asarray(time_field.data, dtype=float),
+            jnp.asarray(time_field.data, dtype=jnp.float64),
             jnp.asarray(case_field.data, dtype=jnp.int32),
             derivative_order=self.derivative_order,
         )

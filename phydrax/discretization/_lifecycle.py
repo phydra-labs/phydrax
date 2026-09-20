@@ -6,8 +6,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import equinox as eqx
+
 from .._precision import PrecisionEvidenceEnvelope
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._core import (
     DiscretizationCapability,
@@ -23,23 +25,23 @@ from ._support import DiscreteSupport
 class AbstractDiscretizationPlan(StrictModule, NonTrainableState):
     """Symbolic, identity-bearing plan for one numerical discretization."""
 
-    key: AbstractAttribute[DiscretizationKey]
-    capabilities: AbstractAttribute[tuple[DiscretizationCapability, ...]]
-    plan_id: AbstractAttribute[str]
+    key: eqx.AbstractVar[DiscretizationKey]
+    capabilities: eqx.AbstractVar[tuple[DiscretizationCapability, ...]]
+    plan_id: eqx.AbstractVar[str]
 
 
 class AbstractPreparedDiscretization(StrictModule, NonTrainableState):
     """Prepared finite support, spaces, measures, and method-specific state."""
 
-    key: AbstractAttribute[DiscretizationKey]
-    support: AbstractAttribute[DiscreteSupport]
-    field_spaces: AbstractAttribute[tuple[DiscreteFieldSpace, ...]]
-    measures: AbstractAttribute[tuple[DiscreteMeasure, ...]]
-    capabilities: AbstractAttribute[tuple[DiscretizationCapability, ...]]
-    plan_id: AbstractAttribute[str]
-    prepared_id: AbstractAttribute[str]
-    numeric_version: AbstractAttribute[str]
-    preparation: AbstractAttribute[PreparationReport]
+    key: eqx.AbstractVar[DiscretizationKey]
+    support: eqx.AbstractVar[DiscreteSupport]
+    field_spaces: eqx.AbstractVar[tuple[DiscreteFieldSpace, ...]]
+    measures: eqx.AbstractVar[tuple[DiscreteMeasure, ...]]
+    capabilities: eqx.AbstractVar[tuple[DiscretizationCapability, ...]]
+    plan_id: eqx.AbstractVar[str]
+    prepared_id: eqx.AbstractVar[str]
+    numeric_version: eqx.AbstractVar[str]
+    preparation: eqx.AbstractVar[PreparationReport]
 
     @property
     def precision_evidence(self) -> PrecisionEvidenceEnvelope | None:
@@ -119,8 +121,7 @@ def require_capabilities(
     if missing:
         names = ", ".join(str(value) for value in missing)
         raise ValueError(
-            f"Prepared discretization {prepared.prepared_id!r} lacks capabilities: "
-            f"{names}."
+            f"Prepared discretization {prepared.prepared_id!r} lacks capabilities: {names}."
         )
 
 

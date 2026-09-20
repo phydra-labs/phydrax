@@ -74,14 +74,14 @@ class CancellationRequested(RemoteServiceError):
 class JobState(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
-    CANCELLING = "cancelling"
+    CANCELING = "canceling"
     SUCCEEDED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
 
     @property
     def terminal(self) -> bool:
-        return self in (self.SUCCEEDED, self.FAILED, self.CANCELLED)
+        return self in (self.SUCCEEDED, self.FAILED, self.CANCELED)
 
 
 @dataclass(frozen=True, slots=True)

@@ -52,8 +52,7 @@ class VolumeDensity(StrictModule):
         expected = points.shape[:-1]
         if values.shape != expected:
             raise ValueError(
-                f"Volume density must be scalar-valued with shape {expected}; "
-                f"got {values.shape}."
+                f"Volume density must be scalar-valued with shape {expected}; got {values.shape}."
             )
         return values
 
@@ -70,8 +69,7 @@ class VolumeDensity(StrictModule):
         expected = points.shape[:-1]
         if result.shape != expected:
             raise ValueError(
-                "Log volume density must be scalar-valued with shape "
-                f"{expected}; got {result.shape}."
+                f"Log volume density must be scalar-valued with shape {expected}; got {result.shape}."
             )
         return result
 
@@ -172,10 +170,10 @@ class VolumeDensityValidationReport(StrictModule):
         finite_log: ArrayLike,
         maximum_log_residual: ArrayLike,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.positive = jnp.asarray(positive, dtype=bool)
-        self.finite_log = jnp.asarray(finite_log, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.positive = jnp.asarray(positive, dtype=jnp.bool_)
+        self.finite_log = jnp.asarray(finite_log, dtype=jnp.bool_)
         self.maximum_log_residual = jnp.asarray(maximum_log_residual)
 
 

@@ -43,7 +43,7 @@ class CurvedSchlierenPlan:
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        basis = np.array(self.transverse_basis, dtype=float, copy=True)
+        basis = np.array(self.transverse_basis, dtype=np.float64, copy=True)
         if basis.shape != (2, 3):
             raise ValueError("transverse_basis must have shape (2, 3).")
         if self.deflection_quantity.unit != RADIAN:

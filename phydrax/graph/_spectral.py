@@ -9,6 +9,8 @@ import jax.tree_util as jtu
 import numpy as np
 import scipy.sparse as scipy_sparse
 
+from phydrax._strict import StrictModule
+
 from ..discretization._spectral import SpectralDecomposition
 from ..sparse import linear_apply, route_reduce
 from ._graph import ensure_graph
@@ -24,12 +26,12 @@ def _tree_leading_size(tree: Any, /) -> int:
     leaves = jtu.tree_leaves(tree)
     if not leaves:
         raise ValueError("Feature tree must contain at least one array leaf.")
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 def _num_nodes(graph: GraphIR, nodes: Any, /) -> int:
     if graph.node_mask is not None:
-        return int(graph.node_mask.shape[0])
+        return graph.node_mask.shape[0]
     return _tree_leading_size(nodes)
 
 
@@ -40,7 +42,7 @@ def _multiply_leaf(value: Any, weight: Any, /) -> jnp.ndarray:
         value_arr.ndim != weight_arr.ndim
         and value_arr.ndim > 0
         and weight_arr.ndim > 0
-        and int(value_arr.shape[0]) == int(weight_arr.shape[0])
+        and value_arr.shape[0] == weight_arr.shape[0]
     ):
         while value_arr.ndim < weight_arr.ndim:
             value_arr = jnp.expand_dims(value_arr, axis=-1)
@@ -117,22 +119,22 @@ def _edge_weight(
     if graph.senders is None:
         raise ValueError("Spectral graph operators require explicit senders/receivers.")
     if weight is not None:
-        out = jnp.asarray(weight, dtype=float)
+        out = jnp.asarray(weight, dtype=jnp.float64)
     elif weight_key is not None:
         if not isinstance(graph.edges, Mapping):
             raise TypeError("weight_key requires mapping-valued graph edges.")
         if weight_key not in graph.edges:
             raise KeyError(f"Graph edges do not contain weight_key {weight_key!r}.")
-        out = jnp.asarray(graph.edges[weight_key], dtype=float)
+        out = jnp.asarray(graph.edges[weight_key], dtype=jnp.float64)
     else:
-        out = jnp.ones((graph.senders.shape[0],), dtype=float)
-    if out.ndim == 2 and int(out.shape[1]) == 1:
+        out = jnp.ones((graph.senders.shape[0],), dtype=jnp.float64)
+    if out.ndim == 2 and out.shape[1] == 1:
         out = out[:, 0]
     if out.ndim != 1:
         raise ValueError(
             "Graph spectral edge weights must have shape (n_edge,) or (n_edge, 1)."
         )
-    if int(out.shape[0]) != int(graph.senders.shape[0]):
+    if out.shape[0] != graph.senders.shape[0]:
         raise ValueError("Graph spectral edge weights must match edge count.")
     return out
 
@@ -262,13 +264,13 @@ def _apply_coefficient_leaf(term: Any, coeff: Any, /) -> jnp.ndarray:
     if (
         coeff_arr.ndim == 1
         and term_arr.ndim >= 2
-        and int(coeff_arr.shape[0]) == int(term_arr.shape[-1])
+        and coeff_arr.shape[0] == term_arr.shape[-1]
     ):
         return term_arr * coeff_arr
     if (
         coeff_arr.ndim == 2
         and term_arr.ndim == 2
-        and int(coeff_arr.shape[0]) == int(term_arr.shape[-1])
+        and coeff_arr.shape[0] == term_arr.shape[-1]
     ):
         return term_arr @ coeff_arr
     return term_arr * coeff_arr
@@ -286,7 +288,7 @@ def _coeff_at(coefficients: Any, index: int, /) -> Any:
     return jnp.asarray(coefficients)[index]
 
 
-class GraphLaplacianOperator(eqx.Module):
+class GraphLaplacianOperator(StrictModule):
     """`GraphIR -> GraphIR` sparse graph Laplacian block."""
 
     weight: Any
@@ -329,7 +331,7 @@ class GraphLaplacianOperator(eqx.Module):
         )
 
 
-class GraphPolynomialFilter(eqx.Module):
+class GraphPolynomialFilter(StrictModule):
     """Polynomial graph filter over powers of sparse adjacency or Laplacian."""
 
     coefficients: Any
@@ -357,7 +359,7 @@ class GraphPolynomialFilter(eqx.Module):
         coeff_leaves = jtu.tree_leaves(coefficients)
         if not coeff_leaves:
             raise ValueError("GraphPolynomialFilter coefficients must be non-empty.")
-        if int(jnp.asarray(coeff_leaves[0]).shape[0]) <= 0:
+        if jnp.asarray(coeff_leaves[0]).shape[0] <= 0:
             raise ValueError("GraphPolynomialFilter requires at least one coefficient.")
         self.coefficients = coefficients
         self.weight = weight
@@ -370,7 +372,7 @@ class GraphPolynomialFilter(eqx.Module):
 
     @property
     def order(self) -> int:
-        return int(jnp.asarray(jtu.tree_leaves(self.coefficients)[0]).shape[0]) - 1
+        return jnp.asarray(jtu.tree_leaves(self.coefficients)[0]).shape[0] - 1
 
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
@@ -396,7 +398,7 @@ class GraphPolynomialFilter(eqx.Module):
         )
 
 
-class GraphChebyshevFilter(eqx.Module):
+class GraphChebyshevFilter(StrictModule):
     """Chebyshev polynomial filter over the scaled graph Laplacian."""
 
     coefficients: Any
@@ -424,7 +426,7 @@ class GraphChebyshevFilter(eqx.Module):
         coeff_leaves = jtu.tree_leaves(coefficients)
         if not coeff_leaves:
             raise ValueError("GraphChebyshevFilter coefficients must be non-empty.")
-        if int(jnp.asarray(coeff_leaves[0]).shape[0]) <= 0:
+        if jnp.asarray(coeff_leaves[0]).shape[0] <= 0:
             raise ValueError("GraphChebyshevFilter requires at least one coefficient.")
         if float(lambda_max) <= 0:
             raise ValueError("lambda_max must be positive.")
@@ -435,11 +437,11 @@ class GraphChebyshevFilter(eqx.Module):
         self.output_key = output_key
         self.flow = flow
         self.normalization = normalization
-        self.lambda_max = jnp.asarray(lambda_max, dtype=float)
+        self.lambda_max = jnp.asarray(lambda_max, dtype=jnp.float64)
 
     @property
     def order(self) -> int:
-        return int(jnp.asarray(jtu.tree_leaves(self.coefficients)[0]).shape[0]) - 1
+        return jnp.asarray(jtu.tree_leaves(self.coefficients)[0]).shape[0] - 1
 
     def _scaled_laplacian(self, graph: GraphIR, nodes: Any, /) -> Any:
         lap = graph_laplacian_apply(
@@ -516,22 +518,21 @@ def spectral_discretization_from_graph(
             weight=weight,
             weight_key=weight_key,
         ),
-        dtype=float,
+        dtype=np.float64,
     )
     if np.any(~np.isfinite(weights)) or np.any(weights < 0.0):
         raise ValueError("Graph spectral edge weights must be finite and non-negative.")
     if min(max_construction_bytes, 0) == max_construction_bytes:
         raise ValueError("max_construction_bytes must be positive.")
-    assembly_bytes = 6 * max(1, weights.size) * np.dtype(float).itemsize
+    assembly_bytes = 6 * max(1, weights.size) * np.dtype(np.float64).itemsize
     if assembly_bytes > int(max_construction_bytes):
         raise ValueError(
-            "Graph Laplacian assembly exceeds max_construction_bytes; "
-            f"estimated {assembly_bytes} bytes."
+            f"Graph Laplacian assembly exceeds max_construction_bytes; estimated {assembly_bytes} bytes."
         )
     adjacency = scipy_sparse.coo_matrix(
         (weights, (senders, receivers)),
         shape=(num_nodes, num_nodes),
-        dtype=float,
+        dtype=jnp.float64,
     ).tocsr()
     adjacency.sum_duplicates()
     if symmetrize:
@@ -546,7 +547,7 @@ def spectral_discretization_from_graph(
             )
     adjacency.setdiag(0.0)
     adjacency.eliminate_zeros()
-    degree = np.asarray(adjacency.sum(axis=1), dtype=float).reshape((-1,))
+    degree = np.asarray(adjacency.sum(axis=1), dtype=np.float64).reshape((-1,))
     stiffness = scipy_sparse.diags(degree, format="csr") - adjacency
     if mass is not None and mass_key is not None:
         raise ValueError("Specify mass or mass_key, not both.")
@@ -557,7 +558,7 @@ def spectral_discretization_from_graph(
             raise KeyError(f"Graph nodes do not contain mass_key {mass_key!r}.")
         measure = graph_value.nodes[mass_key]
     elif mass is None:
-        measure = np.ones((num_nodes,), dtype=float)
+        measure = np.ones((num_nodes,), dtype=np.float64)
     else:
         measure = mass
     return SpectralDecomposition.from_stiffness(
@@ -586,15 +587,14 @@ def spectral_discretization_from_triangle_mesh(
         raise TypeError("mesh must be a TriangleMesh.")
     operators = DDGOperators(mesh)
     edges = np.asarray(operators.edges, dtype=np.int64)
-    weights = np.asarray(operators.edge_weights, dtype=float)
-    num_nodes = int(mesh.vertices.shape[0])
-    assembly_bytes = 8 * max(1, weights.size) * np.dtype(float).itemsize
+    weights = np.asarray(operators.edge_weights, dtype=np.float64)
+    num_nodes = mesh.vertices.shape[0]
+    assembly_bytes = 8 * max(1, weights.size) * np.dtype(np.float64).itemsize
     if int(max_construction_bytes) <= 0:
         raise ValueError("max_construction_bytes must be positive.")
     if assembly_bytes > int(max_construction_bytes):
         raise ValueError(
-            "Cotangent Laplacian assembly exceeds max_construction_bytes; "
-            f"estimated {assembly_bytes} bytes."
+            f"Cotangent Laplacian assembly exceeds max_construction_bytes; estimated {assembly_bytes} bytes."
         )
     first = edges[:, 0]
     second = edges[:, 1]
@@ -604,12 +604,12 @@ def spectral_discretization_from_triangle_mesh(
     stiffness = scipy_sparse.coo_matrix(
         (data, (rows, columns)),
         shape=(num_nodes, num_nodes),
-        dtype=float,
+        dtype=jnp.float64,
     ).tocsr()
     stiffness.sum_duplicates()
     return SpectralDecomposition.from_stiffness(
         stiffness,
-        np.asarray(operators.vertex_mass, dtype=float),
+        np.asarray(operators.vertex_mass, dtype=np.float64),
         n_modes=n_modes,
         group_tolerance=group_tolerance,
         decomposition_id=decomposition_id,

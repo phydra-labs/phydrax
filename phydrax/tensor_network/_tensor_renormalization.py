@@ -108,8 +108,7 @@ class TensorRenormalizationResourcePolicy(StrictModule):
         contractions: ContractionResourcePolicy | None = None,
     ):
         limits = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_tensor_elements,
                 maximum_factorization_elements,
                 maximum_workspace_bytes,
@@ -223,8 +222,8 @@ class TensorRenormalizationStagePlan(StrictModule):
         /,
     ):
         self.kind = str(kind)
-        self.input_shape = tuple(int(value) for value in input_shape)
-        self.output_shape = tuple(int(value) for value in output_shape)
+        self.input_shape = tuple(input_shape)
+        self.output_shape = tuple(output_shape)
         self.first_retained_rank = int(first_retained_rank)
         self.second_retained_rank = int(second_retained_rank)
         self.maximum_factorization_elements = int(maximum_factorization_elements)
@@ -538,7 +537,7 @@ def plan_tensor_renormalization(
     precision = tensor.precision
     dtype = str(tensor.value.dtype)
     cache = ContractionPlanCache(max(4, 2 * policy.steps))
-    shape = tuple(int(dimension) for dimension in tensor.value.shape)
+    shape = tuple(tensor.value.shape)
     stages: list[TensorRenormalizationStagePlan] = []
     for index in range(policy.steps):
         if isinstance(policy.method, TRGMethod):

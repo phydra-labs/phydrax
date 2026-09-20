@@ -41,7 +41,7 @@ from .._numerics._ssp_runge_kutta import (
     SSPRKStepResult,
     StageTransformResult,
 )
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
 from ..discretization import DiscretizationBundle
@@ -92,7 +92,7 @@ def _validate_result_state(
 def _validate_scalar_result(role: str, value: Any, /, *, boolean: bool = False) -> None:
     if not eqx.is_array(value) or value.shape != ():
         raise TypeError(f"Fixed-step {role} must be a scalar array.")
-    if boolean and value.dtype != jnp.dtype(bool):
+    if boolean and value.dtype != jnp.dtype(jnp.bool_):
         raise TypeError(f"Fixed-step {role} must be Boolean.")
 
 
@@ -118,7 +118,7 @@ class AcceptedStepTransformResult(StrictModule):
 
 
 class AbstractAcceptedStepTransform(StrictModule, NonTrainableState):
-    transform_id: AbstractAttribute[str]
+    transform_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def apply(
@@ -297,7 +297,7 @@ class RetriedFixedStepResult(StrictModule):
 
 
 class AbstractFixedStepMethod(StrictModule, NonTrainableState):
-    method_id: AbstractAttribute[str]
+    method_id: eqx.AbstractVar[str]
 
     @property
     def required_step_size(self) -> float | None:
@@ -784,7 +784,7 @@ class FixedStepIterationMetrics(StrictModule):
         self.residual = jnp.asarray(residual)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int64)
         self.work = jnp.asarray(work, dtype=jnp.int64)
-        self.transform_applied = jnp.asarray(transform_applied, dtype=bool)
+        self.transform_applied = jnp.asarray(transform_applied, dtype=jnp.bool_)
         self.transform_correction_norm = jnp.asarray(transform_correction_norm)
 
 
@@ -833,7 +833,9 @@ def _fixed_step_iteration_record(
     terminal=False,
     status=None,
 ) -> IterationRecord:
-    committed = jnp.asarray(active, dtype=bool) & jnp.asarray(successful, dtype=bool)
+    committed = jnp.asarray(active, dtype=jnp.bool_) & jnp.asarray(
+        successful, dtype=jnp.bool_
+    )
     accepted = jnp.where(
         committed,
         jnp.asarray(ordinal, dtype=jnp.int32),
@@ -1087,7 +1089,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
             )
             if saved_indices[-1] != problem.step_count:
                 saved_indices = (*saved_indices, problem.step_count)
-            save_after_step = np.zeros((problem.step_count,), dtype=bool)
+            save_after_step = np.zeros((problem.step_count,), dtype=np.bool_)
             for endpoint in saved_indices[1:]:
                 save_after_step[endpoint - 1] = True
             save_mask = jnp.asarray(save_after_step)
@@ -1099,7 +1101,9 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 ),
                 problem.initial_state,
             )
-            retained_valid = jnp.zeros((len(saved_indices),), dtype=bool).at[0].set(True)
+            retained_valid = (
+                jnp.zeros((len(saved_indices),), dtype=jnp.bool_).at[0].set(True)
+            )
 
             def checkpoint_step(carry, step_index):
                 state_carry, saved, saved_valid, cursor = carry

@@ -77,12 +77,12 @@ def test_input_function_prediction_matches_explicit_ragged_draw_loop():
     stacked = phx.nn.operator.stack_operator_batches(batches, case_axis="input_draw")
 
     prediction = phx.uq.operator_input_predictive(
-        model.predict(stacked),
+        model.evaluate(stacked),
         input_sample_axes=("input_draw",),
         field_name="output",
     )
     explicit = jnp.stack(
-        tuple(model.predict(batch).field("output").values for batch in batches)
+        tuple(model.evaluate(batch).field("output").values for batch in batches)
     )
     expected = jnp.where(prediction.output_mask()[None, ...], explicit, 0.0)
 
@@ -189,7 +189,7 @@ def test_operator_hilbert_covariance_requires_measure_and_stays_operator_valued(
     )
     mask = jnp.asarray([[True, True, False], [True, True, True]])
     cotangent = cx.AxisArray(
-        mask.astype(float),
+        mask.astype("float64"),
         dims=result.mean.dims,
     )
     expected_input = 0.25 * weighted.adjoint(cotangent.data)

@@ -92,7 +92,7 @@ def _equation_polynomials(
     ):
         _add_term(
             equations[int(equation)],
-            tuple(int(value) for value in exponent),
+            tuple(exponent),
             Fraction(coefficient),
         )
     return tuple(equations)

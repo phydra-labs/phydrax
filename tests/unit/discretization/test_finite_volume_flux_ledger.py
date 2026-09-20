@@ -30,7 +30,7 @@ def _stage(
     topology_epoch_id="topology:0",
     active_cell_mask=(True, True),
     owner=(0, 1),
-    neighbour=(1, -1),
+    neighbor=(1, -1),
     active=(True, True),
     block_id="faces:physical",
     block_kind="physical",
@@ -40,8 +40,8 @@ def _stage(
     block = ConservationStageFluxRateBlock(
         jnp.asarray(flux_rate),
         jnp.asarray(owner, dtype=jnp.int32),
-        jnp.asarray(neighbour, dtype=jnp.int32),
-        jnp.asarray(active, dtype=bool),
+        jnp.asarray(neighbor, dtype=jnp.int32),
+        jnp.asarray(active, dtype="bool"),
         block_id,
         block_kind,
     )
@@ -326,11 +326,14 @@ def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes():
 
     with pytest.raises(ValueError, match="IDs must be unique"):
         ConservationStageLedger(
-            (first, repeated_id), jnp.zeros((2, 1)), jnp.ones(2, dtype=bool), **kwargs
+            (first, repeated_id), jnp.zeros((2, 1)), jnp.ones(2, dtype="bool"), **kwargs
         )
     with pytest.raises(ValueError, match="routes must be unique"):
         ConservationStageLedger(
-            (first, repeated_route), jnp.zeros((2, 1)), jnp.ones(2, dtype=bool), **kwargs
+            (first, repeated_route),
+            jnp.zeros((2, 1)),
+            jnp.ones(2, dtype="bool"),
+            **kwargs,
         )
 
 
@@ -349,7 +352,7 @@ def test_stage_ledger_rejects_every_nonzero_source_rate_on_inactive_cells(source
             source_rate,
             active_cell_mask=(True, False),
             owner=(0, 0),
-            neighbour=(-1, -1),
+            neighbor=(-1, -1),
             active=(True, False),
         )
 
@@ -388,14 +391,14 @@ def test_active_cell_mask_is_exact_boolean_and_has_one_entry_per_cell():
         _stage([[1.0], [2.0]], [[0.0], [0.0]], active_cell_mask=(True,))
 
 
-def test_active_face_routes_cannot_own_or_neighbour_an_inactive_cell():
+def test_active_face_routes_cannot_own_or_neighbor_an_inactive_cell():
     with pytest.raises(Exception, match="active route through an inactive cell"):
         _stage(
             [[1.0], [0.0]],
             [[0.0], [0.0]],
             active_cell_mask=(True, False),
             owner=(0, 0),
-            neighbour=(1, -1),
+            neighbor=(1, -1),
             active=(True, False),
         )
 
@@ -406,7 +409,7 @@ def test_ssprk33_preserves_active_mask_and_rejects_stage_mask_mismatch():
         source_rate=[[1.0], [0.0]],
         active_cell_mask=(True, False),
         owner=(0, 0),
-        neighbour=(-1, -1),
+        neighbor=(-1, -1),
         active=(True, False),
     )
     stage1 = _stage(**common, geometry_version=1)
@@ -424,7 +427,7 @@ def test_ssprk33_preserves_active_mask_and_rejects_stage_mask_mismatch():
         [[1.0], [0.0]],
         active_cell_mask=(True, True),
         owner=(0, 0),
-        neighbour=(-1, -1),
+        neighbor=(-1, -1),
         active=(True, False),
         geometry_version=2,
     )
@@ -648,7 +651,7 @@ def test_ssprk33_rejects_geometry_layout_evidence_policy_or_route_mismatch():
         [[0.0], [0.0]],
         geometry_version=2,
         owner=(1, 1),
-        neighbour=(0, -1),
+        neighbor=(0, -1),
     )
 
     with pytest.raises(ValueError, match="one geometry layout"):
@@ -740,21 +743,21 @@ def test_inactive_faces_are_zeroed_before_scatter_and_accepted_integration():
         [[2.0, 4.0], [1000.0, 2000.0]],
         [[0.0, 0.0], [0.0, 0.0]],
         active=(True, False),
-        neighbour=(1, 1),
+        neighbor=(1, 1),
         geometry_version=1,
     )
     stage2 = _stage(
         [[4.0, 8.0], [3000.0, 4000.0]],
         [[0.0, 0.0], [0.0, 0.0]],
         active=(True, False),
-        neighbour=(1, 1),
+        neighbor=(1, 1),
         geometry_version=2,
     )
     stage3 = _stage(
         [[8.0, 16.0], [5000.0, 6000.0]],
         [[0.0, 0.0], [0.0, 0.0]],
         active=(True, False),
-        neighbour=(1, 1),
+        neighbor=(1, 1),
         geometry_version=3,
     )
 

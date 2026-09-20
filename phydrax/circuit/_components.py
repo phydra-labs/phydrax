@@ -158,7 +158,7 @@ class AdmittanceComponent(AbstractMNAComponent):
             raise ValueError("component_id must be non-empty.")
         self.admittance = value.astype(jnp.result_type(value, jnp.complex128))
         self.component_id = identifier
-        self._terminal_count = int(value.shape[-1])
+        self._terminal_count = value.shape[-1]
 
     @property
     def terminal_count(self) -> int:
@@ -204,7 +204,7 @@ class ImpedanceComponent(AbstractMNAComponent):
             raise ValueError("component_id must be non-empty.")
         self.impedance = value.astype(jnp.result_type(value, jnp.complex128))
         self.component_id = identifier
-        self._terminal_count = int(value.shape[-1])
+        self._terminal_count = value.shape[-1]
 
     @property
     def terminal_count(self) -> int:

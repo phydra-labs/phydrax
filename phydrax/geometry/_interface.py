@@ -31,7 +31,7 @@ class PhaseGeometryMetrics(StrictModule):
     ):
         self.measure = jnp.asarray(measure)
         self.centroid = jnp.asarray(centroid)
-        self.centroid_defined = jnp.asarray(centroid_defined, dtype=bool)
+        self.centroid_defined = jnp.asarray(centroid_defined, dtype=jnp.bool_)
 
 
 class InterfaceDistanceMetrics(StrictModule):
@@ -57,7 +57,7 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
     values = jnp.asarray(value)
     if jnp.iscomplexobj(values):
         raise TypeError(f"{name} must be real-valued.")
-    return values.astype(float)
+    return values.astype("float64")
 
 
 def _positive_width(width: float, /) -> float:
@@ -103,7 +103,7 @@ def regularized_delta_values(
 
 def _point_cloud(value: ArrayLike, name: str, /) -> Array:
     points = _real_array(value, name)
-    if points.ndim < 2 or int(points.shape[-2]) <= 0 or int(points.shape[-1]) <= 0:
+    if points.ndim < 2 or points.shape[-2] <= 0 or points.shape[-1] <= 0:
         raise ValueError(f"{name} must end in non-empty (point, coordinate) axes.")
     return points
 
@@ -111,10 +111,10 @@ def _point_cloud(value: ArrayLike, name: str, /) -> Array:
 def _point_mask_shape(mask: ArrayLike | None, count: int, name: str, /):
     if mask is None:
         return (), None
-    values = jnp.asarray(mask, dtype=bool)
-    if values.ndim < 1 or int(values.shape[-1]) != count:
+    values = jnp.asarray(mask, dtype=jnp.bool_)
+    if values.ndim < 1 or values.shape[-1] != count:
         raise ValueError(f"{name} must end in a point axis of length {count}.")
-    return tuple(int(size) for size in values.shape[:-1]), values
+    return tuple(values.shape[:-1]), values
 
 
 def _broadcast_point_mask(
@@ -123,7 +123,7 @@ def _broadcast_point_mask(
     count: int,
     /,
 ) -> Array:
-    values = jnp.ones((count,), dtype=bool) if mask is None else mask
+    values = jnp.ones((count,), dtype=jnp.bool_) if mask is None else mask
     return jnp.broadcast_to(values, case_shape + (count,))
 
 
@@ -152,8 +152,8 @@ def _directed_nearest_distances(
 ) -> Array:
     target_square = jnp.sum(target * target, axis=-1)
     blocks = []
-    for start in range(0, int(source.shape[-2]), chunk_size):
-        stop = min(start + chunk_size, int(source.shape[-2]))
+    for start in range(0, source.shape[-2], chunk_size):
+        stop = min(start + chunk_size, source.shape[-2])
         block = source[..., start:stop, :]
         block_square = jnp.sum(block * block, axis=-1, keepdims=True)
         cross = ein.contract("...id,...jd->...ij", block, target)
@@ -209,19 +209,19 @@ def phase_geometry_metrics(
     weights = _real_array(quadrature_weights, "quadrature_weights")
     if fraction.ndim < 1:
         raise ValueError("phase_fraction must end in a point axis.")
-    count = int(fraction.shape[-1])
-    if int(points.shape[-2]) != count:
+    count = fraction.shape[-1]
+    if points.shape[-2] != count:
         raise ValueError("coordinates and phase_fraction point counts must match.")
-    if weights.ndim < 1 or int(weights.shape[-1]) != count:
+    if weights.ndim < 1 or weights.shape[-1] != count:
         raise ValueError("quadrature_weights must match the phase point count.")
     mask_case, mask_ = _point_mask_shape(mask, count, "mask")
     case_shape = jnp.broadcast_shapes(
-        tuple(int(size) for size in fraction.shape[:-1]),
-        tuple(int(size) for size in points.shape[:-2]),
-        tuple(int(size) for size in weights.shape[:-1]),
+        tuple(fraction.shape[:-1]),
+        tuple(points.shape[:-2]),
+        tuple(weights.shape[:-1]),
         mask_case,
     )
-    dimension = int(points.shape[-1])
+    dimension = points.shape[-1]
     fraction = jnp.broadcast_to(fraction, case_shape + (count,))
     points = jnp.broadcast_to(points, case_shape + (count, dimension))
     weights = jnp.broadcast_to(weights, case_shape + (count,))
@@ -277,7 +277,7 @@ def interface_distance_metrics(
 
     predicted = _point_cloud(predicted_points, "predicted_points")
     reference = _point_cloud(reference_points, "reference_points")
-    if int(predicted.shape[-1]) != int(reference.shape[-1]):
+    if predicted.shape[-1] != reference.shape[-1]:
         raise ValueError("Predicted and reference coordinate dimensions must match.")
     percentile_ = float(percentile)
     if not math.isfinite(percentile_) or not 0.0 <= percentile_ <= 1.0:
@@ -286,8 +286,8 @@ def interface_distance_metrics(
     if chunk <= 0:
         raise ValueError("chunk_size must be positive.")
 
-    predicted_count = int(predicted.shape[-2])
-    reference_count = int(reference.shape[-2])
+    predicted_count = predicted.shape[-2]
+    reference_count = reference.shape[-2]
     predicted_mask_case, predicted_mask_ = _point_mask_shape(
         predicted_mask,
         predicted_count,
@@ -299,12 +299,12 @@ def interface_distance_metrics(
         "reference_mask",
     )
     case_shape = jnp.broadcast_shapes(
-        tuple(int(size) for size in predicted.shape[:-2]),
-        tuple(int(size) for size in reference.shape[:-2]),
+        tuple(predicted.shape[:-2]),
+        tuple(reference.shape[:-2]),
         predicted_mask_case,
         reference_mask_case,
     )
-    dimension = int(predicted.shape[-1])
+    dimension = predicted.shape[-1]
     predicted = jnp.broadcast_to(
         predicted,
         case_shape + (predicted_count, dimension),

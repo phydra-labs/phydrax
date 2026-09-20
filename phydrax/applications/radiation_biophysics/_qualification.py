@@ -233,7 +233,7 @@ class RadiationCalibrationData:
         capacity = max(1, max(len(item.direct_multiplicity) for item in self.supports))
         direct = np.zeros((len(self.supports), capacity), dtype=np.int64)
         indirect = np.zeros_like(direct)
-        mask = np.zeros(direct.shape, dtype=bool)
+        mask = np.zeros(direct.shape, dtype=np.bool_)
         for row, support in enumerate(self.supports):
             n = len(support.direct_multiplicity)
             direct[row, :n] = support.direct_multiplicity
@@ -402,9 +402,9 @@ def calibrate_radiation_lesions(
         or maximum_heldout_standardized_rms <= 0
     ):
         raise ValueError("Held-out acceptance threshold must be positive.")
-    initial = jnp.asarray(initial_logits, dtype=float)
-    mean = jnp.asarray(prior_mean, dtype=float)
-    prior_sd = jnp.asarray(prior_standard_deviation, dtype=float)
+    initial = jnp.asarray(initial_logits, dtype=jnp.float64)
+    mean = jnp.asarray(prior_mean, dtype=jnp.float64)
+    prior_sd = jnp.asarray(prior_standard_deviation, dtype=jnp.float64)
     if (
         initial.shape != (2,)
         or mean.shape != (2,)

@@ -394,7 +394,7 @@ identity, and inactive payloads must remain numerically inert.
 ## Meshfree RBF-FD and GMLS
 
 `MeshfreeStencilPlan` freezes unique point coordinates, deterministic nearest
-neighbours, and a complete total-degree polynomial basis. It prepares value,
+neighbors, and a complete total-degree polynomial basis. It prepares value,
 gradient, or Laplacian operators with polyharmonic RBF-FD or Gaussian-weighted
 GMLS. `MeshfreeReproductionEvidence` records the maximum polynomial defect and
 local conditioning; rank-deficient preparation fails instead of dropping basis

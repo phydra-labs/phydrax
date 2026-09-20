@@ -277,8 +277,6 @@ class PICMaxwellCurrentArguments(StrictModule):
     external_arguments: object
 
 
-
-
 __all__ = [
     "ChargeConservingCurrentPlan",
     "PICMaxwellCurrentArguments",

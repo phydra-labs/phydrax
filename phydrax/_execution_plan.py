@@ -139,9 +139,7 @@ class ValuePlacement:
         mesh = tuple(
             None if axis is None else _identifier(axis, "mesh axis") for axis in mesh_axes
         )
-        shape = (
-            None if global_shape is None else tuple(int(size) for size in global_shape)
-        )
+        shape = None if global_shape is None else tuple(global_shape)
         if shape is not None and any(size < 0 for size in shape):
             raise ValueError("global_shape dimensions must be non-negative")
         if shape is not None and mesh and len(shape) != len(mesh):

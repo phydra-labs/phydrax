@@ -67,7 +67,7 @@ class CompositeAMRCellLayout(StrictModule, NonTrainableState):
     ):
         if not isinstance(topology, BlockHierarchyTopology):
             raise TypeError("Composite AMR layout requires BlockHierarchyTopology.")
-        components = tuple(int(size) for size in component_shape)
+        components = tuple(component_shape)
         if any(size <= 0 for size in components):
             raise ValueError("Composite AMR component dimensions must be positive.")
         dtype_ = np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(dtype)))
@@ -84,10 +84,10 @@ class CompositeAMRCellLayout(StrictModule, NonTrainableState):
             )
 
         masks = tuple(
-            np.asarray(metadata.active, dtype=bool).reshape(
+            np.asarray(metadata.active, dtype=np.bool_).reshape(
                 (level_plan.maximum_blocks,) + (1,) * len(level_plan.block_shape)
             )
-            & ~np.asarray(topology.covered_cells[level], dtype=bool)
+            & ~np.asarray(topology.covered_cells[level], dtype=np.bool_)
             for level, (level_plan, metadata) in enumerate(
                 zip(topology.plan.levels, topology.levels, strict=True)
             )

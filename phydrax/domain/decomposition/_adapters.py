@@ -61,8 +61,7 @@ def geometry_subdomain_patch(
     local = GeometryDomain(geometry, label=label)
     if local.labels != ambient.labels:
         raise ValueError(
-            "geometry_subdomain_patch currently requires a single-factor ambient "
-            "domain with the same coordinate label."
+            "geometry_subdomain_patch currently requires a single-factor ambient domain with the same coordinate label."
         )
     return SubdomainPatch(
         local,

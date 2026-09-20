@@ -3,8 +3,6 @@
 #
 
 import copy
-import hashlib
-import io
 import json
 import zipfile
 from importlib.util import find_spec
@@ -15,8 +13,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._array_archive import write_array_archive
-from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from phydrax._fingerprint import array_tree_fingerprint
 
 
 def _prepared_runtime(cells=16):
@@ -69,7 +66,7 @@ def _prepared_block_runtime():
     )
     prepared = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
     initial = prepared.initial_topology()
-    tags = jnp.zeros((2, 4), dtype=bool).at[0, 1].set(True)
+    tags = jnp.zeros((2, 4), dtype="bool").at[0, 1].set(True)
     compiled = prepared.compile_topology(initial, (tags,))
     assert compiled.status.successful
     system = phx.equations.ScalarConservationSystem(
@@ -116,149 +113,6 @@ def _prepared_block_runtime():
         level_accepted_steps=jnp.asarray((3, 6), dtype=jnp.int32),
     )
     return prepared, compiled, runtime, state
-
-
-_LEGACY_ARRAY_NAMES = (
-    "conservative_state",
-    "time",
-    "accepted_step",
-    "step_size",
-    "last_status",
-    "controller_state",
-    "integrator_state",
-    "forcing_state",
-    "random_state",
-    "output_cursor",
-)
-
-
-def _legacy_arrays(case, state):
-    checkpoint_dtype = case.precision.numpy_dtype("checkpoint")
-    return {
-        "conservative_state": np.asarray(
-            state.cell_average().reshape(case.state_shape),
-            dtype=checkpoint_dtype,
-        ),
-        "time": np.asarray(state.time),
-        "accepted_step": np.asarray(state.accepted_step, dtype=np.int64),
-        "step_size": np.asarray(state.step_size),
-        "last_status": np.asarray(state.last_status, dtype=np.int32),
-        "controller_state": np.asarray(state.controller_state),
-        "integrator_state": np.asarray(state.integrator_state),
-        "forcing_state": np.asarray(()),
-        "random_state": np.asarray((), dtype=np.uint32),
-        "output_cursor": np.asarray(state.output_cursor, dtype=np.int32),
-    }
-
-
-def _legacy_case_v1(case):
-    current = case.to_dict()
-    legacy = {
-        name: current[name]
-        for name in (
-            "name",
-            "runtime_id",
-            "system_id",
-            "discretization_id",
-            "method_id",
-            "boundary_id",
-            "precision",
-            "execution",
-        )
-    }
-    legacy["schema_version"] = 1
-    legacy["case_id"] = canonical_fingerprint(legacy)
-    return legacy
-
-
-def _legacy_checkpoint_id(version, case_id, case):
-    payload = {
-        "kind": "finite-volume-checkpoint-plan",
-        "schema_version": version,
-        "case": case_id,
-        "precision_policy_id": case.precision.policy_id,
-        "precision_evidence_id": case.precision.evidence().evidence_id,
-        "checkpoint_dtype": case.precision.checkpoint_dtype,
-    }
-    if version == 3:
-        payload.update(
-            {
-                "runtime_state_schema_version": 2,
-                "topology": case.mesh_topology_id,
-                "geometry": case.mesh_geometry_id,
-            }
-        )
-    return canonical_fingerprint(payload)
-
-
-def _legacy_payload_id(manifest, arrays):
-    metadata = {
-        name: value
-        for name, value in manifest.items()
-        if name not in ("arrays", "payload_id")
-    }
-    return canonical_fingerprint(
-        {
-            "manifest": metadata,
-            "arrays": {
-                name: array_tree_fingerprint(value)
-                for name, value in sorted(arrays.items())
-            },
-        }
-    )
-
-
-def _write_legacy_checkpoint(path, version, case, state):
-    arrays = _legacy_arrays(case, state)
-    if version == 2:
-        case_record = _legacy_case_v1(case)
-        payloads = {}
-        for name, value in arrays.items():
-            stream = io.BytesIO()
-            np.save(stream, value, allow_pickle=False)
-            payloads[name] = stream.getvalue()
-        manifest = {
-            "schema_version": 2,
-            "checkpoint_id": _legacy_checkpoint_id(2, case_record["case_id"], case),
-            "case": case_record,
-            "precision_evidence": case.precision.evidence().to_dict(),
-            "arrays": {
-                name: {
-                    "file": f"arrays/{name}.npy",
-                    "sha256": hashlib.sha256(payloads[name]).hexdigest(),
-                    "shape": list(arrays[name].shape),
-                    "dtype": str(arrays[name].dtype),
-                }
-                for name in _LEGACY_ARRAY_NAMES
-            },
-        }
-        unsigned = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
-        manifest["payload_id"] = hashlib.sha256(
-            unsigned + b"".join(payloads.values())
-        ).hexdigest()
-        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr(
-                "manifest.json",
-                json.dumps(manifest, indent=2, sort_keys=True),
-            )
-            for name in _LEGACY_ARRAY_NAMES:
-                archive.writestr(f"arrays/{name}.npy", payloads[name])
-        return
-    manifest = {
-        "archive_kind": "finite-volume-checkpoint",
-        "schema_version": 3,
-        "runtime_state_schema_version": 2,
-        "checkpoint_id": _legacy_checkpoint_id(3, case.case_id, case),
-        "case": case.to_dict(),
-        "precision_evidence": case.precision.evidence().to_dict(),
-        "mesh": {
-            "kind": case.mesh_kind,
-            "topology_id": case.mesh_topology_id,
-            "geometry_id": case.mesh_geometry_id,
-        },
-    }
-    manifest["payload_id"] = _legacy_payload_id(manifest, arrays)
-    write_array_archive(path, manifest=manifest, arrays=arrays)
 
 
 def _assert_runtime_state_exact(actual, expected):
@@ -332,7 +186,7 @@ def _replace_journal(state, journal, *, content_state=None):
     )
 
 
-def test_case_schema_is_versioned_content_addressed_and_strict():
+def test_case_schema_is_content_addressed_and_strict():
     runtime, _, _ = _prepared_runtime()
     execution = phx.solver.FiniteVolumeExecutionSpec(1.0, 1000)
     case = phx.solver.FiniteVolumeCaseSpec(
@@ -344,7 +198,7 @@ def test_case_schema_is_versioned_content_addressed_and_strict():
     payload = case.to_dict()
 
     phx.solver.FiniteVolumeCaseSpec.validate_dict(payload)
-    assert payload["schema_version"] == 2
+    assert "schema_version" not in payload
     assert payload["case_id"] == case.case_id
     restored = phx.solver.FiniteVolumeCaseSpec.from_dict(payload, runtime, execution)
     assert restored.case_id == case.case_id
@@ -405,9 +259,9 @@ def test_checkpoint_roundtrip_preserves_exact_runtime_state(tmp_path):
     _assert_runtime_state_exact(loaded.runtime_state, state)
     with zipfile.ZipFile(path, "r") as archive:
         manifest = json.loads(archive.read("manifest.json"))
-    assert manifest["schema_version"] == 5
-    assert manifest["runtime_state_schema_version"] == 4
-    assert manifest["content"]["schema_version"] == 2
+    assert "schema_version" not in manifest
+    assert "runtime_state_schema_version" not in manifest
+    assert "schema_version" not in manifest["content"]
     assert (
         manifest["content"]["geometry_family_id"]
         == state.content_state.geometry_family_id
@@ -458,14 +312,14 @@ def test_block_checkpoint_roundtrip_preserves_canonical_hierarchy_and_routes(tmp
         assert actual.metadata.metadata_id == expected.metadata.metadata_id
         np.testing.assert_array_equal(actual.safe_values(), expected.safe_values())
         active_ids = np.asarray(actual.metadata.block_ids)[
-            np.asarray(actual.metadata.active, dtype=bool)
+            np.asarray(actual.metadata.active, dtype="bool")
         ]
         np.testing.assert_array_equal(active_ids, np.sort(active_ids))
     with zipfile.ZipFile(path) as archive:
         manifest = json.loads(archive.read("manifest.json"))
     assert manifest["archive_kind"] == "finite-volume-checkpoint"
-    assert manifest["schema_version"] == 6
-    assert manifest["runtime_state_schema_version"] == 5
+    assert "schema_version" not in manifest
+    assert "runtime_state_schema_version" not in manifest
     assert (
         manifest["topology"]["epoch"]["epoch_id"]
         == state.hierarchy_state.topology.epoch.epoch_id
@@ -654,7 +508,6 @@ def test_output_plan_is_explicitly_optional_when_h5py_is_unavailable(tmp_path):
 
 def test_allowlisted_case_loader_builds_portable_runtime():
     payload = {
-        "schema_version": 1,
         "name": "loaded-euler",
         "grid": {
             "cells": 16,
@@ -714,63 +567,3 @@ def test_interrupted_checkpoint_trajectory_matches_uninterrupted(tmp_path):
     resumed = advance_many(restored, 2)
 
     _assert_runtime_state_exact(resumed, uninterrupted)
-
-
-@pytest.mark.parametrize("schema_version", (2, 3))
-def test_public_legacy_checkpoints_migrate_and_continue(tmp_path, schema_version):
-    runtime, _, state = _prepared_runtime()
-    case = phx.solver.FiniteVolumeCaseSpec(
-        f"legacy-schema-{schema_version}",
-        runtime,
-        phx.solver.FiniteVolumeExecutionSpec(1.0, 1000),
-    )
-    plan = phx.solver.FiniteVolumeCheckpointPlan(case, runtime=runtime)
-    path = tmp_path / f"legacy-{schema_version}.fvckpt"
-    _write_legacy_checkpoint(path, schema_version, case, state)
-
-    restored = phx.solver.read_finite_volume_checkpoint(path, plan).runtime_state
-
-    np.testing.assert_array_equal(restored.cell_average(), state.cell_average())
-    np.testing.assert_allclose(
-        restored.content_state.conservative_content,
-        state.content_state.conservative_content,
-        rtol=0.0,
-        atol=np.finfo(np.asarray(restored.cell_average()).dtype).eps,
-    )
-    assert restored.content_state.precision.policy_id == runtime.precision.policy_id
-    assert restored.content_state.topology_epoch_id == runtime.topology_epoch_id
-    assert restored.topology_journal.current_epoch_id == runtime.topology_epoch_id
-    assert int(np.asarray(restored.topology_journal.count)) == 0
-    assert int(np.asarray(restored.content_state.geometry_version)) == 0
-    assert int(np.asarray(restored.content_state.evidence_version)) == 0
-
-    continued = runtime.advance(restored)
-    assert bool(np.asarray(continued.accepted))
-    assert int(np.asarray(continued.runtime_state.accepted_step)) == (
-        int(np.asarray(restored.accepted_step)) + 1
-    )
-
-
-def test_checkpoint_manifest_version_matches_unstructured_guide(tmp_path):
-    runtime, _, state = _prepared_runtime()
-    case = phx.solver.FiniteVolumeCaseSpec(
-        "documented-checkpoint-schema",
-        runtime,
-        phx.solver.FiniteVolumeExecutionSpec(1.0, 1000),
-    )
-    path = tmp_path / "documented.fvckpt"
-    phx.solver.write_finite_volume_checkpoint(
-        path,
-        phx.solver.FiniteVolumeCheckpointPlan(case),
-        state,
-    )
-    with zipfile.ZipFile(path) as archive:
-        manifest = json.loads(archive.read("manifest.json"))
-    guide = (
-        Path(__file__).parents[3] / "docs" / "guides_unstructured_finite_volume.md"
-    ).read_text()
-    assert f"schema version {manifest['schema_version']}" in guide
-    assert (
-        f"runtime-state schema version {manifest['runtime_state_schema_version']}"
-        in guide
-    )

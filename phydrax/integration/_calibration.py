@@ -80,7 +80,7 @@ def calibrate(
         calibration=result,
         source_mass=measure.physical_mass,
         source_points=measure.count,
-        feature_count=int(feature_values.shape[1]),
+        feature_count=feature_values.shape[1],
         source_provenance=measure.source_provenance,
     )
     target_kind = "exact" if isinstance(target, ExactMoments) else "quadratic"

@@ -280,7 +280,12 @@ def stokes_image_from_fits_payload(payload: NeutralArrayPayload, /) -> StokesIma
         raise ValueError("Stokes image metadata does not use the canonical contract.")
     if metadata["axis_order"] != ["stokes", "screen_y", "screen_x"] or metadata[
         "stokes_components"
-    ] != ["I", "Q", "U", "V"]:
+    ] != [
+        "I",
+        "Q",
+        "U",
+        "V",
+    ]:
         raise ValueError("Stokes image axis semantics are not canonical.")
     units = metadata["units"]
     if not isinstance(units, Mapping) or set(units) != {

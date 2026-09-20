@@ -235,7 +235,7 @@ class DiagonalSystemTransform(StrictModule):
     ):
         self.left_scale = jnp.asarray(left_scale)
         self.right_scale = jnp.asarray(right_scale)
-        self.converged = jnp.asarray(converged, dtype=bool)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.steps = jnp.asarray(steps, dtype=jnp.int32)
         self.row_spread = jnp.asarray(row_spread)
         self.column_spread = jnp.asarray(column_spread)

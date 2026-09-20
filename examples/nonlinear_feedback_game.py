@@ -8,7 +8,7 @@ import phydrax as phx
 HORIZON = 4
 partition = phx.control.games.PlayerControlPartition(("left", "right"), (1, 1))
 time_grid = phx.dynamics.TimeGrid(
-    jnp.arange(HORIZON + 1, dtype=float),
+    jnp.arange(HORIZON + 1, dtype="float64"),
     time_id="example-nonlinear-feedback-game",
 )
 

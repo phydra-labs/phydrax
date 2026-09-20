@@ -42,7 +42,7 @@ from phydrax.solver._variable_sector_vmc import (
 
 def _configuration(coordinates, active, species) -> VariableParticleConfiguration:
     return VariableParticleConfiguration(
-        jnp.asarray(coordinates, dtype=float),
+        jnp.asarray(coordinates, dtype="float64"),
         jnp.asarray(active),
         jnp.asarray(species),
     )
@@ -184,7 +184,7 @@ def test_pair_contact_and_particle_changing_local_operators_are_finite() -> None
     space = VariableSectorSpace(3, 1, 1)
     configuration = _configuration([[-0.5], [0.5], [0.0]], [1, 1, 0], [0, 0, 0])
     model = BosonicJastrowAmplitude(
-        space, sector_log_weights=jnp.zeros((1, 4), dtype=complex)
+        space, sector_log_weights=jnp.zeros((1, 4), dtype="complex128")
     )
     pair = PairPotentialOperator(space, jnp.asarray(((2.0,),)), softening=0.1)
     contact = ContactInteractionOperator(space, jnp.asarray(((0.3,),)), 0.2)

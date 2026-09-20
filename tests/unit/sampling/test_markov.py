@@ -307,7 +307,7 @@ def test_incremental_target_refresh_runs_on_declared_transition_cadence():
         plan=phx.sampling.MarkovChunkPlan(4, 1),
     )
 
-    assert jnp.array_equal(result.accepted, jnp.ones((1, 4, 1), dtype=bool))
+    assert jnp.array_equal(result.accepted, jnp.ones((1, 4, 1), dtype="bool"))
     assert jnp.allclose(result.log_target[0], jnp.asarray([1.0, 0.0, 1.0, 0.0]))
     assert jnp.all(result.final_state.valid)
     assert jnp.all(result.target_valid)
@@ -450,7 +450,7 @@ def test_incremental_target_rejects_unadmitted_chain_count():
         jnp.zeros((2, 1)),
         jnp.zeros((2,)),
         cache=jnp.zeros((2, 1)),
-        valid=jnp.ones((2,), dtype=bool),
+        valid=jnp.ones((2,), dtype="bool"),
         target_id=target.target_id,
     )
     with pytest.raises(ValueError, match="chain count"):

@@ -44,7 +44,7 @@ class ScenarioSplitPolicy(StrictModule, NonTrainableState):
         seed: int = 0,
     ):
         fractions = np.asarray(
-            (train_fraction, validation_fraction, test_fraction), dtype=float
+            (train_fraction, validation_fraction, test_fraction), dtype=np.float64
         )
         if not np.all(np.isfinite(fractions)) or np.any(fractions <= 0.0):
             raise ValueError("All scenario split fractions must be finite and positive.")
@@ -98,7 +98,7 @@ class SyntheticScenarioSplit(StrictModule, NonTrainableState):
             raise ValueError("Every scenario split must be a non-empty index vector.")
         if any(bool(jnp.any(value < 0)) for value in indices):
             raise ValueError("Scenario split indices must be non-negative.")
-        if any(int(jnp.unique(value).size) != int(value.size) for value in indices):
+        if any(jnp.unique(value).size != value.size for value in indices):
             raise ValueError("A scenario split must not contain duplicate indices.")
         if any(
             bool(jnp.any(jnp.isin(indices[left], indices[right])))
@@ -128,13 +128,11 @@ class SyntheticScenarioSplit(StrictModule, NonTrainableState):
             raise ValueError("scenario_ids must be non-empty identifiers.")
         if len(set(ids)) != len(ids):
             raise ValueError("scenario_ids must be unique to prevent split leakage.")
-        total = sum(int(value.size) for value in indices)
+        total = sum(value.size for value in indices)
         if total != len(ids):
             raise ValueError("Split indices must cover every scenario exactly once.")
         combined = jnp.concatenate(indices)
-        if int(jnp.unique(combined).size) != len(ids) or bool(
-            jnp.any(combined >= len(ids))
-        ):
+        if jnp.unique(combined).size != len(ids) or bool(jnp.any(combined >= len(ids))):
             raise ValueError("Split indices must form the complete scenario index set.")
         policy = str(policy_id)
         if not policy:

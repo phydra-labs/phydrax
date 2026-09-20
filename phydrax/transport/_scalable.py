@@ -74,12 +74,12 @@ class PositiveKernelApproximationDiagnostics(StrictModule):
         status_ = jnp.asarray(status, dtype=jnp.int32)
         rank_ = jnp.asarray(rank, dtype=jnp.int32)
         num_probes_ = jnp.asarray(num_probes, dtype=jnp.int32)
-        relative_error = jnp.asarray(relative_probe_error, dtype=float)
-        maximum_error = jnp.asarray(maximum_relative_probe_error, dtype=float)
-        tolerance = jnp.asarray(probe_tolerance, dtype=float)
+        relative_error = jnp.asarray(relative_probe_error, dtype=jnp.float64)
+        maximum_error = jnp.asarray(maximum_relative_probe_error, dtype=jnp.float64)
+        tolerance = jnp.asarray(probe_tolerance, dtype=jnp.float64)
         zero_source = jnp.asarray(zero_source_rows, dtype=jnp.int32)
         zero_target = jnp.asarray(zero_target_rows, dtype=jnp.int32)
-        finite = jnp.asarray(finite_features, dtype=bool)
+        finite = jnp.asarray(finite_features, dtype=jnp.bool_)
         scalar_evidence = (
             status_,
             rank_,
@@ -98,9 +98,9 @@ class PositiveKernelApproximationDiagnostics(StrictModule):
             raise ValueError("Approximation key evidence must have shape (2,).")
         source_indices = jnp.asarray(probe_source_indices, dtype=jnp.int32)
         target_indices = jnp.asarray(probe_target_indices, dtype=jnp.int32)
-        exact_values = jnp.asarray(exact_probe_values, dtype=float)
-        approximate_values = jnp.asarray(approximate_probe_values, dtype=float)
-        relative_errors = jnp.asarray(relative_probe_errors, dtype=float)
+        exact_values = jnp.asarray(exact_probe_values, dtype=jnp.float64)
+        approximate_values = jnp.asarray(approximate_probe_values, dtype=jnp.float64)
+        relative_errors = jnp.asarray(relative_probe_errors, dtype=jnp.float64)
         if source_indices.ndim != 1:
             raise ValueError("Approximation probe indices must be rank one.")
         probe_shape = source_indices.shape
@@ -189,8 +189,8 @@ class PositiveKernelFactors(StrictModule):
         diagnostics: PositiveKernelApproximationDiagnostics,
         factorization_id: str,
     ):
-        source = jnp.asarray(source_factors, dtype=float)
-        target = jnp.asarray(target_factors, dtype=float)
+        source = jnp.asarray(source_factors, dtype=jnp.float64)
+        target = jnp.asarray(target_factors, dtype=jnp.float64)
         if source.ndim != 2 or target.ndim != 2:
             raise ValueError("Positive kernel factors must be rank-two arrays.")
         if source.shape[0] < 1 or target.shape[0] < 1:
@@ -351,7 +351,7 @@ class GaussianPositiveFeatures(StrictModule):
         key_data = jax.random.key_data(key)
         if key_data.shape != (2,):
             raise ValueError("key must be one scalar JAX PRNG key.")
-        tolerance = jnp.asarray(probe_tolerance, dtype=float).reshape(())
+        tolerance = jnp.asarray(probe_tolerance, dtype=jnp.float64).reshape(())
         self.probe_tolerance = eqx.error_if(
             tolerance,
             jnp.isnan(tolerance) | (tolerance < 0.0),
@@ -370,7 +370,9 @@ class GaussianPositiveFeatures(StrictModule):
             raise TypeError("GaussianPositiveFeatures requires SquaredEuclideanCost.")
         epsilon_ = jnp.asarray(
             epsilon,
-            dtype=jnp.result_type(problem.source.points, problem.target.points, float),
+            dtype=jnp.result_type(
+                problem.source.points, problem.target.points, jnp.float64
+            ),
         ).reshape(())
         epsilon_ = eqx.error_if(
             epsilon_,
@@ -638,8 +640,8 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
             raise ValueError("check_every must be positive.")
         if block_size < 1:
             raise ValueError("statistic_block_size must be positive.")
-        epsilon_ = jnp.asarray(epsilon, dtype=float).reshape(())
-        tolerance_ = jnp.asarray(tolerance, dtype=float).reshape(())
+        epsilon_ = jnp.asarray(epsilon, dtype=jnp.float64).reshape(())
+        tolerance_ = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
         self.epsilon = eqx.error_if(
             epsilon_,
             ~jnp.isfinite(epsilon_) | (epsilon_ <= 0.0),

@@ -114,7 +114,7 @@ Only float64 geometry/certification supports the conservative capability.
 
 The finite-element problem must be compiled from one
 `phydrax.variational.Functional`. Arbitrary residuals, nonsymmetric fluxes, and
-unlabelled nonconservative sources are not silently treated as potentials.
+unlabeled nonconservative sources are not silently treated as potentials.
 `CompiledFiniteElementProblem.potential` evaluates the same terms, density, and
 quadrature whose discrete first variation is returned by `residual`.
 

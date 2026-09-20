@@ -753,7 +753,7 @@ target = phx.integration.discrete(nodes, weights, axes="node")
 estimate = phx.integration.integrate(lambda x: x**2, target)
 
 samples = cx.AxisArray(
-    jnp.arange(2 * 4, dtype=float).reshape((2, 4)),
+    jnp.arange(2 * 4, dtype=jnp.float64).reshape((2, 4)),
     dims=("case", "particle"),
 )
 log_weights = cx.AxisArray(jnp.zeros((2, 4)), dims=("case", "particle"))
@@ -787,7 +787,7 @@ resampling them:
 ```python
 trajectory = phx.stochastic.StochasticTrajectory(
     jnp.asarray([0.0, 0.4, 1.0]),
-    jnp.arange(2 * 3 * 4, dtype=float).reshape((2, 3, 4)),
+    jnp.arange(2 * 3 * 4, dtype=jnp.float64).reshape((2, 3, 4)),
     realization_axes=("path",),
     realization_shape=(2,),
     state_axes=("space",),

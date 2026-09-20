@@ -10,6 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from phydrax._strict import StrictModule
+
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._tree_math import validate_real_inexact_tree
 from ..linalg import (
@@ -47,7 +49,7 @@ def _coordinate_norm(value, precision: NonlinearPrecisionPolicy, /):
     return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
 
 
-class POUNDERSEvidence(eqx.Module):
+class POUNDERSEvidence(StrictModule):
     interpolation_rank: jax.Array
     poisedness_condition: jax.Array
     final_radius: jax.Array
@@ -227,7 +229,6 @@ class POUNDERS(AbstractLeastSquaresMethod):
                 )
             )
         )
-        initial_objective = objective
         accepted = rejected = iterations = 0
         step_norm = 0.0
         ratio = jnp.asarray(jnp.nan, dtype=objective.dtype)

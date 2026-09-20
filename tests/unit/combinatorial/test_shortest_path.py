@@ -111,7 +111,7 @@ def test_dag_shortest_path_handles_identity_path_and_rejects_cycles():
     identity = phx.combinatorial.solve_combinatorial(
         phx.combinatorial.LinearCombinatorialProblem(
             identity_space,
-            jnp.asarray([], dtype=float),
+            jnp.asarray([], dtype="float64"),
         ),
         phx.combinatorial.DAGShortestPath(),
     )

@@ -50,9 +50,9 @@ candidate = model.candidate(
     jnp.asarray(1.0e-5),
 )
 accepted = model.commit(candidate)
-implicit = DeGrooteFregly2016ImplicitTendonForcePlan(
-    parameters, ("soleus",)
-).prepare(state)
+implicit = DeGrooteFregly2016ImplicitTendonForcePlan(parameters, ("soleus",)).prepare(
+    state
+)
 implicit_candidate = implicit.candidate(
     state,
     activation,
@@ -62,7 +62,10 @@ implicit_candidate = implicit.candidate(
 )
 
 print("tendon force [N]", evaluation.tendon_force_N)
-print("force-equilibrium residual", evaluation.evidence.force_equilibrium_residual_normalized)
+print(
+    "force-equilibrium residual",
+    evaluation.evidence.force_equilibrium_residual_normalized,
+)
 print("power-balance residual [W]", evaluation.evidence.power_balance_residual_W)
 print("candidate accepted", bool(candidate.successful))
 print("accepted normalized tendon force", accepted.normalized_tendon_force)

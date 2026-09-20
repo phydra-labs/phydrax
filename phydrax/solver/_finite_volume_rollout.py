@@ -195,7 +195,7 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule, NonTrainableState):
             times,
             self.runtime.precision,
         )
-        prefix = jnp.cumprod(accepted.astype(jnp.int32)).astype(bool)
+        prefix = jnp.cumprod(accepted.astype(jnp.int32)).astype("bool")
         count = jnp.sum(prefix.astype(jnp.int32))
         accepted_times = jnp.where(prefix, times, initial_state.time)
         realized = RealizedTemporalMesh(

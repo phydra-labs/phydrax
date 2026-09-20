@@ -278,8 +278,8 @@ class MappedPeriodicSeamPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
     ):
         axis_ = int(axis)
-        rotation_ = np.asarray(rotation, dtype=float)
-        translation_ = np.asarray(translation, dtype=float)
+        rotation_ = np.asarray(rotation, dtype=np.float64)
+        translation_ = np.asarray(translation, dtype=np.float64)
         tolerance_ = float(tolerance)
         if (
             rotation_.ndim != 2

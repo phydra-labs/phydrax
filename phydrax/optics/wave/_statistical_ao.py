@@ -45,11 +45,11 @@ class StatisticalResidualAOPlan(StrictModule, NonTrainableState):
         measurement_phase_variance: ArrayLike = 0.0,
         aliasing_phase_variance: ArrayLike = 0.0,
     ):
-        cutoff = jnp.asarray(control_cutoff, dtype=float)
-        gain = jnp.asarray(correction_gain, dtype=float)
-        delay = jnp.asarray(loop_delay, dtype=float)
-        measurement = jnp.asarray(measurement_phase_variance, dtype=float)
-        aliasing = jnp.asarray(aliasing_phase_variance, dtype=float)
+        cutoff = jnp.asarray(control_cutoff, dtype=jnp.float64)
+        gain = jnp.asarray(correction_gain, dtype=jnp.float64)
+        delay = jnp.asarray(loop_delay, dtype=jnp.float64)
+        measurement = jnp.asarray(measurement_phase_variance, dtype=jnp.float64)
+        aliasing = jnp.asarray(aliasing_phase_variance, dtype=jnp.float64)
         values = (cutoff, gain, delay, measurement, aliasing)
         if any(value.shape != () for value in values):
             raise ValueError("Statistical AO plan parameters must be scalar.")

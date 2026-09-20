@@ -207,9 +207,9 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
             raise TypeError("encounter must be an EncounterEvaluation.")
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
-        mass = np.asarray(masses, dtype=float)
-        position = np.asarray(positions, dtype=float)
-        velocity = np.asarray(velocities, dtype=float)
+        mass = np.asarray(masses, dtype=np.float64)
+        position = np.asarray(positions, dtype=np.float64)
+        velocity = np.asarray(velocities, dtype=np.float64)
         if (
             mass.ndim != 1
             or mass.size < 2
@@ -221,7 +221,7 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
             or np.any(~np.isfinite(velocity))
         ):
             raise ValueError("Regularized segment state arrays are invalid.")
-        pair_values = np.asarray(encounter.pair, dtype=int)
+        pair_values = np.asarray(encounter.pair, dtype=np.int64)
         if pair_values.shape != (2,):
             raise ValueError("Encounter pair must contain two particle indices.")
         pair = tuple(sorted((int(pair_values[0]), int(pair_values[1]))))
@@ -250,7 +250,7 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
                 "kind": "prepared-close-encounter-segment",
                 "plan": plan.plan_id,
                 "pair": list(pair),
-                "particle_capacity": int(mass.size),
+                "particle_capacity": mass.size,
                 "state": array_tree_fingerprint((mass, position, velocity)),
                 "context": context.context_id,
                 "preparation_status": status,

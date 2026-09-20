@@ -114,7 +114,7 @@ def test_feature_preparation_rejects_future_available_inputs_and_preserves_label
     available = event.at[2].set(100)
     panel = PreparedPointInTimePanel(
         values=jnp.arange(100.0, 108.0)[None, :],
-        valid_mask=jnp.ones((1, 8), dtype=bool),
+        valid_mask=jnp.ones((1, 8), dtype="bool"),
         event_times_ns=event[None, :],
         published_times_ns=event[None, :],
         received_times_ns=event[None, :],
@@ -132,7 +132,7 @@ def test_feature_preparation_rejects_future_available_inputs_and_preserves_label
     )
     returns = ReturnResult(
         values=jnp.full((1, 7), 0.01),
-        valid_mask=jnp.ones((1, 7), dtype=bool),
+        valid_mask=jnp.ones((1, 7), dtype="bool"),
         status=jnp.zeros((1, 7), dtype=jnp.int32),
         interval_start_ns=event[:-1][None, :],
         interval_end_ns=event[1:][None, :],
@@ -165,7 +165,7 @@ def test_walk_forward_purges_complete_label_overlap_and_embargoes_by_time():
     dataset = PreparedFeatureLabelDataset(
         features=jnp.arange(24.0).reshape(12, 2),
         labels=jnp.arange(12.0),
-        row_valid=jnp.ones((12,), dtype=bool),
+        row_valid=jnp.ones((12,), dtype="bool"),
         decision_times_ns=decision,
         feature_start_times_ns=decision - 20,
         feature_available_times_ns=decision,

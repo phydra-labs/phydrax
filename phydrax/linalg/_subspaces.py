@@ -79,8 +79,8 @@ class LinearSubspace(StrictModule):
             raise TypeError("Subspace basis must use an inexact dtype.")
         if basis_.dtype != _coordinate_dtype(space):
             raise TypeError("Subspace basis dtype must match its coordinate space.")
-        batch_shape = tuple(int(size) for size in basis_.shape[:-2])
-        capacity = int(basis_.shape[-1])
+        batch_shape = tuple(basis_.shape[:-2])
+        capacity = basis_.shape[-1]
         dimension_ = jnp.asarray(
             jnp.full(batch_shape, capacity, dtype=jnp.int32)
             if dimension is None
@@ -149,11 +149,11 @@ class LinearSubspace(StrictModule):
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return tuple(int(size) for size in self.basis.shape[:-2])
+        return tuple(self.basis.shape[:-2])
 
     @property
     def capacity(self) -> int:
-        return int(self.basis.shape[-1])
+        return self.basis.shape[-1]
 
     def project_coordinates(self, coordinates: ArrayLike, /) -> Array:
         value = jnp.asarray(coordinates)
@@ -163,8 +163,7 @@ class LinearSubspace(StrictModule):
             value = jnp.broadcast_to(value, batched_shape)
         elif value.shape != batched_shape:
             raise ValueError(
-                "Projection coordinates must be shared or match batch_shape + "
-                "(space.size,)."
+                "Projection coordinates must be shared or match batch_shape + (space.size,)."
             )
         if value.dtype != _coordinate_dtype(self.space):
             raise TypeError("Projection coordinate dtype must match the subspace space.")

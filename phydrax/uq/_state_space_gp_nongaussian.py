@@ -227,8 +227,7 @@ def _validate_likelihood(likelihood: AbstractLikelihood, /) -> None:
         likelihood, ScalarNaturalExponentialFamilyLikelihood
     ) or not isinstance(likelihood.family, (BernoulliFamily, PoissonFamily)):
         raise TypeError(
-            "State-space Laplace sites require a certified scalar Bernoulli or "
-            "Poisson natural-parameter likelihood."
+            "State-space Laplace sites require a certified scalar Bernoulli or Poisson natural-parameter likelihood."
         )
 
 

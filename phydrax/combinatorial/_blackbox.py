@@ -34,7 +34,7 @@ class BlackboxInterpolation(StrictModule):
         *,
         certification: CombinatorialCertification | None = None,
     ):
-        scale = jnp.asarray(lambda_, dtype=float)
+        scale = jnp.asarray(lambda_, dtype=jnp.float64)
         if scale.ndim != 0:
             raise ValueError("blackbox interpolation lambda_ must be scalar.")
         invalid = ~jnp.isfinite(scale) | (scale <= 0.0)
@@ -198,7 +198,7 @@ def estimate_blackbox_pullback(
         perturbed.features,
         forward.features,
     )
-    cotangent_finite = jnp.ones(problem.batch_shape, dtype=bool)
+    cotangent_finite = jnp.ones(problem.batch_shape, dtype=jnp.bool_)
     for value, spec in zip(
         jax.tree_util.tree_leaves(gradient_output),
         jax.tree_util.tree_leaves(problem.space.feature_spec()),

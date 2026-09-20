@@ -217,7 +217,7 @@ def _merge_fit(
     sample_weight = jnp.concatenate((pseudo_weight, current_weight), axis=-1)
     sample_mask = jnp.concatenate(
         (
-            jnp.ones(batch.case_shape + (2 * rank,), dtype=bool),
+            jnp.ones(batch.case_shape + (2 * rank,), dtype=jnp.bool_),
             batch.sample_mask,
         ),
         axis=-1,

@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._tree_math import tree_norm, tree_scale, validate_inexact_tree
 from ..linalg import AbstractVectorSpace
 from ..nonlinear import (
@@ -39,7 +39,7 @@ class DeflatedRootStatus(IntEnum):
 class AbstractDeflationMetric(StrictModule):
     """Distance contract used to distinguish roots in a state space."""
 
-    metric_id: AbstractAttribute[str]
+    metric_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def distance(

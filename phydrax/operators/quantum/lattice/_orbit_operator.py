@@ -355,19 +355,19 @@ def prepare_quantum_orbit_sector_operator(
 
     targets, sources = np.nonzero(np.abs(reduced) > resources.route_tolerance)
     amplitudes = reduced[targets, sources]
-    if int(amplitudes.size) > resources.maximum_routes:
+    if amplitudes.size > resources.maximum_routes:
         raise ValueError("Reduced orbit action exceeds maximum_routes.")
-    if int(amplitudes.size) == 0:
+    if amplitudes.size == 0:
         sources = np.zeros((1,), dtype=np.int32)
         targets = np.zeros((1,), dtype=np.int32)
         amplitudes = np.zeros((1,), dtype=np.complex128)
-        valid = np.zeros((1,), dtype=bool)
+        valid = np.zeros((1,), dtype=np.bool_)
         route_count = 0
     else:
         sources = sources.astype(np.int32)
         targets = targets.astype(np.int32)
-        valid = np.ones(amplitudes.shape, dtype=bool)
-        route_count = int(amplitudes.size)
+        valid = np.ones(amplitudes.shape, dtype=np.bool_)
+        route_count = amplitudes.size
     action_workspace = (
         basis.dimension * np.dtype(np.complex128).itemsize
         + sources.nbytes

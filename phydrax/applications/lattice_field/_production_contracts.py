@@ -50,7 +50,7 @@ class LatticeRegulator(StrictModule, NonTrainableState):
     ):
         if not isinstance(boundary, LatticeBoundaryPhasePlan):
             raise TypeError("boundary must be LatticeBoundaryPhasePlan.")
-        spacing = np.asarray(lattice_spacing, dtype=float)
+        spacing = np.asarray(lattice_spacing, dtype=np.float64)
         dimension = boundary.dimension
         if spacing.shape == ():
             spacing = np.full((dimension,), float(spacing))
@@ -114,7 +114,7 @@ class LatticeTheoryPoint(StrictModule, NonTrainableState):
         names = tuple(name for name, _ in parameters)
         if any(not name for name in names) or len(set(names)) != len(names):
             raise ValueError("Bare-parameter names must be distinct and non-empty.")
-        values = np.asarray([value for _, value in parameters], dtype=float)
+        values = np.asarray([value for _, value in parameters], dtype=np.float64)
         if np.any(~np.isfinite(values)):
             raise ValueError("Bare-parameter values must be finite.")
         self.regulator = regulator
@@ -268,9 +268,9 @@ class PreparedLatticeEnsemble(StrictModule, NonTrainableState):
         if jnp.iscomplexobj(values):
             raise TypeError("Admitted production observables must be real-valued.")
         mask = (
-            jnp.ones((self.plan.sample_count,), dtype=bool)
+            jnp.ones((self.plan.sample_count,), dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if mask.shape != (self.plan.sample_count,):
             raise ValueError("valid must contain one boolean per sample.")
@@ -354,7 +354,7 @@ class ContinuumExtrapolationPlan(StrictModule, NonTrainableState):
         extent_tolerance: float = 1.0e-10,
     ):
         points = tuple(theory_points)
-        powers_ = tuple(int(value) for value in powers)
+        powers_ = tuple(powers)
         point_limit = int(maximum_points)
         tolerance = float(extent_tolerance)
         if not points or not all(

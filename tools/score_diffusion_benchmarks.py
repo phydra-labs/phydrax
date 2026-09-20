@@ -137,9 +137,9 @@ def benchmark_process(process, *, sample_count: int, seed: int, quick: bool):
     reverse_seconds = perf_counter() - reverse_start
     sample_mean, sample_variance = _moments(reverse_result.final_states)
     mean_error = jnp.linalg.vector_norm(sample_mean - mean)
-    variance_error = jnp.linalg.vector_norm(sample_variance - variance) / jnp.linalg.vector_norm(
-        variance
-    )
+    variance_error = jnp.linalg.vector_norm(
+        sample_variance - variance
+    ) / jnp.linalg.vector_norm(variance)
 
     system = phx.transport.probability_flow_system(
         process,
@@ -188,7 +188,7 @@ def benchmark_process(process, *, sample_count: int, seed: int, quick: bool):
         "dimension": dimension,
         "sample_count": sample_count,
         "denoising_objective": float(score_diagnostics.objective),
-        "reverse_valid_fraction": float(jnp.mean(reverse_result.valid.astype(float))),
+        "reverse_valid_fraction": float(jnp.mean(reverse_result.valid.astype("float64"))),
         "reverse_mean_error": float(mean_error),
         "reverse_variance_relative_error": float(variance_error),
         "reverse_seconds": reverse_seconds,

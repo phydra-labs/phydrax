@@ -26,7 +26,7 @@ from ._dark_sector_species import DarkSectorSpeciesPlan
 
 IdenticalParticleConvention: TypeAlias = Literal[
     "distinguishable-full-sphere",
-    "labelled-full-sphere",
+    "labeled-full-sphere",
     "exchange-quotient",
 ]
 ScreeningConvention: TypeAlias = Literal[
@@ -64,7 +64,7 @@ def _canonical_kernel_table_bytes(
         metadata, allow_nan=False, separators=(",", ":"), sort_keys=True
     ).encode("ascii")
     return (
-        b"phydrax-two-body-differential-kernel-v1\0"
+        b"phydrax-two-body-differential-kernel\0"
         + len(header).to_bytes(8, "big")
         + header
         + b"".join(np.ascontiguousarray(value).tobytes(order="C") for _, value in arrays)
@@ -175,8 +175,10 @@ def _integrate_piecewise_linear(
 ) -> float:
     """Integrate a piecewise-linear angular density against one exact moment."""
 
-    gauss_nodes = np.asarray((-0.7745966692414834, 0.0, 0.7745966692414834), dtype=float)
-    gauss_weights = np.asarray((5.0 / 9.0, 8.0 / 9.0, 5.0 / 9.0), dtype=float)
+    gauss_nodes = np.asarray(
+        (-0.7745966692414834, 0.0, 0.7745966692414834), dtype=np.float64
+    )
+    gauss_weights = np.asarray((5.0 / 9.0, 8.0 / 9.0, 5.0 / 9.0), dtype=np.float64)
     total = 0.0
     for index in range(nodes.size - 1):
         left = max(float(nodes[index]), lower)
@@ -391,12 +393,12 @@ class TwoBodyDifferentialKernelPlan(StrictModule, NonTrainableState):
         identical_particle_convention: IdenticalParticleConvention = (
             "distinguishable-full-sphere"
         ),
-        source_artifact: ScientificArtifactEnvelope,
-        reference_manifest: ReferenceArtifactManifest,
-        commercial_use: bool,
-        redistribution: bool,
-        training_use: bool,
-        export: bool,
+        source_artifact: ScientificArtifactEnvelope | None = None,
+        reference_manifest: ReferenceArtifactManifest | None = None,
+        commercial_use: bool = False,
+        redistribution: bool = False,
+        training_use: bool = False,
+        export: bool = False,
         screening_convention: ScreeningConvention = "finite-full-support",
         minimum_scattering_angle: float = 0.0,
         speed_unit: str = "physical-length/physical-time",
@@ -409,55 +411,70 @@ class TwoBodyDifferentialKernelPlan(StrictModule, NonTrainableState):
             second_species, DarkSectorSpeciesPlan
         ):
             raise TypeError("Two-body kernels require two DarkSectorSpeciesPlan objects.")
-        speeds = np.asarray(relative_speeds, dtype=float)
-        mu = np.asarray(cosines, dtype=float)
-        values = np.asarray(differential_cross_section, dtype=float)
-        phi = None if azimuths is None else np.asarray(azimuths, dtype=float)
-        if not isinstance(source_artifact, ScientificArtifactEnvelope):
-            raise TypeError(
-                "External differential kernels require ScientificArtifactEnvelope."
-            )
-        if not isinstance(reference_manifest, ReferenceArtifactManifest):
-            raise TypeError(
-                "External differential kernels require ReferenceArtifactManifest."
-            )
+        speeds = np.asarray(relative_speeds, dtype=np.float64)
+        mu = np.asarray(cosines, dtype=np.float64)
+        values = np.asarray(differential_cross_section, dtype=np.float64)
+        phi = None if azimuths is None else np.asarray(azimuths, dtype=np.float64)
         requested = (commercial_use, redistribution, training_use, export)
         if any(not isinstance(value, bool) for value in requested):
             raise TypeError(
-                "External differential kernels require four explicit boolean "
-                "requested-use flags."
+                "Differential kernels require four explicit boolean requested-use flags."
             )
         rights = tuple(requested)
-        if source_artifact.status != "complete":
-            raise ValueError("Differential-kernel source artifacts must be complete.")
-        payload = _canonical_kernel_table_bytes(speeds, mu, values, phi)
-        reference_manifest.verify_bytes(payload)
-        if (
-            source_artifact.content_digest != reference_manifest.checksum
-            or source_artifact.license_id != reference_manifest.license_id
-            or tuple(sorted(source_artifact.parent_artifact_ids))
-            != reference_manifest.lineage_ids
-        ):
+        if (source_artifact is None) != (reference_manifest is None):
             raise ValueError(
-                "Differential-kernel manifest and artifact digest, license, or "
-                "lineage disagree."
+                "Kernel source artifact and reference manifest must be supplied together."
             )
-        reference_manifest.require_rights(
-            commercial_use=rights[0],
-            redistribution=rights[1],
-            training_use=rights[2],
-            export=rights[3],
-        )
-        requested_use_id = canonical_fingerprint(
-            {
-                "kind": "differential-kernel-requested-use",
-                "reference_manifest": reference_manifest.manifest_id,
-                "commercial_use": rights[0],
-                "redistribution": rights[1],
-                "training_use": rights[2],
-                "export": rights[3],
-            }
-        )
+        if source_artifact is None:
+            if (
+                any(rights)
+                or not bool(isotropic_specialization)
+                or not bool(unbounded_speed)
+            ):
+                raise TypeError(
+                    "External differential kernels require source_artifact and reference_manifest."
+                )
+            requested_use_id = canonical_fingerprint(
+                {"kind": "internal-constant-isotropic-kernel-use"}
+            )
+        else:
+            if not isinstance(source_artifact, ScientificArtifactEnvelope):
+                raise TypeError(
+                    "External differential kernels require ScientificArtifactEnvelope."
+                )
+            if not isinstance(reference_manifest, ReferenceArtifactManifest):
+                raise TypeError(
+                    "External differential kernels require ReferenceArtifactManifest."
+                )
+            if source_artifact.status != "complete":
+                raise ValueError("Differential-kernel source artifacts must be complete.")
+            payload = _canonical_kernel_table_bytes(speeds, mu, values, phi)
+            reference_manifest.verify_bytes(payload)
+            if (
+                source_artifact.content_digest != reference_manifest.checksum
+                or source_artifact.license_id != reference_manifest.license_id
+                or tuple(sorted(source_artifact.parent_artifact_ids))
+                != reference_manifest.lineage_ids
+            ):
+                raise ValueError(
+                    "Differential-kernel manifest and artifact digest, license, or lineage disagree."
+                )
+            reference_manifest.require_rights(
+                commercial_use=rights[0],
+                redistribution=rights[1],
+                training_use=rights[2],
+                export=rights[3],
+            )
+            requested_use_id = canonical_fingerprint(
+                {
+                    "kind": "differential-kernel-requested-use",
+                    "reference_manifest": reference_manifest.manifest_id,
+                    "commercial_use": rights[0],
+                    "redistribution": rights[1],
+                    "training_use": rights[2],
+                    "export": rights[3],
+                }
+            )
         convention = str(identical_particle_convention)
         screening = str(screening_convention)
         minimum_angle = float(minimum_scattering_angle)
@@ -486,7 +503,7 @@ class TwoBodyDifferentialKernelPlan(StrictModule, NonTrainableState):
             )
         if convention not in (
             "distinguishable-full-sphere",
-            "labelled-full-sphere",
+            "labeled-full-sphere",
             "exchange-quotient",
         ):
             raise ValueError("Unknown identical-particle convention.")
@@ -683,56 +700,17 @@ class TwoBodyDifferentialKernelPlan(StrictModule, NonTrainableState):
         speeds = jnp.asarray((0.0, 1.0))
         cosines = jnp.asarray((-1.0, 0.0, 1.0), dtype=speeds.dtype)
         differential = jnp.full((2, 3), value / (4.0 * jnp.pi), dtype=speeds.dtype)
-        moments = jnp.asarray(
-            ((value, value, 2.0 * value / 3.0, value / 2.0),) * 2,
-            dtype=speeds.dtype,
+        return cls(
+            species,
+            species,
+            speeds,
+            cosines,
+            differential,
+            identical_particle_convention="labeled-full-sphere",
+            cross_section_unit=unit,
+            unbounded_speed=True,
+            isotropic_specialization=True,
         )
-        requested_use_id = canonical_fingerprint(
-            {"kind": "internal-constant-isotropic-kernel-use"}
-        )
-        plan = object.__new__(cls)
-        object.__setattr__(plan, "first_species", species)
-        object.__setattr__(plan, "second_species", species)
-        object.__setattr__(plan, "relative_speeds", speeds)
-        object.__setattr__(plan, "cosines", cosines)
-        object.__setattr__(plan, "differential_cross_section", differential)
-        object.__setattr__(plan, "azimuths", None)
-        object.__setattr__(plan, "source_artifact", None)
-        object.__setattr__(plan, "reference_manifest", None)
-        object.__setattr__(plan, "commercial_use", False)
-        object.__setattr__(plan, "redistribution", False)
-        object.__setattr__(plan, "training_use", False)
-        object.__setattr__(plan, "export", False)
-        object.__setattr__(plan, "requested_use_id", requested_use_id)
-        object.__setattr__(plan, "total_cross_sections", moments[:, 0])
-        object.__setattr__(plan, "transfer_cross_sections", moments[:, 1])
-        object.__setattr__(plan, "viscosity_cross_sections", moments[:, 2])
-        object.__setattr__(plan, "modified_transfer_cross_sections", moments[:, 3])
-        object.__setattr__(plan, "identical_particle_convention", "labelled-full-sphere")
-        object.__setattr__(plan, "screening_convention", "finite-full-support")
-        object.__setattr__(plan, "minimum_scattering_angle", 0.0)
-        object.__setattr__(plan, "speed_unit", "physical-length/physical-time")
-        object.__setattr__(plan, "cross_section_unit", unit)
-        object.__setattr__(plan, "normalization_tolerance", 1.0e-10)
-        object.__setattr__(plan, "unbounded_speed", True)
-        object.__setattr__(plan, "isotropic_specialization", True)
-        object.__setattr__(
-            plan,
-            "kernel_id",
-            canonical_fingerprint(
-                {
-                    "kind": "internal-constant-isotropic-two-body-kernel",
-                    "species": species.species_plan_id,
-                    "cross_section": value,
-                    "cross_section_unit": unit,
-                    "requested_use": requested_use_id,
-                    "arrays": array_tree_fingerprint(
-                        (speeds, cosines, differential, moments)
-                    ),
-                }
-            ),
-        )
-        return plan
 
     def _speed_row(self, table: Array, relative_speed: Array, /) -> tuple[Array, Array]:
         speed = jnp.asarray(relative_speed, dtype=self.relative_speeds.dtype).reshape(())
@@ -937,7 +915,7 @@ class SmallAngleSplitPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Small-angle splitting requires TwoBodyDifferentialKernelPlan."
             )
-        split = np.asarray(split_cosines, dtype=float)
+        split = np.asarray(split_cosines, dtype=np.float64)
         if split.shape == ():
             split = np.full(kernel.relative_speeds.shape, float(split))
         expected = tuple(kernel.relative_speeds.shape)

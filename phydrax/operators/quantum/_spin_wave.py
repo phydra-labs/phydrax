@@ -54,8 +54,8 @@ class SpinWaveReferenceState(StrictModule):
         *,
         tolerance: float = 1.0e-10,
     ):
-        values = np.asarray(directions, dtype=float)
-        magnitudes = np.asarray(spin_magnitudes, dtype=float)
+        values = np.asarray(directions, dtype=np.float64)
+        magnitudes = np.asarray(spin_magnitudes, dtype=np.float64)
         if (
             values.ndim != 2
             or values.shape[1] != 3
@@ -99,7 +99,7 @@ class SpinWaveReferenceState(StrictModule):
 
     @property
     def site_count(self) -> int:
-        return int(self.spin_magnitudes.size)
+        return self.spin_magnitudes.size
 
 
 class LinearSpinWavePlan(StrictModule):
@@ -139,7 +139,7 @@ class LinearSpinWavePlan(StrictModule):
         goldstone = np.asarray(declared_goldstone_counts)
         if (
             minus.ndim != 1
-            or minus.size != int(mesh.fractional_points.shape[0])
+            or minus.size != mesh.fractional_points.shape[0]
             or not np.issubdtype(minus.dtype, np.integer)
         ):
             raise TypeError(
@@ -204,7 +204,7 @@ class LinearSpinWavePlan(StrictModule):
 
     @property
     def q_count(self) -> int:
-        return int(self.minus_q_indices.size)
+        return self.minus_q_indices.size
 
 
 class PreparedLinearSpinWave(StrictModule):
@@ -328,7 +328,7 @@ def _family_from_scalar_routes(
         hermitian=hermitian,
         maximum_dense_entries=maximum_dense_entries,
     )
-    values = np.asarray([coefficients[key] for key in keys], dtype=complex).reshape(
+    values = np.asarray([coefficients[key] for key in keys], dtype=np.complex128).reshape(
         (-1, 1, 1)
     )
     family_state = PeriodicTranslationFamilyState(family_plan, values)
@@ -360,12 +360,12 @@ def lower_collinear_spin_wave_bonds(
         raise TypeError("plan must be LinearSpinWavePlan.")
     sites = plan.reference.site_count
     rank = plan.mesh.rank
-    frames = np.asarray(transverse_frames, dtype=float)
+    frames = np.asarray(transverse_frames, dtype=np.float64)
     senders = np.asarray(bond_senders)
     receivers = np.asarray(bond_receivers)
     translations_ = np.asarray(translations)
-    tensors = np.asarray(exchange_tensors, dtype=complex)
-    bonds = int(senders.size)
+    tensors = np.asarray(exchange_tensors, dtype=np.complex128)
+    bonds = senders.size
     if (
         frames.shape != (sites, 3, 2)
         or senders.ndim != 1
@@ -412,7 +412,7 @@ def lower_collinear_spin_wave_bonds(
     for sender, receiver, translation in zip(
         senders, receivers, translations_, strict=True
     ):
-        key = (int(sender), int(receiver), tuple(int(value) for value in translation))
+        key = (int(sender), int(receiver), tuple(translation))
         reverse_key = (
             int(receiver),
             int(sender),
@@ -424,19 +424,19 @@ def lower_collinear_spin_wave_bonds(
             )
         oriented.add(key)
     k = (
-        np.zeros((sites,), dtype=float)
+        np.zeros((sites,), dtype=np.float64)
         if anisotropy is None
-        else np.asarray(anisotropy, dtype=float)
+        else np.asarray(anisotropy, dtype=np.float64)
     )
     axes = (
         np.broadcast_to([0.0, 0.0, 1.0], (sites, 3)).copy()
         if anisotropy_axes is None
-        else np.asarray(anisotropy_axes, dtype=float)
+        else np.asarray(anisotropy_axes, dtype=np.float64)
     )
     fields = (
-        np.zeros((sites, 3), dtype=float)
+        np.zeros((sites, 3), dtype=np.float64)
         if zeeman_energies is None
-        else np.asarray(zeeman_energies, dtype=float)
+        else np.asarray(zeeman_energies, dtype=np.float64)
     )
     if (
         k.shape != (sites,)
@@ -476,7 +476,7 @@ def lower_collinear_spin_wave_bonds(
     for bond in range(bonds):
         left = int(senders[bond])
         right = int(receivers[bond])
-        translation = tuple(int(value) for value in translations_[bond])
+        translation = tuple(translations_[bond])
         reverse_translation = tuple(-value for value in translation)
         tensor = tensors[bond]
         left_spin = spins[left]
@@ -591,12 +591,12 @@ def prepare_linear_spin_wave(
             "LSWT periodic families do not match the reciprocal mesh and site basis."
         )
     normal = np.asarray(
-        normal_family.evaluate(plan.mesh.fractional_points), dtype=complex
+        normal_family.evaluate(plan.mesh.fractional_points), dtype=np.complex128
     )
     pairing = np.asarray(
-        pairing_family.evaluate(plan.mesh.fractional_points), dtype=complex
+        pairing_family.evaluate(plan.mesh.fractional_points), dtype=np.complex128
     )
-    torque = np.asarray(reference_torques, dtype=float)
+    torque = np.asarray(reference_torques, dtype=np.float64)
     expected = (plan.q_count, plan.reference.site_count, plan.reference.site_count)
     if normal.shape != expected or pairing.shape != expected:
         raise ValueError(f"LSWT normal and pairing blocks must have shape {expected}.")

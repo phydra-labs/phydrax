@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -90,7 +92,7 @@ class PeriodicBandManifold(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return int(self.band_indices.size)
+        return self.band_indices.size
 
 
 class PeriodicCrossKConnection(StrictModule, NonTrainableState):
@@ -208,7 +210,7 @@ class PeriodicOverlapBundle(StrictModule, NonTrainableState):
             ]
             source = np.asarray(plan.source_indices)
             target = np.asarray(plan.target_indices)
-            raw = np.einsum(
+            raw = ein.contract(
                 "eai,eab,ebj->eij",
                 np.conj(coefficients[source]),
                 np.asarray(connection.matrices),
@@ -403,8 +405,8 @@ class PeriodicChernRefinementEvidence(StrictModule, NonTrainableState):
         tolerance: float,
         /,
     ):
-        coarse_shape = tuple(int(value) for value in coarse_mesh_shape)
-        fine_shape = tuple(int(value) for value in fine_mesh_shape)
+        coarse_shape = tuple(coarse_mesh_shape)
+        fine_shape = tuple(fine_mesh_shape)
         coarse = float(coarse_chern)
         fine = float(fine_chern)
         tolerance_ = float(tolerance)
@@ -580,7 +582,7 @@ def identity_cross_k_connection(
     orbital_count = pencil.plan.basis.orbital_count
     matrices = np.broadcast_to(
         np.eye(orbital_count), (edge_count, orbital_count, orbital_count)
-    ).astype(complex)
+    ).astype("complex128")
     if pencil.plan.basis.gauge.kind == "atomic":
         points = np.asarray(connectivity.plan.mesh.fractional_points)
         source = np.asarray(connectivity.plan.source_indices)

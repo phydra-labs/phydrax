@@ -4,9 +4,10 @@
 
 import abc
 
+import equinox as eqx
 from jaxtyping import Array, ArrayLike
 
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 
 
 class _AbstractScaler(StrictModule):
@@ -26,7 +27,7 @@ class _AbstractScaler(StrictModule):
 class _AbstractScalerSpecifier(_AbstractScaler):
     """Wrapper base class for specific scalers backed by an affine scaler."""
 
-    scaler: AbstractAttribute[_AbstractScaler]
+    scaler: eqx.AbstractVar[_AbstractScaler]
 
     def transform(self, x: ArrayLike) -> Array:
         return self.scaler.transform(x)

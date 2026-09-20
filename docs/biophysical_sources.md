@@ -44,10 +44,10 @@ locked prediction, external transfer, and prospective intervention remain
 separate stage IDs.
 
 The four public molecular capability profiles are **unreleased candidates**:
-`protein.stability.megascale-natural-small-domain.v1`,
-`nucleic.strand-displacement.rna-to-dna.declared-condition.v1`,
-`protein.coordinate-proposal.fixed-construct-standard-chemistry.v1`, and
-`rna.ensemble.adenine-riboswitch.declared-protocol.v1`.
+`protein.stability.megascale-natural-small-domain`,
+`nucleic.strand-displacement.rna-to-dna.declared-condition`,
+`protein.coordinate-proposal.fixed-construct-standard-chemistry`, and
+`rna.ensemble.adenine-riboswitch.declared-protocol`.
 `biophysical_candidate_profile` and `biophysical_candidate_profiles` return
 `CapabilityProfile` values with `released=False`, no release evidence, and
 default version `candidate`. They are scopes to qualify, not shipped scientific
@@ -161,7 +161,7 @@ forward models; a sampled schedule or a branch-shaped plot does not supply them.
 - Synthetic radiation columns exercise the source-pinned ledger adapter and
   downstream analysis; separate binary ROOT fixtures exercise the actual optional
   reader. Neither constitutes a real transport corpus. Synthetic fluorescence,
-  thermodynamic, kinetic, mechanical and transcript controls are explicitly labelled.
+  thermodynamic, kinetic, mechanical and transcript controls are explicitly labeled.
 
 Code, raw data, parameter tables, model weights, derived outputs and provider execution
 have separate rights. A published equation does not automatically authorize copying a

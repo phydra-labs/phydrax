@@ -80,8 +80,14 @@ def test_isotropic_schwarzschild_single_hole_limit_and_adm_mass():
 
     radius = 100.0
     normals = jnp.asarray(
-        ((1.0, 0.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
-         (0.0, -1.0, 0.0), (0.0, 0.0, 1.0), (0.0, 0.0, -1.0))
+        (
+            (1.0, 0.0, 0.0),
+            (-1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, -1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (0.0, 0.0, -1.0),
+        )
     )
     weights = jnp.full((6,), 4.0 * jnp.pi * radius**2 / 6.0)
     charges = adm_charge_diagnostics(field, radius * normals, normals, weights)
@@ -98,7 +104,9 @@ def test_nonspinning_kerr_schild_reduces_to_schwarzschild_kerr_schild():
 
     assert jnp.allclose(data.lapse, 1.0 / jnp.sqrt(1.0 + factor))
     assert jnp.allclose(data.shift, jnp.asarray((factor / (1.0 + factor), 0.0, 0.0)))
-    assert jnp.allclose(data.spatial_metric, jnp.diag(jnp.asarray((1.0 + factor, 1.0, 1.0))))
+    assert jnp.allclose(
+        data.spatial_metric, jnp.diag(jnp.asarray((1.0 + factor, 1.0, 1.0)))
+    )
     assert bool(data.status.physically_valid)
     assert jnp.all(jnp.isfinite(data.extrinsic_curvature))
 

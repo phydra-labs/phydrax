@@ -6,7 +6,7 @@
 
 The capillary action in this module is deliberately a rate block rather than a
 source hidden in an equation/system object.  PLIC provides the interface
-orientation and centres; the cell least-squares reconstruction supplies the
+orientation and centers; the cell least-squares reconstruction supplies the
 same owner-oriented face gradient used by the collocated pressure operators.
 """
 
@@ -331,14 +331,14 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
     """Owner-oriented equal/opposite capillary momentum and work rates.
 
     ``momentum_rate`` and ``energy_work_rate`` are face rates.  The owner gets
-    their negative and an interior neighbour gets their positive, exactly as
+    their negative and an interior neighbor gets their positive, exactly as
     for an ordinary owner-oriented finite-volume flux block.
     """
 
     momentum_rate: Array
     energy_work_rate: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     active_mask: Array
     curvature: Array
     orientation: Array
@@ -353,7 +353,7 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
         momentum_rate: ArrayLike,
         energy_work_rate: ArrayLike,
         owner_cells: ArrayLike,
-        neighbour_cells: ArrayLike,
+        neighbor_cells: ArrayLike,
         active_mask: ArrayLike,
         curvature: ArrayLike,
         orientation: ArrayLike,
@@ -366,8 +366,8 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
         momentum = jnp.asarray(momentum_rate)
         work = jnp.asarray(energy_work_rate, dtype=momentum.dtype)
         owners = jnp.asarray(owner_cells, dtype=jnp.int32)
-        neighbours = jnp.asarray(neighbour_cells, dtype=jnp.int32)
-        active = jnp.asarray(active_mask, dtype=bool)
+        neighbors = jnp.asarray(neighbor_cells, dtype=jnp.int32)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         kappa = jnp.asarray(curvature, dtype=momentum.dtype)
         direction = jnp.asarray(orientation, dtype=momentum.dtype)
         if momentum.ndim != 2 or work.shape != (momentum.shape[0],):
@@ -377,7 +377,7 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
         face_count, dimension = momentum.shape
         if (
             owners.shape != (face_count,)
-            or neighbours.shape != (face_count,)
+            or neighbors.shape != (face_count,)
             or active.shape != (face_count,)
             or kappa.shape != (face_count,)
             or direction.shape != (face_count, dimension)
@@ -387,8 +387,8 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
             raise ValueError("surface_tension must be finite and nonnegative.")
         momentum = eqx.error_if(
             momentum,
-            jnp.any(owners < 0) | jnp.any(neighbours < -1),
-            "Capillary owner/neighbour routes are invalid.",
+            jnp.any(owners < 0) | jnp.any(neighbors < -1),
+            "Capillary owner/neighbor routes are invalid.",
         )
         momentum = eqx.error_if(
             momentum,
@@ -403,7 +403,7 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
         self.momentum_rate = jnp.where(active[:, None], momentum, 0.0)
         self.energy_work_rate = jnp.where(active, work, 0.0)
         self.owner_cells = owners
-        self.neighbour_cells = neighbours
+        self.neighbor_cells = neighbors
         self.active_mask = active
         self.curvature = jnp.where(active, kappa, 0.0)
         self.orientation = jnp.where(active[:, None], direction, 0.0)
@@ -435,7 +435,7 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
         return -self.momentum_rate
 
     @property
-    def neighbour_momentum_rate(self) -> Array:
+    def neighbor_momentum_rate(self) -> Array:
         return self.momentum_rate
 
     @property
@@ -443,7 +443,7 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
         return -self.energy_work_rate
 
     @property
-    def neighbour_energy_rate(self) -> Array:
+    def neighbor_energy_rate(self) -> Array:
         return self.energy_work_rate
 
     @property
@@ -459,16 +459,16 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
         return self.owner_momentum_rate
 
     @property
-    def neighbour_force_rate(self) -> Array:
-        return self.neighbour_momentum_rate
+    def neighbor_force_rate(self) -> Array:
+        return self.neighbor_momentum_rate
 
     @property
     def owner_work_rate(self) -> Array:
         return self.owner_energy_rate
 
     @property
-    def neighbour_work_rate(self) -> Array:
-        return self.neighbour_energy_rate
+    def neighbor_work_rate(self) -> Array:
+        return self.neighbor_energy_rate
 
     def cell_momentum_rate(self, cell_count: int, /) -> Array:
         """Scatter this block into cell momentum force rates."""
@@ -477,10 +477,10 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
         result = jnp.zeros(
             (count, self.momentum_rate.shape[-1]), dtype=self.momentum_rate.dtype
         )
-        safe = jnp.maximum(self.neighbour_cells, 0)
+        safe = jnp.maximum(self.neighbor_cells, 0)
         result = result.at[self.owner_cells].add(-self.momentum_rate)
         return result.at[safe].add(
-            jnp.where(self.neighbour_cells[:, None] >= 0, self.momentum_rate, 0.0)
+            jnp.where(self.neighbor_cells[:, None] >= 0, self.momentum_rate, 0.0)
         )
 
     def cell_energy_rate(self, cell_count: int, /) -> Array:
@@ -488,10 +488,10 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
 
         count = int(cell_count)
         result = jnp.zeros((count,), dtype=self.energy_work_rate.dtype)
-        safe = jnp.maximum(self.neighbour_cells, 0)
+        safe = jnp.maximum(self.neighbor_cells, 0)
         result = result.at[self.owner_cells].add(-self.energy_work_rate)
         return result.at[safe].add(
-            jnp.where(self.neighbour_cells >= 0, self.energy_work_rate, 0.0)
+            jnp.where(self.neighbor_cells >= 0, self.energy_work_rate, 0.0)
         )
 
     def momentum_budget(self, cell_count: int, /) -> Array:
@@ -559,21 +559,21 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
     def _plic_values(self, plic: Any, /):
         try:
             normals = jnp.asarray(plic.normals)
-            centres = getattr(plic, "interface_centers", None)
-            if centres is None:
-                centres = getattr(plic, "interface_centres")
-            centres = jnp.asarray(centres)
+            centers = getattr(plic, "interface_centers", None)
+            if centers is None:
+                centers = getattr(plic, "interface_centers")
+            centers = jnp.asarray(centers)
             measures = jnp.asarray(plic.interface_measures)
-            active = jnp.asarray(plic.interface_active, dtype=bool)
+            active = jnp.asarray(plic.interface_active, dtype=jnp.bool_)
         except AttributeError as error:
             raise TypeError(
-                "plic must provide normals, centres, measures, and active mask."
+                "plic must provide normals, centers, measures, and active mask."
             ) from error
         cell_count = self.discretization.cell_count
         dimension = self.discretization.cell_dimension
         if (
             normals.shape != (cell_count, dimension)
-            or centres.shape != (cell_count, dimension)
+            or centers.shape != (cell_count, dimension)
             or measures.shape != (cell_count,)
             or active.shape != (cell_count,)
         ):
@@ -593,7 +593,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         )
         return (
             normals,
-            centres,
+            centers,
             measures,
             active,
             mismatch,
@@ -630,21 +630,21 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         plic: Any,
         volume_fraction: ArrayLike,
     ) -> CurvatureEvidence:
-        """Fit ``div(n)`` from PLIC normals at neighbouring PLIC centres."""
+        """Fit ``div(n)`` from PLIC normals at neighboring PLIC centers."""
 
         alpha = self._validate_volume_fraction(volume_fraction)
         (
             normals_raw,
-            centres,
+            centers,
             measures,
             active_raw,
             mismatch,
             reconstruction,
             volume_fraction_id,
         ) = self._plic_values(plic)
-        dtype = jnp.result_type(alpha, normals_raw, centres)
+        dtype = jnp.result_type(alpha, normals_raw, centers)
         normals = normals_raw.astype(dtype)
-        centres = centres.astype(dtype)
+        centers = centers.astype(dtype)
         measure = measures.astype(dtype)
         magnitude = jnp.linalg.norm(normals, axis=-1)
         fit_active = active_raw & (magnitude > 64.0 * jnp.finfo(dtype).eps)
@@ -655,15 +655,15 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
             routes
             == jnp.arange(self.discretization.cell_count, dtype=routes.dtype)[:, None]
         )
-        neighbours_active = fit_active[routes]
-        usable = stencil_valid & neighbours_active & ~same
+        neighbors_active = fit_active[routes]
+        usable = stencil_valid & neighbors_active & ~same
         usable = (
             usable
             & fit_active[:, None]
             & jnp.isfinite(measure[:, None])
             & (measure[:, None] > 0.0)
         )
-        offsets = centres[routes] - centres[:, None, :]
+        offsets = centers[routes] - centers[:, None, :]
         differences = normals[routes] - normals[:, None, :]
         distance = jnp.sqrt(jnp.sum(offsets * offsets, axis=-1))
         weights = jnp.where(
@@ -701,8 +701,8 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         minimum = 0.5 * (trace - discriminant)
         maximum = 0.5 * (trace + discriminant)
         condition = maximum / jnp.maximum(minimum, jnp.finfo(dtype).tiny)
-        neighbour_count = jnp.sum(usable, axis=1)
-        constant_normal = (neighbour_count >= 1) & (
+        neighbor_count = jnp.sum(usable, axis=1)
+        constant_normal = (neighbor_count >= 1) & (
             jnp.max(
                 jnp.where(
                     usable,
@@ -715,7 +715,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         )
 
         rank_valid = (
-            (neighbour_count >= self.discretization.cell_dimension)
+            (neighbor_count >= self.discretization.cell_dimension)
             & (determinant > self.curvature_tolerance**2 * jnp.maximum(scale, 1.0) ** 2)
             & (condition <= self.condition_limit)
         )
@@ -771,7 +771,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         if volume_fraction is None:
             # This fallback is intentionally conservative: only PLIC-cut cells
             # carry phase-one volume in the absence of a caller-owned alpha.
-            active = jnp.asarray(plic.interface_active, dtype=bool)
+            active = jnp.asarray(plic.interface_active, dtype=jnp.bool_)
             alpha = active.astype(
                 jnp.result_type(self.discretization.cell_volumes, jnp.float32)
             )
@@ -791,9 +791,9 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
             jnp.finfo(dtype).tiny,
         )
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
-        interior = neighbour >= 0
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
+        interior = neighbor >= 0
         if sigma == 0.0:
             return (
                 zero_force,
@@ -817,11 +817,11 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         coefficients = self.gradient.coefficients(pressure)
         lengths = self.gradient.characteristic_lengths.astype(dtype)
         cell_gradient = coefficients / lengths[:, None]
-        average = 0.5 * (cell_gradient[owner] + cell_gradient[safe_neighbour])
+        average = 0.5 * (cell_gradient[owner] + cell_gradient[safe_neighbor])
         normal_gradient = ein.contract("fd,fd->f", average, orientation)
         normal_gradient = jnp.where(interior, normal_gradient, 0.0)
         force = normal_gradient[:, None] * normals
-        face_curvature = 0.5 * (local[owner] + local[safe_neighbour])
+        face_curvature = 0.5 * (local[owner] + local[safe_neighbor])
         face_curvature = jnp.where(interior, face_curvature, 0.0)
         if velocity is None:
             work = zero_work
@@ -833,7 +833,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
             )
             if speed.shape != expected:
                 raise ValueError(f"Velocity must have shape {expected}.")
-            face_speed = 0.5 * (speed[owner] + speed[safe_neighbour])
+            face_speed = 0.5 * (speed[owner] + speed[safe_neighbor])
             face_speed = jnp.where(interior[:, None], face_speed, 0.0)
             work = ein.contract("fd,fd->f", force, face_speed)
         has_interface = jnp.any(evidence.interface_active)
@@ -877,7 +877,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
             force,
             work,
             self.discretization.owner_cells,
-            self.discretization.neighbour_cells,
+            self.discretization.neighbor_cells,
             active,
             curvature,
             orientation,
@@ -957,7 +957,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         if interface_active is None:
             has_interface = jnp.asarray(True)
         else:
-            active = jnp.asarray(interface_active, dtype=bool)
+            active = jnp.asarray(interface_active, dtype=jnp.bool_)
             if active.shape != rho.shape:
                 raise ValueError(
                     "interface_active must have one value per capillary cell."

@@ -56,7 +56,9 @@ class ProcessTransferPlan:
     ) -> ManufacturingRuntimeState:
         mass = self.transfer_extensive(state.deposited_mass_kg)
         energy = self.transfer_extensive(state.supplied_energy_j)
-        active_fraction = self.transfer_intensive(state.activation.active.astype(float))
+        active_fraction = self.transfer_intensive(
+            state.activation.active.astype("float64")
+        )
         activation_time = self.transfer_intensive(
             jnp.where(
                 state.activation.active,

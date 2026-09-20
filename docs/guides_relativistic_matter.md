@@ -112,8 +112,8 @@ reservoir records and exactly balances projection/restoration field-energy chang
 
 ## General-relativistic radiation
 
-`GRGreyM1RadiationSystem` owns transport, closure, characteristics, and stress-energy
-projection only. `GRGreyRadiationInteractionPlan` separately owns opacity-dependent
+`GRGrayM1RadiationSystem` owns transport, closure, characteristics, and stress-energy
+projection only. `GRGrayRadiationInteractionPlan` separately owns opacity-dependent
 absorption, emission, scattering, and Compton exchange. Matter energy and momentum
 sources are exact negatives of the radiation sources.
 
@@ -156,7 +156,7 @@ time coordinate $t_{\rm in}=v-r$, not null constant-$v$ hypersurfaces.
 `grrmhd_fast_light_snapshot` converts an accepted state into the native
 chart/scale/convention-bound imaging medium.
 
-`ThermalBremsstrahlungGreyOpacityPlan`, `ThermalSynchrotronGreyOpacityPlan`, and
+`ThermalBremsstrahlungGrayOpacityPlan`, `ThermalSynchrotronGrayOpacityPlan`, and
 `KleinNishinaScatteringPlan` produce state-dependent interaction coefficients.
 `GRPhotonNumberPlan` transports and creates/absorbs photon number separately from
 energy moments. `RelativisticTwoTemperaturePlan` combines adiabatic species work,

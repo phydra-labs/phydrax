@@ -67,8 +67,8 @@ def benchmark() -> dict[str, object]:
     )
     coupled_result, coupled_solve_seconds = _timed(
         lambda: coupled_prepared.execute(
-            left_incoming=jnp.ones((32,), dtype=complex),
-            right_incoming=jnp.zeros((32,), dtype=complex),
+            left_incoming=jnp.ones((32,), dtype="complex128"),
+            right_incoming=jnp.zeros((32,), dtype="complex128"),
         ),
         lambda value: value.forward_amplitude,
     )

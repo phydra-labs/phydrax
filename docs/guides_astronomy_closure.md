@@ -63,7 +63,7 @@ The black-hole surface is layered rather than gathered under one relativity faca
   thermodynamics, perturbations/QNMs/scattering/Hawking products, accretion initial
   data, ingoing-Kerr GRRMHD torus/fast-light products, plasma microphysics, and EOS/TOV.
 - `phydrax.equations` owns relativistic EOS, SRHD/Valencia GRHD, ideal GRMHD,
-  resistive Ohm, force-free, and grey/multigroup/neutrino radiation closures.
+  resistive Ohm, force-free, and gray/multigroup/neutrino radiation closures.
 - `phydrax.solver` owns bounded primitive recovery, boundary-aware finite-volume
   GRHD/GRMHD/CT, conservative GRRMHD IMEX, resistive and force-free transitions, and
   polarized radiation feedback.

@@ -34,9 +34,9 @@ class DifferentialNormalization(StrictModule):
     field_scale: Array
 
     def __init__(self, coordinate_scale: Array, field_scale: Array, /):
-        coordinate = jnp.asarray(coordinate_scale, dtype=float).reshape((-1,))
-        field = jnp.asarray(field_scale, dtype=float).reshape((-1,))
-        if int(coordinate.size) == 0 or int(field.size) == 0:
+        coordinate = jnp.asarray(coordinate_scale, dtype=jnp.float64).reshape((-1,))
+        field = jnp.asarray(field_scale, dtype=jnp.float64).reshape((-1,))
+        if coordinate.size == 0 or field.size == 0:
             raise ValueError("Differential normalization scales must not be empty.")
         if bool(jnp.any(~jnp.isfinite(coordinate))) or bool(jnp.any(coordinate == 0.0)):
             raise ValueError("Coordinate scales must be finite and nonzero.")
@@ -48,11 +48,10 @@ class DifferentialNormalization(StrictModule):
     def physical_jacobian(self, jacobian: Array, /) -> Array:
         """Apply ``field_scale / coordinate_scale`` to a normalized Jacobian."""
         value = jnp.asarray(jacobian)
-        expected = (int(self.field_scale.size), int(self.coordinate_scale.size))
+        expected = (self.field_scale.size, self.coordinate_scale.size)
         if value.shape[-2:] != expected:
             raise ValueError(
-                f"Jacobian must end with field/coordinate shape {expected}; "
-                f"got {value.shape}."
+                f"Jacobian must end with field/coordinate shape {expected}; got {value.shape}."
             )
         return (
             value
@@ -67,11 +66,10 @@ class LinearDifferentialTransform(StrictModule):
     coefficients: Array
 
     def __init__(self, coefficients: Array, /):
-        tensor = jnp.asarray(coefficients, dtype=float)
-        if tensor.ndim != 3 or any(int(size) <= 0 for size in tensor.shape):
+        tensor = jnp.asarray(coefficients, dtype=jnp.float64)
+        if tensor.ndim != 3 or any(size <= 0 for size in tensor.shape):
             raise ValueError(
-                "Linear differential coefficients require shape "
-                "(outputs, fields, coordinates)."
+                "Linear differential coefficients require shape (outputs, fields, coordinates)."
             )
         if bool(jnp.any(~jnp.isfinite(tensor))):
             raise ValueError("Linear differential coefficients must be finite.")
@@ -79,15 +77,15 @@ class LinearDifferentialTransform(StrictModule):
 
     @property
     def output_channels(self) -> int:
-        return int(self.coefficients.shape[0])
+        return self.coefficients.shape[0]
 
     @property
     def field_channels(self) -> int:
-        return int(self.coefficients.shape[1])
+        return self.coefficients.shape[1]
 
     @property
     def coordinate_dimension(self) -> int:
-        return int(self.coefficients.shape[2])
+        return self.coefficients.shape[2]
 
     def __call__(self, jacobian: Array, /) -> Array:
         return ein.contract("ofc,...fc->...o", self.coefficients, jacobian)
@@ -167,7 +165,7 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
             out_size = (dimension, dimension)
         else:
             raise ValueError(f"Unknown differential transform {transform!r}.")
-        step_ = jnp.asarray(step, dtype=float)
+        step_ = jnp.asarray(step, dtype=jnp.float64)
         if step_.ndim == 0:
             step_ = jnp.full((dimension,), step_)
         else:
@@ -248,7 +246,7 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
         coordinates = jnp.asarray(x)
         if coordinates.ndim == 0 and self.coord_dim == 1:
             coordinates = coordinates[None]
-        if coordinates.ndim < 1 or int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.ndim < 1 or coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
                 f"DifferentialFieldDecoder expects trailing size {self.coord_dim}."
             )

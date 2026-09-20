@@ -4,7 +4,7 @@
 
 """Admitted secondary free-energy profiles and native event-exact CTMC workflows.
 
-Only exhaustive bounded ordered-planar, linear, physically labelled strands are
+Only exhaustive bounded ordered-planar, linear, physically labeled strands are
 compiled. Caller-supplied parameters govern DNA/RNA/hybrid chemistry; no external
 parameter tables or experimentally calibrated kinetic prefactors are bundled.
 """

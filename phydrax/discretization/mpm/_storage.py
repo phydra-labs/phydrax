@@ -13,7 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import GatherStencil
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..spatial import SparseBlockTopologyPlan, SparseBlockTopologyState
 from ..splatting import (
@@ -27,7 +27,7 @@ from ..splatting import (
 class AbstractMPMNodalStoragePlan(StrictModule, NonTrainableState):
     """Static MPM nodal placement policy."""
 
-    storage_id: AbstractAttribute[str]
+    storage_id: eqx.AbstractVar[str]
 
     @property
     @abc.abstractmethod
@@ -52,7 +52,7 @@ class DenseMPMNodalStoragePlan(AbstractMPMNodalStoragePlan):
     storage_id: str = eqx.field(static=True)
 
     def __init__(self, grid_shape, /):
-        shape = tuple(int(value) for value in grid_shape)
+        shape = tuple(grid_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("grid_shape must contain positive dimensions.")
         self.grid_shape = shape

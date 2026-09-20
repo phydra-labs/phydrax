@@ -116,7 +116,7 @@ def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr():
     r_linear = jnp.asarray([[0.04 - 0.01 * i] for i in range(horizon)])
     q_terminal = jnp.diag(jnp.array([3.0, 0.8]))
     terminal_linear = jnp.array([-0.6, 0.2])
-    times = jnp.arange(horizon + 1, dtype=float)
+    times = jnp.arange(horizon + 1, dtype="float64")
     initial_state = jnp.array([0.8, -0.2])
     args = (a, b, bias, q, r, cross, q_linear, r_linear, q_terminal, terminal_linear)
 

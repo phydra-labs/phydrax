@@ -116,10 +116,10 @@ class ScaledMonomialBasis(StrictModule, NonTrainableState):
         scales_ = jnp.asarray(scales)
         if normalized.ndim == scales_.ndim + 2:
             scales_ = scales_[..., None]
-        safe_squared = jnp.maximum(
-            scales_ * scales_, jnp.finfo(normalized.dtype).tiny
+        safe_squared = jnp.maximum(scales_ * scales_, jnp.finfo(normalized.dtype).tiny)
+        result = jnp.zeros(
+            normalized.shape[:-1] + (self.feature_count,), dtype=normalized.dtype
         )
-        result = jnp.zeros(normalized.shape[:-1] + (self.feature_count,), dtype=normalized.dtype)
         exponents = self.exponents
         for axis in range(self.dimension):
             exponent = exponents[:, axis]

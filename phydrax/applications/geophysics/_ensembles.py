@@ -397,7 +397,7 @@ class GeophysicalAnalysisInventory(StrictModule, NonTrainableState):
         /,
     ):
         shape = _layout_shape(state_layout)
-        array = np.asarray(weights, dtype=float)
+        array = np.asarray(weights, dtype=np.float64)
         if (
             not isinstance(name, str)
             or not name

@@ -41,7 +41,7 @@ def test_elastic_network_rigid_invariance_and_force_energy_parity():
 
 
 def _linear_field(policy):
-    grid = jnp.indices((3, 4, 5), dtype=float)
+    grid = jnp.indices((3, 4, 5), dtype="float64")
     scalar = grid[0] + 2.0 * grid[1] - 0.5 * grid[2]
     return GriddedExternalFieldPlan(
         [1.0, -1.0, 2.0],
@@ -68,7 +68,7 @@ def test_scalar_field_interpolation_gradient_and_conservative_force():
 
 
 def test_vector_field_and_boundary_policies_report_domain_evidence():
-    grid = jnp.indices((2, 2, 2), dtype=float)
+    grid = jnp.indices((2, 2, 2), dtype="float64")
     vector = jnp.stack((grid[0], 2.0 * grid[1], 3.0 * grid[2]), axis=-1)
     periodic = GriddedExternalFieldPlan(
         [0.0] * 3,

@@ -62,8 +62,8 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(transfer, PreparedMeshParticleGridSplat):
             raise TypeError("transfer must be PreparedMeshParticleGridSplat.")
-        heat = np.asarray(heat_transfer_coefficient, dtype=float)
-        mass = np.asarray(mass_transfer_coefficient, dtype=float)
+        heat = np.asarray(heat_transfer_coefficient, dtype=np.float64)
+        mass = np.asarray(mass_transfer_coefficient, dtype=np.float64)
         if heat.shape != (transfer.particle_capacity,):
             raise ValueError("heat_transfer_coefficient must have particle capacity.")
         if (
@@ -90,7 +90,7 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
         self.heat_transfer_coefficient = jnp.asarray(heat)
         self.mass_transfer_coefficient = jnp.asarray(mass)
         self.schema_id = schema
-        self.species_count = int(mass.shape[1])
+        self.species_count = mass.shape[1]
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "particle-continuum-exchange-plan",
@@ -128,7 +128,7 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
         active = (
             self.transfer.prepared_active
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         relation = self.transfer.routes(positions, active)
         fluid_temperature_ = jnp.asarray(fluid_temperature)

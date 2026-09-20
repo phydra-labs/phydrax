@@ -42,10 +42,10 @@ class RotorSystem:
         *,
         tolerance: float = 1e-10,
     ) -> RotorSystem:
-        mass_ = np.asarray(mass, dtype=float)
-        damping_ = np.asarray(damping, dtype=float)
-        gyroscopic_ = np.asarray(gyroscopic, dtype=float)
-        stiffness_ = np.asarray(stiffness, dtype=float)
+        mass_ = np.asarray(mass, dtype=np.float64)
+        damping_ = np.asarray(damping, dtype=np.float64)
+        gyroscopic_ = np.asarray(gyroscopic, dtype=np.float64)
+        stiffness_ = np.asarray(stiffness, dtype=np.float64)
         if mass_.ndim != 2 or mass_.shape[0] != mass_.shape[1]:
             raise ValueError("Rotor matrices must be square.")
         if any(
@@ -111,7 +111,7 @@ class RotorSystem:
         for index in range(speed.size):
             excitation = float(excitation_order) * speed[index]
             dynamic = (
-                self.stiffness.astype(complex)
+                self.stiffness.astype("complex128")
                 - excitation**2 * self.mass
                 + 1j * excitation * (self.damping + speed[index] * self.gyroscopic)
             )

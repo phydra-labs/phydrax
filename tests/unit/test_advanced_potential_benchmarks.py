@@ -10,7 +10,6 @@ def test_advanced_potential_benchmark_schema_and_guarantee_split():
         panels_per_chart=2,
         quadrature_order=4,
     )
-    assert result["schema_version"] == 1
     assert result["passed"]
     assert result["holomorphic"]["laplace_residual"] == 0.0
     assert result["boundary_layer"]["pde_exactness"] == "algebraic"

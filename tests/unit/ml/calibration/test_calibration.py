@@ -171,7 +171,7 @@ def test_every_smooth_calibration_family_normalizes_labels_and_jit_vmap_outputs(
 def test_platt_calibration_preserves_case_masks_product_weights_and_frozen_execution():
     features = jnp.stack((_BINARY_SCORES, 0.7 * _BINARY_SCORES + 0.1))
     targets = jnp.stack((_BINARY_TARGETS, _BINARY_TARGETS))
-    target_mask = jnp.ones_like(targets, dtype=bool).at[:, 1].set(False)
+    target_mask = jnp.ones_like(targets, dtype="bool").at[:, 1].set(False)
     sample_mask = jnp.arange(10) != 8
     sample_weight = jnp.linspace(0.5, 1.4, 10)
     measure_weight = jnp.linspace(1.3, 0.8, 10)
@@ -458,7 +458,7 @@ def test_calibration_failures_report_empty_single_class_nonfinite_and_nonconverg
         MLBatch(
             _BINARY_SCORES,
             _BINARY_TARGETS,
-            sample_mask=jnp.zeros(10, dtype=bool),
+            sample_mask=jnp.zeros(10, dtype="bool"),
         )
     )
     single_class = _platt().fit_batch(

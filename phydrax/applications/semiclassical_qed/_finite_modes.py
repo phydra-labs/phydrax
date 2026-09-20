@@ -28,9 +28,9 @@ _SIGMA = jnp.asarray(
         ((0.0, -1j), (1j, 0.0)),
         ((1.0, 0.0), (0.0, -1.0)),
     ),
-    dtype=complex,
+    dtype=jnp.complex128,
 )
-_ZERO_2 = jnp.zeros((2, 2), dtype=complex)
+_ZERO_2 = jnp.zeros((2, 2), dtype=jnp.complex128)
 _ALPHA = jnp.stack(
     tuple(
         jnp.concatenate(
@@ -43,7 +43,7 @@ _ALPHA = jnp.stack(
         for sigma in _SIGMA
     )
 )
-_BETA = jnp.diag(jnp.asarray((1.0, 1.0, -1.0, -1.0), dtype=complex))
+_BETA = jnp.diag(jnp.asarray((1.0, 1.0, -1.0, -1.0), dtype=jnp.complex128))
 _SIGMA_1 = _SIGMA[0]
 _SIGMA_3 = _SIGMA[2]
 
@@ -64,7 +64,7 @@ class HomogeneousSpinorQED3DState(StrictModule):
     ):
         potential = jnp.asarray(vector_potential)
         field = jnp.asarray(electric_field)
-        modes = jnp.asarray(mode_spinors, dtype=complex)
+        modes = jnp.asarray(mode_spinors, dtype=jnp.complex128)
         if potential.shape != (3,) or field.shape != (3,):
             raise ValueError("3+1 homogeneous gauge fields must have shape (3,).")
         if modes.ndim != 3 or modes.shape[1:] != (2, 4):
@@ -98,10 +98,10 @@ class HomogeneousSpinorQED3DPlan(StrictModule, NonTrainableState):
         external_source_id: str | None = None,
         maximum_modes: int = 2**17,
     ):
-        momentum = np.asarray(momenta, dtype=float)
-        weights = np.asarray(quadrature_weights, dtype=float)
-        q = np.asarray(charge, dtype=float)
-        m = np.asarray(mass, dtype=float)
+        momentum = np.asarray(momenta, dtype=np.float64)
+        weights = np.asarray(quadrature_weights, dtype=np.float64)
+        q = np.asarray(charge, dtype=np.float64)
+        m = np.asarray(mass, dtype=np.float64)
         if (
             momentum.ndim != 2
             or momentum.shape[1] != 3
@@ -238,7 +238,7 @@ class ZeroExternalCurrent3D(StrictModule, NonTrainableState):
 
     def __call__(self, time: ArrayLike, /) -> Array:
         del time
-        return jnp.zeros((3,), dtype=float)
+        return jnp.zeros((3,), dtype=jnp.float64)
 
 
 class HomogeneousSpinorQED3DVectorField(StrictModule):
@@ -308,7 +308,7 @@ class FiniteSpatialSpinorQEDState(StrictModule):
     ):
         potential = jnp.asarray(vector_potential)
         field = jnp.asarray(electric_field)
-        modes = jnp.asarray(mode_spinors, dtype=complex)
+        modes = jnp.asarray(mode_spinors, dtype=jnp.complex128)
         if potential.ndim != 1 or field.shape != potential.shape:
             raise ValueError("Finite spatial gauge fields must be matching vectors.")
         if modes.ndim != 3 or modes.shape[1:] != (potential.size, 2):
@@ -348,12 +348,12 @@ class FiniteSpatialSpinorQEDPlan(StrictModule, NonTrainableState):
         maximum_points: int = 8192,
         maximum_modes: int = 2**16,
     ):
-        differential = np.asarray(derivative, dtype=float)
-        weights = np.asarray(spatial_weights, dtype=float)
-        momenta = np.asarray(canonical_momenta, dtype=float)
-        mode_mass = np.asarray(mode_weights, dtype=float)
-        q = np.asarray(charge, dtype=float)
-        m = np.asarray(mass, dtype=float)
+        differential = np.asarray(derivative, dtype=np.float64)
+        weights = np.asarray(spatial_weights, dtype=np.float64)
+        momenta = np.asarray(canonical_momenta, dtype=np.float64)
+        mode_mass = np.asarray(mode_weights, dtype=np.float64)
+        q = np.asarray(charge, dtype=np.float64)
+        m = np.asarray(mass, dtype=np.float64)
         tolerance = float(skew_adjoint_tolerance)
         if (
             differential.ndim != 2
@@ -513,7 +513,7 @@ class ZeroSpatialExternalCurrent(StrictModule, NonTrainableState):
 
     def __call__(self, time: ArrayLike, /) -> Array:
         del time
-        return jnp.zeros((self.point_count,), dtype=float)
+        return jnp.zeros((self.point_count,), dtype=jnp.float64)
 
 
 class FiniteSpatialSpinorQEDVectorField(StrictModule):

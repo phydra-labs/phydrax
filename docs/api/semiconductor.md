@@ -126,7 +126,7 @@ model/mesh admission, storage semantics, qualification, and examples.
 
 ::: phydrax.applications.semiconductor.bipolar_transistor
 
-## Transient, small-signal, and implicit derivative analyses
+## Transient, small-signal, and implicit derivative analyzes
 
 ::: phydrax.applications.semiconductor.semiconductor_transient
 

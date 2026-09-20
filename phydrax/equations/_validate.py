@@ -243,8 +243,7 @@ def infer_expression_type(
             for coordinate_name in regions[node.region].coordinates:
                 if coordinate_name not in coordinates:
                     raise ValueError(
-                        f"Region {node.region!r} references unknown coordinate "
-                        f"{coordinate_name!r}."
+                        f"Region {node.region!r} references unknown coordinate {coordinate_name!r}."
                     )
                 coordinate = coordinates[coordinate_name]
                 dimension = dimension * coordinate.dimension**coordinate.size

@@ -237,7 +237,7 @@ class RectangularFiniteAperture(StrictModule, NonTrainableState):
     aperture_id: str = eqx.field(static=True)
 
     def __init__(self, widths: ArrayLike, /, *, aperture_id: str | None = None):
-        value = np.asarray(widths, dtype=float)
+        value = np.asarray(widths, dtype=np.float64)
         if value.shape != (2,) or np.any(~np.isfinite(value)) or np.any(value <= 0.0):
             raise ValueError("Rectangular aperture widths must be positive shape (2,).")
         identifier = (
@@ -266,8 +266,8 @@ class SampledFiniteAperture(StrictModule, NonTrainableState):
         *,
         aperture_id: str | None = None,
     ):
-        points_ = np.asarray(points, dtype=float)
-        weights_ = np.asarray(weights, dtype=float)
+        points_ = np.asarray(points, dtype=np.float64)
+        weights_ = np.asarray(weights, dtype=np.float64)
         if (
             points_.ndim != 2
             or points_.shape[1] != 2
@@ -314,7 +314,7 @@ class FiniteApertureFarFieldPlan(StrictModule, NonTrainableState):
         normalization: FiniteApertureNormalization = "aperture-area",
         /,
     ):
-        values = np.asarray(directions, dtype=float)
+        values = np.asarray(directions, dtype=np.float64)
         capacity = int(query_capacity)
         if (
             values.ndim != 2
@@ -333,7 +333,7 @@ class FiniteApertureFarFieldPlan(StrictModule, NonTrainableState):
             raise TypeError("Unknown finite aperture plan.")
         if normalization not in ("none", "aperture-area"):
             raise ValueError("Unknown finite-aperture normalization.")
-        padded = np.zeros((capacity, 3), dtype=float)
+        padded = np.zeros((capacity, 3), dtype=np.float64)
         padded[:, 2] = 1.0
         padded[: values.shape[0]] = values / norms[:, None]
         active = np.arange(capacity) < values.shape[0]

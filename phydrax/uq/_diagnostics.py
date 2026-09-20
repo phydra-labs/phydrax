@@ -134,7 +134,7 @@ class MCMCConvergenceReport(StrictModule):
             diagnostics.tail_ess,
             lambda value: ~jnp.isfinite(value) | (value < thresholds.min_tail_ess),
         )
-        divergent_array = jnp.asarray(divergent, dtype=bool)
+        divergent_array = jnp.asarray(divergent, dtype=jnp.bool_)
         divergence_indices = tuple(
             (int(index[0]), int(index[1])) for index in jnp.argwhere(divergent_array)
         )
@@ -242,7 +242,7 @@ def mcmc_diagnostics(
         array = jnp.asarray(leaf)
         if array.ndim < 2:
             raise ValueError("Every MCMC sample leaf needs leading chain and draw axes.")
-        if int(array.shape[0]) < 2 or int(array.shape[1]) < 4:
+        if array.shape[0] < 2 or array.shape[1] < 4:
             raise ValueError(
                 "MCMC diagnostics require at least two chains and four draws."
             )
@@ -275,7 +275,7 @@ def _failing_locations(
 ) -> tuple[str, ...]:
     locations: list[str] = []
     for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
-        array = jnp.asarray(leaf, dtype=float)
+        array = jnp.asarray(leaf, dtype=jnp.float64)
         base = jax.tree_util.keystr(path) or "<root>"
         for index in jnp.argwhere(predicate(array)):
             suffix = ""
@@ -287,7 +287,7 @@ def _failing_locations(
 
 def _tree_extreme(tree: PyTree[Any], /, *, maximum: bool) -> Array:
     leaves = jax.tree_util.tree_leaves(tree)
-    flattened = [jnp.ravel(jnp.asarray(leaf, dtype=float)) for leaf in leaves]
+    flattened = [jnp.ravel(jnp.asarray(leaf, dtype=jnp.float64)) for leaf in leaves]
     values = jnp.concatenate(flattened)
     return jnp.max(values) if maximum else jnp.min(values)
 

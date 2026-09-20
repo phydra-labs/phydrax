@@ -32,9 +32,9 @@ class CurvedVirtualElementEdge(StrictModule, NonTrainableState):
         reference_weights: ArrayLike,
         /,
     ):
-        p = np.asarray(points, dtype=float)
-        t = np.asarray(tangents, dtype=float)
-        w = np.asarray(reference_weights, dtype=float)
+        p = np.asarray(points, dtype=np.float64)
+        t = np.asarray(tangents, dtype=np.float64)
+        w = np.asarray(reference_weights, dtype=np.float64)
         if (
             not str(chart_id)
             or p.ndim != 2
@@ -113,7 +113,7 @@ class VirtualElementProductPlan(StrictModule, NonTrainableState):
                 {"kind": "vem-product-operator", "matrix": array_tree_fingerprint(matrix)}
             ),
         )
-        self.field_offsets = tuple(int(v) for v in offsets)
+        self.field_offsets = tuple(offsets)
         self.inf_sup_margin = float(inf_sup_margin)
         self.commuting_defect = float(commuting_defect)
         self.plan_id = canonical_fingerprint(
@@ -214,7 +214,7 @@ def adapt_virtual_element_p(
     policy: VirtualElementAdaptivityPolicy,
     /,
 ) -> VirtualElementAdaptationResult:
-    values = np.asarray(indicators, dtype=float)
+    values = np.asarray(indicators, dtype=np.float64)
     matrix = np.asarray(transfer)
     if values.shape != epoch.degrees.shape or np.any(values < 0) or matrix.ndim != 2:
         raise ValueError("VEM adaptation indicators/transfer are invalid.")

@@ -43,10 +43,10 @@ class GeometryValidityEvidence(StrictModule):
         margin_names: tuple[str, ...] = (),
         contract_id: str,
     ):
-        finite_ = jnp.asarray(finite, dtype=bool)
-        satisfied_ = jnp.asarray(conditions_satisfied, dtype=bool)
-        resolved_ = jnp.asarray(resolved, dtype=bool)
-        margins_ = jnp.asarray(margins, dtype=float)
+        finite_ = jnp.asarray(finite, dtype=jnp.bool_)
+        satisfied_ = jnp.asarray(conditions_satisfied, dtype=jnp.bool_)
+        resolved_ = jnp.asarray(resolved, dtype=jnp.bool_)
+        margins_ = jnp.asarray(margins, dtype=jnp.float64)
         if finite_.shape != () or satisfied_.shape != () or resolved_.shape != ():
             raise ValueError("Geometry validity flags must be scalar.")
         if margins_.ndim != 1 or margins_.shape != (len(margin_names),):
@@ -136,7 +136,7 @@ def parameter_validity(
             margins.append(margin)
             names.append(f"{spec.parameter_id}:upper")
             satisfied = satisfied & (margin >= 0.0)
-    margin_array = jnp.stack(margins) if margins else jnp.empty((0,), dtype=float)
+    margin_array = jnp.stack(margins) if margins else jnp.empty((0,), dtype=jnp.float64)
     return GeometryValidityEvidence(
         finite=finite,
         conditions_satisfied=satisfied,

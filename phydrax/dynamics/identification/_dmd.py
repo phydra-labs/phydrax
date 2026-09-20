@@ -273,7 +273,7 @@ def fit_dmd(
         )
         state_retained, _, _ = _rank_mask(
             state_singular,
-            rank=(None if rank is None else min(int(rank), int(state_singular.shape[0]))),
+            rank=(None if rank is None else min(int(rank), state_singular.shape[0])),
             energy_threshold=energy_threshold,
             rcond=rcond,
             rows=state_columns.shape[0],

@@ -63,8 +63,7 @@ def _evaluate(
         values = values[..., None]
     if values.shape[-1:] != (coefficient_count,):
         raise ValueError(
-            f"Degree-{degree} form coefficients require trailing size "
-            f"{coefficient_count}; got {values.shape}."
+            f"Degree-{degree} form coefficients require trailing size {coefficient_count}; got {values.shape}."
         )
     return values
 
@@ -102,8 +101,7 @@ class DomainDifferentialForm(StrictModule):
             raise ValueError("Domain differential forms require a geometry variable.")
         if dimension != chart.dimension:
             raise ValueError(
-                f"Chart dimension {chart.dimension} does not match domain variable "
-                f"{variable!r} dimension {dimension}."
+                f"Chart dimension {chart.dimension} does not match domain variable {variable!r} dimension {dimension}."
             )
         self.coefficients = coefficients
         self.chart = chart
@@ -263,8 +261,7 @@ class _DomainExteriorCallable(StrictModule):
         )
         if derivative.shape[-2:] != expected:
             raise ValueError(
-                f"Form coefficient derivative requires trailing shape {expected}; "
-                f"got {derivative.shape}."
+                f"Form coefficient derivative requires trailing shape {expected}; got {derivative.shape}."
             )
         terms = self.signs * derivative[..., self.source_terms, self.derivative_axes]
         return (

@@ -37,7 +37,7 @@ class _LinearModel(AbstractArrayModel):
 
     def __init__(self, coefficients):
         self.coefficients = jnp.asarray(coefficients)
-        self.in_size = int(self.coefficients.shape[0])
+        self.in_size = self.coefficients.shape[0]
         self.out_size = "scalar"
 
     def __call__(self, x, /, *, key=None):
@@ -97,7 +97,7 @@ def _batch(case=False):
     )
     x = jnp.stack((base, base + jnp.array([1.0, 0.0, 0.0]))) if case else base
     y = 2.0 * x[..., 0] + 0.1 * x[..., 2]
-    feature_mask = jnp.ones_like(x, dtype=bool).at[..., 5, 2].set(False)
+    feature_mask = jnp.ones_like(x, dtype="bool").at[..., 5, 2].set(False)
     return MLBatch(
         x,
         y,
@@ -302,8 +302,8 @@ def test_continuous_sparse_gate_preserves_values_and_stays_finite_at_degeneracy(
         sparsity=0.4,
         scorer=lambda _: scores,
     ).fit_batch(_batch())
-    normalised = (scores - jnp.min(scores)) / (jnp.max(scores) - jnp.min(scores))
-    expected = jax.nn.sigmoid((normalised - 0.4) / 0.25)
+    normalized = (scores - jnp.min(scores)) / (jnp.max(scores) - jnp.min(scores))
+    expected = jax.nn.sigmoid((normalized - 0.4) / 0.25)
     assert jnp.allclose(result.as_trainable().gates, expected)
 
     equal = ContinuousSparseGateRecipe(

@@ -83,8 +83,7 @@ def _tensor_array(
     expected = leading_shape + (dimension,) * tensor_type.rank
     if array.shape != expected:
         raise ValueError(
-            f"Tensor type of rank {tensor_type.rank} requires shape {expected}; "
-            f"got {array.shape}."
+            f"Tensor type of rank {tensor_type.rank} requires shape {expected}; got {array.shape}."
         )
     return array, points, len(leading_shape)
 

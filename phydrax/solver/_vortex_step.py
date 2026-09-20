@@ -45,10 +45,14 @@ class SampledAirfoilPolar(StrictModule, NonTrainableState):
         *,
         endpoint: Literal["clamp", "error"] = "clamp",
     ):
-        alpha = jnp.asarray(angle, dtype=float)
-        cl = jnp.asarray(lift, dtype=float)
-        cd = jnp.asarray(drag, dtype=float)
-        cm = jnp.zeros_like(alpha) if moment is None else jnp.asarray(moment, dtype=float)
+        alpha = jnp.asarray(angle, dtype=jnp.float64)
+        cl = jnp.asarray(lift, dtype=jnp.float64)
+        cd = jnp.asarray(drag, dtype=jnp.float64)
+        cm = (
+            jnp.zeros_like(alpha)
+            if moment is None
+            else jnp.asarray(moment, dtype=jnp.float64)
+        )
         if (
             alpha.ndim != 1
             or alpha.size < 2

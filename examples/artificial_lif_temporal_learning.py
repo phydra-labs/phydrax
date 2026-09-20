@@ -27,7 +27,7 @@ def run_example(*, steps: int = 120) -> dict:
     nodes = jnp.arange(length, dtype=jnp.float32)
     phases = jnp.arange(4, dtype=jnp.float32)
     inputs = (0.35 + 0.9 * (((nodes[None, :] + phases[:, None]) % 8) < 3))[..., None]
-    valid = jnp.ones((4, length), dtype=bool)
+    valid = jnp.ones((4, length), dtype="bool")
     time = jnp.broadcast_to(nodes, valid.shape)
     batch = phx.nn.layers.RecurrentBatch(inputs, valid, time=time)
     cell = phx.nn.layers.ArtificialLIFCell(
@@ -56,7 +56,7 @@ def run_example(*, steps: int = 120) -> dict:
     def scenario_loss(current, scenario, _args):
         model = eqx.combine(current, configuration)
         sequence = phx.nn.layers.RecurrentBatch(
-            scenario["inputs"], jnp.ones((length,), dtype=bool), time=nodes
+            scenario["inputs"], jnp.ones((length,), dtype="bool"), time=nodes
         )
         residual = jnp.cumsum(model(sequence) - scenario["target"], axis=0)
         return jnp.mean(jnp.square(residual))

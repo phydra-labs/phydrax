@@ -45,8 +45,7 @@ def unbalanced_sinkhorn_divergence(
     if isinstance(problem.cost, PrecomputedCost):
         if source_self_cost is None or target_self_cost is None:
             raise ValueError(
-                "Precomputed cross costs require explicit source_self_cost and "
-                "target_self_cost."
+                "Precomputed cross costs require explicit source_self_cost and target_self_cost."
             )
         source_cost = source_self_cost
         target_cost = target_self_cost

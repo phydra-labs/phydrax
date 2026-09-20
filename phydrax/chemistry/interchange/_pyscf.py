@@ -101,10 +101,10 @@ class PreparedPySCFCalculation(AbstractPreparedElectronicCalculation):
         gto, scf, dft = require_pyscf()
         system = self.calculation.system
         coordinate = np.asarray(positions, dtype=np.dtype(system.coordinate_dtype))
-        expected = (int(system.particle_ids.shape[0]), 3)
+        expected = (system.particle_ids.shape[0], 3)
         if coordinate.shape != expected:
             raise ValueError(f"positions must have shape {expected}.")
-        active = np.asarray(system.active_mask, dtype=bool)
+        active = np.asarray(system.active_mask, dtype=np.bool_)
         numbers = np.asarray(system.atomic_numbers, dtype=np.int64)[active]
         if np.any(numbers <= 0) or np.any(numbers >= len(_SYMBOLS)):
             raise ValueError("PySCF provider requires supported positive atomic numbers.")
@@ -154,7 +154,7 @@ class PreparedPySCFCalculation(AbstractPreparedElectronicCalculation):
         forces = None
         request = self.calculation.task
         if request.requires(ElectronicProperty.FORCES):
-            gradient = np.asarray(mean_field.nuc_grad_method().kernel(), dtype=float)
+            gradient = np.asarray(mean_field.nuc_grad_method().kernel(), dtype=np.float64)
             if gradient.shape != (int(np.count_nonzero(active)), 3):
                 raise ValueError("PySCF returned an invalid nuclear-gradient shape.")
             forces = np.zeros((active.size, 3), dtype=gradient.dtype)
@@ -162,7 +162,7 @@ class PreparedPySCFCalculation(AbstractPreparedElectronicCalculation):
         dipole = None
         if request.requires(ElectronicProperty.DIPOLE):
             dipole_source = np.asarray(
-                mean_field.dip_moment(unit="AU", verbose=0), dtype=float
+                mean_field.dip_moment(unit="AU", verbose=0), dtype=np.float64
             ).reshape((3,))
             dipole = (
                 dipole_source
@@ -283,8 +283,7 @@ class PySCFProvider(AbstractElectronicProvider):
             or model.model_artifact is not None
         ):
             raise ElectronicCapabilityError(
-                "PySCF provider does not map correction, relativistic, or "
-                "model-artifact semantics."
+                "PySCF provider does not map correction, relativistic, or model-artifact semantics."
             )
         if calculation.task.requires(ElectronicProperty.HESSIAN):
             raise ElectronicCapabilityError(

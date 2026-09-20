@@ -79,7 +79,7 @@ def run() -> dict[str, object]:
         species_ids=("OH",),
         sample_times=[0.0, 1.0],
         species_counts=np.asarray([[[0, 0]], [[1, 0]]]),
-        species_valid=np.ones((2, 1, 2), dtype=bool),
+        species_valid=np.ones((2, 1, 2), dtype="bool"),
         time_unit=SECOND,
         dosimetry_reference=None,
         transport_reference=None,

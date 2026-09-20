@@ -213,8 +213,7 @@ class PreparedBatteryParticle(StrictModule, NonTrainableState):
             diffusivity = jnp.broadcast_to(diffusivity, amounts.shape)
         elif diffusivity.shape != amounts.shape:
             raise ValueError(
-                "diffusivity_m2_s must be scalar, have shape (shell,), or match "
-                "the complete amount shape."
+                "diffusivity_m2_s must be scalar, have shape (shell,), or match the complete amount shape."
             )
         outward_flux = jnp.asarray(outward_molar_flux_mol_m2_s)
         if outward_flux.shape == ():

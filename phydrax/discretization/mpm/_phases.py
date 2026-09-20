@@ -74,7 +74,7 @@ def update_deformation(
     step_size: Array,
     /,
 ) -> Array:
-    dimension = int(deformation_gradient.shape[-1])
+    dimension = deformation_gradient.shape[-1]
     identity = jnp.broadcast_to(
         jnp.eye(dimension, dtype=deformation_gradient.dtype),
         deformation_gradient.shape,

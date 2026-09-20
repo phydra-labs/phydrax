@@ -53,8 +53,7 @@ class EigenCostEstimate(StrictModule):
         if not component_ or not reason_:
             raise ValueError("Eigen cost component and reason must be non-empty.")
         integers = tuple(
-            int(value)
-            for value in (
+            (
                 storage_bytes,
                 preparation_workspace_bytes,
                 apply_workspace_bytes,
@@ -133,8 +132,7 @@ class EigenSolvePlan(StrictModule):
             and not isinstance(selected_method, DenseEigh)
         ):
             raise ValueError(
-                "Iterative eigenvalue differentiation requires an additional "
-                "isolation mode."
+                "Iterative eigenvalue differentiation requires an additional isolation mode."
             )
         if (
             policy.differentiation == "eigenvalues"
@@ -142,8 +140,7 @@ class EigenSolvePlan(StrictModule):
             and problem.constraints.capacity > 0
         ):
             raise ValueError(
-                "Eigenvalue differentiation does not support parameter-dependent "
-                "excluded-subspace stationarity."
+                "Eigenvalue differentiation does not support parameter-dependent excluded-subspace stationarity."
             )
         if isinstance(selected_method, DenseEigh):
             if block != policy.count or subspace != 0 or restart != 0:
@@ -303,8 +300,7 @@ def make_eigensolve_plan(
         and problem.constraints.capacity > 0
     ):
         raise ValueError(
-            "Eigenvalue differentiation does not support parameter-dependent "
-            "excluded-subspace stationarity."
+            "Eigenvalue differentiation does not support parameter-dependent excluded-subspace stationarity."
         )
     _validate_initial_basis(problem, policy)
     preconditioner_plan = _make_preconditioner_plan(problem, policy)
@@ -439,8 +435,7 @@ def _make_preconditioner_plan(
     required = ("linear", "stationary", "self_adjoint", "positive_definite")
     if any(not properties.certifies(name) for name in required):
         raise ValueError(
-            "Eigen preconditioners must be certified linear, stationary, "
-            "self-adjoint, and positive-definite."
+            "Eigen preconditioners must be certified linear, stationary, self-adjoint, and positive-definite."
         )
     cost = plan.cost
     if cost.storage_bytes > policy.resources.preconditioner_bytes:
@@ -463,7 +458,7 @@ def _evaluate_candidate(
 ) -> tuple[EigenCostEstimate, int, int, int]:
     extra = int(policy.differentiation == "eigenvalues")
     supplied_columns = (
-        0 if policy.initial_basis is None else int(policy.initial_basis.shape[1])
+        0 if policy.initial_basis is None else policy.initial_basis.shape[1]
     )
     if isinstance(method, DenseEigh):
         structural_reason = None
@@ -582,13 +577,11 @@ def _dense_cost_estimate(
     materialization = policy.materialization
     if matrix_entries > materialization.max_entries:
         failures.append(
-            f"dense entries {matrix_entries} exceed materialization limit "
-            f"{materialization.max_entries}"
+            f"dense entries {matrix_entries} exceed materialization limit {materialization.max_entries}"
         )
     if matrix_bytes > materialization.max_bytes:
         failures.append(
-            f"dense bytes {matrix_bytes} exceed materialization limit "
-            f"{materialization.max_bytes}"
+            f"dense bytes {matrix_bytes} exceed materialization limit {materialization.max_bytes}"
         )
     resources = policy.resources
     checks = (
@@ -661,7 +654,7 @@ def _cost_estimate(
         policy.count if generalized and policy.differentiation == "eigenvalues" else 0
     )
     supplied_columns = (
-        0 if policy.initial_basis is None else int(policy.initial_basis.shape[1])
+        0 if policy.initial_basis is None else policy.initial_basis.shape[1]
     )
     supplied_storage = n * supplied_columns * itemsize
     prepared_storage = n * (block + 2 * constraint_capacity) * itemsize

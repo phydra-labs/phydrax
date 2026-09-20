@@ -106,9 +106,9 @@ def test_regional_farthest_points_are_deterministic_case_local_and_masked():
 
 
 def test_kernel_transfer_distinguishes_integral_and_normalized_measure():
-    source = (jnp.arange(8, dtype=float) + 0.5)[:, None] / 8.0
+    source = (jnp.arange(8, dtype="float64") + 0.5)[:, None] / 8.0
     target = jnp.array([[0.25], [0.75]])
-    values = jnp.arange(8, dtype=float)
+    values = jnp.arange(8, dtype="float64")
     measure = jnp.full((8,), 0.25)
 
     integral = _constant_kernel_transfer(reduction="integral")(
@@ -502,7 +502,7 @@ def test_regional_graph_processor_is_measure_scale_invariant_and_jittable():
         axis=-1,
     )
     measure = jnp.full((2, 5), 0.2)
-    mask = jnp.ones((2, 5), dtype=bool)
+    mask = jnp.ones((2, 5), dtype="bool")
     evaluate = eqx.filter_jit(
         lambda model, weights: model(
             values,
@@ -582,7 +582,7 @@ def test_operator_transformer_patch_roundtrip_measure_scaling_and_masks():
         heads=2,
         key=jr.key(40),
     )
-    values = jnp.arange(64, dtype=float).reshape((2, 16, 2)) / 64.0
+    values = jnp.arange(64, dtype="float64").reshape((2, 16, 2)) / 64.0
     coordinates = jnp.stack(
         jnp.meshgrid(
             jnp.linspace(0.0, 1.0, 4),
@@ -593,7 +593,7 @@ def test_operator_transformer_patch_roundtrip_measure_scaling_and_masks():
     ).reshape((16, 2))
     coordinates = jnp.broadcast_to(coordinates, (2, 16, 2))
     measure = jnp.full((2, 16), 1.0 / 16.0)
-    mask = jnp.ones((2, 16), dtype=bool).at[1, 10:].set(False)
+    mask = jnp.ones((2, 16), dtype="bool").at[1, 10:].set(False)
 
     tokens = processor.patchify(values)
     reconstructed = processor.unpatchify(tokens, (2,))
@@ -636,7 +636,7 @@ def test_operator_transformer_has_finite_parameter_gradients():
         axis=-1,
     ).reshape((1, 16, 2))
     measure = jnp.full((1, 16), 1.0 / 16.0)
-    mask = jnp.ones((1, 16), dtype=bool)
+    mask = jnp.ones((1, 16), dtype="bool")
 
     loss, gradient = eqx.filter_value_and_grad(
         lambda model: jnp.mean(model(values, coordinates, measure, mask) ** 2)

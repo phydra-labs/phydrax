@@ -19,13 +19,13 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
+from .._array_archive import write_array_archive
 from ..stochastic._bsde import BSDEEvaluation
 from ..stochastic._jump_bsde import JumpBSDEEvaluation
 from ._bellman import BellmanFilterResult, BellmanSmootherResult
 from ._checkpoint import (
     _json_value,
     _read_array_archive,
-    _write_array_archive,
     CheckpointCorruptionError,
 )
 from ._diagnostics import MCMCConvergenceReport
@@ -150,7 +150,7 @@ def export_result(
         "trees": trees,
         "excluded": list(excluded),
     }
-    return _write_array_archive(path, manifest=manifest, arrays=arrays)
+    return write_array_archive(path, manifest=manifest, arrays=arrays)
 
 
 def read_result_archive(path: str | Path, /) -> UQResultArchive:
@@ -1825,8 +1825,7 @@ def _adapt_result(result, arrays, fields, trees):
         )
 
     raise TypeError(
-        "Unsupported UQ result type for export: "
-        f"{type(result).__module__}.{type(result).__qualname__}."
+        f"Unsupported UQ result type for export: {type(result).__module__}.{type(result).__qualname__}."
     )
 
 
@@ -2234,7 +2233,7 @@ def _put_flat_inexact_tree(
             continue
         array_name = f"tree/{name}/{len(names):06d}"
         array = _portable_array(leaf)
-        size = int(array.size)
+        size = array.size
         arrays[array_name] = array
         paths.append(jax.tree_util.keystr(path) or "<root>")
         names.append(array_name)
@@ -2245,8 +2244,7 @@ def _put_flat_inexact_tree(
         raise ValueError(f"Result inexact array tree {name!r} has no leaves.")
     if offset != int(expected_size):
         raise ValueError(
-            f"Result inexact array tree {name!r} has size {offset}, "
-            f"expected {expected_size}."
+            f"Result inexact array tree {name!r} has size {offset}, expected {expected_size}."
         )
     trees[name] = {
         "paths": paths,

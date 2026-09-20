@@ -19,8 +19,8 @@ def test_chunked_extended_correlation_recovers_row_column_shift_and_mask():
     expected = jnp.asarray([1.0, -2.0])
     second_values = jnp.zeros((3, 14, 14))
     second_values = second_values.at[:, 4:12, 1:9].set(first_values)
-    first_mask = jnp.ones_like(first_values, dtype=bool).at[2].set(False)
-    second_mask = jnp.ones_like(second_values, dtype=bool).at[2].set(False)
+    first_mask = jnp.ones_like(first_values, dtype="bool").at[2].set(False)
+    second_mask = jnp.ones_like(second_values, dtype="bool").at[2].set(False)
     first = WindowBatch2D(first_values, first_mask, jnp.zeros((3, 2)), (1, 3))
     second = WindowBatch2D(second_values, second_mask, jnp.zeros((3, 2)), (1, 3))
 
@@ -45,8 +45,8 @@ def test_linear_correlation_uses_overlap_mask_instead_of_wrapping():
     first_values = jr.normal(jr.key(5), (1, 8, 8))
     second_values = jnp.zeros_like(first_values)
     second_values = second_values.at[:, 1:, 2:].set(first_values[:, :-1, :-2])
-    first_mask = jnp.ones_like(first_values, dtype=bool)
-    second_mask = jnp.zeros_like(second_values, dtype=bool).at[:, 1:, 2:].set(True)
+    first_mask = jnp.ones_like(first_values, dtype="bool")
+    second_mask = jnp.zeros_like(second_values, dtype="bool").at[:, 1:, 2:].set(True)
     first = WindowBatch2D(first_values, first_mask, jnp.zeros((1, 2)), (1, 1))
     second = WindowBatch2D(second_values, second_mask, jnp.zeros((1, 2)), (1, 1))
 
@@ -67,7 +67,7 @@ def test_linear_correlation_uses_overlap_mask_instead_of_wrapping():
 def test_circular_correlation_preserves_positive_row_down_shift():
     first_values = jr.normal(jr.key(7), (1, 8, 8))
     second_values = jnp.roll(first_values, (2, -1), axis=(-2, -1))
-    mask = jnp.ones_like(first_values, dtype=bool)
+    mask = jnp.ones_like(first_values, dtype="bool")
     first = WindowBatch2D(first_values, mask, jnp.zeros((1, 2)), (1, 1))
     second = WindowBatch2D(second_values, mask, jnp.zeros((1, 2)), (1, 1))
 
@@ -90,7 +90,7 @@ def test_top_k_ties_are_row_major_and_gaussian_fit_is_subpixel():
     tied = CorrelationBatch(
         jnp.ones((1, 5, 5)),
         jnp.ones((1, 5, 5)),
-        jnp.ones((1, 5, 5), dtype=bool),
+        jnp.ones((1, 5, 5), dtype="bool"),
         lags,
         "linear",
     )
@@ -105,7 +105,7 @@ def test_top_k_ties_are_row_major_and_gaussian_fit_is_subpixel():
     smooth = CorrelationBatch(
         surface[None],
         jnp.ones((1, 5, 5)),
-        jnp.ones((1, 5, 5), dtype=bool),
+        jnp.ones((1, 5, 5), dtype="bool"),
         lags,
         "linear",
     )

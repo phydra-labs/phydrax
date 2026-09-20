@@ -37,7 +37,8 @@ class SpaceWeatherTable(StrictModule, NonTrainableState):
 
     def __init__(self, times, f107, f107_average, ap, provenance, /):
         values = tuple(
-            np.asarray(value, dtype=float) for value in (times, f107, f107_average, ap)
+            np.asarray(value, dtype=np.float64)
+            for value in (times, f107, f107_average, ap)
         )
         if (
             values[0].ndim != 1

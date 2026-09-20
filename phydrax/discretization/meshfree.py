@@ -32,7 +32,10 @@ def _multiindices(dimension: int, degree: int, /) -> tuple[tuple[int, ...], ...]
 
 def _monomial_matrix(offsets: np.ndarray, exponents, /) -> np.ndarray:
     return np.stack(
-        [np.prod(offsets ** np.asarray(exponent)[None, :], axis=1) for exponent in exponents],
+        [
+            np.prod(offsets ** np.asarray(exponent)[None, :], axis=1)
+            for exponent in exponents
+        ],
         axis=1,
     )
 
@@ -47,7 +50,9 @@ def _operator_moments(exponents, kind, axis, /) -> np.ndarray:
                 float(
                     exponent[axis] == 1
                     and all(
-                        power == 0 for index, power in enumerate(exponent) if index != axis
+                        power == 0
+                        for index, power in enumerate(exponent)
+                        if index != axis
                     )
                 )
             )
@@ -67,7 +72,7 @@ def _operator_moments(exponents, kind, axis, /) -> np.ndarray:
                     )
                 )
             )
-    return np.asarray(values, dtype=float)
+    return np.asarray(values, dtype=np.float64)
 
 
 def _rbf_rhs(offsets: np.ndarray, power: int, kind, axis, /) -> np.ndarray:
@@ -85,10 +90,10 @@ def _rbf_rhs(offsets: np.ndarray, power: int, kind, axis, /) -> np.ndarray:
 
 @dataclass(frozen=True, slots=True)
 class MeshfreeStencilPlan:
-    """Fixed point cloud and nearest-neighbour topology."""
+    """Fixed point cloud and nearest-neighbor topology."""
 
     coordinates: Array
-    neighbours: Array
+    neighbors: Array
     polynomial_degree: int
     plan_id: str
 
@@ -100,7 +105,7 @@ class MeshfreeStencilPlan:
         stencil_size: int,
         polynomial_degree: int = 2,
     ):
-        points = np.asarray(coordinates, dtype=float)
+        points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
             raise ValueError("coordinates must have shape (points, dimensions).")
         if not np.all(np.isfinite(points)):
@@ -116,15 +121,15 @@ class MeshfreeStencilPlan:
             )
         differences = points[:, None, :] - points[None, :, :]
         distances = np.sum(differences * differences, axis=-1)
-        neighbours = np.argsort(distances, axis=1, kind="stable")[:, :size]
+        neighbors = np.argsort(distances, axis=1, kind="stable")[:, :size]
         payload = {
             "kind": "meshfree-stencil-plan",
             "coordinates": points.tolist(),
-            "neighbours": neighbours.tolist(),
+            "neighbors": neighbors.tolist(),
             "polynomial_degree": degree,
         }
         object.__setattr__(self, "coordinates", jnp.asarray(points))
-        object.__setattr__(self, "neighbours", jnp.asarray(neighbours, dtype=jnp.int32))
+        object.__setattr__(self, "neighbors", jnp.asarray(neighbors, dtype=jnp.int32))
         object.__setattr__(self, "polynomial_degree", degree)
         object.__setattr__(self, "plan_id", canonical_fingerprint(payload))
 
@@ -170,7 +175,7 @@ class PreparedMeshfreeOperator:
         field = jnp.asarray(values)
         if field.shape[0] != self.plan.coordinates.shape[0]:
             raise ValueError("meshfree values must begin with the point axis.")
-        gathered = field[self.plan.neighbours]
+        gathered = field[self.plan.neighbors]
         weights = self.weights[(...,) + (None,) * (field.ndim - 1)]
         return jnp.sum(weights * gathered, axis=1)
 
@@ -193,7 +198,7 @@ def prepare_meshfree_operator(
         raise ValueError("Unknown meshfree operator kind.")
     if method not in ("rbf-fd", "gmls"):
         raise ValueError("Unknown meshfree method.")
-    dimension = int(plan.coordinates.shape[1])
+    dimension = plan.coordinates.shape[1]
     axis_ = 0 if axis is None else int(axis)
     if kind == "gradient" and not 0 <= axis_ < dimension:
         raise ValueError("gradient axis is outside the coordinate dimension.")
@@ -207,13 +212,13 @@ def prepare_meshfree_operator(
         raise ValueError("gmls_scale must be finite and positive.")
 
     points = np.asarray(plan.coordinates)
-    neighbours = np.asarray(plan.neighbours)
+    neighbors = np.asarray(plan.neighbors)
     exponents = _multiindices(dimension, plan.polynomial_degree)
     moments = _operator_moments(exponents, kind, axis_)
     weights = []
     conditions = []
     reproduction_errors = []
-    for center_index, stencil in enumerate(neighbours):
+    for center_index, stencil in enumerate(neighbors):
         offsets = points[stencil] - points[center_index]
         polynomial = _monomial_matrix(offsets, exponents)
         if method == "rbf-fd":
@@ -225,15 +230,13 @@ def prepare_meshfree_operator(
                     [polynomial.T, np.zeros((len(exponents), len(exponents)))],
                 ]
             )
-            right = np.concatenate(
-                (_rbf_rhs(offsets, power, kind, axis_), moments)
-            )
+            right = np.concatenate((_rbf_rhs(offsets, power, kind, axis_), moments))
             solution = np.linalg.solve(matrix, right)
             stencil_weights = solution[: stencil.size]
             condition = np.linalg.cond(matrix)
         else:
             radius = np.linalg.norm(offsets, axis=1)
-            maximum = max(float(np.max(radius)), np.finfo(float).eps)
+            maximum = max(float(np.max(radius)), np.finfo(np.float64).eps)
             diagonal = np.exp(-((radius / (scale * maximum)) ** 2))
             normal = polynomial.T @ (diagonal[:, None] * polynomial)
             stencil_weights = diagonal * (polynomial @ np.linalg.solve(normal, moments))

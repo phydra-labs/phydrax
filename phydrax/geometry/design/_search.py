@@ -91,16 +91,18 @@ class DesignSearchResult(StrictModule):
         invalid_evaluations: int,
         design_signature: str,
     ):
-        residual_ = jnp.asarray(residual, dtype=float).reshape((-1,))
+        residual_ = jnp.asarray(residual, dtype=jnp.float64).reshape((-1,))
         self.state = state
         self.residual = residual_
         self.residual_norm = jnp.linalg.norm(residual_)
-        self.objective = jnp.asarray(objective, dtype=float).reshape(())
-        self.population_vectors = jnp.asarray(population_vectors, dtype=float)
-        self.population_objectives = jnp.asarray(population_objectives, dtype=float)
-        self.best_objective_history = jnp.asarray(best_objective_history, dtype=float)
-        self.lower_bounds = jnp.asarray(lower_bounds, dtype=float)
-        self.upper_bounds = jnp.asarray(upper_bounds, dtype=float)
+        self.objective = jnp.asarray(objective, dtype=jnp.float64).reshape(())
+        self.population_vectors = jnp.asarray(population_vectors, dtype=jnp.float64)
+        self.population_objectives = jnp.asarray(population_objectives, dtype=jnp.float64)
+        self.best_objective_history = jnp.asarray(
+            best_objective_history, dtype=jnp.float64
+        )
+        self.lower_bounds = jnp.asarray(lower_bounds, dtype=jnp.float64)
+        self.upper_bounds = jnp.asarray(upper_bounds, dtype=jnp.float64)
         self.key = key
         self.search = search
         self.converged = bool(converged)
@@ -119,13 +121,12 @@ def _parameter_bound(
     parameter_id: ParameterId,
     side: str,
 ) -> np.ndarray:
-    array = np.asarray(value, dtype=float)
+    array = np.asarray(value, dtype=np.float64)
     if array.shape == ():
-        return np.full(shape, float(array), dtype=float).reshape((-1,))
+        return np.full(shape, float(array), dtype=np.float64).reshape((-1,))
     if array.shape != shape:
         raise ValueError(
-            f"{side} search bound for {parameter_id} must be scalar or have shape "
-            f"{shape}, got {array.shape}."
+            f"{side} search bound for {parameter_id} must be scalar or have shape {shape}, got {array.shape}."
         )
     return array.reshape((-1,))
 
@@ -149,8 +150,8 @@ def _resolve_search_bounds(
             strict=True,
         )
     }
-    lower = np.asarray(system.lower_bounds, dtype=float).copy()
-    upper = np.asarray(system.upper_bounds, dtype=float).copy()
+    lower = np.asarray(system.lower_bounds, dtype=np.float64).copy()
+    upper = np.asarray(system.upper_bounds, dtype=np.float64).copy()
 
     for parameter_id, pair in overrides.items():
         if not isinstance(parameter_id, ParameterId):
@@ -173,19 +174,16 @@ def _resolve_search_bounds(
             raise ValueError(f"Search bounds for {parameter_id} must be finite.")
         if np.any(lower_ >= upper_):
             raise ValueError(
-                f"Every lower search bound for {parameter_id} must be smaller "
-                "than its upper bound."
+                f"Every lower search bound for {parameter_id} must be smaller than its upper bound."
             )
         physical_lower, physical_upper = schema.specs[index].bounds
         if physical_lower is not None and np.any(lower_ < physical_lower):
             raise ValueError(
-                f"Search bounds for {parameter_id} extend below the physical lower "
-                f"bound {physical_lower}."
+                f"Search bounds for {parameter_id} extend below the physical lower bound {physical_lower}."
             )
         if physical_upper is not None and np.any(upper_ > physical_upper):
             raise ValueError(
-                f"Search bounds for {parameter_id} extend above the physical upper "
-                f"bound {physical_upper}."
+                f"Search bounds for {parameter_id} extend above the physical upper bound {physical_upper}."
             )
         lower[start:stop] = lower_
         upper[start:stop] = upper_
@@ -202,14 +200,14 @@ def _resolve_search_bounds(
     if np.any(lower >= upper):
         raise ValueError("Every lower search bound must be smaller than its upper bound.")
 
-    initial = np.asarray(system.pack(initial_state), dtype=float)
+    initial = np.asarray(system.pack(initial_state), dtype=np.float64)
     outside = (initial < lower) | (initial > upper)
     if np.any(outside):
         raise ValueError("The initial design state lies outside the search bounds.")
     return (
-        jnp.asarray(lower, dtype=float),
-        jnp.asarray(upper, dtype=float),
-        jnp.asarray(initial, dtype=float),
+        jnp.asarray(lower, dtype=jnp.float64),
+        jnp.asarray(upper, dtype=jnp.float64),
+        jnp.asarray(initial, dtype=jnp.float64),
     )
 
 

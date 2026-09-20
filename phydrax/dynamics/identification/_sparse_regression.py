@@ -210,11 +210,11 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
         )
         target_scale = _target_scales(design, self.scale_targets)
         normalized_target = design.target / target_scale[None, :]
-        support = jnp.ones((design.output_size, design.num_features), dtype=bool)
+        support = jnp.ones((design.output_size, design.num_features), dtype=jnp.bool_)
         coefficients, ranks, conditions, solve_valid = _solve_outputs(
             normalized, normalized_target, support, self.ridge
         )
-        converged = jnp.zeros((design.output_size,), dtype=bool)
+        converged = jnp.zeros((design.output_size,), dtype=jnp.bool_)
         iteration_count = jnp.zeros((design.output_size,), dtype=jnp.int32)
         coefficient_history = [coefficients]
         support_history = [support]
@@ -357,8 +357,7 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
             feature_names=design.feature_names,
             output_names=design.output_names,
             method_id=(
-                f"stlsq:threshold-space={self.threshold_space}:"
-                f"ridge={self.ridge:g}:unbiased={self.unbiased_refit}"
+                f"stlsq:threshold-space={self.threshold_space}:ridge={self.ridge:g}:unbiased={self.unbiased_refit}"
             ),
             design_id=design.design_id,
         )
@@ -384,7 +383,7 @@ class DenseBlockRidgeRegression(AbstractSparseRegression):
         scale_targets: bool = False,
         rcond: float | None = None,
     ):
-        sizes = tuple(int(size) for size in block_sizes)
+        sizes = tuple(block_sizes)
         penalties = tuple(float(value) for value in regularization)
         if not sizes or any(size <= 0 for size in sizes):
             raise ValueError("block_sizes must contain positive block widths.")
@@ -490,7 +489,7 @@ class DenseBlockRidgeRegression(AbstractSparseRegression):
         )
         support = jnp.ones(
             (design.output_size, design.num_features),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         rank_scalar = jnp.asarray(linear_result.diagnostics.rank).reshape(-1)[0]
         condition_scalar = jnp.asarray(

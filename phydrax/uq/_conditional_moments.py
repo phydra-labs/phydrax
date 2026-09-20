@@ -436,7 +436,7 @@ def _condition_affine_gaussian_diagonal(
     matrix = jnp.asarray(observation_matrix)
     offset = jnp.asarray(observation_offset)
     variance = jnp.asarray(observation_variance)
-    observed = jnp.asarray(mask, dtype=bool)
+    observed = jnp.asarray(mask, dtype=jnp.bool_)
     state_size = mean.size
     observation_size = variance.size
     if mean.shape != (state_size,):

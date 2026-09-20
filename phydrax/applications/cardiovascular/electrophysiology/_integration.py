@@ -66,7 +66,7 @@ class LieSplit(StrictModule, NonTrainableState):
     split_id: str = eqx.field(static=True)
 
     def __init__(self):
-        self.split_id = "cardiovascular-lie-reaction-diffusion-v1"
+        self.split_id = "cardiovascular-lie-reaction-diffusion"
 
 
 class StrangSplit(StrictModule, NonTrainableState):
@@ -75,7 +75,7 @@ class StrangSplit(StrictModule, NonTrainableState):
     split_id: str = eqx.field(static=True)
 
     def __init__(self):
-        self.split_id = "cardiovascular-strang-diffusion-reaction-v1"
+        self.split_id = "cardiovascular-strang-diffusion-reaction"
 
 
 MonodomainSplitting: TypeAlias = LieSplit | StrangSplit
@@ -96,7 +96,7 @@ class ExplicitReferenceDiffusion(StrictModule, NonTrainableState):
         self.maximum_step_ms = maximum
         self.diffusion_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-explicit-reference-diffusion-v1",
+                "kind": "cardiovascular-explicit-reference-diffusion",
                 "maximum_step_ms": maximum,
             }
         )
@@ -125,7 +125,7 @@ class ImplicitThetaDiffusion(StrictModule, NonTrainableState):
         self.linear_policy = linear_policy
         self.diffusion_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-implicit-theta-diffusion-v1",
+                "kind": "cardiovascular-implicit-theta-diffusion",
                 "theta": theta_,
                 "linear_method": linear_policy.method.name,
                 "relative_tolerance": linear_policy.tolerance.relative,
@@ -175,7 +175,7 @@ class EventAlignedMultirateSchedule(StrictModule, NonTrainableState):
             raise TypeError("Schedule cadence values must be integers.")
         if any(value <= 0 for value in integer_values):
             raise ValueError("Schedule cadence values must be positive.")
-        events = tuple(int(value) for value in event_ticks)
+        events = tuple(event_ticks)
         total_ticks = reaction_ticks_per_macro * macro_step_count
         if not events or events[0] != 0:
             raise ValueError("event_ticks must start at zero.")
@@ -190,7 +190,7 @@ class EventAlignedMultirateSchedule(StrictModule, NonTrainableState):
         self.checkpoint_stride = checkpoint_stride
         self.schedule_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-event-aligned-multirate-v1",
+                "kind": "cardiovascular-event-aligned-multirate",
                 "tick_dt_ms": tick,
                 "reaction_ticks_per_macro": reaction_ticks_per_macro,
                 "macro_step_count": macro_step_count,
@@ -208,7 +208,7 @@ class EventAlignedMultirateSchedule(StrictModule, NonTrainableState):
         return self.reaction_ticks_per_macro * self.macro_step_count
 
     def event_mask(self) -> Array:
-        mask = jnp.zeros((self.total_tick_count,), dtype=bool)
+        mask = jnp.zeros((self.total_tick_count,), dtype=jnp.bool_)
         return mask.at[jnp.asarray(self.event_ticks, dtype=jnp.int32)].set(True)
 
 
@@ -353,7 +353,7 @@ class PhysicalMonodomainSpatialBinding(StrictModule, NonTrainableState):
         self.diffusion = diffusion
         self.binding_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-physical-monodomain-spatial-binding-v1",
+                "kind": "cardiovascular-physical-monodomain-spatial-binding",
                 "label": label,
                 "node_volume_mm3": array_tree_fingerprint(volumes),
                 "diffusion_input_id": diffusion.input_id,
@@ -432,7 +432,7 @@ class PhysicalMonodomainPlan(StrictModule, NonTrainableState):
         self.checkpoint_capacity = checkpoint_capacity
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-physical-monodomain-plan-v1",
+                "kind": "cardiovascular-physical-monodomain-plan",
                 "node_count": node_count,
                 "schedule": schedule.schedule_id,
                 "splitting": splitting.split_id,
@@ -606,17 +606,16 @@ def _build_worksets(
         if reaction_index >= len(reactions_):
             raise ValueError("A workset reaction_index is out of range.")
         reaction = reactions_[reaction_index]
-        if reaction.node_count != int(node_indices.shape[0]):
+        if reaction.node_count != node_indices.shape[0]:
             raise ValueError(
-                "Each PreparedReaction node_count must equal its homogeneous "
-                "workset size."
+                "Each PreparedReaction node_count must equal its homogeneous workset size."
             )
         if reaction.plan.dtype != dtype:
             raise TypeError("Reaction and diffusion dtypes must match exactly.")
         gate_indices = tuple(
             index - 1 for index in reaction.model.state_layout.gate_indices
         )
-        exact_mask = jnp.zeros((reaction.gate_count,), dtype=bool)
+        exact_mask = jnp.zeros((reaction.gate_count,), dtype=jnp.bool_)
         if gate_indices:
             exact_mask = exact_mask.at[jnp.asarray(gate_indices, dtype=jnp.int32)].set(
                 True
@@ -627,14 +626,13 @@ def _build_worksets(
         ) * float(reaction.model.membrane_capacitance_uF_per_mm2)
         if not isfinite(volumetric_capacitance) or volumetric_capacitance <= 0.0:
             raise ValueError(
-                "Reaction membrane scaling must define positive finite "
-                "volumetric capacitance."
+                "Reaction membrane scaling must define positive finite volumetric capacitance."
             )
         ionic_current_scale = assignment.workset_ionic_current_scales[position]
         state_update_scale = assignment.workset_state_update_scales[position]
         workset_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-homogeneous-reaction-workset-v1",
+                "kind": "cardiovascular-homogeneous-reaction-workset",
                 "regional_workset_id": assignment.workset_ids[position],
                 "reaction_plan_id": reaction.plan_id,
                 "reaction_model_id": reaction.model_id,
@@ -755,7 +753,7 @@ def prepare_physical_monodomain(
             )
     runtime_id = canonical_fingerprint(
         {
-            "kind": "prepared-cardiovascular-physical-monodomain-v1",
+            "kind": "prepared-cardiovascular-physical-monodomain",
             "plan": plan.plan_id,
             "spatial": spatial.binding_id,
             "regional_assignment": regional_assignment.runtime_id,
@@ -795,8 +793,8 @@ def _empty_checkpoint_buffer(
         jnp.zeros((capacity,), dtype=jnp.int32),
         jnp.zeros((capacity,), dtype=jnp.int32),
         jnp.zeros((capacity, runtime.plan.node_count), dtype=voltage_mV.dtype),
-        jnp.zeros((capacity,), dtype=bool),
-        jnp.zeros((capacity,), dtype=bool).at[0].set(True),
+        jnp.zeros((capacity,), dtype=jnp.bool_),
+        jnp.zeros((capacity,), dtype=jnp.bool_).at[0].set(True),
         jnp.asarray(1 % capacity, dtype=jnp.int32),
         runtime.runtime_id,
     )

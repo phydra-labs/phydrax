@@ -14,10 +14,12 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
+
 from ._delay import StateDependentDelay
 
 
-class DynamicDiscontinuityState(eqx.Module):
+class DynamicDiscontinuityState(StrictModule):
     """Finite-capacity state for forward discontinuity propagation."""
 
     times: Array
@@ -38,7 +40,7 @@ class DynamicDiscontinuityState(eqx.Module):
     num_restarts: Array
 
 
-class DynamicControllerState(eqx.Module):
+class DynamicControllerState(StrictModule):
     inner_state: Any
     discontinuities: DynamicDiscontinuityState
 
@@ -52,8 +54,8 @@ def constant_discontinuity_schedule(
     max_discontinuities: int,
 ) -> tuple[Array, Array]:
     """Return the ordered additive constant-delay schedule and its generations."""
-    num_delays = int(delays.size)
-    num_sources = int(initial_discontinuities.size)
+    num_delays = delays.size
+    num_sources = initial_discontinuities.size
     combinations = comb(depth + num_delays, num_delays)
     candidate_count = num_sources * combinations
     if candidate_count > max_discontinuities:
@@ -84,7 +86,7 @@ def constant_discontinuity_schedule(
     return flat_candidates[order], flat_generations[order]
 
 
-class StateDependentDiscontinuityTracker(eqx.Module):
+class StateDependentDiscontinuityTracker(StrictModule):
     """Certified monotone and sign-isolated nonmonotone root tracker."""
 
     delays: tuple[StateDependentDelay, ...]
@@ -122,7 +124,7 @@ class StateDependentDiscontinuityTracker(eqx.Module):
             raise ValueError("Dynamic discontinuity depth must be positive.")
         if initial_times.ndim != 1 or initial_generations.shape != initial_times.shape:
             raise ValueError("Initial discontinuity times and generations must align.")
-        initial_count = int(initial_times.size)
+        initial_count = initial_times.size
         if initial_count > capacity:
             raise ValueError(
                 "Initial discontinuity schedule exceeds the static root capacity."
@@ -216,7 +218,7 @@ class StateDependentDiscontinuityTracker(eqx.Module):
             landed=landed,
             processed=jnp.zeros(
                 (self.capacity, len(self.delays)),
-                dtype=bool,
+                dtype=jnp.bool_,
             ),
             count=finite_count,
             bracket_active=jnp.asarray(False),
@@ -367,7 +369,7 @@ class StateDependentDiscontinuityTracker(eqx.Module):
             jnp.where(
                 exists,
                 state.processed[index],
-                jnp.zeros((len(self.delays),), dtype=bool),
+                jnp.zeros((len(self.delays),), dtype=jnp.bool_),
             )
         )
         count = state.count + (~exists).astype(jnp.int32)

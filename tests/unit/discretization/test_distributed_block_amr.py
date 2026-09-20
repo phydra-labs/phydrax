@@ -42,7 +42,7 @@ def _compiled(hierarchy, *, coarse_slot=1, coarse_cell=2):
                 hierarchy.levels[0].maximum_blocks,
                 *hierarchy.levels[0].block_shape,
             ),
-            dtype=bool,
+            dtype="bool",
         )
         .at[coarse_slot, coarse_cell]
         .set(True)
@@ -97,9 +97,9 @@ def test_partition_ownership_is_local_and_independent_of_compilation_history():
     hierarchy = _hierarchy()
     compiler, direct = _compiled(hierarchy)
     initial = compiler.initialize().topology
-    other_tags = jnp.zeros((2, 4), dtype=bool).at[0, 0].set(True)
+    other_tags = jnp.zeros((2, 4), dtype="bool").at[0, 0].set(True)
     other = compiler.compile(initial, (other_tags,)).topology
-    target_tags = jnp.zeros((2, 4), dtype=bool).at[1, 2].set(True)
+    target_tags = jnp.zeros((2, 4), dtype="bool").at[1, 2].set(True)
     by_other_history = compiler.compile(other, (target_tags,))
 
     _, first = _prepare(hierarchy, direct, 3)
@@ -234,10 +234,10 @@ def test_resource_evidence_counts_the_real_allocations_exactly_and_manifest_is_c
         prepared.partition.part_count * value for value in prepared.local_block_capacities
     )
     assert evidence.dynamic_route_array_entries == sum(
-        int(array.size) for array in dynamic_arrays
+        array.size for array in dynamic_arrays
     )
     assert evidence.dynamic_route_array_bytes == sum(
-        int(array.size) * int(array.dtype.itemsize) for array in dynamic_arrays
+        array.size * array.dtype.itemsize for array in dynamic_arrays
     )
     assert evidence.static_permutation_pairs == sum(
         len(phase) for route in schedules for phase in route.permutations

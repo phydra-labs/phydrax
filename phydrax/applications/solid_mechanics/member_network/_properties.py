@@ -410,7 +410,7 @@ class MemberPropertyMap(StrictModule, NonTrainableState):
 
     @property
     def member_count(self) -> int:
-        return int(self.member_material.size)
+        return self.member_material.size
 
     def arrays(self, /) -> dict[str, Array]:
         young = jnp.asarray([value.young_modulus for value in self.materials])

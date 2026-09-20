@@ -64,8 +64,7 @@ class MACImmersedPressureBlockPreconditionerPlan(StrictModule, NonTrainableState
         allowed = (AbstractPreconditioner, AbstractPreconditionerBuilder)
         if not isinstance(pressure, allowed) or not isinstance(marker, allowed):
             raise TypeError(
-                "Immersed pressure and marker solvers must be prepared preconditioners "
-                "or preconditioner builders."
+                "Immersed pressure and marker solvers must be prepared preconditioners or preconditioner builders."
             )
         if factorization not in ("diagonal", "lower", "upper", "ldu"):
             raise ValueError("Unknown immersed block factorization form.")

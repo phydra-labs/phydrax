@@ -95,7 +95,7 @@ class ProteinStructureHypothesis:
         if not isinstance(length_unit, UnitDefinition) or length_unit.dimension != LENGTH:
             raise ValueError("Coordinates need an exact length unit.")
         rows = tuple(source_atoms)
-        coordinates = np.asarray(positions, dtype=float)
+        coordinates = np.asarray(positions, dtype=np.float64)
         if not rows or any(not isinstance(row, ProteinSourceAtom) for row in rows):
             raise ValueError("Explicit source atom records are required.")
         if coordinates.shape != (len(rows), 3) or not np.all(np.isfinite(coordinates)):

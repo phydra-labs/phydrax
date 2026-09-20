@@ -76,7 +76,7 @@ def tree_allfinite(vector: PyTree[Any], /) -> Array:
 def tree_all(tree: PyTree[Any], /) -> Array:
     """Return the conjunction of all Boolean-like elements in a PyTree."""
     values = tuple(
-        jnp.all(jnp.asarray(leaf, dtype=bool)) for leaf in jax.tree.leaves(tree)
+        jnp.all(jnp.asarray(leaf, dtype=jnp.bool_)) for leaf in jax.tree.leaves(tree)
     )
     if not values:
         return jnp.asarray(False)

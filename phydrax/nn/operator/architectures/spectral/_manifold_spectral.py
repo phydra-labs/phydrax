@@ -232,7 +232,7 @@ class ManifoldSpectralOperator(AbstractOperatorModel):
             if self.in_channels != 1:
                 raise ValueError("Scalar source values require one input channel.")
             values = values[..., None]
-        elif tuple(int(size) for size in trailing) != (self.in_channels,):
+        elif tuple(trailing) != (self.in_channels,):
             raise ValueError("Manifold source channel shape is incompatible.")
         values = values.reshape(
             batch.case_shape + (self.source_plan.num_points, self.in_channels)

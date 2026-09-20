@@ -147,7 +147,7 @@ def factorization_inertia(
             raise ValueError("Prepared provider does not expose inertia evidence.")
         batch_shape = state.batch_shape
         unavailable = jnp.full(batch_shape, -1, dtype=jnp.int32)
-        false = jnp.zeros(batch_shape, dtype=bool)
+        false = jnp.zeros(batch_shape, dtype=jnp.bool_)
         nan = jnp.full(batch_shape, jnp.nan, dtype=state.storage.values.real.dtype)
         return InertiaEvidence(
             positive=state.positive_inertia,

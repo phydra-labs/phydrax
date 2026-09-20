@@ -344,10 +344,10 @@ def coherent_spin_network_state(
     if set(directions) != set(basis.canonical_edge_order):
         raise ValueError("One coherent direction is required per incident edge.")
     local_states = []
-    closure = np.zeros(3, dtype=float)
+    closure = np.zeros(3, dtype=np.float64)
     for label in basis.canonical_edge_order:
         edge = edge_lookup[label]
-        direction = np.asarray(directions[label], dtype=float)
+        direction = np.asarray(directions[label], dtype=np.float64)
         if direction.shape != (3,) or not np.all(np.isfinite(direction)):
             raise ValueError("Coherent directions must be finite three-vectors.")
         norm = np.linalg.norm(direction)
@@ -492,7 +492,7 @@ class RegulatedHamiltonianConstraintPlan(StrictModule):
         ordering_id: str,
     ):
         moves = np.asarray(move_matrices, dtype=np.complex128)
-        lapse = np.asarray(lapse_values, dtype=float)
+        lapse = np.asarray(lapse_values, dtype=np.float64)
         changes = tuple(str(value).strip() for value in graph_change_ids)
         regularization = str(regularization_id).strip()
         ordering = str(ordering_id).strip()

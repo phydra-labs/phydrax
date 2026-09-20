@@ -45,7 +45,9 @@ def _real_array(value: ArrayLike, /, *, dtype=None) -> Array:
         raise TypeError("Fiber geometry, times and coefficients must be real.")
     if dtype is not None:
         return result.astype(dtype)
-    return result if jnp.issubdtype(result.dtype, jnp.floating) else result.astype(float)
+    return (
+        result if jnp.issubdtype(result.dtype, jnp.floating) else result.astype("float64")
+    )
 
 
 def _dual_lengths(segment_lengths: Array, /) -> Array:
@@ -683,7 +685,7 @@ class PreparedStructuredFiberResponse(StrictModule):
 
         def reject(_):
             shape = (self.plan.substep_count,)
-            false = jnp.zeros(shape, dtype=bool)
+            false = jnp.zeros(shape, dtype=jnp.bool_)
             zero = jnp.zeros(shape, dtype=state.values.dtype)
             return state.values, (
                 false,

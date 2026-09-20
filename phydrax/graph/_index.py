@@ -13,7 +13,7 @@ Reduce = Literal["add", "mean", "max", "min"]
 def maybe_num_nodes(edge_index: jnp.ndarray, num_nodes: int | None = None) -> int:
     if num_nodes is not None:
         return int(num_nodes)
-    if int(edge_index.size) == 0:
+    if edge_index.size == 0:
         return 0
     return int(jnp.max(edge_index)) + 1
 
@@ -52,7 +52,7 @@ def coalesce(
     reduce: Reduce = "add",
 ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
     edge_index = _validate_edge_index(edge_index)
-    if int(edge_index.shape[1]) == 0:
+    if edge_index.shape[1] == 0:
         return edge_index, edge_attr
 
     n_nodes = maybe_num_nodes(edge_index, num_nodes)
@@ -69,7 +69,7 @@ def coalesce(
         return edge_index_u, None
 
     edge_attr = jnp.asarray(edge_attr)
-    n_unique = int(uniq.shape[0])
+    n_unique = uniq.shape[0]
     edge_attr_u = _reduce_edge_attr(edge_attr, inverse, n_unique, reduce)
     return edge_index_u, edge_attr_u
 
@@ -148,12 +148,12 @@ def add_remaining_self_loops(
     col = edge_index[1]
     is_loop = row == col
 
-    has_loop = jnp.zeros((n_nodes,), dtype=bool)
-    if int(row.shape[0]) > 0:
+    has_loop = jnp.zeros((n_nodes,), dtype=jnp.bool_)
+    if row.shape[0] > 0:
         has_loop = has_loop.at[row[is_loop]].set(True)
 
     missing = jnp.where(~has_loop)[0]
-    if int(missing.shape[0]) == 0:
+    if missing.shape[0] == 0:
         return edge_index, edge_attr
 
     loop_index = jnp.stack([missing, missing], axis=0)

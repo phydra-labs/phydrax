@@ -29,7 +29,7 @@ class StratonovichCorrectionResult(StrictModule):
     approximation_kind: str = eqx.field(static=True)
 
 
-class _CombinedDiffusion(eqx.Module):
+class _CombinedDiffusion(StrictModule):
     terms: tuple[Any, ...]
     time: Array
     args: Any
@@ -42,7 +42,7 @@ class _CombinedDiffusion(eqx.Module):
         return jnp.concatenate(flattened, axis=-1).reshape(state.shape + (-1,))
 
 
-class _ItoDrift(eqx.Module):
+class _ItoDrift(StrictModule):
     drift: Any
     terms: tuple[Any, ...]
     geometry: AbstractStateGeometry | None
@@ -131,10 +131,10 @@ def stratonovich_correction(
         )
         if tangent_evidence is None:
             rank_margin = jnp.asarray(jnp.inf, dtype=point.dtype)
-            evidence_valid = jnp.asarray(geometry.contains(point), dtype=bool)
+            evidence_valid = jnp.asarray(geometry.contains(point), dtype=jnp.bool_)
         else:
             projector = jnp.asarray(tangent_evidence.tangent_projector)
-            size = int(point.size)
+            size = point.size
             if projector.shape != (size, size):
                 raise ValueError("tangent_evidence projector must match flattened state.")
             evidence_projected = (projector @ sigma.reshape((size, -1))).reshape(
@@ -144,7 +144,7 @@ def stratonovich_correction(
                 tangent_residual, jnp.max(jnp.abs(sigma - evidence_projected))
             )
             rank_margin = jnp.asarray(tangent_evidence.rank_margin)
-            evidence_valid = jnp.asarray(tangent_evidence.valid, dtype=bool)
+            evidence_valid = jnp.asarray(tangent_evidence.valid, dtype=jnp.bool_)
         geometry_id = geometry.geometry_id
         approximation = "projected-covariant-directional-jvp"
     valid = (

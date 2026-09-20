@@ -122,7 +122,7 @@ def reconstruct_particles(
             raise TypeError(
                 "detections_by_camera must contain ParticleDetections values."
             )
-        detection_capacity = int(detections.positions_rc.shape[0])
+        detection_capacity = detections.positions_rc.shape[0]
         if detections.positions_rc.shape != (detection_capacity, 2):
             raise ValueError(
                 "ParticleDetections.positions_rc must have shape (capacity, 2)."
@@ -133,7 +133,7 @@ def reconstruct_particles(
         selected = association.valid & (camera_indices >= 0)
         valid = (
             selected
-            & jnp.asarray(detections.valid, dtype=bool)[safe_indices]
+            & jnp.asarray(detections.valid, dtype=jnp.bool_)[safe_indices]
             & rig.camera_valid[camera_index]
             & rays.valid
         )
@@ -174,7 +174,7 @@ def reconstruct_particles(
     reconstruction_id = "reconstruction:" + canonical_fingerprint(
         {
             "detections": tuple(source_ids),
-            "association_shape": tuple(int(size) for size in indices.shape),
+            "association_shape": tuple(indices.shape),
             "plan": triangulation_plan.plan_id,
         }
     )

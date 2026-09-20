@@ -32,7 +32,7 @@ class CausalTimeSlabSchedule(StrictModule, NonTrainableState):
         causal_strength: float = 1.0,
         schedule_id: str = "causal-time-slabs",
     ):
-        values = np.asarray(boundaries, dtype=float)
+        values = np.asarray(boundaries, dtype=np.float64)
         if values.ndim != 1 or values.size < 2 or np.any(~np.isfinite(values)):
             raise ValueError("boundaries must contain at least two finite times.")
         if np.any(np.diff(values) <= 0.0):
@@ -53,7 +53,7 @@ class CausalTimeSlabSchedule(StrictModule, NonTrainableState):
 
     @property
     def slab_count(self) -> int:
-        return int(self.boundaries.size) - 1
+        return self.boundaries.size - 1
 
     def bounds(self, index: int, /) -> tuple[Array, Array]:
         position = int(index)
@@ -82,8 +82,8 @@ class CausalTimeSlabSchedule(StrictModule, NonTrainableState):
     def causal_weights(self, slab_losses: ArrayLike, /) -> Array:
         """Exponentially downweight a slab by all preceding detached losses."""
 
-        losses = jnp.asarray(slab_losses, dtype=float)
-        if losses.ndim < 1 or int(losses.shape[-1]) != self.slab_count:
+        losses = jnp.asarray(slab_losses, dtype=jnp.float64)
+        if losses.ndim < 1 or losses.shape[-1] != self.slab_count:
             raise ValueError(f"slab_losses must end in {self.slab_count} slab values.")
         losses = jnp.maximum(losses, 0.0)
         preceding = jnp.concatenate(

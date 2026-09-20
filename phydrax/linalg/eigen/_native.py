@@ -47,7 +47,7 @@ def _solve_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
     selected_indices = order[: policy.count]
     selected_values = jnp.real(values[selected_indices])
     selected_vectors = vectors[:, selected_indices]
-    mode_mask = jnp.ones((policy.count,), dtype=bool)
+    mode_mask = jnp.ones((policy.count,), dtype=jnp.bool_)
     operator_vectors, operator_count = _operator_columns(
         problem.operator,
         selected_vectors,
@@ -143,7 +143,7 @@ def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         selected_indices[..., None, :],
         axis=-1,
     )
-    mode_mask = jnp.ones(batch_shape + (policy.count,), dtype=bool)
+    mode_mask = jnp.ones(batch_shape + (policy.count,), dtype=jnp.bool_)
     operator_vectors = _batched_operator_images(
         problem.operator,
         selected_vectors,
@@ -212,7 +212,7 @@ def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         ),
         preconditioner_apply_count=per_batch(0),
         isolation_gaps=isolation_gaps,
-        rank_deficient=jnp.zeros(batch_shape, dtype=bool),
+        rank_deficient=jnp.zeros(batch_shape, dtype=jnp.bool_),
     )
 
 

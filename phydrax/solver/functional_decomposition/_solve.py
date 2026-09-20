@@ -113,7 +113,7 @@ class FunctionalDecompositionState(StrictModule):
         strategy: str,
     ):
         states = tuple(optimizer_states)
-        steps = tuple(int(value) for value in local_steps)
+        steps = tuple(local_steps)
         if states and len(states) != len(steps):
             raise ValueError("optimizer_states and local_steps must have equal length.")
         if any(value < 0 for value in steps):
@@ -423,8 +423,7 @@ def _patch_parameter_subspace(
     selected = tuple(path for path in _trainable_paths(functions) if token in path)
     if not selected:
         raise ValueError(
-            f"Patch {problem.cover.patch_ids[patch_index]!r} has no trainable "
-            "inexact-array parameters."
+            f"Patch {problem.cover.patch_ids[patch_index]!r} has no trainable inexact-array parameters."
         )
     return ParameterSubspace.from_leaf_paths(functions, selected)
 
@@ -771,8 +770,7 @@ def solve_functional_decomposition(
         raise ValueError("max_sweeps is only valid for block and Schwarz strategies.")
     if state is not None and isinstance(strategy, JointDecompositionTraining):
         raise ValueError(
-            "Joint decomposition resumes through FunctionalTrainingCheckpoint, "
-            "not FunctionalDecompositionState."
+            "Joint decomposition resumes through FunctionalTrainingCheckpoint, not FunctionalDecompositionState."
         )
     if isinstance(strategy, JointDecompositionTraining):
         solver = prepared.solver.solve(

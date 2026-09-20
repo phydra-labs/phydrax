@@ -110,19 +110,19 @@ def _assignments(
             raise ValueError("state_count must be positive.")
         valid = (assignment >= 0) & (assignment < states)
         safe = jnp.where(valid, assignment, 0)
-        probabilities = jax.nn.one_hot(safe, states, dtype=float)
+        probabilities = jax.nn.one_hot(safe, states, dtype=jnp.float64)
         return probabilities, valid, states, "hard"
     if (
         assignment.ndim == len(sample_shape) + 1
         and tuple(assignment.shape[:-1]) == sample_shape
     ):
-        states = int(assignment.shape[-1])
+        states = assignment.shape[-1]
         if state_count is not None and int(state_count) != states:
             raise ValueError("state_count does not match soft assignment width.")
         if states <= 0:
             raise ValueError("Soft assignments require at least one state.")
         if not jnp.issubdtype(assignment.dtype, jnp.inexact):
-            assignment = assignment.astype(float)
+            assignment = assignment.astype("float64")
         tolerance = 64.0 * jnp.finfo(assignment.dtype).eps
         finite = jnp.all(jnp.isfinite(assignment), axis=-1)
         nonnegative = jnp.all(assignment >= -tolerance, axis=-1)
@@ -138,8 +138,8 @@ def _assignments(
 
 
 def _communicating_classes(matrix: Array, active: Array, /) -> tuple[Array, Array, Array]:
-    count = int(matrix.shape[0])
-    reach = (matrix > 0.0) | jnp.eye(count, dtype=bool)
+    count = matrix.shape[0]
+    reach = (matrix > 0.0) | jnp.eye(count, dtype=jnp.bool_)
     for _ in range(count):
         reach = reach | ((reach.astype(jnp.int32) @ reach.astype(jnp.int32)) > 0)
     mutual = reach & reach.T & active[:, None] & active[None, :]

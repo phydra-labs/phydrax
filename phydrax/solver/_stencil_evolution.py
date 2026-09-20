@@ -39,7 +39,7 @@ def _pml_profile(
 ) -> Array:
     if width == 0:
         return jnp.zeros((count,))
-    coordinate = jnp.arange(count, dtype=float) + offset
+    coordinate = jnp.arange(count, dtype=jnp.float64) + offset
     lower_depth = jnp.clip((width - coordinate) / width, 0.0, 1.0)
     upper_depth = jnp.clip(
         (coordinate - (cell_count - width)) / width,
@@ -72,11 +72,7 @@ class SplitFieldPMLPlan(StrictModule):
         maximum_attenuation: float,
         polynomial_order: int = 2,
     ):
-        values = (
-            (int(widths),)
-            if isinstance(widths, int)
-            else tuple(int(value) for value in widths)
-        )
+        values = (int(widths),) if isinstance(widths, int) else tuple(widths)
         attenuation = float(maximum_attenuation)
         order = int(polynomial_order)
         if not values or any(value < 0 for value in values):

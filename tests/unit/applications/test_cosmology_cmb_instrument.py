@@ -42,7 +42,7 @@ def test_low_resolution_sky_tod_mapmaking_and_bandpower_handoff():
     pointing = cosmology.CmbPointingProduct(
         pixels,
         angles,
-        jnp.zeros_like(pixels, dtype=bool),
+        jnp.zeros_like(pixels, dtype="bool"),
         jnp.tile(jnp.arange(4), pixel_count),
         pixel_count=pixel_count,
     )

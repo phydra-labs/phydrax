@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._dem_contact_state import DEMCohesionHistory, DEMContactEvaluationContext
 
@@ -48,8 +48,8 @@ class DEMCohesionResponse(StrictModule):
 
 
 class AbstractDEMCohesionPlan(StrictModule, NonTrainableState):
-    cohesion_law_id: AbstractAttribute[str]
-    maximum_interaction_range: AbstractAttribute[float | None]
+    cohesion_law_id: eqx.AbstractVar[str]
+    maximum_interaction_range: eqx.AbstractVar[float | None]
 
     @abc.abstractmethod
     def initialize_history(self, capacity: int, dtype: Any, /) -> Any:
@@ -437,7 +437,7 @@ class BagheriCapillaryBridgePlan(AbstractDEMCohesionPlan):
         material_count: int,
         /,
     ) -> np.ndarray:
-        radius = np.asarray(radii, dtype=float)
+        radius = np.asarray(radii, dtype=np.float64)
         material = np.asarray(material_ids)
         count = int(material_count)
         if (
@@ -484,7 +484,7 @@ class BagheriCapillaryBridgePlan(AbstractDEMCohesionPlan):
         material_count: int,
         /,
     ) -> float:
-        radius = np.asarray(radii, dtype=float)
+        radius = np.asarray(radii, dtype=np.float64)
         extent = self.interaction_extents_for_radii(radius, material_ids, material_count)
         return 2.0 * float(np.max(extent - radius))
 
@@ -985,7 +985,7 @@ def zero_cohesion_response(
     shape: tuple[int, ...], dtype: Any, history: DEMCohesionHistory, /
 ) -> DEMCohesionResponse:
     scalar = jnp.zeros(shape, dtype=dtype)
-    mask = jnp.zeros(shape, dtype=bool)
+    mask = jnp.zeros(shape, dtype=jnp.bool_)
     return DEMCohesionResponse(
         scalar,
         scalar,
@@ -1013,7 +1013,7 @@ def _empty_component_history(capacity: int, dtype: Any):
     if count < 0:
         raise ValueError("Cohesion history capacity must be nonnegative.")
     scalar = jnp.zeros((count,), dtype=dtype)
-    mask = jnp.zeros((count,), dtype=bool)
+    mask = jnp.zeros((count,), dtype=jnp.bool_)
     return DEMCohesionComponentHistory(
         mask,
         scalar,
@@ -1023,7 +1023,7 @@ def _empty_component_history(capacity: int, dtype: Any):
 
 
 def _static_interaction_extents(radii: ArrayLike, maximum_range: float, /) -> np.ndarray:
-    radius = np.asarray(radii, dtype=float)
+    radius = np.asarray(radii, dtype=np.float64)
     if radius.ndim != 1 or np.any(~np.isfinite(radius)) or np.any(radius <= 0.0):
         raise ValueError("Interaction-envelope radii must be finite and positive.")
     return radius + 0.5 * float(maximum_range)
@@ -1038,7 +1038,7 @@ def _pair_value(parameter, left, right, material_count: int):
 
 
 def _host_pair_table(parameter: ArrayLike, material_count: int, /) -> np.ndarray:
-    value = np.asarray(parameter, dtype=float)
+    value = np.asarray(parameter, dtype=np.float64)
     count = int(material_count)
     if count <= 0:
         raise ValueError("material_count must be positive.")

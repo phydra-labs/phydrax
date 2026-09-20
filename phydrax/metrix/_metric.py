@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ..linalg import FactorizationPolicy, inverse, OperatorProperties
 from ._chart import ChartTransition, CoordinateChart
 from ._map import DifferentiableMap, Immersion
@@ -78,9 +78,9 @@ class MetricSignature(StrictModule):
 class AbstractSemiRiemannianMetric(StrictModule):
     """Common nondegenerate signed-metric calculus in one coordinate chart."""
 
-    matrix_function: AbstractAttribute[Callable[[Array], Array]]
-    chart: AbstractAttribute[CoordinateChart]
-    signature: AbstractAttribute[MetricSignature]
+    matrix_function: eqx.AbstractVar[Callable[[Array], Array]]
+    chart: eqx.AbstractVar[CoordinateChart]
+    signature: eqx.AbstractVar[MetricSignature]
 
     def __call__(self, coordinates: ArrayLike, /) -> Array:
         matrix = _pointwise_array(
@@ -188,8 +188,7 @@ class SemiRiemannianMetric(AbstractSemiRiemannianMetric):
             raise TypeError("signature must be a MetricSignature.")
         if signature.dimension != chart.dimension:
             raise ValueError(
-                f"Metric signature dimension {signature.dimension} does not match "
-                f"chart dimension {chart.dimension}."
+                f"Metric signature dimension {signature.dimension} does not match chart dimension {chart.dimension}."
             )
         self.matrix_function = matrix
         self.chart = chart
@@ -316,8 +315,7 @@ class _DiagonalMetricMap(StrictModule):
         values = jnp.asarray(self.diagonal(coordinates))
         if values.shape != (self.dimension,):
             raise ValueError(
-                "Pointwise diagonal metric output must have shape "
-                f"{(self.dimension,)}; got {values.shape}."
+                f"Pointwise diagonal metric output must have shape {(self.dimension,)}; got {values.shape}."
             )
         return jnp.diag(values)
 
@@ -426,14 +424,12 @@ def _validate_metric_pullback(
         raise TypeError("Metric pullback requires a differentiable coordinate map.")
     if not map.target.compatible_with(metric.chart):
         raise ValueError(
-            "Pullback map target chart must match the metric chart; got "
-            f"{map.target.name!r} and {metric.chart.name!r}."
+            f"Pullback map target chart must match the metric chart; got {map.target.name!r} and {metric.chart.name!r}."
         )
     if allow_immersion:
         if map.source.dimension > map.target.dimension:
             raise ValueError(
-                "Riemannian metric pullback requires source dimension no greater "
-                "than target dimension."
+                "Riemannian metric pullback requires source dimension no greater than target dimension."
             )
         return
     if map.source.dimension != map.target.dimension:

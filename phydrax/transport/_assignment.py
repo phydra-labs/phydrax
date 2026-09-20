@@ -59,14 +59,14 @@ def solve_multidimensional_assignment(
     if maximum <= 0 or source.shape[0] > maximum or target.shape[0] > maximum:
         raise ValueError("assignment atom count exceeds maximum_atoms.")
     source_active = (
-        np.ones((source.shape[0],), dtype=bool)
+        np.ones((source.shape[0],), dtype=np.bool_)
         if source_mask is None
-        else np.asarray(source_mask, dtype=bool)
+        else np.asarray(source_mask, dtype=np.bool_)
     )
     target_active = (
-        np.ones((target.shape[0],), dtype=bool)
+        np.ones((target.shape[0],), dtype=np.bool_)
         if target_mask is None
-        else np.asarray(target_mask, dtype=bool)
+        else np.asarray(target_mask, dtype=np.bool_)
     )
     if source_active.shape != (source.shape[0],) or target_active.shape != (
         target.shape[0],
@@ -82,16 +82,16 @@ def solve_multidimensional_assignment(
         )
     else:
         matrix = jnp.asarray(cost)
-    matrix_host = np.asarray(matrix, dtype=float)
+    matrix_host = np.asarray(matrix, dtype=np.float64)
     if matrix_host.shape != (source.shape[0], target.shape[0]):
         raise ValueError("cost matrix must align all source and target points.")
     if np.any(~np.isfinite(matrix_host)) or np.any(matrix_host < 0.0):
         raise ValueError("assignment costs must be finite and nonnegative.")
     restricted = matrix_host[np.ix_(source_ids, target_ids)]
     prohibited = (
-        np.zeros_like(matrix_host, dtype=bool)
+        np.zeros_like(matrix_host, dtype=np.bool_)
         if forbidden is None
-        else np.asarray(forbidden, dtype=bool)
+        else np.asarray(forbidden, dtype=np.bool_)
     )
     if prohibited.shape != matrix_host.shape:
         raise ValueError("forbidden must align the complete cost matrix.")
@@ -116,14 +116,14 @@ def solve_multidimensional_assignment(
     finite_max = max(float(np.max(restricted)), 1.0)
     barrier = finite_max * float(n + m + 2)
     size = n + m - requested
-    augmented = np.full((size, size), barrier, dtype=float)
+    augmented = np.full((size, size), barrier, dtype=np.float64)
     augmented[:n, :m] = np.where(restricted_forbidden, barrier, restricted)
     augmented[:n, m:] = 0.0
     augmented[n:, :m] = 0.0
     # Dummy-to-dummy assignments would increase the number of real edges above k.
     augmented[n:, m:] = barrier
-    scale = np.finfo(float).eps * max(1.0, float(np.max(np.abs(augmented))))
-    lexicographic = np.arange(size * size, dtype=float).reshape((size, size))
+    scale = np.finfo(np.float64).eps * max(1.0, float(np.max(np.abs(augmented))))
+    lexicographic = np.arange(size * size, dtype=np.float64).reshape((size, size))
     selected_rows, selected_columns = linear_sum_assignment(
         augmented + scale * lexicographic
     )

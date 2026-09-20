@@ -156,7 +156,7 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
                     )
                 return ImplicitConservationStageResult(
                     jnp.asarray(result.state, dtype=value.dtype),
-                    jnp.asarray(result.successful, dtype=bool),
+                    jnp.asarray(result.successful, dtype=jnp.bool_),
                     jnp.asarray(result.iterations, dtype=jnp.int32),
                     jnp.asarray(jnp.abs(result.residual_norm), dtype=value.real.dtype),
                 )
@@ -297,7 +297,7 @@ def prepare_element_block_preconditioner(
     route_values = []
     for route in routes:
         indices = jnp.asarray(route, dtype=jnp.int32)
-        component_count = int(np.prod(value.shape[1:], dtype=int))
+        component_count = int(np.prod(value.shape[1:], dtype=np.int64))
         flattened_indices = (
             indices[:, None] * component_count + jnp.arange(component_count)[None, :]
         ).reshape((-1,))

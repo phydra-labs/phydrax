@@ -20,7 +20,7 @@ from jaxtyping import Array, ArrayLike, Key
 import phydrax.ein as ein
 
 from .._frozendict import frozendict
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._linear_gaussian import (
     degenerate_gaussian_log_prob,
     LinearGaussianDynamics,
@@ -35,7 +35,7 @@ from ._state_space_input import (
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    resolved = tuple(int(size) for size in value)
+    resolved = tuple(value)
     if any(size <= 0 for size in resolved):
         raise ValueError(f"{owner} dimensions must be positive.")
     return resolved
@@ -117,7 +117,7 @@ class StateSpaceStepContext(StrictModule):
         case_index: ArrayLike = 0,
         step_index: ArrayLike = 0,
     ) -> StateSpaceStepContext:
-        absent = jnp.empty((0,), dtype=float)
+        absent = jnp.empty((0,), dtype=jnp.float64)
         return cls(
             args=args,
             case_index=jnp.asarray(case_index, dtype=jnp.int32),
@@ -126,7 +126,7 @@ class StateSpaceStepContext(StrictModule):
             transition_end_input=absent,
             observation_input=absent,
             input_breakpoints=absent,
-            input_breakpoint_valid=jnp.empty((0,), dtype=bool),
+            input_breakpoint_valid=jnp.empty((0,), dtype=jnp.bool_),
             input_valid=jnp.asarray(True),
             input_signal=None,
         )
@@ -190,13 +190,13 @@ class ObservationSequence(StrictModule):
                 "values must have shape case_shape + (step,) + observation_shape."
             )
         step_position = len(cases)
-        num_steps = int(array.shape[step_position])
+        num_steps = array.shape[step_position]
         if num_steps <= 0:
             raise ValueError("Observation sequences require at least one step.")
-        observation_shape = tuple(int(size) for size in array.shape[step_position + 1 :])
+        observation_shape = tuple(array.shape[step_position + 1 :])
         if any(size <= 0 for size in observation_shape):
             raise ValueError("observation_shape dimensions must be positive.")
-        time_array = jnp.asarray(times, dtype=float)
+        time_array = jnp.asarray(times, dtype=jnp.float64)
         if time_array.shape == (num_steps,):
             time_array = jnp.broadcast_to(time_array, cases + (num_steps,))
         if time_array.shape != cases + (num_steps,):
@@ -208,10 +208,10 @@ class ObservationSequence(StrictModule):
                 "Observation values must be finite; use masks for missingness."
             )
         valid = (
-            jnp.ones(cases + (num_steps,), dtype=bool)
+            jnp.ones(cases + (num_steps,), dtype=jnp.bool_)
             if step_valid is None
             else jnp.broadcast_to(
-                jnp.asarray(step_valid, dtype=bool), cases + (num_steps,)
+                jnp.asarray(step_valid, dtype=jnp.bool_), cases + (num_steps,)
             )
         )
         if bool(jnp.any(valid[..., 1:] & ~valid[..., :-1])):
@@ -226,7 +226,9 @@ class ObservationSequence(StrictModule):
                 valid.reshape(valid.shape + (1,) * len(observation_shape)), array.shape
             )
             if observation_mask is None
-            else jnp.broadcast_to(jnp.asarray(observation_mask, dtype=bool), array.shape)
+            else jnp.broadcast_to(
+                jnp.asarray(observation_mask, dtype=jnp.bool_), array.shape
+            )
         )
         valid_expanded = valid.reshape(valid.shape + (1,) * len(observation_shape))
         if bool(jnp.any(mask & ~valid_expanded)):
@@ -262,7 +264,7 @@ class ObservationSequence(StrictModule):
 
     @property
     def num_steps(self) -> int:
-        return int(self.times.shape[-1])
+        return self.times.shape[-1]
 
     @property
     def num_cases(self) -> int:
@@ -272,10 +274,10 @@ class ObservationSequence(StrictModule):
 class AbstractStatePrior(StrictModule):
     """Initial-state law with explicit physical-case and state shapes."""
 
-    state_shape: AbstractAttribute[tuple[int, ...]]
-    batch_shape: AbstractAttribute[tuple[int, ...]]
-    prior_id: AbstractAttribute[str]
-    has_log_density: AbstractAttribute[bool]
+    state_shape: eqx.AbstractVar[tuple[int, ...]]
+    batch_shape: eqx.AbstractVar[tuple[int, ...]]
+    prior_id: eqx.AbstractVar[str]
+    has_log_density: eqx.AbstractVar[bool]
 
     @property
     @abstractmethod
@@ -342,7 +344,7 @@ class GaussianStatePrior(AbstractStatePrior):
     ):
         states = _shape(state_shape, owner="state_shape")
         size = _event_size(states)
-        mean_array = jnp.asarray(mean, dtype=float)
+        mean_array = jnp.asarray(mean, dtype=jnp.float64)
         _ends_with(mean_array, states, owner="mean")
         batches = tuple(mean_array.shape[: -len(states)]) if states else mean_array.shape
         covariance_array = jnp.asarray(covariance, dtype=mean_array.dtype)
@@ -365,7 +367,7 @@ class GaussianStatePrior(AbstractStatePrior):
         self.covariance = covariance_array
         self.factor = factor
         self.state_shape = states
-        self.batch_shape = tuple(int(size_) for size_ in batches)
+        self.batch_shape = tuple(batches)
         self.prior_id = _name(prior_id, owner="prior_id")
         self.has_log_density = bool(np.all(eigenvalues > 0.0))
 
@@ -425,8 +427,8 @@ class CategoricalStatePrior(AbstractStatePrior):
         state_values = jnp.asarray(states)
         if state_values.ndim < 1 or state_values.shape[0] <= 0:
             raise ValueError("states must have one non-empty leading category axis.")
-        probabilities_array = jnp.asarray(probabilities, dtype=float)
-        categories = int(state_values.shape[0])
+        probabilities_array = jnp.asarray(probabilities, dtype=jnp.float64)
+        categories = state_values.shape[0]
         if probabilities_array.ndim < 1 or probabilities_array.shape[-1] != categories:
             raise ValueError("probabilities must end in the state category count.")
         if bool(jnp.any(~jnp.isfinite(probabilities_array))) or bool(
@@ -438,8 +440,8 @@ class CategoricalStatePrior(AbstractStatePrior):
             raise ValueError("probabilities must have positive total mass.")
         self.states = state_values
         self.probabilities = probabilities_array / total
-        self.state_shape = tuple(int(size) for size in state_values.shape[1:])
-        self.batch_shape = tuple(int(size) for size in probabilities_array.shape[:-1])
+        self.state_shape = tuple(state_values.shape[1:])
+        self.batch_shape = tuple(probabilities_array.shape[:-1])
         self.prior_id = _name(prior_id, owner="prior_id")
         self.has_log_density = True
 
@@ -464,7 +466,7 @@ class CategoricalStatePrior(AbstractStatePrior):
         expected = self.batch_shape + self.state_shape
         if values.shape != expected:
             raise ValueError(f"value must have shape {expected}; got {values.shape}.")
-        categories = int(self.states.shape[0])
+        categories = self.states.shape[0]
         if self.state_shape:
             left = values.reshape(self.batch_shape + (1,) + self.state_shape)
             right = self.states.reshape(
@@ -496,10 +498,10 @@ class TransitionSample(StrictModule):
 class AbstractTransitionKernel(StrictModule):
     """Markov transition sampler with optional normalized transition density."""
 
-    state_shape: AbstractAttribute[tuple[int, ...]]
-    process_id: AbstractAttribute[str]
-    approximation_id: AbstractAttribute[str]
-    has_log_density: AbstractAttribute[bool]
+    state_shape: eqx.AbstractVar[tuple[int, ...]]
+    process_id: eqx.AbstractVar[str]
+    approximation_id: eqx.AbstractVar[str]
+    has_log_density: eqx.AbstractVar[bool]
 
     @abstractmethod
     def sample(
@@ -650,8 +652,8 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
 def _parameter(value: Array | Callable[..., ArrayLike], *args: Any) -> Array:
     if callable(value):
         function = cast(Callable[..., ArrayLike], value)
-        return jnp.asarray(function(*args), dtype=float)
-    return jnp.asarray(value, dtype=float)
+        return jnp.asarray(function(*args), dtype=jnp.float64)
+    return jnp.asarray(value, dtype=jnp.float64)
 
 
 class LinearGaussianTransitionKernel(AbstractTransitionKernel):
@@ -850,9 +852,9 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
 class AbstractObservationModel(StrictModule):
     """Observation location, normalized likelihood, and sampler."""
 
-    state_shape: AbstractAttribute[tuple[int, ...]]
-    observation_shape: AbstractAttribute[tuple[int, ...]]
-    observation_id: AbstractAttribute[str]
+    state_shape: eqx.AbstractVar[tuple[int, ...]]
+    observation_shape: eqx.AbstractVar[tuple[int, ...]]
+    observation_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def location(
@@ -1000,7 +1002,7 @@ class GaussianObservationModel(AbstractObservationModel):
         self.covariance = (
             cast(Callable[[Array, StateSpaceStepContext], ArrayLike], covariance)
             if callable(covariance)
-            else jnp.asarray(covariance, dtype=float)
+            else jnp.asarray(covariance, dtype=jnp.float64)
         )
         self.state_shape = _shape(state_shape, owner="state_shape")
         self.observation_shape = _shape(observation_shape, owner="observation_shape")
@@ -1025,7 +1027,7 @@ class GaussianObservationModel(AbstractObservationModel):
             jnp.asarray(value),
             self.location(state, time, context),
             self.covariance_at(time, context),
-            jnp.asarray(mask, dtype=bool),
+            jnp.asarray(mask, dtype=jnp.bool_),
             observation_shape=self.observation_shape,
         )
 
@@ -1071,17 +1073,17 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         self.matrix = (
             cast(Callable[[Array, StateSpaceStepContext], ArrayLike], matrix)
             if callable(matrix)
-            else jnp.asarray(matrix, dtype=float)
+            else jnp.asarray(matrix, dtype=jnp.float64)
         )
         self.offset = (
             cast(Callable[[Array, StateSpaceStepContext], ArrayLike], offset)
             if callable(offset)
-            else jnp.asarray(offset, dtype=float)
+            else jnp.asarray(offset, dtype=jnp.float64)
         )
         self.covariance = (
             cast(Callable[[Array, StateSpaceStepContext], ArrayLike], covariance)
             if callable(covariance)
-            else jnp.asarray(covariance, dtype=float)
+            else jnp.asarray(covariance, dtype=jnp.float64)
         )
         self.state_shape = _shape(state_shape, owner="state_shape")
         self.observation_shape = _shape(observation_shape, owner="observation_shape")
@@ -1104,10 +1106,10 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         return matrix, offset, covariance
 
     def location(self, state, time, context, /) -> Array:
-        state_array = jnp.asarray(state, dtype=float)
+        state_array = jnp.asarray(state, dtype=jnp.float64)
         _ends_with(state_array, self.state_shape, owner="state")
         state_size = _event_size(self.state_shape)
-        observation_size = _event_size(self.observation_shape)
+        _event_size(self.observation_shape)
         batch_shape = (
             state_array.shape[: -len(self.state_shape)]
             if self.state_shape
@@ -1130,7 +1132,7 @@ class LinearGaussianObservationModel(AbstractObservationModel):
             jnp.asarray(value),
             self.location(state, time, context),
             covariance,
-            jnp.asarray(mask, dtype=bool),
+            jnp.asarray(mask, dtype=jnp.bool_),
             observation_shape=self.observation_shape,
         )
 
@@ -1227,7 +1229,7 @@ def _state_space_input_validity(
     """Prevalidate one typed input over every active physical schedule interval."""
     num_steps = observations.num_steps
     if input_signal is None:
-        return jnp.ones(observations.case_shape + (num_steps,), dtype=bool)
+        return jnp.ones(observations.case_shape + (num_steps,), dtype=jnp.bool_)
     case_count = prod(observations.case_shape) if observations.case_shape else 1
     flat_times = observations.times.reshape((case_count, num_steps))
     flat_initial = initial_time.reshape((case_count,))
@@ -1252,8 +1254,7 @@ def _state_space_input_validity(
     input_valid = jnp.stack(case_validity).reshape(observations.case_shape + (num_steps,))
     if bool(jnp.any(~input_valid)):
         raise ValueError(
-            "Input signal does not support every active transition endpoint "
-            "and observation time."
+            "Input signal does not support every active transition endpoint and observation time."
         )
     return input_valid
 
@@ -1358,7 +1359,7 @@ class StateSpaceProblem(StrictModule):
                 raise ValueError(
                     "Input signal case_shape must equal the observation case_shape."
                 )
-        initial = jnp.asarray(initial_time, dtype=float)
+        initial = jnp.asarray(initial_time, dtype=jnp.float64)
         initial = jnp.broadcast_to(initial, observations.case_shape)
         if bool(jnp.any(~jnp.isfinite(initial))):
             raise ValueError("initial_time must be finite.")

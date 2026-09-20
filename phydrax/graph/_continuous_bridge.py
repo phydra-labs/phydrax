@@ -116,8 +116,7 @@ class ContinuousCochainBridge(StrictModule):
                 or parameterization.ambient_dimension != chart.dimension
             ):
                 raise ValueError(
-                    "Cell parameterization degree, count, and dimension must match "
-                    "the cochain complex and chart."
+                    "Cell parameterization degree, count, and dimension must match the cochain complex and chart."
                 )
         self.complex = complex
         self.chart = chart
@@ -155,7 +154,7 @@ class StokesValidationReport(StrictModule):
         maximum_residual: Array,
         relative_residual: Array,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.maximum_residual = jnp.asarray(maximum_residual)
         self.relative_residual = jnp.asarray(relative_residual)
 
@@ -174,8 +173,7 @@ def _cell_integral(
         expected_coordinate_shape = (parameterization.ambient_dimension,)
         if coordinates.shape != expected_coordinate_shape:
             raise ValueError(
-                f"Cell map must return shape {expected_coordinate_shape}; "
-                f"got {coordinates.shape}."
+                f"Cell map must return shape {expected_coordinate_shape}; got {coordinates.shape}."
             )
         coefficients = form._coefficients_point(coordinates)
         if degree == 0:
@@ -187,8 +185,7 @@ def _cell_integral(
         )
         if jacobian.shape != expected_jacobian_shape:
             raise ValueError(
-                f"Cell Jacobian must return shape {expected_jacobian_shape}; "
-                f"got {jacobian.shape}."
+                f"Cell Jacobian must return shape {expected_jacobian_shape}; got {jacobian.shape}."
             )
         minors = jacobian[target_indices, :]
         return jnp.sum(coefficients * jnp.linalg.det(minors))

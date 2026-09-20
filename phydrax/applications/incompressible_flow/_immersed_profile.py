@@ -72,7 +72,7 @@ class ImmersedDNSQualificationProfile(StrictModule, NonTrainableState):
                 sharp_measure_tolerance,
                 marker_condition_limit,
             ),
-            dtype=float,
+            dtype=np.float64,
         )
         if np.any(~np.isfinite(tolerances)) or np.any(tolerances <= 0.0):
             raise ValueError("Immersed DNS qualification tolerances must be positive.")

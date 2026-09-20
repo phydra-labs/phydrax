@@ -86,7 +86,12 @@ def test_schedule_resolution_preserves_eom_short_stub_and_neutral_padding():
     assert [
         FinanceDate(int(value)).isoformat()
         for value in np.asarray(schedule.unadjusted_dates[:4])
-    ] == ["2024-02-29", "2024-03-31", "2024-04-30", "2024-05-15"]
+    ] == [
+        "2024-02-29",
+        "2024-03-31",
+        "2024-04-30",
+        "2024-05-15",
+    ]
     np.testing.assert_array_equal(schedule.valid, (True, True, True, True, False, False))
     np.testing.assert_array_equal(schedule.unadjusted_dates[4:], (0, 0))
     np.testing.assert_array_equal(schedule.year_fractions[4:], (0.0, 0.0))
@@ -114,7 +119,7 @@ def test_long_front_stub_removes_the_first_regular_boundary():
 
 def test_financial_timestamp_keeps_event_clock_independent_of_publication_clock():
     point_in_time = TemporalAdmissibilityPolicy(True, True, True)
-    timestamp = FinancialTimestamp(300, 100, 110, 120, "vendor-v1", point_in_time)
+    timestamp = FinancialTimestamp(300, 100, 110, 120, "vendor", point_in_time)
 
     assert timestamp.event_ns == 300
     assert timestamp.epoch_nanoseconds == 300
@@ -124,7 +129,7 @@ def test_financial_timestamp_keeps_event_clock_independent_of_publication_clock(
 
     no_future_effect = TemporalAdmissibilityPolicy(True, True, False)
     with pytest.raises(ValueError, match="admissibility policy"):
-        FinancialTimestamp(121, 100, 110, 120, "vendor-v1", no_future_effect)
+        FinancialTimestamp(121, 100, 110, 120, "vendor", no_future_effect)
 
 
 def test_calendar_semantic_identity_is_separate_from_snapshot_content():

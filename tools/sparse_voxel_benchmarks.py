@@ -42,7 +42,7 @@ def _case(depth: int, kind: str):
     plan = phx.discretization.SparseVoxelGridPlan(
         address,
         brick_size=brick_size,
-        brick_capacity=max(int(brick_coordinates.shape[0]), 1),
+        brick_capacity=max(brick_coordinates.shape[0], 1),
     )
     started = time.perf_counter()
     grid = plan.prepare(coordinates)
@@ -56,7 +56,7 @@ def _case(depth: int, kind: str):
     first, first_seconds = _measure(sample, points)
     _, steady_seconds = _measure(sample, points)
     topology_bytes = sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(grid)
         if isinstance(leaf, jax.Array)
     )

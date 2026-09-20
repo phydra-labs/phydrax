@@ -63,7 +63,7 @@ system = phx.dynamics.DiscreteSystem(
 problem = phx.control.games.NonlinearOpenLoopGameProblem(
     phx.control.DiscreteControlDynamics(system),
     phx.dynamics.TimeGrid(
-        jnp.arange(HORIZON + 1, dtype=float),
+        jnp.arange(HORIZON + 1, dtype="float64"),
         time_id="example-private-nonlinear-open-loop-kkt",
     ),
     jnp.asarray([0.0]),

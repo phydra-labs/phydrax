@@ -297,11 +297,11 @@ class LegendreValidationReport(StrictModule):
             raise TypeError("metric_validation must be a MetricValidationReport.")
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be a PrecisionEvidenceEnvelope.")
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.metric_validation = metric_validation
-        self.primal_support_valid = jnp.asarray(primal_support_valid, dtype=bool)
-        self.dual_support_valid = jnp.asarray(dual_support_valid, dtype=bool)
+        self.primal_support_valid = jnp.asarray(primal_support_valid, dtype=jnp.bool_)
+        self.dual_support_valid = jnp.asarray(dual_support_valid, dtype=jnp.bool_)
         self.maximum_primal_roundtrip_error = jnp.asarray(maximum_primal_roundtrip_error)
         self.maximum_dual_roundtrip_error = jnp.asarray(maximum_dual_roundtrip_error)
         self.maximum_jacobian_inverse_error = jnp.asarray(maximum_jacobian_inverse_error)

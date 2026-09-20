@@ -51,9 +51,9 @@ def _duffy_rule(order: int, adjacency: str) -> tuple[np.ndarray, np.ndarray, np.
     Sauter--Schwab/Duffy coincident, edge-adjacent, and vertex-adjacent regions.
     """
     nodes, weights_1d = _gauss01(order)
-    tensor_points = np.asarray([(x, y) for y in nodes for x in nodes], dtype=float)
+    tensor_points = np.asarray([(x, y) for y in nodes for x in nodes], dtype=np.float64)
     tensor_weights = np.asarray(
-        [wy * wx for wy in weights_1d for wx in weights_1d], dtype=float
+        [wy * wx for wy in weights_1d for wx in weights_1d], dtype=np.float64
     )
     test_points: list[tuple[float, float]] = []
     trial_points: list[tuple[float, float]] = []
@@ -139,9 +139,9 @@ def _duffy_rule(order: int, adjacency: str) -> tuple[np.ndarray, np.ndarray, np.
                 trial_points.append((trial[0] - trial[1], trial[1]))
                 weights.append(region_weight)
     return (
-        np.asarray(test_points, dtype=float),
-        np.asarray(trial_points, dtype=float),
-        np.asarray(weights, dtype=float),
+        np.asarray(test_points, dtype=np.float64),
+        np.asarray(trial_points, dtype=np.float64),
+        np.asarray(weights, dtype=np.float64),
     )
 
 
@@ -197,8 +197,7 @@ def _kernel_sum(
     distance = np.linalg.norm(test_points - trial_points, axis=1)
     if np.any(~np.isfinite(distance)) or np.any(distance <= 0.0):
         raise ValueError(
-            f"[quadrature-{pair_class}] Transformed Galerkin quadrature "
-            "produced a singular point."
+            f"[quadrature-{pair_class}] Transformed Galerkin quadrature produced a singular point."
         )
     return float(
         np.sum(reference_weights / (4.0 * np.pi * distance))
@@ -246,7 +245,9 @@ def _singular_pair_value(
 
 def _regular_rule(order: int) -> tuple[np.ndarray, np.ndarray]:
     data = reference_rule_data(ReferenceTriangleRule(GaussLegendreRule(int(order))))
-    return np.asarray(data.points, dtype=float), np.asarray(data.weights, dtype=float)
+    return np.asarray(data.points, dtype=np.float64), np.asarray(
+        data.weights, dtype=np.float64
+    )
 
 
 def _class_workspace_byte_estimates(
@@ -255,7 +256,7 @@ def _class_workspace_byte_estimates(
     near_order: int,
 ) -> tuple[tuple[int, int, int, int, int], int]:
     """Return per-class peak scratch estimates and stored regular point count."""
-    float_bytes = np.dtype(float).itemsize
+    float_bytes = np.dtype(np.float64).itemsize
     regular_points = regular_order**2
     high_regular_points = (regular_order + 2) ** 2
     high_singular = singular_order + 2
@@ -274,7 +275,7 @@ def _preparation_workspace_byte_estimate(
     exception_count: int,
     class_workspace_bytes: tuple[int, int, int, int, int],
 ) -> int:
-    float_bytes = np.dtype(float).itemsize
+    float_bytes = np.dtype(np.float64).itemsize
     geometry_bytes = max(face_count, 1) * 2 * 3 * float_bytes
     exception_record_bytes = max(exception_count, 1) * 5 * float_bytes
     return geometry_bytes + exception_record_bytes + max(class_workspace_bytes)
@@ -285,7 +286,7 @@ def _resident_byte_estimate(
     exception_count: int,
     regular_point_count: int,
 ) -> int:
-    float_bytes = np.dtype(float).itemsize
+    float_bytes = np.dtype(np.float64).itemsize
     int32_bytes = np.dtype(np.int32).itemsize
     int64_bytes = np.dtype(np.int64).itemsize
     exception_bytes = exception_count * (int64_bytes + 3 * int32_bytes + float_bytes)
@@ -305,8 +306,7 @@ def _regular_pair_value(
     distance = np.linalg.norm(difference, axis=-1)
     if np.any(~np.isfinite(distance)) or np.any(distance <= 0.0):
         raise ValueError(
-            "[quadrature-regular] Regular Galerkin quadrature encountered "
-            "a singular point."
+            "[quadrature-regular] Regular Galerkin quadrature encountered a singular point."
         )
     return float(
         np.sum(weights[:, None] * weights[None, :] / (4.0 * np.pi * distance))
@@ -440,7 +440,7 @@ def _prepare_surface_pairs_3d(
     max_preparation_workspace_bytes: int,
     max_resident_bytes: int,
 ) -> _SurfacePairData3D:
-    vertices_host = np.asarray(vertices, dtype=float)
+    vertices_host = np.asarray(vertices, dtype=np.float64)
     faces_host = np.asarray(faces, dtype=np.int32)
     face_count = faces_host.shape[0]
     class_workspace_bytes, regular_point_count = _class_workspace_byte_estimates(
@@ -460,8 +460,7 @@ def _prepare_surface_pairs_3d(
     )
     if minimum_workspace > int(max_preparation_workspace_bytes):
         raise ValueError(
-            "[preparation-bytes] Surface pair preparation exceeds its "
-            "workspace-byte budget."
+            "[preparation-bytes] Surface pair preparation exceeds its workspace-byte budget."
         )
     minimum_resident = _resident_byte_estimate(
         face_count,
@@ -500,8 +499,7 @@ def _prepare_surface_pairs_3d(
                 continue
             if exception_count >= int(max_exception_pairs):
                 raise ValueError(
-                    "[exception-capacity] Surface pair exceptions exceed "
-                    "max_exception_pairs."
+                    "[exception-capacity] Surface pair exceptions exceed max_exception_pairs."
                 )
             exception_count += 1
 
@@ -512,8 +510,7 @@ def _prepare_surface_pairs_3d(
     )
     if estimated_workspace > int(max_preparation_workspace_bytes):
         raise ValueError(
-            "[preparation-bytes] Surface pair preparation exceeds its "
-            "workspace-byte budget."
+            "[preparation-bytes] Surface pair preparation exceeds its workspace-byte budget."
         )
     resident_bytes = _resident_byte_estimate(
         face_count,
@@ -549,8 +546,7 @@ def _prepare_surface_pairs_3d(
                 threshold = absolute_tolerance + relative_tolerance * abs(high)
                 if error > threshold:
                     raise ValueError(
-                        "[quadrature-regular] Regular-pair quadrature exceeds "
-                        "its tolerance."
+                        "[quadrature-regular] Regular-pair quadrature exceeds its tolerance."
                     )
                 regular_error = max(regular_error, error)
                 regular_tolerance = max(regular_tolerance, threshold)
@@ -558,10 +554,10 @@ def _prepare_surface_pairs_3d(
                 continue
             records[record_index] = (target, source, pair_class)
             record_index += 1
-    values = np.empty((exception_count,), dtype=float)
+    values = np.empty((exception_count,), dtype=np.float64)
     classes = np.empty((exception_count,), dtype=np.int32)
-    errors = np.zeros((5,), dtype=float)
-    tolerances = np.zeros((5,), dtype=float)
+    errors = np.zeros((5,), dtype=np.float64)
+    tolerances = np.zeros((5,), dtype=np.float64)
     evaluations = np.zeros((5,), dtype=np.int64)
     counts = np.zeros((4,), dtype=np.int64)
     high_singular = singular_order + 2

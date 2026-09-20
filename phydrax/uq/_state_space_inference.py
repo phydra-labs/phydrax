@@ -279,8 +279,7 @@ def _resolved_method(problem: StateSpaceProblem, method: ExactStateSpaceMethod, 
         )
     if method == "finite-state" and not finite:
         raise TypeError(
-            "The finite-state likelihood requires CategoricalStatePrior and "
-            "FiniteStateTransitionKernel."
+            "The finite-state likelihood requires CategoricalStatePrior and FiniteStateTransitionKernel."
         )
     return method
 
@@ -293,18 +292,17 @@ def _finite_state_filter(problem: StateSpaceProblem, /) -> FiniteStateFilterResu
         transition, FiniteStateTransitionKernel
     ):
         raise TypeError(
-            "Finite-state filtering requires CategoricalStatePrior and "
-            "FiniteStateTransitionKernel."
+            "Finite-state filtering requires CategoricalStatePrior and FiniteStateTransitionKernel."
         )
 
     sequence = problem.observations
     case_shape = sequence.case_shape
     case_count = prod(case_shape) if case_shape else 1
     num_steps = sequence.num_steps
-    num_states = int(prior.states.shape[0])
+    num_states = prior.states.shape[0]
     probabilities = prior.probabilities.reshape((case_count, num_states))
     times = problem.initial_time.reshape((case_count,))
-    alive = jnp.ones((case_count,), dtype=bool)
+    alive = jnp.ones((case_count,), dtype=jnp.bool_)
     cumulative = jnp.zeros((case_count,), dtype=probabilities.dtype)
     state_alignment = jnp.all(prior.states == transition.generator.states)
 
@@ -473,7 +471,7 @@ def finite_state_backward_smoother(
     case_shape = result.case_shape
     case_count = prod(case_shape) if case_shape else 1
     num_steps = result.problem.observations.num_steps
-    num_states = int(prior.states.shape[0])
+    num_states = prior.states.shape[0]
     filtered = result.filtered_probabilities.reshape((case_count, num_steps, num_states))
     predicted = result.predicted_probabilities.reshape(
         (case_count, num_steps, num_states)
@@ -571,7 +569,7 @@ def finite_state_viterbi(
     case_shape = result.case_shape
     case_count = prod(case_shape) if case_shape else 1
     num_steps = problem.observations.num_steps
-    num_states = int(prior.states.shape[0])
+    num_states = prior.states.shape[0]
     probabilities = prior.probabilities.reshape((case_count, num_states))
     scores = jnp.where(
         probabilities > 0.0,
@@ -690,7 +688,7 @@ def finite_state_expected_transition_counts(
     if not isinstance(prior, CategoricalStatePrior):
         raise TypeError("Finite-state transition counts require CategoricalStatePrior.")
     case_shape = result.filter_result.case_shape
-    num_states = int(prior.states.shape[0])
+    num_states = prior.states.shape[0]
     case_count = prod(case_shape) if case_shape else 1
     probabilities = result.transition_probabilities.reshape(
         (case_count, -1, num_states, num_states)
@@ -735,7 +733,7 @@ def finite_state_expected_sufficient_statistics(
     case_shape = filter_result.case_shape
     case_count = prod(case_shape) if case_shape else 1
     num_steps = problem.observations.num_steps
-    num_states = int(prior.states.shape[0])
+    num_states = prior.states.shape[0]
     weights = result.transition_probabilities.reshape(
         (case_count, num_steps, num_states, num_states)
     )
@@ -921,9 +919,7 @@ def state_space_identifiability(
         else np.inf
     )
     paths = tuple(jax.tree_util.keystr(path) for path, _ in leaves_with_paths)
-    shapes = tuple(
-        tuple(int(size) for size in leaf.shape) for _, leaf in leaves_with_paths
-    )
+    shapes = tuple(tuple(leaf.shape) for _, leaf in leaves_with_paths)
     return StateSpaceIdentifiabilityReport(
         score=score,
         observed_information=information,
@@ -934,7 +930,7 @@ def state_space_identifiability(
         condition_number=jnp.asarray(condition, dtype=flat.dtype),
         score_norm=jnp.linalg.norm(score),
         finite=finite,
-        dimension=int(flat.size),
+        dimension=flat.size,
         numerical_rank=rank,
         parameter_paths=paths,
         parameter_shapes=shapes,

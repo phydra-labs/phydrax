@@ -14,7 +14,7 @@ from ..data import FunctionSamples, OperatorBatch, OperatorTargetBatch
 from ._dataset import OperatorDataset
 
 
-_OPERATOR_DATASET_FINGERPRINT_FORMAT = "phydrax-operator-dataset-v1"
+_OPERATOR_DATASET_FINGERPRINT_FORMAT = "phydrax-operator-dataset"
 
 
 def _samples_schema(samples: FunctionSamples, /) -> dict[str, Any]:
@@ -24,7 +24,7 @@ def _samples_schema(samples: FunctionSamples, /) -> dict[str, Any]:
         values = {"shape": list(array.shape), "dtype": str(array.dtype)}
     coordinate_dim = None
     if samples.coordinates is not None:
-        coordinate_dim = int(samples.coordinates.shape[-1])
+        coordinate_dim = samples.coordinates.shape[-1]
     elif samples.axes:
         coordinate_dim = len(samples.axes)
     topology = None
@@ -38,7 +38,7 @@ def _samples_schema(samples: FunctionSamples, /) -> dict[str, Any]:
             "num_graphs": samples.topology.graph.num_graphs,
             "entity_count": samples.topology.entity_count,
             "edge_count": (
-                int(samples.topology.graph.senders.shape[0])
+                samples.topology.graph.senders.shape[0]
                 if samples.topology.graph.senders is not None
                 else 0
             ),
@@ -122,7 +122,7 @@ def operator_fit_schema(
                 "dtype": str(array.dtype),
             }
         coordinate_dim = (
-            int(samples.coordinates.shape[-1])
+            samples.coordinates.shape[-1]
             if samples.coordinates is not None
             else len(samples.axes) or None
         )

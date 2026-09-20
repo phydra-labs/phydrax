@@ -6,9 +6,9 @@ Phydrax separates radiation transport, spectral material coefficients, closure a
 
 `MultigroupM1RadiationSystem` provides hyperbolic moment transport and checks realizability. Closure clipping is a numerical guard, not proof that an arbitrary discretization preserves the realizable cone.
 
-`GRGreyM1RadiationSystem` is the separate 3+1 grey moment transport and closure
-system. `GRGreyRadiationInteractionPlan` consumes a distinct
-`AbstractGRGreyOpacityPlan` to construct the fluid-frame four-force. This separation
+`GRGrayM1RadiationSystem` is the separate 3+1 gray moment transport and closure
+system. `GRGrayRadiationInteractionPlan` consumes a distinct
+`AbstractGRGrayOpacityPlan` to construct the fluid-frame four-force. This separation
 allows one transport discretization to use constant, composite, bremsstrahlung,
 synchrotron, Klein--Nishina, or caller-defined coefficients without changing the
 hyperbolic system.
@@ -85,8 +85,8 @@ not selected automatically by the transfer plan. See
 Material scattering in transfer, real-frequency black-hole potential scattering, and
 semiclassical Hawking occupation are different problems.
 `BlackHoleScatteringPlan` closes an independently solved scalar Killing-energy flux
-ledger and reports signed greybody factors. `HawkingSpectrumPlan` consumes independently
-qualified greybody data, corotation slopes, and tail bounds; it does not solve
+ledger and reports signed graybody factors. `HawkingSpectrumPlan` consumes independently
+qualified graybody data, corotation slopes, and tail bounds; it does not solve
 radiative transfer or radial scattering. See the
 [perturbation and Hawking guide](guides_black_hole_perturbations.md).
 
@@ -96,7 +96,7 @@ radiative transfer or radial scattering. See the
 canonical `DiagnosticPhotonCoefficientTable` inputs. It requires one exact material
 basis and energy grid, checks each source manifest's requested rights, preserves each
 table's linear or log-log interpolation policy, converts area-per-mass coefficients
-and kg/m³ density to inverse-metre interaction rates, retains every
+and kg/m³ density to inverse-meter interaction rates, retains every
 table/provenance identity, and never extrapolates.
 
 `ChargedRadiationMaterialLibrary` separately owns stopping power, scattering power,

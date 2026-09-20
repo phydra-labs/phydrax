@@ -57,7 +57,7 @@ class ClassicalRegisterLayout(StrictModule):
         maximum_total_bits: int,
     ):
         identifiers = tuple(str(value) for value in register_ids)
-        widths = tuple(int(value) for value in bit_widths)
+        widths = tuple(bit_widths)
         maximum = int(maximum_total_bits)
         if not identifiers or len(identifiers) != len(widths):
             raise ValueError(
@@ -116,10 +116,8 @@ class QuantumExperimentProgram(StrictModule):
         if not isinstance(classical_layout, ClassicalRegisterLayout):
             raise TypeError("classical_layout must be ClassicalRegisterLayout.")
         branches = tuple(branch_programs)
-        routes = tuple(int(value) for value in feed_forward_branch_by_outcome)
-        register_table = tuple(
-            tuple(int(value) for value in row) for row in register_values_by_outcome
-        )
+        routes = tuple(feed_forward_branch_by_outcome)
+        register_table = tuple(tuple(row) for row in register_values_by_outcome)
         capacity = int(branch_capacity)
         if capacity < 1 or not 1 <= len(branches) <= capacity:
             raise MemoryError(

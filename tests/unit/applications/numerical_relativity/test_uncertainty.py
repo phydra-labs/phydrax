@@ -10,13 +10,13 @@ from phydrax.applications.compact_objects._inverse import (
     FixedBranchModelEvaluation,
 )
 from phydrax.applications.numerical_relativity._uncertainty import (
+    admit_learned_closure,
+    apply_admitted_learned_closure,
     LearnedClosureAdmissionEvidence,
     LearnedClosureCandidate,
     ModelDiscrepancyRecord,
     NumericalErrorRecord,
     RelativisticMultifidelityPlan,
-    admit_learned_closure,
-    apply_admitted_learned_closure,
     smooth_grhd_inverse_adapter,
     smooth_nr_inverse_adapter,
 )
@@ -48,7 +48,7 @@ def _component(kind, realization, function):
         realization_id=realization,
         branch_id="fixed",
         adapter_id=f"adapter:{kind}",
-        evaluator_semantic_id=f"multifidelity:{kind}:v1",
+        evaluator_semantic_id=f"multifidelity:{kind}",
         evaluator_numeric_id=f"multifidelity:{realization}",
     )
 
@@ -67,20 +67,16 @@ def _error(realization, scale):
 
 def test_multifidelity_composition_keeps_levels_and_uncertainties_separate():
     exact = _component("exact-baseline", "exact:r1", lambda p: p)
-    perturbative = _component(
-        "perturbative-correction", "pert:r2", lambda p: 0.1 * p**2
-    )
+    perturbative = _component("perturbative-correction", "pert:r2", lambda p: 0.1 * p**2)
     rom = _component("rom-correction", "rom:r3", lambda p: 0.2 * jnp.sin(p))
-    full = _component(
-        "full-simulation-correction", "full:r4", lambda p: -0.05 * p
-    )
+    full = _component("full-simulation-correction", "full:r4", lambda p: -0.05 * p)
     discrepancy = ModelDiscrepancyRecord(
         jnp.asarray([0.1, -0.2]),
         jnp.asarray([[0.3], [0.4]]),
         converged=True,
         physically_valid=True,
         qualified=True,
-        model_id="discrepancy:v1",
+        model_id="discrepancy",
         calibration_evidence_id="calibration:held-in",
         validation_evidence_id="validation:held-out",
         support_id="support:two-observables",
@@ -121,9 +117,7 @@ def test_multifidelity_composition_keeps_levels_and_uncertainties_separate():
     assert bool(result.derivative_valid)
     assert bool(result.uncertainty_qualified)
 
-    sensitivity = plan.sensitivity(
-        parameters, jnp.asarray([0.25, -0.1]), epsilon=2.0e-4
-    )
+    sensitivity = plan.sensitivity(parameters, jnp.asarray([0.25, -0.1]), epsilon=2.0e-4)
     assert bool(sensitivity.derivative_valid)
     assert float(sensitivity.jvp_finite_difference_residual) < 2.0e-3
     assert float(sensitivity.vjp_pairing_residual) < 1.0e-6
@@ -172,15 +166,11 @@ def test_smooth_grhd_and_nr_adapters_fail_closed_at_shocks_or_topology_changes()
         realization_id="grhd:smooth",
         branch_id="primitive-recovery-0",
         adapter_id="grhd-parameters",
-        evaluator_semantic_id="grhd-smooth-observable:v1",
+        evaluator_semantic_id="grhd-smooth-observable",
         evaluator_numeric_id="grhd-smooth-forward:r1",
     )
-    smooth = grhd_adapter.sensitivity(
-        jnp.asarray([1.0, 0.5]), jnp.asarray([0.1, -0.2])
-    )
-    shocked = grhd_adapter.sensitivity(
-        jnp.asarray([-1.0, 0.5]), jnp.asarray([0.1, -0.2])
-    )
+    smooth = grhd_adapter.sensitivity(jnp.asarray([1.0, 0.5]), jnp.asarray([0.1, -0.2]))
+    shocked = grhd_adapter.sensitivity(jnp.asarray([-1.0, 0.5]), jnp.asarray([0.1, -0.2]))
     assert bool(smooth.derivative_valid)
     assert not bool(shocked.derivative_valid)
     assert jnp.all(jnp.isnan(shocked.jvp))
@@ -206,7 +196,7 @@ def test_smooth_grhd_and_nr_adapters_fail_closed_at_shocks_or_topology_changes()
         realization_id="z4c:grid-1",
         branch_id="fixed-step",
         adapter_id="z4c-parameters",
-        evaluator_semantic_id="z4c-smooth-observable:v1",
+        evaluator_semantic_id="z4c-smooth-observable",
         evaluator_numeric_id="z4c-smooth-forward:r1",
     )
     topology_change = nr_adapter.sensitivity(
@@ -220,7 +210,7 @@ def test_learned_closure_requires_all_evidence_and_only_adds_to_native_physics()
     candidate = LearnedClosureCandidate(
         lambda value: 0.1 * value,
         native_model_id="z4c:native",
-        model_id="closure:weights-v3",
+        model_id="closure:weights",
         training_realization_id="training:split-7",
         derivative_supported=True,
         differentiation_evidence_id="derivatives:jvp-vjp-fd",

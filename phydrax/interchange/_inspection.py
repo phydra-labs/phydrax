@@ -83,7 +83,7 @@ class HostInspectionField:
             raise ValueError("Host inspection component labels must be unique.")
 
         values = _readonly_array(self.values)
-        valid = _readonly_array(self.valid, dtype=bool)
+        valid = _readonly_array(self.valid, dtype=np.bool_)
         if labels and (values.ndim == 0 or values.shape[-1] != len(labels)):
             raise ValueError(
                 "Host inspection component labels must match the final value axis."
@@ -127,7 +127,7 @@ class HostInspectionFrame:
             raise ValueError("Host inspection frame step must be nonnegative.")
         if self.state_kind not in ("candidate", "accepted"):
             raise ValueError("Host inspection state_kind must be candidate or accepted.")
-        successful = np.asarray(self.successful, dtype=bool)
+        successful = np.asarray(self.successful, dtype=np.bool_)
         if successful.shape != ():
             raise ValueError("Host inspection successful must be scalar.")
         status = index(self.status)

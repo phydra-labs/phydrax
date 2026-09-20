@@ -75,7 +75,8 @@ class DiagramMonteCarloPlan(StrictModule, NonTrainableState):
         maximum_order: int = 32,
     ):
         probabilities = np.asarray(
-            (insertion_probability, removal_probability, worm_probability), dtype=float
+            (insertion_probability, removal_probability, worm_probability),
+            dtype=np.float64,
         )
         fugacity = float(worm_fugacity)
         limits = (
@@ -118,16 +119,16 @@ class DiagramMonteCarloPlan(StrictModule, NonTrainableState):
         /,
     ) -> "PreparedDiagramMonteCarlo":
         diagrams_ = tuple(diagrams)
-        weights = np.asarray(complex_weights, dtype=complex)
+        weights = np.asarray(complex_weights, dtype=np.complex128)
         count = len(diagrams_)
         if count == 0 or any(not isinstance(item, DiagramGraph) for item in diagrams_):
             raise ValueError("diagrams must contain DiagramGraph values.")
         if count > self.maximum_diagrams:
             raise ValueError(
-                "Diagram catalogue exceeds maximum_diagrams before allocation."
+                "Diagram catalog exceeds maximum_diagrams before allocation."
             )
         if len({item.graph_id for item in diagrams_}) != count:
-            raise ValueError("Diagram catalogue graph identities must be unique.")
+            raise ValueError("Diagram catalog graph identities must be unique.")
         if weights.shape != (count,) or not np.all(np.isfinite(weights)):
             raise ValueError("complex_weights must be one finite value per diagram.")
         magnitudes = np.abs(weights)
@@ -225,7 +226,7 @@ class DiagramMonteCarloPlan(StrictModule, NonTrainableState):
 
 
 class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
-    """Fixed catalogue and adjacency tables for JAX birth/death/worm transitions."""
+    """Fixed catalog and adjacency tables for JAX birth/death/worm transitions."""
 
     orders: Array
     vertex_counts: Array
@@ -286,8 +287,8 @@ class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
 
     def initialize(self, diagram_index: int = 0, /) -> DiagramMonteCarloState:
         index = int(diagram_index)
-        if index < 0 or index >= int(self.orders.shape[0]):
-            raise ValueError("diagram_index is outside the prepared catalogue.")
+        if index < 0 or index >= self.orders.shape[0]:
+            raise ValueError("diagram_index is outside the prepared catalog.")
         return DiagramMonteCarloState(
             jnp.asarray(index, dtype=jnp.int32),
             jnp.asarray(False),

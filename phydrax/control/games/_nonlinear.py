@@ -130,8 +130,7 @@ class DeterministicFeedbackGameProblem(StrictModule):
     ):
         if not isinstance(dynamics, DiscreteControlDynamics):
             raise TypeError(
-                "DeterministicFeedbackGameProblem dynamics must be "
-                "DiscreteControlDynamics."
+                "DeterministicFeedbackGameProblem dynamics must be DiscreteControlDynamics."
             )
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
@@ -148,14 +147,13 @@ class DeterministicFeedbackGameProblem(StrictModule):
         state = jnp.asarray(initial_state)
         if state.ndim < 1 or tuple(state.shape[-1:]) != dynamics.state_shape:
             raise ValueError(
-                "initial_state must have shape case_shape + "
-                f"{dynamics.state_shape}; got {state.shape}."
+                f"initial_state must have shape case_shape + {dynamics.state_shape}; got {state.shape}."
             )
         if jnp.issubdtype(state.dtype, jnp.complexfloating):
             raise TypeError("Deterministic game states must be real-valued.")
         if not jnp.issubdtype(state.dtype, jnp.inexact):
-            state = state.astype(float)
-        cases = tuple(int(size) for size in state.shape[:-1])
+            state = state.astype("float64")
+        cases = tuple(state.shape[:-1])
         if any(size <= 0 for size in cases):
             raise ValueError("Deterministic game case dimensions must be positive.")
 
@@ -225,7 +223,7 @@ class ILQGameScaling(StrictModule):
         state = _positive_real_vector(state_scales, "state_scales")
         control = _positive_real_vector(control_scales, "control_scales")
         cost = _positive_real_vector(cost_scales, "cost_scales")
-        dtype = jnp.result_type(state, control, cost, float)
+        dtype = jnp.result_type(state, control, cost, jnp.float64)
         state = state.astype(dtype)
         control = control.astype(dtype)
         cost = cost.astype(dtype)
@@ -244,7 +242,7 @@ class ILQGameScaling(StrictModule):
         self.cost_scales = cost
         self.state_shape = tuple(state.shape)
         self.control_shape = tuple(control.shape)
-        self.num_players = int(cost.shape[0])
+        self.num_players = cost.shape[0]
         self.scaling_id = scaling_id
 
 
@@ -344,12 +342,12 @@ class NominalNashResidual(StrictModule):
 
 def _positive_real_vector(value: ArrayLike, name: str, /) -> Array:
     array = jnp.asarray(value)
-    if array.ndim != 1 or int(array.shape[0]) < 1:
+    if array.ndim != 1 or array.shape[0] < 1:
         raise ValueError(f"{name} must be a nonempty rank-one array.")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     host = np.asarray(array)
     if not np.all(np.isfinite(host) & (host > 0.0)):
         raise ValueError(f"{name} must be finite and strictly positive.")
@@ -363,7 +361,7 @@ def _real_scalar(value: ArrayLike, owner: str, /) -> Array:
     if jnp.issubdtype(scalar.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must return a real scalar.")
     if not jnp.issubdtype(scalar.dtype, jnp.inexact):
-        scalar = scalar.astype(float)
+        scalar = scalar.astype("float64")
     return scalar
 
 

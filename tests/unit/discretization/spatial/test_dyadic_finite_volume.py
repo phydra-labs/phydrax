@@ -13,7 +13,7 @@ def _discretization():
         cell_capacity=32,
     )
     root = grid.prepare()
-    refine = jnp.zeros((grid.cell_capacity,), dtype=bool).at[0].set(True)
+    refine = jnp.zeros((grid.cell_capacity,), dtype="bool").at[0].set(True)
     topology = grid.adapt(root, refine_mask=refine).accepted
     system = phx.equations.EulerSystem(2)
     discretization = phx.discretization.DyadicFiniteVolumePlan(
@@ -31,10 +31,10 @@ def test_dyadic_finite_volume_faces_close_and_split_interfaces() -> None:
     np.testing.assert_allclose(jnp.sum(discretization.cell_volumes), 1.0)
     closure = jnp.zeros_like(discretization.cell_centers)
     closure = closure.at[discretization.owner_cells].add(discretization.area_vectors)
-    safe_neighbour = jnp.maximum(discretization.neighbour_cells, 0)
-    closure = closure.at[safe_neighbour].add(
+    safe_neighbor = jnp.maximum(discretization.neighbor_cells, 0)
+    closure = closure.at[safe_neighbor].add(
         jnp.where(
-            (discretization.neighbour_cells >= 0)[:, None],
+            (discretization.neighbor_cells >= 0)[:, None],
             -discretization.area_vectors,
             0.0,
         )
@@ -82,7 +82,7 @@ def test_dyadic_finite_volume_decomposes_coarse_fine_faces_conservatively() -> N
     )
     level_one = grid.adapt(
         grid.prepare(),
-        refine_mask=jnp.zeros((grid.cell_capacity,), dtype=bool).at[0].set(True),
+        refine_mask=jnp.zeros((grid.cell_capacity,), dtype="bool").at[0].set(True),
     ).accepted
     selected = next(
         int(slot)
@@ -91,15 +91,15 @@ def test_dyadic_finite_volume_decomposes_coarse_fine_faces_conservatively() -> N
     )
     topology = grid.adapt(
         level_one,
-        refine_mask=jnp.zeros((grid.cell_capacity,), dtype=bool).at[selected].set(True),
+        refine_mask=jnp.zeros((grid.cell_capacity,), dtype="bool").at[selected].set(True),
     ).accepted
     discretization = phx.discretization.DyadicFiniteVolumePlan(topology).prepare()
     assert discretization.cell_count == 7
-    internal = discretization.neighbour_cells >= 0
+    internal = discretization.neighbor_cells >= 0
     assert bool(jnp.any(jnp.isclose(discretization.face_measures[internal], 0.25)))
     closure = jnp.zeros_like(discretization.cell_centers)
     closure = closure.at[discretization.owner_cells].add(discretization.area_vectors)
-    closure = closure.at[jnp.maximum(discretization.neighbour_cells, 0)].add(
+    closure = closure.at[jnp.maximum(discretization.neighbor_cells, 0)].add(
         jnp.where(internal[:, None], -discretization.area_vectors, 0.0)
     )
     np.testing.assert_allclose(closure, 0.0, atol=1.0e-14)

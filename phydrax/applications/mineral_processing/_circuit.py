@@ -36,8 +36,8 @@ class RecycleSeparationCircuit:
         tailings_recycle_fraction: ArrayLike,
         /,
     ) -> RecycleSeparationCircuit:
-        recovery = np.asarray(component_recovery, dtype=float)
-        recycle = np.asarray(tailings_recycle_fraction, dtype=float)
+        recovery = np.asarray(component_recovery, dtype=np.float64)
+        recycle = np.asarray(tailings_recycle_fraction, dtype=np.float64)
         if recovery.ndim != 2 or recovery.shape[0] == 0 or recovery.shape[1] == 0:
             raise ValueError("Mineral recovery requires stage-by-component shape.")
         if recycle.ndim == 1:

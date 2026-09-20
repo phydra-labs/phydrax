@@ -93,7 +93,7 @@ def test_recovery_objective_adaptive_control_and_hybrid_embedding():
     )
     hybrid = discrete.HybridDiscreteEmbedding(
         lambda value: jnp.asarray(value, dtype=jnp.int32),
-        lambda value: jnp.asarray(value, dtype=float),
+        lambda value: jnp.asarray(value, dtype="float64"),
         process,
     )
     encoded = hybrid.encode(jnp.asarray([1.0]))

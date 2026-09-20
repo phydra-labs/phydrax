@@ -142,7 +142,7 @@ def test_output_pipeline_enforces_lift_and_boundary_envelope():
             envelope_fn=lambda coordinates, batch, *, key: (
                 coordinates[..., 0] * (1.0 - coordinates[..., 0])
             ),
-            identity="unit-interval-dirichlet-v1",
+            identity="unit-interval-dirichlet",
             lift_fn=lambda coordinates, batch, *, key: coordinates[..., 0],
         ),
         phx.nn.operator.training.ConservationProjection(
@@ -151,7 +151,7 @@ def test_output_pipeline_enforces_lift_and_boundary_envelope():
             correction_fn=lambda coordinates, batch, *, key: (
                 coordinates[..., 0] * (1.0 - coordinates[..., 0])
             ),
-            identity="dirichlet-compatible-mass-v1",
+            identity="dirichlet-compatible-mass",
         ),
     )
     transformed = pipeline(raw, batch, key=jr.key(0))
@@ -244,7 +244,7 @@ def test_dynamic_weak_loss_selects_physical_integration_measure():
         "weak_constant",
         residual_fn=lambda prediction, batch, targets, **kwargs: jnp.ones((2, 5)),
         test_fn=lambda batch, **kwargs: jnp.ones((5, 1)),
-        identity="constant-residual-v1",
+        identity="constant-residual",
         space="physical",
     )
     value = term(
@@ -274,7 +274,7 @@ def test_dynamic_weak_loss_selects_physical_integration_measure():
             "weak_constant",
             residual_fn=lambda prediction, batch, targets, **kwargs: jnp.ones((2, 5)),
             test_fn=lambda batch, **kwargs: jnp.ones((5, 1)),
-            identity="constant-residual-v1",
+            identity="constant-residual",
             space="execution",
         ).fingerprint
     )

@@ -342,7 +342,7 @@ def prepare_particle_boundary_correction(
 
 
 def _normalized_weights(value: ArrayLike, name: str, /) -> Array:
-    weights = jnp.asarray(value, dtype=float)
+    weights = jnp.asarray(value, dtype=jnp.float64)
     if weights.ndim != 1 or weights.size == 0:
         raise ValueError(f"{name} must be a nonempty vector.")
     if bool(jnp.any(~jnp.isfinite(weights))) or bool(jnp.any(weights < 0.0)):

@@ -40,7 +40,7 @@ def test_tangent_gradient_and_hodge_identities_including_poles(sampling, executi
     )
     if sampling == "mwss":
         np.testing.assert_allclose(theta[jnp.array([0, -1]), 0], [0.0, np.pi], atol=1e-15)
-        # Longitude-labelled frame components vary at each pole; the Cartesian
+        # Longitude-labeled frame components vary at each pole; the Cartesian
         # vector is single valued. No division by sin(theta) is allowed here.
         cartesian_x = -east * jnp.sin(phi) - north * jnp.cos(theta) * jnp.cos(phi)
         cartesian_y = east * jnp.cos(phi) - north * jnp.cos(theta) * jnp.sin(phi)
@@ -62,7 +62,7 @@ def test_oblique_solid_rotation_curl_and_helmholtz_inversion():
     vorticity = space.project(
         2.0 * omega * (jnp.sin(theta) * jnp.cos(phi) + 0.3 * jnp.cos(theta))
     )
-    zero = jnp.zeros(space.coefficient_shape, dtype=complex)
+    zero = jnp.zeros(space.coefficient_shape, dtype="complex128")
 
     np.testing.assert_allclose(vector.curl(east, north), vorticity, atol=2e-11)
     np.testing.assert_allclose(vector.divergence(east, north), zero, atol=2e-11)
@@ -95,7 +95,7 @@ def test_constant_gradient_and_explicit_wind_null_mode_policy_under_jit():
     space = SphericalSpectralPlan(4).prepare()
     vector = PreparedSphericalVectorOperators(space)
     project = PreparedSphericalVectorOperators(space, mean_policy="project")
-    constant = jnp.zeros(space.coefficient_shape, dtype=complex).at[0, 3].set(2.0)
+    constant = jnp.zeros(space.coefficient_shape, dtype="complex128").at[0, 3].set(2.0)
     zero = jnp.zeros_like(constant)
     np.testing.assert_allclose(vector.gradient(constant), 0.0, atol=0.0)
     assert float(eqx.filter_jit(vector.null_mode_defect)(constant)) == 2.0
@@ -111,7 +111,7 @@ def test_constant_gradient_and_explicit_wind_null_mode_policy_under_jit():
 def test_reality_conjugacy_and_layout_are_enforced_not_silently_repaired():
     space = SphericalSpectralPlan(4).prepare()
     vector = PreparedSphericalVectorOperators(space)
-    zero = jnp.zeros(space.coefficient_shape, dtype=complex)
+    zero = jnp.zeros(space.coefficient_shape, dtype="complex128")
     compiled = eqx.filter_jit(vector.gradient)
     # A non-real zonal mode is missed by negative-order-only conjugacy checks.
     for malformed in (zero.at[1, 3].set(1j), zero.at[1, 4].set(1.0)):
@@ -121,7 +121,7 @@ def test_reality_conjugacy_and_layout_are_enforced_not_silently_repaired():
         vector.gradient(jnp.zeros((4, 4)))
     physical = jnp.zeros(space.sample_shape)
     with pytest.raises(TypeError, match="real arrays"):
-        vector.divergence(physical.astype(complex), physical)
+        vector.divergence(physical.astype("complex128"), physical)
     with pytest.raises(ValueError, match="identical shapes"):
         vector.curl(physical, physical[..., None])
     precision = SpectralPrecisionPolicy(jnp.complex128)
@@ -137,7 +137,9 @@ def test_reality_conjugacy_and_layout_are_enforced_not_silently_repaired():
 def test_invalid_padded_capacity_is_inert_for_vector_calculus():
     space = SphericalSpectralPlan(4).prepare()
     vector = PreparedSphericalVectorOperators(space)
-    coefficients = jnp.zeros(space.coefficient_shape, dtype=complex).at[1, 3].set(0.7)
+    coefficients = (
+        jnp.zeros(space.coefficient_shape, dtype="complex128").at[1, 3].set(0.7)
+    )
     contaminated = coefficients.at[0, 0].set(jnp.nan + 1j * jnp.inf)
     np.testing.assert_allclose(
         vector.gradient(contaminated), vector.gradient(coefficients)

@@ -106,7 +106,7 @@ class SurfelRayQueryPlan(StrictModule):
         ):
             raise ValueError("Surfel bounds and geometry identities disagree.")
         maximum_depth = int(np.max(np.asarray(bounds.hierarchy.node_levels)))
-        branching = int(bounds.hierarchy.node_children.shape[1])
+        branching = bounds.hierarchy.node_children.shape[1]
         self.bounds = bounds
         self.geometry = geometry
         self.footprint_plan = SurfelFootprintPlan(

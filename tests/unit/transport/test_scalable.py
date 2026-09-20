@@ -22,11 +22,11 @@ def _target(
     mask_field = (
         None
         if mask is None
-        else cx.AxisArray(jnp.asarray(mask, dtype=bool), dims=("atom",))
+        else cx.AxisArray(jnp.asarray(mask, dtype="bool"), dims=("atom",))
     )
     return phx.integration.discrete(
-        jnp.asarray(points, dtype=float),
-        cx.AxisArray(jnp.asarray(weights, dtype=float), dims=("atom",)),
+        jnp.asarray(points, dtype="float64"),
+        cx.AxisArray(jnp.asarray(weights, dtype="float64"), dims=("atom",)),
         axes="atom",
         mask=mask_field,
         normalized=normalized,
@@ -44,8 +44,8 @@ def _problem(
     target_mask=None,
     normalized=True,
 ):
-    source_points = jnp.asarray(source_points, dtype=float)
-    target_points = jnp.asarray(target_points, dtype=float)
+    source_points = jnp.asarray(source_points, dtype="float64")
+    target_points = jnp.asarray(target_points, dtype="float64")
     if source_weights is None:
         source_weights = jnp.ones((source_points.shape[0],))
     if target_weights is None:

@@ -68,7 +68,7 @@ def test_regression_definitions_and_explicit_edge_statuses():
     assert jnp.allclose(explained.value, 1.0)
     assert jnp.allclose(median.value, 1.0 / 3.0)
 
-    empty = metrics.mean_squared_error(target, target, mask=jnp.zeros(3, dtype=bool))
+    empty = metrics.mean_squared_error(target, target, mask=jnp.zeros(3, dtype="bool"))
     invalid = metrics.mean_squared_error(
         target, target, sample_weight=jnp.array([1.0, -1.0, 1.0])
     )
@@ -316,7 +316,7 @@ def test_classification_averaging_wrappers_and_denominator_states():
     empty = metrics.accuracy_score(
         binary_target,
         binary_prediction,
-        mask=jnp.zeros(4, dtype=bool),
+        mask=jnp.zeros(4, dtype="bool"),
     )
     invalid = metrics.brier_score(binary_target, jnp.array([0.1, 1.2, 0.8, 0.2]))
     invalid_label = metrics.smooth_accuracy_score(

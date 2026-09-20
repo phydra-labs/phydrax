@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+import phydrax.ein as ein
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.qualification import (
     QualificationEvidence,
@@ -55,8 +56,7 @@ def _require_exact_claim_scope(claim: ScientificClaimProfile, /) -> None:
         or claim.support.attributes != _SUPPORT_ATTRIBUTES
     ):
         raise ValueError(
-            "Pulse/chase claim capability, observables, conditions, and support "
-            "must equal the exact assessed scope."
+            "Pulse/chase claim capability, observables, conditions, and support must equal the exact assessed scope."
         )
 
 
@@ -306,8 +306,7 @@ def assess_pulse_chase_prediction(
         or frozenset(prediction.fit_plate_ids) != expected_fit_plates
     ):
         raise ValueError(
-            "Prediction lineage does not match the exact schedule, assay, "
-            "preprocessing, and calibration observations."
+            "Prediction lineage does not match the exact schedule, assay, preprocessing, and calibration observations."
         )
     if (
         identifiability.model_id != prediction.model_id
@@ -321,15 +320,15 @@ def assess_pulse_chase_prediction(
         raise ValueError(
             "Identifiability evidence does not belong to the assessed prediction fit."
         )
-    latent = np.asarray(prediction.latent_means, dtype=float)
-    latent_covariance = np.asarray(prediction.latent_covariance, dtype=float)
+    latent = np.asarray(prediction.latent_means, dtype=np.float64)
+    latent_covariance = np.asarray(prediction.latent_covariance, dtype=np.float64)
     expected_shape = locked_observations.counts.shape
     if latent.shape != expected_shape:
         raise ValueError("Frozen latent prediction must align with locked counts.")
     if not math.isfinite(maximum_standardized_rms) or maximum_standardized_rms <= 0.0:
         raise ValueError("maximum_standardized_rms must be finite and positive.")
     predicted, observation_covariance = assay.conditional_moments(latent)
-    propagated_latent_covariance = np.einsum(
+    propagated_latent_covariance = ein.contract(
         "ot,...tu,pu->...op",
         np.asarray(assay.observation_probabilities),
         latent_covariance,
@@ -340,8 +339,8 @@ def assess_pulse_chase_prediction(
     )
     mask = np.asarray(locked_observations.valid)
     raw_residuals = np.asarray(predicted) - np.asarray(locked_observations.counts)
-    residuals = np.zeros_like(raw_residuals, dtype=float)
-    whitening_valid = np.ones((raw_residuals.shape[0],), dtype=bool)
+    residuals = np.zeros_like(raw_residuals, dtype=np.float64)
+    whitening_valid = np.ones((raw_residuals.shape[0],), dtype=np.bool_)
     covariance_missing: list[str] = []
     covariance_failed: list[str] = []
     for row in range(raw_residuals.shape[0]):

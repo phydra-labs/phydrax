@@ -58,7 +58,7 @@ def _mesh_arrays(region: MeshRegion, /) -> tuple[np.ndarray, np.ndarray]:
     topology = region.triangle_mesh.topology
     if not topology.watertight:
         raise ValueError("Potential-flow body geometry must be watertight.")
-    vertices = np.asarray(region.triangle_mesh.vertices, dtype=float)
+    vertices = np.asarray(region.triangle_mesh.vertices, dtype=np.float64)
     faces = np.asarray(region.triangle_mesh.faces, dtype=np.int32)
     if vertices.ndim != 2 or vertices.shape[1] != 3 or np.any(~np.isfinite(vertices)):
         raise ValueError("Potential-flow body vertices must be finite three-vectors.")
@@ -68,7 +68,7 @@ def _mesh_arrays(region: MeshRegion, /) -> tuple[np.ndarray, np.ndarray]:
         axis=1,
     )
     scale = max(float(np.max(np.ptp(vertices, axis=0))), 1.0)
-    if np.any(doubled_areas <= 64.0 * np.finfo(float).eps * scale * scale):
+    if np.any(doubled_areas <= 64.0 * np.finfo(np.float64).eps * scale * scale):
         raise ValueError("Potential-flow body faces must be nondegenerate.")
     return vertices, faces
 
@@ -182,7 +182,7 @@ def _polygon_moments(
     following = np.roll(loop, -1, axis=0)
     cross = loop[:, 0] * following[:, 1] - following[:, 0] * loop[:, 1]
     twice_area = float(np.sum(cross))
-    if abs(twice_area) <= 128.0 * np.finfo(float).eps:
+    if abs(twice_area) <= 128.0 * np.finfo(np.float64).eps:
         raise ValueError("Waterline loop has zero numerical area.")
     if twice_area < 0.0:
         loop = loop[::-1]
@@ -250,7 +250,7 @@ def prepare_hydrostatic_properties_3d(
     frame = _nonempty(frame_id, "frame_id")
     units = _nonempty(unit_system_id, "unit_system_id")
     scale = max(float(np.max(np.ptp(vertices, axis=0))), 1.0)
-    tolerance = 256.0 * np.finfo(float).eps * scale
+    tolerance = 256.0 * np.finfo(np.float64).eps * scale
     signed_heights = vertices[:, 2] - surface
     if np.any(np.abs(signed_heights) <= tolerance):
         raise ValueError(
@@ -287,7 +287,7 @@ def prepare_hydrostatic_properties_3d(
             if boxes_overlap:
                 raise ValueError("Overlapping or nested waterline loops are unsupported.")
 
-    relative_triangles = np.asarray(clipped_triangles, dtype=float)
+    relative_triangles = np.asarray(clipped_triangles, dtype=np.float64)
     relative_triangles[:, :, 2] -= surface
     signed_volumes = (
         np.sum(
@@ -315,7 +315,7 @@ def prepare_hydrostatic_properties_3d(
     reference = (
         waterplane_centroid.copy()
         if reference_point is None
-        else np.asarray(reference_point, dtype=float)
+        else np.asarray(reference_point, dtype=np.float64)
     )
     if reference.shape != (3,) or np.any(~np.isfinite(reference)):
         raise ValueError("reference_point must be one finite three-vector.")
@@ -330,12 +330,12 @@ def prepare_hydrostatic_properties_3d(
         + reference[0] * reference[1] * area
     )
     waterplane_block = np.asarray(
-        ((area, sy, -sx), (sy, ix, -ixy), (-sx, -ixy, iy)), dtype=float
+        ((area, sy, -sx), (sy, ix, -ixy), (-sx, -ixy, iy)), dtype=np.float64
     )
     metacentric_shift = volume * (center_of_buoyancy[2] - reference[2])
     waterplane_block[1, 1] += metacentric_shift
     waterplane_block[2, 2] += metacentric_shift
-    restoring = np.zeros((6, 6), dtype=float)
+    restoring = np.zeros((6, 6), dtype=np.float64)
     indices = np.asarray((2, 3, 4), dtype=np.int32)
     restoring[np.ix_(indices, indices)] = density * gravity_ * waterplane_block
     result_id = canonical_fingerprint(
@@ -372,7 +372,7 @@ def prepare_hydrostatic_properties_3d(
         unit_system_id=units,
         time_convention="static",
         normal_convention=_NORMAL_CONVENTION,
-        resource_evidence=(int(vertices.shape[0]), int(faces.shape[0])),
+        resource_evidence=(vertices.shape[0], faces.shape[0]),
         error_evidence=(
             "exact for the input planar triangle geometry up to float64 roundoff",
             "no curved-surface or continuum geometry error estimate",
@@ -510,7 +510,7 @@ class PreparedFreeSurfaceHydrodynamics3D(StrictModule, NonTrainableState):
 
     @property
     def face_count(self) -> int:
-        return int(self.face_areas.shape[0])
+        return self.face_areas.shape[0]
 
     def potential_trace(self, density: ArrayLike, /) -> Array:
         """Map unweighted DP0 source-strength coefficients to face potential."""
@@ -596,7 +596,7 @@ def _blocked_wave_normal_matrix(
     source_block_size: int,
     /,
 ) -> Array:
-    face_count = int(targets.shape[0])
+    face_count = targets.shape[0]
     rows = []
     for target_start in range(0, face_count, target_block_size):
         target_stop = min(target_start + target_block_size, face_count)
@@ -640,7 +640,7 @@ def _blocked_wave_value_matrix(
     source_block_size: int,
     /,
 ) -> Array:
-    face_count = int(targets.shape[0])
+    face_count = targets.shape[0]
     rows = []
     for target_start in range(0, face_count, target_block_size):
         target_stop = min(target_start + target_block_size, face_count)
@@ -691,7 +691,7 @@ def prepare_free_surface_hydrodynamics_3d(
     if not isinstance(selected, FreeSurfaceHydrodynamicsPolicy3D):
         raise TypeError("policy must be FreeSurfaceHydrodynamicsPolicy3D or None.")
     vertices, faces = _mesh_arrays(region)
-    face_count = int(faces.shape[0])
+    face_count = faces.shape[0]
     if face_count > selected.max_faces:
         raise ValueError("Body face count exceeds max_faces.")
     dense_entries = 2 * face_count * face_count
@@ -712,7 +712,7 @@ def prepare_free_surface_hydrodynamics_3d(
     scale = max(float(np.max(np.ptp(vertices, axis=0))), 1.0)
     required_clearance = max(
         selected.minimum_geometric_clearance,
-        256.0 * np.finfo(float).eps * scale,
+        256.0 * np.finfo(np.float64).eps * scale,
     )
     surface_clearance = surface - float(np.max(vertices[:, 2]))
     if surface_clearance <= required_clearance:
@@ -741,7 +741,7 @@ def prepare_free_surface_hydrodynamics_3d(
             ]
         )
     else:
-        references = np.asarray(reference_points, dtype=float)
+        references = np.asarray(reference_points, dtype=np.float64)
         if component_count == 1 and references.shape == (3,):
             references = references[None, :]
     if references.shape != (component_count, 3) or np.any(~np.isfinite(references)):
@@ -862,7 +862,7 @@ def prepare_free_surface_hydrodynamics_3d(
         ),
     )
 
-    modes = np.zeros((face_count, 6 * component_count), dtype=float)
+    modes = np.zeros((face_count, 6 * component_count), dtype=np.float64)
     mode_names: list[str] = []
     for component in range(component_count):
         selected_faces = component_ids_host == component
@@ -911,8 +911,8 @@ def prepare_free_surface_hydrodynamics_3d(
         face_count=face_count,
         component_count=component_count,
         degree_of_freedom_count=6 * component_count,
-        boundary_operator_bytes=int(boundary_matrix.nbytes),
-        trace_operator_bytes=int(trace_matrix.nbytes),
+        boundary_operator_bytes=boundary_matrix.nbytes,
+        trace_operator_bytes=trace_matrix.nbytes,
         resident_bytes=resident_bytes,
         preparation_workspace_bytes=preparation_workspace_bytes,
         maximum_resident_bytes=selected.max_resident_bytes,
@@ -956,8 +956,7 @@ def prepare_free_surface_hydrodynamics_3d(
         pde_id=_PDE_ID,
         geometry_id=region.feature_id,
         formulation_id=(
-            "exterior-single-layer-dp0-neumann-centroid-collocation-with-"
-            "galerkin-potential-trace"
+            "exterior-single-layer-dp0-neumann-centroid-collocation-with-galerkin-potential-trace"
         ),
         provider_id="phydrax-dense-dp0-free-surface-green",
         precision_id=_PRECISION_ID,

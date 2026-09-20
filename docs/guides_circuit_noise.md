@@ -6,4 +6,4 @@ Circuit noise is represented by a spectral factor `L`, with covariance `Q = L L*
 
 `thermal_resistor_noise_factor` implements the Johnson–Nyquist current-noise factor using explicit resistance and absolute temperature. Noise reference or basis changes must be performed with the same explicit coordinate maps used for deterministic waves.
 
-Frequency-domain noise does not imply periodic phase noise or transient stochastic behavior. Those analyses require separate harmonic-transfer or stochastic-DAE contracts.
+Frequency-domain noise does not imply periodic phase noise or transient stochastic behavior. Those analyzes require separate harmonic-transfer or stochastic-DAE contracts.

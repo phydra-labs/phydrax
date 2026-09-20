@@ -84,8 +84,8 @@ class RobustDiagnostics(StrictModule):
         subset_scores: Array,
     ):
         self.common = common
-        self.inlier_mask = jnp.asarray(inlier_mask, dtype=bool)
-        self.selected_subset = jnp.asarray(selected_subset, dtype=bool)
+        self.inlier_mask = jnp.asarray(inlier_mask, dtype=jnp.bool_)
+        self.selected_subset = jnp.asarray(selected_subset, dtype=jnp.bool_)
         self.subset_scores = jax.lax.stop_gradient(jnp.asarray(subset_scores))
 
     @property
@@ -599,7 +599,7 @@ class RANSACRegressorRecipe(AbstractRecipe):
             random_score = jnp.where(active, random_score, jnp.inf)
             indices = jnp.argsort(random_score, axis=-1)[:, :subset_size]
             subset = (
-                jnp.zeros((cases, samples), dtype=bool)
+                jnp.zeros((cases, samples), dtype=jnp.bool_)
                 .at[jnp.arange(cases)[:, None], indices]
                 .set(True)
             )
@@ -630,7 +630,7 @@ class RANSACRegressorRecipe(AbstractRecipe):
                 jnp.where(inlier[..., None], prepared.weights, 0.0), axis=(1, 2)
             )
             loss = jnp.sum(prepared.weights * jnp.abs(residual), axis=(1, 2))
-            score = mass - jnp.finfo(float).eps * loss
+            score = mass - jnp.finfo(jnp.float64).eps * loss
             score = jnp.where(candidate.valid, score, -jnp.inf)
             inlier_candidates.append(inlier)
             subsets.append(subset)
@@ -739,7 +739,7 @@ class TheilSenRegressorRecipe(AbstractRecipe):
             )
             indices = jnp.argsort(score, axis=-1)[:, :subset_size]
             mask = (
-                jnp.zeros((cases, samples), dtype=bool)
+                jnp.zeros((cases, samples), dtype=jnp.bool_)
                 .at[jnp.arange(cases)[:, None], indices]
                 .set(True)
             )
@@ -804,7 +804,7 @@ class TheilSenRegressorRecipe(AbstractRecipe):
         subset_stack = jnp.stack(subset_masks, axis=1)
         diagnostics = RobustDiagnostics(
             common=common,
-            inlier_mask=jnp.zeros(prepared.case_shape + (samples,), dtype=bool),
+            inlier_mask=jnp.zeros(prepared.case_shape + (samples,), dtype=jnp.bool_),
             selected_subset=subset_stack.reshape(
                 prepared.case_shape + (self.num_subsets, samples)
             ),

@@ -25,7 +25,7 @@ from ._evaluation import ControlledPathBatch
 
 
 _SAMPLE_ROLES = ("training", "holdout")
-_METHOD_ID = "pathwise-euler-open-loop-stochastic-maximum-principle-v1"
+_METHOD_ID = "pathwise-euler-open-loop-stochastic-maximum-principle"
 _CERTIFICATE = "OPEN_LOOP_SMP_STATIONARY"
 
 SampleRole: TypeAlias = Literal["training", "holdout"]
@@ -318,7 +318,7 @@ def _identifier(value: str, owner: str, /) -> str:
 
 
 def _vector_shape(value: Sequence[int], owner: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if len(shape) != 1 or shape[0] <= 0:
         raise ValueError(f"{owner} must be one positive vector dimension.")
     return shape
@@ -343,7 +343,7 @@ def _real_array(value: ArrayLike, owner: str, /) -> Array:
         array.dtype, jnp.complexfloating
     ):
         raise TypeError(f"{owner} must be a real numeric array.")
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _prediction_values(
@@ -423,7 +423,7 @@ def _batched_stage_callback(
         lambda state, action: jnp.asarray(callback(context, state, action, args))
     )(states, actions)
     result = _real_array(value, owner)
-    expected = (int(states.shape[0]),) + expected_shape
+    expected = (states.shape[0],) + expected_shape
     if tuple(result.shape) != expected:
         raise ValueError(
             f"{owner} must return {expected_shape} per path; got {result.shape}."
@@ -444,7 +444,7 @@ def _terminal_gradients(
         )
     )(states)
     result = _real_array(values, "terminal_cost_gradient")
-    expected = (int(states.shape[0]), problem.state_size)
+    expected = (states.shape[0], problem.state_size)
     if tuple(result.shape) != expected:
         raise ValueError(f"terminal_cost_gradient must return {problem.state_shape}.")
     return result
@@ -470,7 +470,7 @@ def _cell_measurability_residuals(
 ) -> Array:
     host_values = np.asarray(jax.device_get(values))
     host_labels = np.asarray(jax.device_get(labels))
-    host_eligible = np.asarray(jax.device_get(eligible), dtype=bool)
+    host_eligible = np.asarray(jax.device_get(eligible), dtype=np.bool_)
     count, steps = host_labels.shape
     residual = np.full((count, steps), np.inf, dtype=host_values.dtype)
     for step in range(steps):
@@ -493,7 +493,7 @@ def _conditional_cluster_means(
     host_values = np.asarray(jax.device_get(values))
     host_labels = np.asarray(jax.device_get(labels))
     host_clusters = np.asarray(jax.device_get(independence_labels))
-    host_eligible = np.asarray(jax.device_get(eligible), dtype=bool)
+    host_eligible = np.asarray(jax.device_get(eligible), dtype=np.bool_)
     count, steps = host_labels.shape
     result = np.full_like(host_values, np.nan)
     cluster_counts = np.zeros((count, steps), dtype=np.int32)

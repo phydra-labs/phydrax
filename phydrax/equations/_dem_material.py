@@ -46,7 +46,7 @@ class DEMMaterialTable(StrictModule):
         )
         if young.ndim != 1 or young.size == 0:
             raise ValueError("young_modulus must be a nonempty rank-1 array.")
-        count = int(young.size)
+        count = young.size
         if poisson.shape != (count,):
             raise ValueError("poisson_ratio must have the young_modulus shape.")
         pair_shape = (count, count)

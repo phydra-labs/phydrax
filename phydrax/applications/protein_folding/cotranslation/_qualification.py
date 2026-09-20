@@ -175,7 +175,7 @@ class CotranslationObservationLaw:
     ) -> tuple[Array, Array]:
         """Map typed latent values and their uncertainty to response moments."""
 
-        values = jnp.asarray(latent, dtype=float)
+        values = jnp.asarray(latent, dtype=jnp.float64)
         latent_errors = jnp.asarray(latent_standard_errors, dtype=values.dtype)
         dwell = jnp.asarray(measured_dwell_times, dtype=values.dtype)
         dwell_errors = jnp.asarray(dwell_time_standard_errors, dtype=values.dtype)
@@ -282,10 +282,12 @@ class LengthResolvedCotranslationObservations:
             )
         lengths = np.asarray(nascent_lengths)
         time_factor = float(conversion_factor(time_unit, SECOND))
-        dwell = np.asarray(measured_dwell_times, dtype=float) * time_factor
-        dwell_errors = np.asarray(dwell_time_standard_errors, dtype=float) * time_factor
-        observed = np.asarray(values, dtype=float)
-        errors = np.asarray(standard_errors, dtype=float)
+        dwell = np.asarray(measured_dwell_times, dtype=np.float64) * time_factor
+        dwell_errors = (
+            np.asarray(dwell_time_standard_errors, dtype=np.float64) * time_factor
+        )
+        observed = np.asarray(values, dtype=np.float64)
+        errors = np.asarray(standard_errors, dtype=np.float64)
         if (
             lengths.shape != (n,)
             or lengths.dtype.kind not in "iu"
@@ -397,7 +399,7 @@ class CotranslationModelFit:
         units = tuple(sorted({case.independent_unit_id for case in lineage}))
         preparations = tuple(sorted({case.preparation_id for case in lineage}))
         constructs = tuple(sorted({case.construct_id for case in lineage}))
-        parameters = np.asarray(fitted_parameters, dtype=float)
+        parameters = np.asarray(fitted_parameters, dtype=np.float64)
         if not parameters.size or not np.all(np.isfinite(parameters)):
             raise ValueError(
                 "Fitted cotranslation parameters must be finite and nonempty."
@@ -522,8 +524,8 @@ class CotranslationModelPrediction:
         _validate_locked_campaign(fit.campaign, observations)
         if not isinstance(latent_unit, UnitDefinition):
             raise TypeError("latent_unit must be a UnitDefinition.")
-        values = np.asarray(latent_values, dtype=float)
-        errors = np.asarray(latent_standard_errors, dtype=float)
+        values = np.asarray(latent_values, dtype=np.float64)
+        errors = np.asarray(latent_standard_errors, dtype=np.float64)
         if (
             values.shape != observations.values.shape
             or errors.shape != values.shape

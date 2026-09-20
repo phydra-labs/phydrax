@@ -160,8 +160,7 @@ class MaxwellResourcePolicy(StrictModule, NonTrainableState):
         maximum_total_bytes: int = 4 * 1024**3,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_state_bytes,
                 maximum_workspace_bytes,
                 maximum_acquisition_bytes,
@@ -499,7 +498,7 @@ def _positive_material(name: str, value: ArrayLike, count: int, /) -> Array:
     if jnp.iscomplexobj(array):
         raise TypeError(f"{name} must be real.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     if array.shape not in ((), (1,), (count,)):
         raise ValueError(f"{name} must be scalar or have shape ({count},).")
     array = jnp.broadcast_to(array, (count,))
@@ -528,9 +527,9 @@ class DiagonalMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         if jnp.iscomplexobj(epsilon) or jnp.iscomplexobj(mu):
             raise TypeError("Diagonal lossless Maxwell materials must be real.")
         if not jnp.issubdtype(epsilon.dtype, jnp.inexact):
-            epsilon = epsilon.astype(float)
+            epsilon = epsilon.astype("float64")
         if not jnp.issubdtype(mu.dtype, jnp.inexact):
-            mu = mu.astype(float)
+            mu = mu.astype("float64")
         identifier = (
             canonical_fingerprint(
                 {
@@ -1032,7 +1031,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         )
         dtype = jnp.result_type(displacement, flux, charge_)
         if not jnp.issubdtype(dtype, jnp.inexact):
-            dtype = jnp.dtype(float)
+            dtype = jnp.dtype(jnp.float64)
         displacement = displacement.astype(dtype)
         flux = flux.astype(dtype)
         charge_ = charge_.astype(dtype)

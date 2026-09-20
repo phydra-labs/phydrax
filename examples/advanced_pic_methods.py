@@ -54,7 +54,7 @@ transfer = phx.discretization.pic.ReducedPICTransferPlan(grid)
 reduced = phx.solver.ReducedElectromagneticPICPlan(field_plan, transfer, -1.0)
 state = phx.solver.ReducedElectromagneticPICState(
     phx.discretization.pic.PICParticleState(
-        (jnp.arange(8, dtype=float)[:, None] + 0.5) / 8.0,
+        (jnp.arange(8, dtype="float64")[:, None] + 0.5) / 8.0,
         collision.accepted_velocity,
     ),
     population,

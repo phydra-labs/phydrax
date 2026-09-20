@@ -98,13 +98,13 @@ class RelativisticParticleState(StrictModule):
         particle_ids_ = _integer(particle_ids, "particle_ids", dtype=jnp.int64)
         if particle_ids_.ndim != 1 or particle_ids_.size == 0:
             raise ValueError("particle_ids must be a non-empty rank-one array.")
-        capacity = int(particle_ids_.size)
+        capacity = particle_ids_.size
         weights_ = _real(weights, "weights")
         positions_ = _real(positions, "positions")
         local_ = _real(local_momenta, "local_momenta")
         covariant_ = _real(covariant_momenta, "covariant_momenta")
         species_ = _integer(species_ids, "species_ids", dtype=jnp.int32)
-        active_ = jnp.asarray(active_mask, dtype=bool)
+        active_ = jnp.asarray(active_mask, dtype=jnp.bool_)
         incarnations_ = _integer(incarnations, "incarnations", dtype=jnp.int32)
         lineage_ = _integer(lineage_ids, "lineage_ids", dtype=jnp.int64)
         expected_vector = (capacity, 3)
@@ -150,7 +150,7 @@ class RelativisticParticleState(StrictModule):
 
     @property
     def capacity(self) -> int:
-        return int(self.particle_ids.size)
+        return self.particle_ids.size
 
     @property
     def finite(self) -> Array:
@@ -305,7 +305,7 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         if transfer.particles.ambient_dimension != 3:
             raise ValueError("Relativistic stress transfer requires three dimensions.")
         species_host = np.asarray(species_ids)
-        masses_host = np.asarray(rest_masses, dtype=float)
+        masses_host = np.asarray(rest_masses, dtype=np.float64)
         if (
             species_host.ndim != 1
             or species_host.size == 0
@@ -508,7 +508,7 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         active = (
             particles.active_mask
             if active_mask is None
-            else particles.active_mask & jnp.asarray(active_mask, dtype=bool)
+            else particles.active_mask & jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         incarnation = (
             jnp.zeros((capacity,), dtype=jnp.int32)

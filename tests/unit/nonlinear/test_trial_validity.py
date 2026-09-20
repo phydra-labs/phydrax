@@ -16,7 +16,7 @@ def _problem():
     return nl.NonlinearSystemProblem(
         _positive_log,
         trial_validity=lambda state, _: jnp.all(state > 0.0),
-        trial_validity_id="strict-positive-log-v1",
+        trial_validity_id="strict-positive-log",
     )
 
 
@@ -66,7 +66,7 @@ def test_explicit_jacobian_is_not_called_on_rejected_initial_state():
         state_space=space,
         residual_space=space,
         trial_validity=lambda state, _: jnp.all(state > 0.0),
-        trial_validity_id="strict-positive-log-v1",
+        trial_validity_id="strict-positive-log",
     )
     method = nl.NewtonKrylov(
         jacobian_policy=nl.JacobianPolicy("explicit", operator=jacobian)
@@ -89,7 +89,7 @@ def test_prepared_refresh_refuses_a_changed_domain_contract():
         _positive_log,
         problem_id=problem.problem_id,
         trial_validity=lambda state, _: jnp.all(state > 0.5),
-        trial_validity_id="strict-positive-log-v2",
+        trial_validity_id="strict-positive-log",
     )
     with pytest.raises(ValueError, match="trial_validity_id"):
         nl.refresh_nonlinear(prepared, changed, jnp.asarray([1.0]))
@@ -110,7 +110,7 @@ def test_mapped_newton_never_evaluates_invalid_residual_or_jacobian_lane(explici
         state_space=space,
         residual_space=space,
         trial_validity=lambda state, _: jnp.all(state > 0.0),
-        trial_validity_id="mapped-strict-positive-log-v1",
+        trial_validity_id="mapped-strict-positive-log",
     )
     method = nl.NewtonKrylov(
         jacobian_policy=(

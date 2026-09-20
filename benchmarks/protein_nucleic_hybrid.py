@@ -60,7 +60,7 @@ def prepare(count: int):
     parameter_record = parameter_data()
     spacing = parameter_record["profiles"]["DNA"]["backbone"][1]
     reference = np.column_stack(
-        (spacing * np.arange(count, dtype=float), np.zeros((count, 2)))
+        (spacing * np.arange(count, dtype="float64"), np.zeros((count, 2)))
     )
     reference_source = source(reference.tobytes(), "reference-protein")
     system = AtomisticSystemPlan(
@@ -68,7 +68,7 @@ def prepare(count: int):
         np.zeros(count, dtype=np.int32),
         np.full(count, 2.0),
         units,
-        element_mask=np.zeros(count, dtype=bool),
+        element_mask=np.zeros(count, dtype="bool"),
         mobile_mask=ids != 0,
     ).prepare()
     network = ElasticNetworkPlan(1.1 * spacing, 4.0, count - 1).prepare(

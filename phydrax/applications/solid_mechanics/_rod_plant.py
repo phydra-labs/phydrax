@@ -351,8 +351,7 @@ class PreparedReducedRodPlant(AbstractDiscretePlant, NonTrainableState):
                     f"{type(dynamics.stretch_shear_material).__qualname__}"
                 ),
                 "bend_twist_material": (
-                    f"{type(dynamics.bend_twist_material).__module__}."
-                    f"{type(dynamics.bend_twist_material).__qualname__}"
+                    f"{type(dynamics.bend_twist_material).__module__}.{type(dynamics.bend_twist_material).__qualname__}"
                 ),
                 "actuation": "passive-zero-width",
                 "contact": "none-zero-width",

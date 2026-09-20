@@ -20,7 +20,7 @@ def _line_batch(domain, xs):
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
+                jnp.asarray(xs, dtype="float64").reshape((-1, 1)), dims=(axis, None)
             )
         }
     )

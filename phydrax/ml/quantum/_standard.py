@@ -182,7 +182,7 @@ class ReuploadingAngleMap(AbstractArrayModel):
         dtype: DTypeLike = jnp.float64,
     ):
         size = int(input_size)
-        indices = tuple(int(index) for index in feature_indices)
+        indices = tuple(feature_indices)
         selected_dtype = jnp.dtype(dtype)
         if size <= 0 or not indices:
             raise ValueError("Re-uploading input and angle counts must be positive.")

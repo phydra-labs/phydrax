@@ -45,16 +45,16 @@ class ModalForcingBasis(StrictModule, NonTrainableState):
         weights: ArrayLike | None = None,
         mode_ids: tuple[str, ...] | None = None,
     ):
-        values = np.asarray(vectors, dtype=float)
+        values = np.asarray(vectors, dtype=np.float64)
         if values.ndim != 3 or values.shape[0] == 0 or values.shape[-1] not in (1, 2, 3):
             raise ValueError(
                 "Modal forcing vectors must have shape (modes, cells, dimension)."
             )
         mode_count = values.shape[0]
         weights_ = (
-            np.ones((mode_count,), dtype=float)
+            np.ones((mode_count,), dtype=np.float64)
             if weights is None
-            else np.asarray(weights, dtype=float)
+            else np.asarray(weights, dtype=np.float64)
         )
         identifiers = (
             tuple(f"mode-{index}" for index in range(mode_count))
@@ -85,15 +85,15 @@ class ModalForcingBasis(StrictModule, NonTrainableState):
 
     @property
     def mode_count(self) -> int:
-        return int(self.vectors.shape[0])
+        return self.vectors.shape[0]
 
     @property
     def cell_count(self) -> int:
-        return int(self.vectors.shape[1])
+        return self.vectors.shape[1]
 
     @property
     def dimension(self) -> int:
-        return int(self.vectors.shape[2])
+        return self.vectors.shape[2]
 
     def evaluate(self, coefficients: ArrayLike, /) -> Array:
         value = jnp.asarray(coefficients)

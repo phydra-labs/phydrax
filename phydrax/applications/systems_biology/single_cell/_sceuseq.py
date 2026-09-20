@@ -194,7 +194,7 @@ def import_sceu_seq_arrays(
     if any(array.shape != expected or array.dtype.kind not in "ifu" for array in arrays):
         raise ValueError("Every raw channel matrix must have shape (cell, gene).")
     stacked = np.stack(arrays, axis=-1)
-    mask = np.ones(stacked.shape, dtype=bool) if valid is None else np.asarray(valid)
+    mask = np.ones(stacked.shape, dtype=np.bool_) if valid is None else np.asarray(valid)
     if mask.shape != stacked.shape or mask.dtype != bool:
         raise ValueError("Validity must be a boolean mask matching all four matrices.")
     active = stacked[mask]
@@ -204,7 +204,7 @@ def import_sceu_seq_arrays(
         or np.any(active != np.floor(active))
     ):
         raise ValueError("Active matrix entries must be raw nonnegative integer counts.")
-    coordinates = np.asarray(times, dtype=float)
+    coordinates = np.asarray(times, dtype=np.float64)
     if (
         len(cultures) != len(cells)
         or len(plates) != len(cells)
@@ -258,7 +258,7 @@ def import_sceu_seq_arrays(
         ),
     )
     return ImportedScEUSeq(
-        jnp.asarray(np.where(mask, stacked, 0), dtype=float),
+        jnp.asarray(np.where(mask, stacked, 0), dtype=jnp.float64),
         jnp.asarray(mask),
         genes,
         cells,

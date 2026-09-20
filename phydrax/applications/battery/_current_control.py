@@ -63,7 +63,7 @@ def _real_scalar(value: ArrayLike, owner: str, /) -> Array:
     array = jnp.asarray(value)
     if array.shape != () or jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise ValueError(f"{owner} must be one real scalar.")
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _ordered_bounds(lower: float, upper: float, owner: str, /) -> tuple[float, float]:
@@ -283,7 +283,7 @@ class BatteryPiecewiseCurrent(StrictModule):
         amplitudes = (
             amplitudes
             if jnp.issubdtype(amplitudes.dtype, jnp.inexact)
-            else amplitudes.astype(float)
+            else amplitudes.astype("float64")
         )
         expected = (len(knot_times_s) - 1,)
         if amplitudes.shape != expected:
@@ -587,11 +587,10 @@ class BatteryCurrentControlPlan(StrictModule, NonTrainableState):
         )
         if replay_missing:
             raise ValueError(
-                "Independent replay output selection is missing required observables "
-                f"{replay_missing}."
+                f"Independent replay output selection is missing required observables {replay_missing}."
             )
-        phase_times = np.asarray(protocol.boundary_times_s, dtype=float)
-        replay_times = np.asarray(experiment.plan.save_times_s, dtype=float)
+        phase_times = np.asarray(protocol.boundary_times_s, dtype=np.float64)
+        replay_times = np.asarray(experiment.plan.save_times_s, dtype=np.float64)
         interior_per_phase = tuple(
             np.any((replay_times > left) & (replay_times < right))
             for left, right in zip(phase_times[:-1], phase_times[1:], strict=True)
@@ -759,7 +758,9 @@ def prepare_battery_current_control(
         raise TypeError("plan must be BatteryCurrentControlPlan.")
     experiment = plan.experiment
     protocol = experiment.plan.protocol
-    dtype = jnp.result_type(protocol.boundary_times_s, plan.terminal_target.value, float)
+    dtype = jnp.result_type(
+        protocol.boundary_times_s, plan.terminal_target.value, jnp.float64
+    )
     zero_values = BatteryProtocolValues(
         protocol,
         jnp.zeros((protocol.current_step_count,), dtype=dtype),
@@ -785,7 +786,7 @@ def prepare_battery_current_control(
     if jnp.issubdtype(initial_state.dtype, jnp.complexfloating):
         raise TypeError("Battery current-control state must be real-valued.")
     if not jnp.issubdtype(initial_state.dtype, jnp.inexact):
-        initial_state = initial_state.astype(float)
+        initial_state = initial_state.astype("float64")
     if not bool(np.all(np.isfinite(np.asarray(initial_state)))):
         raise ValueError("Battery current-control initial state must be finite.")
     if plan.terminal_target.state_index >= initial_state.size:
@@ -803,9 +804,9 @@ def prepare_battery_current_control(
         raise ValueError(
             "Battery current-control lowering requires deterministic smooth dynamics."
         )
-    native_bounds = np.asarray((native_problem.t0, native_problem.t1), dtype=float)
+    native_bounds = np.asarray((native_problem.t0, native_problem.t1), dtype=np.float64)
     phase_bounds = np.asarray(
-        (protocol.boundary_times_s[0], protocol.boundary_times_s[-1]), dtype=float
+        (protocol.boundary_times_s[0], protocol.boundary_times_s[-1]), dtype=np.float64
     )
     if not np.array_equal(native_bounds, phase_bounds):
         raise ValueError(
@@ -896,7 +897,7 @@ def prepare_battery_current_control(
             "preparation_id": experiment.preparation_id,
             "native_solve_plan_id": experiment.plan.native_solve_plan.solve_plan_id,
             "save_times_s": np.asarray(
-                experiment.plan.save_times_s, dtype=float
+                experiment.plan.save_times_s, dtype=np.float64
             ).tolist(),
             "path_constraints": list(path_names),
             "terminal_constraints": list(terminal_names),
@@ -1003,7 +1004,9 @@ def replay_battery_current_control(
         - prepared.plan.terminal_target.value
     )
     terminal = jnp.stack((terminal_difference, -terminal_difference))
-    ledger_success = jnp.asarray(prepared.plan.ledger_success(result.ledger), dtype=bool)
+    ledger_success = jnp.asarray(
+        prepared.plan.ledger_success(result.ledger), dtype=jnp.bool_
+    )
     if ledger_success.shape != ():
         raise ValueError("ledger_success must return one scalar boolean.")
     model_ledger_failed = result.application_status == int(
@@ -1016,9 +1019,9 @@ def replay_battery_current_control(
         & jnp.all(jnp.isfinite(states))
     )
     runtime_success = (
-        jnp.asarray(result.successful, dtype=bool)
+        jnp.asarray(result.successful, dtype=jnp.bool_)
         & jnp.all(result.outputs.valid)
-        & ~jnp.asarray(result.termination.terminated, dtype=bool)
+        & ~jnp.asarray(result.termination.terminated, dtype=jnp.bool_)
     )
     execution = jnp.stack(
         (

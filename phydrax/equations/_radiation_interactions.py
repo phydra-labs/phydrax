@@ -79,16 +79,14 @@ class RadiationCrossSectionLibrary(StrictModule, NonTrainableState):
             isinstance(table, DiagnosticPhotonCoefficientTable) for table in tables
         ):
             raise TypeError(
-                "Photon interactions require three DiagnosticPhotonCoefficientTable "
-                "values."
+                "Photon interactions require three DiagnosticPhotonCoefficientTable values."
             )
         if any(
             table.role is not DiagnosticPhotonCoefficientRole.MASS_ATTENUATION
             for table in tables
         ):
             raise ValueError(
-                "Photoelectric, Compton, and Rayleigh inputs must be mass-attenuation "
-                "tables."
+                "Photoelectric, Compton, and Rayleigh inputs must be mass-attenuation tables."
             )
         material_ids = photoelectric.material_ids
         energy_grid_id = photoelectric.energy_grid.grid_id
@@ -110,7 +108,7 @@ class RadiationCrossSectionLibrary(StrictModule, NonTrainableState):
                 redistribution=redistribution,
                 export=export,
             )
-        density = np.asarray(mass_density_kg_per_m3, dtype=float)
+        density = np.asarray(mass_density_kg_per_m3, dtype=np.float64)
         if (
             density.shape != (len(material_ids),)
             or np.any(~np.isfinite(density))
@@ -119,12 +117,12 @@ class RadiationCrossSectionLibrary(StrictModule, NonTrainableState):
             raise ValueError(
                 "mass_density_kg_per_m3 must be finite and positive per material."
             )
-        energy = np.asarray(photoelectric.energy_grid.energy_j, dtype=float) * float(
+        energy = np.asarray(photoelectric.energy_grid.energy_j, dtype=np.float64) * float(
             conversion_factor(JOULE, ELECTRONVOLT)
         )
         mass_coefficients = np.stack(
             tuple(
-                np.asarray(table.values, dtype=float)
+                np.asarray(table.values, dtype=np.float64)
                 * float(conversion_factor(table.unit, _MASS_ATTENUATION_SI))
                 for table in tables
             ),
@@ -142,7 +140,7 @@ class RadiationCrossSectionLibrary(StrictModule, NonTrainableState):
                 table.interpolation is DiagnosticPhotonInterpolationPolicy.LOG_LOG
                 for table in tables
             ),
-            dtype=bool,
+            dtype=np.bool_,
         )
         self.energy = jnp.asarray(energy)
         self.coefficients = jnp.asarray(coefficients)

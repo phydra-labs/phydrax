@@ -24,8 +24,7 @@ def array_inference_callable(
         return _ensure_special_kwonly_args(function.func)
     if not callable(function):
         raise TypeError(
-            "Inference export expects a callable or DomainFunction; "
-            f"got {type(function).__name__}."
+            f"Inference export expects a callable or DomainFunction; got {type(function).__name__}."
         )
     return _ensure_special_kwonly_args(function)
 

@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from phydrax._interpolation import apply_gather_stencil, inverse_distance_stencil
+from phydrax._strict import StrictModule
 from phydrax.geometry.operator import (
     RegionalPointLatentGeometry,
     TensorGridLatentGeometry,
@@ -95,14 +96,11 @@ def _sample_values(
     sample_shape = samples.sample_shape
     case_ndim = len(case_shape)
     sample_ndim = len(sample_shape)
-    if tuple(int(size) for size in values.shape[:case_ndim]) != case_shape:
+    if tuple(values.shape[:case_ndim]) != case_shape:
         raise ValueError(f"{name} case shape does not match OperatorBatch.case_shape.")
-    if (
-        tuple(int(size) for size in values.shape[case_ndim : case_ndim + sample_ndim])
-        != sample_shape
-    ):
+    if tuple(values.shape[case_ndim : case_ndim + sample_ndim]) != sample_shape:
         raise ValueError(f"{name} does not contain its sample shape after case axes.")
-    trailing = tuple(int(size) for size in values.shape[case_ndim + sample_ndim :])
+    trailing = tuple(values.shape[case_ndim + sample_ndim :])
     if not trailing and int(channels) == 1:
         values = values[..., None]
     elif trailing != (int(channels),):
@@ -112,7 +110,7 @@ def _sample_values(
     return values.reshape(case_shape + (prod(sample_shape), int(channels)))
 
 
-class GeometryOperatorDiagnostics(eqx.Module):
+class GeometryOperatorDiagnostics(StrictModule):
     """Latent geometry, processor routes, and conservation data for one evaluation."""
 
     processor: Any | None
@@ -141,7 +139,7 @@ class GeometryOperatorDiagnostics(eqx.Module):
         self.processor = processor
         self.latent_coordinates = jnp.asarray(latent_coordinates)
         self.latent_measure = jnp.asarray(latent_measure)
-        self.latent_mask = jnp.asarray(latent_mask, dtype=bool)
+        self.latent_mask = jnp.asarray(latent_mask, dtype=jnp.bool_)
         self.latent_support = (
             None if latent_support is None else jnp.asarray(latent_support)
         )
@@ -163,7 +161,7 @@ class GeometryOperatorDiagnostics(eqx.Module):
         )
 
 
-class TensorGridProcessor(eqx.Module):
+class TensorGridProcessor(StrictModule):
     """Adapt a structured channels-last processor to latent point arrays."""
 
     model: Any
@@ -232,24 +230,23 @@ class TensorGridProcessor(eqx.Module):
         return_diagnostics: bool = False,
     ) -> tuple[Array, Any | None]:
         del measure
-        if int(values.shape[-2]) != self.geometry.point_count:
+        if values.shape[-2] != self.geometry.point_count:
             raise ValueError(
                 "Latent value count does not match TensorGridLatentGeometry."
             )
-        if int(coordinates.shape[-2]) != self.geometry.point_count:
+        if coordinates.shape[-2] != self.geometry.point_count:
             raise ValueError(
                 "Latent coordinate count does not match TensorGridLatentGeometry."
             )
-        case_shape = tuple(int(size) for size in values.shape[:-2])
+        case_shape = tuple(values.shape[:-2])
         axes = self.geometry.axes()
         grid = values.reshape(case_shape + self.geometry.shape + (self.channels,))
-        grid_mask = jnp.asarray(mask, dtype=bool).reshape(
+        grid_mask = jnp.asarray(mask, dtype=jnp.bool_).reshape(
             case_shape + self.geometry.shape
         )
         if len(condition_values) != len(self.conditioning_channels):
             raise ValueError(
-                "Tensor-grid processor condition values must match its declared "
-                "conditioning channels."
+                "Tensor-grid processor condition values must match its declared conditioning channels."
             )
 
         if self.execution == "structured":
@@ -278,8 +275,7 @@ class TensorGridProcessor(eqx.Module):
                 expected = case_shape + (width,)
                 if condition_array.shape != expected:
                     raise ValueError(
-                        f"Condition {name!r} must have shape {expected}; "
-                        f"got {condition_array.shape}."
+                        f"Condition {name!r} must have shape {expected}; got {condition_array.shape}."
                     )
                 inputs[name] = FunctionSamples(values=condition_array)
             latent_batch = OperatorBatch(
@@ -311,7 +307,9 @@ class TensorGridProcessor(eqx.Module):
         if output.ndim == len(case_shape) + len(self.geometry.shape):
             output = output[..., None]
         output = output.reshape(case_shape + (self.geometry.point_count, self.channels))
-        output = output * jnp.asarray(mask, dtype=bool)[..., None].astype(output.dtype)
+        output = output * jnp.asarray(mask, dtype=jnp.bool_)[..., None].astype(
+            output.dtype
+        )
         return output, diagnostics
 
     def __call__(
@@ -334,7 +332,7 @@ class TensorGridProcessor(eqx.Module):
         return output
 
 
-class _GeometryOperatorCore(eqx.Module):
+class _GeometryOperatorCore(StrictModule):
     """Shared source-to-latent, process, latent-to-query execution core."""
 
     encoders: tuple[GeometryTransfer, ...]
@@ -379,7 +377,7 @@ class _GeometryOperatorCore(eqx.Module):
         conservation_source_key: str | None = None,
     ):
         encoders_ = tuple(encoders)
-        channels_ = tuple(int(value) for value in source_channels)
+        channels_ = tuple(source_channels)
         keys_ = tuple(str(value) for value in source_keys)
         conditions_ = tuple(
             (str(name), int(width)) for name, width in conditioning_channels
@@ -433,8 +431,7 @@ class _GeometryOperatorCore(eqx.Module):
             or processor.execution != "operator_batch"
         ):
             raise ValueError(
-                "Conditioning and hard latent support require an operator-batch "
-                "TensorGridProcessor."
+                "Conditioning and hard latent support require an operator-batch TensorGridProcessor."
             )
         if support_key is not None and not isinstance(
             latent_geometry, TensorGridLatentGeometry
@@ -506,8 +503,7 @@ class _GeometryOperatorCore(eqx.Module):
         )
         if len(self.encoders) != 1 or len(candidates) != 1:
             raise ValueError(
-                "Explicit source_keys are required unless the model and batch contain "
-                "one non-auxiliary source."
+                "Explicit source_keys are required unless the model and batch contain one non-auxiliary source."
             )
         return candidates
 
@@ -523,17 +519,15 @@ class _GeometryOperatorCore(eqx.Module):
             if samples.values is None:
                 raise ValueError(f"Condition {name!r} has no values.")
             array = samples.values
-            if tuple(int(size) for size in array.shape[:case_ndim]) != batch.case_shape:
+            if tuple(array.shape[:case_ndim]) != batch.case_shape:
                 raise ValueError(
-                    f"Condition {name!r} must begin with case shape "
-                    f"{batch.case_shape}; got {array.shape}."
+                    f"Condition {name!r} must begin with case shape {batch.case_shape}; got {array.shape}."
                 )
-            trailing = tuple(int(size) for size in array.shape[case_ndim:])
+            trailing = tuple(array.shape[case_ndim:])
             feature_count = prod(trailing) if trailing else 1
             if feature_count != channels:
                 raise ValueError(
-                    f"Condition {name!r} must contain {channels} features per case; "
-                    f"got trailing shape {trailing}."
+                    f"Condition {name!r} must contain {channels} features per case; got trailing shape {trailing}."
                 )
             if samples.mask is not None:
                 array = eqx.error_if(
@@ -553,7 +547,7 @@ class _GeometryOperatorCore(eqx.Module):
         /,
     ) -> tuple[Array | None, Array]:
         if self.latent_support_key is None:
-            return None, jnp.ones(latent_coordinates.shape[:-1], dtype=bool)
+            return None, jnp.ones(latent_coordinates.shape[:-1], dtype=jnp.bool_)
         support = batch.input(self.latent_support_key)
         case_shape = batch.case_shape
         source_coordinates = _sample_coordinates(support, case_shape)
@@ -576,7 +570,7 @@ class _GeometryOperatorCore(eqx.Module):
                 "Latent occupancy values must lie in [0, 1].",
             )
 
-        source_count = int(source_coordinates.shape[-2])
+        source_count = source_coordinates.shape[-2]
         neighbors = min(self.latent_support_neighbors, source_count)
         neighborhood = query_neighbors(
             source_coordinates,

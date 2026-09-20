@@ -56,7 +56,7 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
         maximum_steps: int = 4096,
         matter_era_tolerance: float = 5.0e-2,
     ):
-        nodes_host = np.asarray(scale_factors, dtype=float).reshape((-1,))
+        nodes_host = np.asarray(scale_factors, dtype=np.float64).reshape((-1,))
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)
         steps = int(maximum_steps)

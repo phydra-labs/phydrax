@@ -41,7 +41,7 @@ class ChemicalComponentCatalog(StrictModule, NonTrainableState):
     ) -> None:
         names = tuple(str(name) for name in component_names)
         elements = tuple(str(name) for name in element_names)
-        masses_np = np.asarray(molar_masses, dtype=float)
+        masses_np = np.asarray(molar_masses, dtype=np.float64)
         composition_np = np.asarray(element_composition)
         charges_np = (
             np.zeros((len(names),), dtype=np.int32)

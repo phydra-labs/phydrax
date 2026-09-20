@@ -57,9 +57,9 @@ class VortexFilamentTopology(StrictModule, NonTrainableState):
                 "nonempty one-dimensional start/end arrays."
             )
         mask = (
-            np.ones(start.shape, dtype=bool)
+            np.ones(start.shape, dtype=np.bool_)
             if active is None
-            else np.asarray(active, dtype=bool)
+            else np.asarray(active, dtype=np.bool_)
         )
         if mask.shape != start.shape:
             raise ValueError("active must have one entry per filament segment slot.")
@@ -89,7 +89,7 @@ class VortexFilamentTopology(StrictModule, NonTrainableState):
             )
         generated_id = canonical_fingerprint(
             {
-                "kind": "oriented-vortex-filament-topology-v1",
+                "kind": "oriented-vortex-filament-topology",
                 "vertex_capacity": vertices,
                 "start_indices": array_tree_fingerprint(start),
                 "end_indices": array_tree_fingerprint(end),
@@ -105,7 +105,7 @@ class VortexFilamentTopology(StrictModule, NonTrainableState):
         self.active = jnp.asarray(mask)
         self.segment_ids = jnp.asarray(ids)
         self.vertex_capacity = vertices
-        self.segment_capacity = int(start.size)
+        self.segment_capacity = start.size
         self.topology_id = identifier
 
     @classmethod
@@ -126,7 +126,7 @@ class VortexFilamentTopology(StrictModule, NonTrainableState):
             raise ValueError("segment_capacity must be positive and hold every segment.")
         start = np.zeros((capacity,), dtype=np.int32)
         end = np.zeros((capacity,), dtype=np.int32)
-        active = np.zeros((capacity,), dtype=bool)
+        active = np.zeros((capacity,), dtype=np.bool_)
         for index, pair in enumerate(pairs):
             start[index], end[index] = pair
             active[index] = True
@@ -191,7 +191,7 @@ class VortexFilamentState(StrictModule):
         self.core_radius = core
         self.state_layout_id = canonical_fingerprint(
             {
-                "kind": "vortex-filament-state-layout-v1",
+                "kind": "vortex-filament-state-layout",
                 "topology": topology.topology_id,
                 "position_shape": list(vertices.shape),
                 "circulation_shape": list(strength.shape),
@@ -245,7 +245,7 @@ class VortexFilamentState(StrictModule):
             ),
             geometry_id=canonical_fingerprint(
                 {
-                    "kind": "oriented-vortex-filament-geometry-v1",
+                    "kind": "oriented-vortex-filament-geometry",
                     "topology": self.topology.topology_id,
                 }
             ),

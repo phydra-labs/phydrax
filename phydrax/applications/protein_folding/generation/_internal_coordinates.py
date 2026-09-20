@@ -206,14 +206,14 @@ class ProteinInternalCoordinatePlan(StrictModule, NonTrainableState):
         return self._representation_id
 
 
-class ProteinClosureEvidence(eqx.Module):
+class ProteinClosureEvidence(StrictModule):
     residuals: Array
     valid: Array
     finite: Array
     group_ids: tuple[str, ...] = eqx.field(static=True)
 
 
-class ProteinDecodedCoordinates(eqx.Module):
+class ProteinDecodedCoordinates(StrictModule):
     """Every decoded case plus construction and closure evidence."""
 
     positions: Array
@@ -554,9 +554,7 @@ def prepare_protein_internal_coordinate_plan(
         raise ValueError(
             "Decoder, full qualification, and sparse support require identical atom order."
         )
-    if tuple(binding.atom_ids) != tuple(
-        int(value) for value in system_ids[list(binding.atom_indices)]
-    ):
+    if tuple(binding.atom_ids) != tuple(system_ids[list(binding.atom_indices)]):
         raise ValueError(
             "Binding stable atom identities do not match its native topology."
         )
@@ -827,7 +825,7 @@ def prepare_protein_internal_coordinate_plan(
     for fixed in fixed_mask:
         slots.append(-1 if fixed else next_slot)
         next_slot += int(not fixed)
-    rotation_masks = np.zeros((len(candidates), len(atom_order)), dtype=bool)
+    rotation_masks = np.zeros((len(candidates), len(atom_order)), dtype=np.bool_)
     for row, item in enumerate(candidates):
         rotation_masks[row, list(item[-2])] = True
 
@@ -851,7 +849,7 @@ def prepare_protein_internal_coordinate_plan(
     dtype = support.template.positions.dtype
     active_mask = np.asarray(support.template.atom_mask[0])
     plan_record = {
-        "kind": "protein-internal-coordinate-plan-v1",
+        "kind": "protein-internal-coordinate-plan",
         "binding": binding.binding_id,
         "support": support.support_id,
         "chemistry": chemistry.fingerprint(),
@@ -907,7 +905,7 @@ def prepare_protein_internal_coordinate_plan(
         jnp.asarray(closure_pairs, dtype=jnp.int32).reshape((-1, 2)),
         jnp.asarray(closure_targets, dtype=dtype),
         jnp.asarray(closure_tolerances, dtype=dtype),
-        jnp.asarray(fixed_mask, dtype=bool),
+        jnp.asarray(fixed_mask, dtype=jnp.bool_),
         jnp.asarray(rotation_masks),
         jnp.asarray(reference_torsions, dtype=dtype),
         jnp.asarray(reference_support, dtype=dtype),

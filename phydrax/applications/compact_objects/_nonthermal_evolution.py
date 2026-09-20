@@ -22,7 +22,7 @@ class NonthermalLorentzGrid(StrictModule, NonTrainableState):
     grid_id: str = eqx.field(static=True)
 
     def __init__(self, edges: ArrayLike, /) -> None:
-        values = np.asarray(edges, dtype=float)
+        values = np.asarray(edges, dtype=np.float64)
         if (
             values.ndim != 1
             or values.size < 3
@@ -47,7 +47,7 @@ class NonthermalLorentzGrid(StrictModule, NonTrainableState):
 
     @property
     def bin_count(self) -> int:
-        return int(self.centers.size)
+        return self.centers.size
 
 
 class NonthermalElectronState(StrictModule):

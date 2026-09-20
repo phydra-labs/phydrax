@@ -55,10 +55,10 @@ class LinearDescriptorSystem(StrictModule):
         )
         if mass.ndim < 2 or mass.shape[-2] != mass.shape[-1]:
             raise ValueError("mass_matrix must end in one square matrix.")
-        size = int(mass.shape[-1])
+        size = mass.shape[-1]
         batch = mass.shape[:-2]
-        input_count = int(inputs.shape[-1]) if inputs.ndim >= 2 else -1
-        output_count = int(outputs.shape[-2]) if outputs.ndim >= 2 else -1
+        input_count = inputs.shape[-1] if inputs.ndim >= 2 else -1
+        output_count = outputs.shape[-2] if outputs.ndim >= 2 else -1
         if (
             state.shape != batch + (size, size)
             or inputs.shape != batch + (size, input_count)
@@ -110,15 +110,15 @@ class LinearDescriptorSystem(StrictModule):
 
     @property
     def state_size(self) -> int:
-        return int(self.state_matrix.shape[-1])
+        return self.state_matrix.shape[-1]
 
     @property
     def input_size(self) -> int:
-        return int(self.input_matrix.shape[-1])
+        return self.input_matrix.shape[-1]
 
     @property
     def output_size(self) -> int:
-        return int(self.output_matrix.shape[-2])
+        return self.output_matrix.shape[-2]
 
     @property
     def batch_shape(self) -> tuple[int, ...]:

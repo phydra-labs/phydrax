@@ -166,7 +166,7 @@ def _tdvp_force(
     /,
 ) -> Array:
     residual = jnp.asarray(local_energy).reshape((-1,)) - mean_energy
-    count = int(residual.shape[0])
+    count = residual.shape[0]
     if parameter_mode == "holomorphic":
         force = jnp.asarray(score.adjoint_mv(residual / count))
         return -1j * force if evolution_mode == "real-time" else -force
@@ -316,11 +316,11 @@ def solve_variational_tdvp(
     return VariationalTDVPResult(
         final_state=current,
         final_estimate=final_estimate,
-        times=policy.step_size * jnp.arange(len(coordinate_history), dtype=float),
+        times=policy.step_size * jnp.arange(len(coordinate_history), dtype=jnp.float64),
         parameter_trajectory=jnp.stack(coordinate_history),
         energy_history=jnp.stack(energies)
         if energies
-        else jnp.empty((0,), dtype=complex),
+        else jnp.empty((0,), dtype=jnp.complex128),
         variance_history=jnp.stack(variances) if variances else jnp.empty((0,)),
         acceptance_history=jnp.stack(acceptances) if acceptances else jnp.empty((0,)),
         velocity_norm_history=jnp.stack(velocity_norms)

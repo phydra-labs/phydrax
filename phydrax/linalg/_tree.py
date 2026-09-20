@@ -52,7 +52,7 @@ class TreeTopology(StrictModule, NonTrainableState):
             for value in parents
         ):
             raise TypeError("Tree parent indices must be host integers.")
-        parents = tuple(int(value) for value in parents)
+        parents = tuple(parents)
         roots = [index for index, parent in enumerate(parents) if parent == -1]
         if len(roots) != 1:
             raise ValueError("A tree requires exactly one -1 root.")
@@ -113,7 +113,7 @@ class TreeLinearOperator(_AbstractCostedLinearOperator):
             raise ValueError(
                 "Tree coefficient vectors must each have length topology.size."
             )
-        dtype = jnp.result_type(*arrays, float)
+        dtype = jnp.result_type(*arrays, jnp.float64)
         self.diagonal, self.lower, self.upper = (value.astype(dtype) for value in arrays)
         space_ = ArraySpace((topology.size,), dtype=dtype) if space is None else space
         if not isinstance(space_, AbstractVectorSpace) or space_.size != topology.size:

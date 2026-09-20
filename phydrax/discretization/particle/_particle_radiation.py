@@ -53,10 +53,10 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
         maximum_range: float,
         plan_id: str | None = None,
     ):
-        emissivity = np.asarray(particle_emissivity, dtype=float)
-        view = np.asarray(pair_view_factor, dtype=float)
-        wall = np.asarray(wall_emissivity, dtype=float)
-        wall_view = np.asarray(wall_view_factor, dtype=float)
+        emissivity = np.asarray(particle_emissivity, dtype=np.float64)
+        view = np.asarray(pair_view_factor, dtype=np.float64)
+        wall = np.asarray(wall_emissivity, dtype=np.float64)
+        wall_view = np.asarray(wall_view_factor, dtype=np.float64)
         cutoff = float(maximum_range)
         if (
             emissivity.ndim != 1

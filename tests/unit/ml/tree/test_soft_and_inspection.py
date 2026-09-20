@@ -70,7 +70,7 @@ def _hard_inspection_tree():
         right_child=jnp.array([[2, -1, -1]]),
         default_left=jnp.array([[True, False, False]]),
         leaf_value=jnp.array([[[0.0], [2.0], [6.0]]]),
-        node_mask=jnp.ones((1, 3), dtype=bool),
+        node_mask=jnp.ones((1, 3), dtype="bool"),
         leaf_mask=jnp.array([[False, True, True]]),
         tree_mask=jnp.array([True]),
         tree_weight=jnp.array([1.0]),
@@ -273,7 +273,7 @@ def test_soft_fit_feature_target_weight_and_hyperparameter_gradients_are_finite(
 
 def test_soft_fit_respects_masks_zero_statistical_weight_and_ignores_measure_weight():
     batch = _soft_batch()
-    feature_mask = jnp.ones_like(batch.features, dtype=bool).at[5, 1].set(False)
+    feature_mask = jnp.ones_like(batch.features, dtype="bool").at[5, 1].set(False)
     common = dict(
         feature_mask=feature_mask,
         sample_mask=jnp.array([True, True, True, True, True, False]),
@@ -333,7 +333,7 @@ def test_soft_classification_objectives_labels_and_failure_status_are_observable
     empty = SoftDecisionTreeRecipe(depth=1, iterations=2).fit_batch(
         MLBatch(
             binary_batch.features,
-            binary_batch.targets.astype(float),
+            binary_batch.targets.astype("float64"),
             sample_weight=jnp.zeros((8,)),
         ),
         key=jax.random.key(4),

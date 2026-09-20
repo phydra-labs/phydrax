@@ -60,7 +60,7 @@ class ReciprocalMeshPlan(StrictModule, NonTrainableState):
         cell_ = _require_cell(cell)
         points = np.asarray(fractional_points)
         weights_ = np.asarray(weights)
-        shape = tuple(int(value) for value in mesh_shape)
+        shape = tuple(mesh_shape)
         shift_ = tuple(float(value) for value in shift)
         tolerance = float(uniqueness_tolerance)
         if (
@@ -161,7 +161,7 @@ class ReciprocalMeshPlan(StrictModule, NonTrainableState):
         maximum_points: int = 1_000_000,
     ) -> "ReciprocalMeshPlan":
         cell_ = _require_cell(cell)
-        shape = tuple(int(value) for value in mesh_shape)
+        shape = tuple(mesh_shape)
         shift_ = (0.0,) * cell_.rank if shift is None else tuple(float(v) for v in shift)
         if len(shape) != cell_.rank or any(value <= 0 for value in shape):
             raise ValueError(
@@ -314,7 +314,7 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
             raise ReciprocalResourceError(
                 "Reciprocal connectivity exceeds maximum_edges."
             )
-        point_count = int(mesh.fractional_points.shape[0])
+        point_count = mesh.fractional_points.shape[0]
         if (
             np.any(source < 0)
             or np.any(source >= point_count)
@@ -423,7 +423,7 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
                 if periodic and size > 1
             )
             if axes is None
-            else tuple(int(axis) for axis in axes)
+            else tuple(axes)
         )
         if (
             not selected
@@ -436,9 +436,7 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
                 "Regular connectivity axes must be distinct sampled periodic axes."
             )
         indices = np.asarray(mesh.mesh_indices)
-        lookup = {
-            tuple(int(value) for value in row): index for index, row in enumerate(indices)
-        }
+        lookup = {tuple(row): index for index, row in enumerate(indices)}
         sources: list[int] = []
         targets: list[int] = []
         shifts: list[tuple[int, ...]] = []
@@ -455,11 +453,11 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
                     elif raw[axis] < 0:
                         raw[axis] = mesh.mesh_shape[axis] - 1
                         shift[axis] = -1
-                    target = lookup[tuple(int(value) for value in raw)]
+                    target = lookup[tuple(raw)]
                     edge_lookup[(point_index, direction * (axis + 1))] = len(sources)
                     sources.append(point_index)
                     targets.append(target)
-                    shifts.append(tuple(int(value) for value in shift))
+                    shifts.append(tuple(shift))
         if len(sources) > int(maximum_edges):
             raise ReciprocalResourceError(
                 "Regular reciprocal connectivity exceeds maximum_edges."
@@ -534,11 +532,11 @@ class PreparedReciprocalConnectivity(StrictModule, NonTrainableState):
 
     @property
     def edge_count(self) -> int:
-        return int(self.plan.source_indices.size)
+        return self.plan.source_indices.size
 
     @property
     def plaquette_count(self) -> int:
-        return int(self.plan.plaquette_edges.shape[0])
+        return self.plan.plaquette_edges.shape[0]
 
 
 def prepare_reciprocal_connectivity(

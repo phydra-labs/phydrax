@@ -104,7 +104,7 @@ class PeriodicSCFResult(StrictModule, NonTrainableState):
         self.populations = population
         self.residual = jnp.asarray(residual, dtype=orbital.real.dtype).reshape(())
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.energy_unit = energy_unit
         self.cell_id = str(cell_id)
         self.mesh_id = str(mesh_id)

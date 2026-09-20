@@ -198,8 +198,8 @@ class SGMCMCResult(AbstractChainSampleResult):
                 else control_variate.construction_duration_seconds
             )
         )
-        retained = int(num_samples) * int(chain_keys.shape[0])
-        update_count = int(num_updates) * int(chain_keys.shape[0])
+        retained = int(num_samples) * chain_keys.shape[0]
+        update_count = int(num_updates) * chain_keys.shape[0]
         gradient_count = int(num_gradient_evaluations)
         self.problem = problem
         self.samples = samples
@@ -242,17 +242,17 @@ class SGMCMCResult(AbstractChainSampleResult):
         self.sample_memory_bytes = (
             _tree_nbytes(samples)
             + _tree_nbytes(unconstrained_samples)
-            + int(self.gradient_norm.nbytes)
-            + (0 if self.thermostat is None else int(self.thermostat.nbytes))
-            + (0 if self.momentum_norm is None else int(self.momentum_norm.nbytes))
-            + (0 if self.log_density is None else int(self.log_density.nbytes))
+            + self.gradient_norm.nbytes
+            + (0 if self.thermostat is None else self.thermostat.nbytes)
+            + (0 if self.momentum_norm is None else self.momentum_norm.nbytes)
+            + (0 if self.log_density is None else self.log_density.nbytes)
         )
         self.mean_update_gradient_norm = float(mean_update_gradient_norm)
         self.max_update_gradient_norm = float(max_update_gradient_norm)
 
     @property
     def num_chains(self) -> int:
-        return int(self.chain_keys.shape[0])
+        return self.chain_keys.shape[0]
 
     @property
     def num_draws(self) -> int:
@@ -565,8 +565,7 @@ def _sample_sgmcmc(
         )
     if control_variate is not None and not estimator.supports_control_variate:
         raise ValueError(
-            "The selected stochastic-gradient estimator does not support "
-            "SGMCMCControlVariate."
+            "The selected stochastic-gradient estimator does not support SGMCMCControlVariate."
         )
     if resume_from is not None and (
         initial_position is not None or initial_positions is not None
@@ -663,10 +662,7 @@ def _sample_sgmcmc(
         values = estimates.log_density
         gradients = estimates.gradient
         invalid_value_chains = tuple(
-            int(index)
-            for index in jnp.argwhere(~jnp.isfinite(values) | ~estimates.valid).reshape(
-                -1
-            )
+            jnp.argwhere(~jnp.isfinite(values) | ~estimates.valid).reshape(-1)
         )
         invalid_gradient_locations = _invalid_chain_locations(gradients, chains)
         if invalid_value_chains or invalid_gradient_locations:
@@ -678,12 +674,12 @@ def _sample_sgmcmc(
         current_states = state_template
         burnin_states = None
         stored_samples = _empty_sample_tree(position, chains)
-        retained_gradient_norm = jnp.empty((chains, 0), dtype=float)
+        retained_gradient_norm = jnp.empty((chains, 0), dtype=jnp.float64)
         retained_thermostat = (
-            jnp.empty((chains, 0), dtype=float) if algorithm == "sgnht" else None
+            jnp.empty((chains, 0), dtype=jnp.float64) if algorithm == "sgnht" else None
         )
         retained_momentum_norm = (
-            jnp.empty((chains, 0), dtype=float) if algorithm == "sgnht" else None
+            jnp.empty((chains, 0), dtype=jnp.float64) if algorithm == "sgnht" else None
         )
         completed_updates = 0
         completed_draws = 0
@@ -1063,14 +1059,14 @@ def _compile_transition(
             return compiled(current_states, keys, minibatch, current_step_size)
 
     else:
-        state_values = _unstack_tree(states, int(chain_keys.shape[0]))
+        state_values = _unstack_tree(states, chain_keys.shape[0])
         sequential_transition = cast(Any, eqx.filter_jit(one_step))
         compiled = sequential_transition.lower(
             chain_keys[0], state_values[0], batch, jnp.asarray(step_size)
         ).compile()
 
         def advance(current_states, keys, minibatch, current_step_size):
-            current_values = _unstack_tree(current_states, int(keys.shape[0]))
+            current_values = _unstack_tree(current_states, keys.shape[0])
             next_states = []
             gradient_norms = []
             gradient_validity = []
@@ -1111,7 +1107,7 @@ def _initialize_states(
     )
     if chain_method == "vectorized":
         return jax.jit(jax.vmap(initialize))(positions, initialization_keys)
-    position_values = _unstack_tree(positions, int(chain_keys.shape[0]))
+    position_values = _unstack_tree(positions, chain_keys.shape[0])
     return _stack_trees(
         [
             initialize(position, init_key)
@@ -1136,10 +1132,10 @@ def _tree_norm(tree: PyTree[Any], /) -> Array:
     return jnp.sqrt(
         sum(
             (
-                jnp.sum(jnp.asarray(leaf, dtype=float) ** 2)
+                jnp.sum(jnp.asarray(leaf, dtype=jnp.float64) ** 2)
                 for leaf in jax.tree_util.tree_leaves(tree)
             ),
-            jnp.zeros((), dtype=float),
+            jnp.zeros((), dtype=jnp.float64),
         )
     )
 
@@ -1149,12 +1145,12 @@ def _batched_tree_norm(tree: PyTree[Any], /) -> Array:
     squared = sum(
         (
             jnp.sum(
-                jnp.asarray(leaf, dtype=float).reshape((leaf.shape[0], -1)) ** 2,
+                jnp.asarray(leaf, dtype=jnp.float64).reshape((leaf.shape[0], -1)) ** 2,
                 axis=1,
             )
             for leaf in leaves
         ),
-        jnp.zeros((leaves[0].shape[0],), dtype=float),
+        jnp.zeros((leaves[0].shape[0],), dtype=jnp.float64),
     )
     return jnp.sqrt(squared)
 
@@ -1168,15 +1164,14 @@ def _invalid_chain_locations(
     for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
         array = jnp.asarray(leaf)
         path_name = jax.tree_util.keystr(path)
-        if array.ndim == 0 or int(array.shape[0]) != num_chains:
+        if array.ndim == 0 or array.shape[0] != num_chains:
             locations.append(
-                f"{path_name or '<root>'}: expected leading chain axis "
-                f"of length {num_chains}"
+                f"{path_name or '<root>'}: expected leading chain axis of length {num_chains}"
             )
             continue
         for index in jnp.argwhere(~jnp.isfinite(array)):
             chain = int(index[0])
-            trailing = tuple(int(value) for value in index[1:])
+            trailing = tuple(index[1:])
             suffix = (
                 ""
                 if not trailing
@@ -1187,13 +1182,13 @@ def _invalid_chain_locations(
 
 
 def _invalid_chain_indices(tree: PyTree[Any], num_chains: int, /) -> tuple[int, ...]:
-    valid = jnp.ones((num_chains,), dtype=bool)
+    valid = jnp.ones((num_chains,), dtype=jnp.bool_)
     for leaf in jax.tree_util.tree_leaves(tree):
         array = jnp.asarray(leaf)
-        if array.ndim == 0 or int(array.shape[0]) != num_chains:
+        if array.ndim == 0 or array.shape[0] != num_chains:
             return tuple(range(num_chains))
         valid = valid & jnp.all(jnp.isfinite(array).reshape((num_chains, -1)), axis=1)
-    return tuple(int(index) for index in jnp.argwhere(~valid).reshape(-1))
+    return tuple(jnp.argwhere(~valid).reshape(-1))
 
 
 def _empty_sample_tree(position: PyTree[Any], chains: int, /):
@@ -1224,7 +1219,7 @@ def _combine_statistic(stored, additions):
 
 def _evaluate_full_log_density(problem, samples):
     leaves = jax.tree_util.tree_leaves(samples)
-    chains, draws = int(leaves[0].shape[0]), int(leaves[0].shape[1])
+    chains, draws = leaves[0].shape[0], leaves[0].shape[1]
     flattened = jax.tree_util.tree_map(
         lambda value: value.reshape((chains * draws, *value.shape[2:])), samples
     )

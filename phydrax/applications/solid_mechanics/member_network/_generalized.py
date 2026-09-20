@@ -39,14 +39,14 @@ class GeneralizedDOFChannel(StrictModule, NonTrainableState):
         geometry: AbstractStateGeometry | None = None,
     ):
         identifier = str(channel_id)
-        shape_ = tuple(int(value) for value in shape)
+        shape_ = tuple(shape)
         if not identifier or not shape_ or any(value <= 0 for value in shape_):
             raise ValueError("Generalized channel ID and shape must be nonempty.")
         size = prod(shape_)
         mask = (
-            jnp.zeros((size,), dtype=bool)
+            jnp.zeros((size,), dtype=jnp.bool_)
             if constrained is None
-            else jnp.asarray(constrained, dtype=bool).reshape((-1,))
+            else jnp.asarray(constrained, dtype=jnp.bool_).reshape((-1,))
         )
         if mask.shape != (size,):
             raise ValueError("Generalized channel constraint mask has the wrong size.")

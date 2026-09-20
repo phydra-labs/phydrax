@@ -316,7 +316,7 @@ class SPDEConvergenceStudy(StrictModule):
         *,
         observable: str | None = None,
     ) -> float:
-        errors = np.asarray(self.errors(metric, observable=observable), dtype=float)
+        errors = np.asarray(self.errors(metric, observable=observable), dtype=np.float64)
         if np.any(errors <= 0.0):
             raise ValueError("Empirical rates require strictly positive errors.")
         slope = np.polyfit(np.log(np.asarray(self.resolutions)), np.log(errors), 1)[0]
@@ -349,7 +349,7 @@ class SPDEConvergenceStudy(StrictModule):
         bound = np.inf if upper_bound is None else float(upper_bound)
         if not isfinite(bound) and upper_bound is not None:
             raise ValueError("upper_bound must be finite when provided.")
-        return bool(np.all(np.asarray(values, dtype=float) <= bound))
+        return bool(np.all(np.asarray(values, dtype=np.float64) <= bound))
 
 
 def weak_observable_estimate(
@@ -365,13 +365,13 @@ def weak_observable_estimate(
     if not callable(observable):
         raise TypeError("observable must be callable.")
     values = jnp.asarray(samples)
-    if values.ndim < 1 or int(values.shape[0]) < 2:
+    if values.ndim < 1 or values.shape[0] < 2:
         raise ValueError("Weak estimates require at least two leading samples.")
     evaluated = jnp.asarray(
-        tuple(observable(values[index]) for index in range(int(values.shape[0]))),
-        dtype=float,
+        tuple(observable(values[index]) for index in range(values.shape[0])),
+        dtype=jnp.float64,
     ).reshape((-1,))
-    if evaluated.shape != (int(values.shape[0]),):
+    if evaluated.shape != (values.shape[0],):
         raise ValueError("observable must return one scalar per sample.")
     estimate = float(jnp.mean(evaluated))
     standard_error = float(jnp.std(evaluated, ddof=1) / jnp.sqrt(float(evaluated.size)))
@@ -380,7 +380,7 @@ def weak_observable_estimate(
         estimate,
         float(reference),
         standard_error,
-        int(evaluated.size),
+        evaluated.size,
         confidence_level=confidence_level,
     )
 
@@ -401,7 +401,7 @@ def coupled_strong_error(
     if quadrature_weights is None:
         squared = jnp.mean(jnp.abs(difference) ** 2, axis=tuple(range(1, left.ndim)))
     else:
-        weights = jnp.asarray(quadrature_weights, dtype=float)
+        weights = jnp.asarray(quadrature_weights, dtype=jnp.float64)
         if difference.shape[1 : 1 + weights.ndim] != weights.shape:
             raise ValueError("quadrature_weights must match leading state dimensions.")
         broadcast = weights.reshape(
@@ -531,8 +531,8 @@ class NoiseTruncationStudy(StrictModule):
         basis_id: str,
         observable_mode_weights: Mapping[str, ArrayLike] | None = None,
     ) -> "NoiseTruncationStudy":
-        covariance = np.asarray(covariance_eigenvalues, dtype=float).reshape((-1,))
-        linear = np.asarray(linear_eigenvalues, dtype=float).reshape((-1,))
+        covariance = np.asarray(covariance_eigenvalues, dtype=np.float64).reshape((-1,))
+        linear = np.asarray(linear_eigenvalues, dtype=np.float64).reshape((-1,))
         if covariance.shape != linear.shape or covariance.size <= 0:
             raise ValueError(
                 "Covariance and linear spectra must be equal non-empty vectors."
@@ -541,13 +541,13 @@ class NoiseTruncationStudy(StrictModule):
             raise ValueError("Covariance eigenvalues must be finite and non-negative.")
         if np.any(~np.isfinite(linear)):
             raise ValueError("Linear eigenvalues must be finite.")
-        retained_ranks = tuple(int(rank) for rank in ranks)
+        retained_ranks = tuple(ranks)
         if any(rank < 0 or rank > covariance.size for rank in retained_ranks):
             raise ValueError("Every retained rank must lie in [0, spectrum size].")
         time = float(horizon)
         if not isfinite(time) or time <= 0.0:
             raise ValueError("horizon must be finite and positive.")
-        threshold = np.sqrt(np.finfo(float).eps)
+        threshold = np.sqrt(np.finfo(np.float64).eps)
         factors = np.where(
             np.abs(linear) > threshold,
             np.expm1(2.0 * linear * time)
@@ -561,7 +561,7 @@ class NoiseTruncationStudy(StrictModule):
         for name, value in (
             {} if observable_mode_weights is None else observable_mode_weights
         ).items():
-            resolved = np.asarray(value, dtype=float).reshape((-1,))
+            resolved = np.asarray(value, dtype=np.float64).reshape((-1,))
             if resolved.shape != covariance.shape or np.any(~np.isfinite(resolved)):
                 raise ValueError(
                     "Every observable mode weight must be finite and match the spectra."

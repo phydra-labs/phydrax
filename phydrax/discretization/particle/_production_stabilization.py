@@ -114,7 +114,7 @@ def balsara_limiter(
     density_ = jnp.asarray(density)
     left = pairs.left_indices
     right = pairs.right_indices
-    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=bool)
+    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=jnp.bool_)
     gradient = kernel.gradient(geometry.displacement, geometry.distance, smoothing_length)
     difference = velocity_[right] - velocity_[left]
     volume = particles.safe_masses / density_
@@ -256,7 +256,7 @@ def particle_shifting(
     density_ = jnp.asarray(density)
     left = pairs.left_indices
     right = pairs.right_indices
-    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=bool)
+    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=jnp.bool_)
     gradient = kernel.gradient(geometry.displacement, geometry.distance, smoothing_length)
     volume = particles.safe_masses / density_
     raw_velocity = scatter_pair_sum(

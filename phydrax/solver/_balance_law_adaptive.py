@@ -142,7 +142,7 @@ class BalanceLawDecisionJournal(StrictModule):
         process_ids: tuple[str, ...],
         source_plan_id: str,
     ):
-        attempted_ = jnp.asarray(attempted, dtype=bool)
+        attempted_ = jnp.asarray(attempted, dtype=jnp.bool_)
         capacity = attempted_.size
         aligned = (
             accepted,
@@ -166,7 +166,7 @@ class BalanceLawDecisionJournal(StrictModule):
         if not plan_id or any(not identifier for identifier in identifiers):
             raise ValueError("Decision-journal provenance must be non-empty.")
         self.attempted = attempted_
-        self.accepted = jnp.asarray(accepted, dtype=bool)
+        self.accepted = jnp.asarray(accepted, dtype=jnp.bool_)
         self.start_times = jnp.asarray(start_times)
         self.end_times = jnp.asarray(end_times)
         self.requested_step_sizes = jnp.asarray(requested_step_sizes)
@@ -179,13 +179,15 @@ class BalanceLawDecisionJournal(StrictModule):
         self.balance_statuses = jnp.asarray(balance_statuses, dtype=jnp.int32)
         self.attempt_count = jnp.asarray(attempt_count, dtype=jnp.int32).reshape(())
         self.accepted_count = jnp.asarray(accepted_count, dtype=jnp.int32).reshape(())
-        self.reached_final_time = jnp.asarray(reached_final_time, dtype=bool).reshape(())
+        self.reached_final_time = jnp.asarray(
+            reached_final_time, dtype=jnp.bool_
+        ).reshape(())
         self.process_ids = identifiers
         self.source_plan_id = plan_id
 
     @property
     def capacity(self) -> int:
-        return int(self.attempted.size)
+        return self.attempted.size
 
 
 class AdaptiveBalanceLawRolloutResult(StrictModule):

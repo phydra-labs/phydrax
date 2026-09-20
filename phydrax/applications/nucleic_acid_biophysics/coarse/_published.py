@@ -46,7 +46,7 @@ def radial_value(r, parameters, kind):
     """
     amplitude, r0, rc, low, high, width = parameters
 
-    def centre(x):
+    def center(x):
         if kind == "morse":
             exponential = jnp.exp(-width * (x - r0))
             reference = jnp.exp(-width * (rc - r0))
@@ -55,12 +55,12 @@ def radial_value(r, parameters, kind):
             ) ** 2, 2 * width * exponential * (1 - exponential)
         return 0.5 * ((x - r0) ** 2 - (rc - r0) ** 2), x - r0
 
-    vlo, dlo = centre(low)
-    vhi, dhi = centre(high)
+    vlo, dlo = center(low)
+    vhi, dhi = center(high)
     cutlo, cuthi = low - 2 * vlo / dlo, high - 2 * vhi / dhi
     blo, bhi = dlo * dlo / (4 * vlo), dhi * dhi / (4 * vhi)
     # Bound inactive central evaluation to avoid overflow outside compact support.
-    middle, _ = centre(jnp.where(r < low, low, jnp.where(r > high, high, r)))
+    middle, _ = center(jnp.where(r < low, low, jnp.where(r > high, high, r)))
     value = jnp.where(
         r < low,
         blo * (r - cutlo) ** 2,
@@ -70,17 +70,17 @@ def radial_value(r, parameters, kind):
 
 
 def radial_support(parameters, kind):
-    p = np.asarray(parameters, dtype=float)
+    p = np.asarray(parameters, dtype=np.float64)
     _, r0, rc, low, high, width = p
 
-    def centre(x):
+    def center(x):
         if kind == "morse":
             e, ec = np.exp(-width * (x - r0)), np.exp(-width * (rc - r0))
             return (1 - e) ** 2 - (1 - ec) ** 2, 2 * width * e * (1 - e)
         return 0.5 * ((x - r0) ** 2 - (rc - r0) ** 2), x - r0
 
-    vlo, dlo = centre(low)
-    vhi, dhi = centre(high)
+    vlo, dlo = center(low)
+    vhi, dhi = center(high)
     if not (0 < low < r0 < high < rc and vlo < 0 and vhi < 0 and dlo < 0 and dhi > 0):
         raise ValueError(
             "Radial matching points must straddle a negative well with outward slopes."

@@ -124,7 +124,7 @@ def _matrix(value: ArrayLike, name: str, /) -> Array:
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
-        result = result.astype(float)
+        result = result.astype("float64")
     return _error_if(
         result,
         jnp.any(~jnp.isfinite(result)),
@@ -139,7 +139,7 @@ def _require_shape(value: ArrayLike, shape: tuple[int, ...], name: str, /) -> Ar
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
-        result = result.astype(float)
+        result = result.astype("float64")
     return _error_if(
         result,
         jnp.any(~jnp.isfinite(result)),
@@ -201,20 +201,19 @@ def _validate_are_inputs(
     /,
 ) -> tuple[Array, Array, Array, Array, Array]:
     a_ = _matrix(a, "a")
-    n = int(a_.shape[-1])
+    n = a_.shape[-1]
     case_shape = tuple(a_.shape[:-2])
     b_ = jnp.asarray(b)
     if b_.ndim < 2 or tuple(b_.shape[:-2]) != case_shape or b_.shape[-2] != n:
         raise ValueError(
-            "b must have shape case_shape + (state_size, control_size); "
-            f"got {b_.shape} for a shape {a_.shape}."
+            f"b must have shape case_shape + (state_size, control_size); got {b_.shape} for a shape {a_.shape}."
         )
     if jnp.issubdtype(b_.dtype, jnp.complexfloating):
         raise TypeError("b must be real-valued.")
     if not jnp.issubdtype(b_.dtype, jnp.inexact):
-        b_ = b_.astype(float)
+        b_ = b_.astype("float64")
     b_ = _error_if(b_, jnp.any(~jnp.isfinite(b_)), "b must be finite.")
-    m = int(b_.shape[-1])
+    m = b_.shape[-1]
     q_ = _require_shape(q, case_shape + (n, n), "q")
     r_ = _require_shape(r, case_shape + (m, m), "r")
     if s is None:
@@ -292,7 +291,7 @@ def _care_primal(a: Array, b: Array, q: Array, r: Array, s: Array, /) -> Array:
         axis=-2,
     )
     eigenvalues, eigenvectors = jnp.linalg.eig(hamiltonian)
-    n = int(a.shape[-1])
+    n = a.shape[-1]
     order = jnp.argsort(jnp.real(eigenvalues), axis=-1)
     columns = jnp.take_along_axis(eigenvectors, order[..., None, :n], axis=-1)
     upper = columns[..., :n, :]
@@ -314,7 +313,7 @@ def _batched_implicit_equation(
     discrete: bool,
 ) -> Array:
     """Apply the shared matrix-equation primitive across explicit case axes."""
-    n = int(matrix.shape[-1])
+    n = matrix.shape[-1]
     case_shape = tuple(source.shape[:-2])
     matrix_flat = matrix.reshape((-1, n, n))
     source_flat = source.reshape((-1, n, n))
@@ -385,7 +384,7 @@ def _dare_primal(
     case_shape = tuple(a.shape[:-2])
     initial = (
         q,
-        jnp.zeros(case_shape, dtype=bool),
+        jnp.zeros(case_shape, dtype=jnp.bool_),
         jnp.zeros(case_shape, dtype=jnp.int32),
     )
     p, _, count = jax.lax.fori_loop(0, max_iterations, body, initial)
@@ -448,7 +447,7 @@ def _pbh_diagnostics(
     discrete: bool,
     tolerance: float,
 ) -> tuple[Array, Array]:
-    n = int(a.shape[-1])
+    n = a.shape[-1]
     eigenvalues = jnp.linalg.eigvals(a)
     identity = jnp.eye(n, dtype=eigenvalues.dtype)
     pencils = eigenvalues[..., :, None, None] * identity - a[..., None, :, :]

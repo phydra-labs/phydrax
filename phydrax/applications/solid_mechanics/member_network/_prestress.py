@@ -223,12 +223,12 @@ def assess_prestress_realizability(
     stability = (
         jnp.asarray(False)
         if stability_valid is None
-        else jnp.asarray(stability_valid, dtype=bool)
+        else jnp.asarray(stability_valid, dtype=jnp.bool_)
     )
     sequence = (
         jnp.asarray(False)
         if sequence_valid is None
-        else jnp.asarray(sequence_valid, dtype=bool)
+        else jnp.asarray(sequence_valid, dtype=jnp.bool_)
     )
     complete = jnp.asarray(
         (not fabrication.require_stability or stability_valid is not None)

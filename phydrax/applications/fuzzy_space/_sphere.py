@@ -139,7 +139,7 @@ def prepare_fuzzy_sphere_two_particle(
     transform = np.concatenate(
         tuple(np.asarray(value.transform) for value in sector_bases), axis=0
     )
-    physical_dimension = int(transform.shape[0])
+    physical_dimension = transform.shape[0]
     if physical_dimension**2 > plan.resources.maximum_matrix_elements:
         raise ValueError("Fuzzy-sphere physical Hamiltonian exceeds matrix admission.")
     energies = np.concatenate(

@@ -87,7 +87,7 @@ def _reaction(calcium, model_id="ord-2011"):
         calcium_sr_flux_mM_per_ms=jnp.zeros(batch, dtype=jnp.float64),
         calcium_membrane_current_uA_per_mm2=jnp.zeros(batch, dtype=jnp.float64),
         charge_balance_residual_uA_per_mm2=jnp.zeros(batch, dtype=jnp.float64),
-        valid=jnp.ones(batch, dtype=bool),
+        valid=jnp.ones(batch, dtype="bool"),
         current_names=("I_test",),
         model_id=model_id,
     )

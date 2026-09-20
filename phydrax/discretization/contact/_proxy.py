@@ -63,9 +63,9 @@ class ContactProxyPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(topology, CollisionSurfacePlan):
             raise TypeError("topology must be CollisionSurfacePlan.")
-        error = np.asarray(approximation_error, dtype=float)
+        error = np.asarray(approximation_error, dtype=np.float64)
         if error.shape == ():
-            error = np.full((topology.vertex_count,), float(error), dtype=float)
+            error = np.full((topology.vertex_count,), float(error), dtype=np.float64)
         if error.shape != (topology.vertex_count,):
             raise ValueError(
                 "approximation_error must be scalar or one value per proxy vertex."
@@ -171,7 +171,7 @@ class ContactProxyTransfer(StrictModule, NonTrainableState):
         old_ids = np.asarray(old_vertex_ids)
         new_ids = np.asarray(new_vertex_ids)
         parents = np.asarray(new_parent_vertices)
-        weights = np.asarray(parent_weights, dtype=float)
+        weights = np.asarray(parent_weights, dtype=np.float64)
         if old_ids.ndim != 1 or new_ids.ndim != 1:
             raise ValueError("Proxy vertex IDs must be vectors.")
         if parents.ndim != 2 or weights.shape != parents.shape:

@@ -84,7 +84,7 @@ class ExchangedOperatorSector(StrictModule):
     ):
         name = str(label)
         representation = str(representation_label)
-        spin_values = tuple(int(value) for value in spins)
+        spin_values = tuple(spins)
         parity_value = str(parity)
         minimum = float(minimum_dimension)
         identity = bool(includes_identity)
@@ -145,7 +145,7 @@ class CrossingChannel(StrictModule):
         involutive: bool,
     ):
         name = str(label)
-        values = tuple(int(value) for value in permutation)
+        values = tuple(permutation)
         if not name:
             raise ValueError("A crossing-channel label must be non-empty.")
         if len(values) != 4 or tuple(sorted(values)) != (0, 1, 2, 3):

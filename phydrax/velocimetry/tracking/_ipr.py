@@ -196,10 +196,10 @@ def iterative_particle_reconstruction(
             "positions_xyz must match IPR particle_capacity and dimension 3."
         )
     if not jnp.issubdtype(positions.dtype, jnp.inexact):
-        positions = positions.astype(float)
+        positions = positions.astype("float64")
     amplitudes = jnp.asarray(amplitude, dtype=positions.dtype)
     sigmas = jnp.asarray(sigma, dtype=positions.dtype)
-    active_ = jnp.asarray(active, dtype=bool)
+    active_ = jnp.asarray(active, dtype=jnp.bool_)
     expected_particle_shape = (plan.particle_capacity,)
     if (
         amplitudes.shape != expected_particle_shape
@@ -225,7 +225,7 @@ def iterative_particle_reconstruction(
     valid = (
         finite_observed
         if valid_mask is None
-        else finite_observed & jnp.asarray(valid_mask, dtype=bool)
+        else finite_observed & jnp.asarray(valid_mask, dtype=jnp.bool_)
     )
     if valid.shape != observed.shape:
         raise ValueError("valid_mask must have the observed image shape.")

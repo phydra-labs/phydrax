@@ -27,7 +27,7 @@ def _benchmark(function, argument, repeats):
     return {
         "compile_and_first_seconds": first,
         "steady_seconds": steady,
-        "output_bytes": int(output.size * output.dtype.itemsize),
+        "output_bytes": output.size * output.dtype.itemsize,
     }
 
 

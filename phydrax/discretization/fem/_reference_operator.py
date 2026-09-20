@@ -319,7 +319,7 @@ class FiniteElementReferenceReport(StrictModule, NonTrainableState):
         self.volume_exact_degree = volume_exact_degree
         self.facet_exact_degrees = facet_exact_degrees
         self.point_count = int(point_count)
-        self.facet_point_counts = tuple(int(value) for value in facet_point_counts)
+        self.facet_point_counts = tuple(facet_point_counts)
         self.tensor_factorized = bool(tensor_factorized)
         self.report_id = canonical_fingerprint(content)
 
@@ -494,8 +494,8 @@ class PreparedFiniteElementReference(StrictModule, NonTrainableState):
             precision_id=precision.policy_id,
             volume_exact_degree=_exact_degree(volume_rule),
             facet_exact_degrees=tuple(_exact_degree(rule) for rule in facet_rules),
-            point_count=int(points.shape[0]),
-            facet_point_counts=tuple(int(facet.points.shape[0]) for facet in facets),
+            point_count=points.shape[0],
+            facet_point_counts=tuple(facet.points.shape[0] for facet in facets),
             tensor_factorized=tensor_tabulation is not None,
         )
         self.element = element

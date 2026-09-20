@@ -174,6 +174,6 @@ def test_compact_group_hmc_rejects_wrong_measure_and_nonmembers():
         )
 
     action, kernel = _su2_kernel()
-    invalid = jnp.zeros((1,) + action.configuration_shape, dtype=complex)
+    invalid = jnp.zeros((1,) + action.configuration_shape, dtype="complex128")
     with pytest.raises(Exception, match="finite group members"):
         phx.sampling.initialize_compact_group_hamiltonian_state(kernel, invalid)

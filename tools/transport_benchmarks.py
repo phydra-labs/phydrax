@@ -31,14 +31,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def _problem(size: int, dimension: int):
     source_points = jnp.reshape(
-        jnp.sin(jnp.arange(size * dimension, dtype=float) * 0.013),
+        jnp.sin(jnp.arange(size * dimension, dtype="float64") * 0.013),
         (size, dimension),
     )
     target_points = jnp.reshape(
-        jnp.cos(jnp.arange(size * dimension, dtype=float) * 0.017),
+        jnp.cos(jnp.arange(size * dimension, dtype="float64") * 0.017),
         (size, dimension),
     )
-    weights = cx.Field(jnp.ones((size,), dtype=float), dims=("atom",))
+    weights = cx.Field(jnp.ones((size,), dtype="float64"), dims=("atom",))
     source = phx.integration.discrete(
         source_points,
         weights,
@@ -62,7 +62,7 @@ def _problem(size: int, dimension: int):
 
 def _bytes(tree) -> int:
     return sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
         if isinstance(leaf, jax.Array)
     )
@@ -90,7 +90,7 @@ def _record(size, dimension, block_size, iterations, repeats, *, blockwise):
         jax.block_until_ready(result.regularized_cost)
     steady_ms = 1e3 * (time.perf_counter() - started) / repeats
 
-    payload = jnp.ones((size, 4), dtype=float)
+    payload = jnp.ones((size, 4), dtype="float64")
     apply = eqx.filter_jit(lambda solved, values: solved.apply_source_to_target(values))
     applied = apply(result, payload)
     jax.block_until_ready(applied)
@@ -101,7 +101,7 @@ def _record(size, dimension, block_size, iterations, repeats, *, blockwise):
     apply_ms = 1e3 * (time.perf_counter() - started) / repeats
 
     def scalar(points):
-        weights = cx.Field(jnp.ones((size,), dtype=float), dims=("atom",))
+        weights = cx.Field(jnp.ones((size,), dtype="float64"), dims=("atom",))
         source = phx.integration.discrete(
             points,
             weights,

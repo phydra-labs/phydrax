@@ -170,9 +170,9 @@ class LinearResponseTaskPlan(StrictModule, NonTrainableState):
     ):
         perturbation_ = _identifier(perturbation, "perturbation")
         gauge_ = _identifier(gauge, "gauge")
-        frequency = np.asarray(frequencies, dtype=float).reshape((-1,))
+        frequency = np.asarray(frequencies, dtype=np.float64).reshape((-1,))
         damping_ = np.broadcast_to(
-            np.asarray(damping, dtype=float), frequency.shape
+            np.asarray(damping, dtype=np.float64), frequency.shape
         ).copy()
         order = int(response_order)
         normalized = _properties(properties, require_energy=False)
@@ -274,7 +274,7 @@ class NonadiabaticCouplingTaskPlan(StrictModule, NonTrainableState):
         *,
         route: str = "analytic",
     ):
-        indices = tuple(int(value) for value in state_indices)
+        indices = tuple(state_indices)
         if len(indices) < 2 or len(set(indices)) != len(indices) or min(indices) < 0:
             raise ValueError(
                 "Nonadiabatic coupling states must be unique non-negative indices."
@@ -303,7 +303,7 @@ class BandStructureTaskPlan(StrictModule, NonTrainableState):
     task_id: str = eqx.field(static=True)
 
     def __init__(self, fractional_k_points: ArrayLike, /):
-        points = np.asarray(fractional_k_points, dtype=float)
+        points = np.asarray(fractional_k_points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 3 or np.any(~np.isfinite(points)):
             raise ValueError("Band-structure k points must have finite shape (K, 3).")
         self.fractional_k_points = jnp.asarray(points)

@@ -57,7 +57,7 @@ def _evidence(
 ):
     return MPMDerivativeEvidence(
         jnp.asarray(int(kind), dtype=jnp.int32),
-        jnp.asarray(valid, dtype=bool),
+        jnp.asarray(valid, dtype=jnp.bool_),
         jnp.asarray(branch_margin),
         jnp.asarray(event_time),
         jnp.asarray(transversality_margin),

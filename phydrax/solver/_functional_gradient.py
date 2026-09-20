@@ -156,8 +156,7 @@ def solve_gradient(
 
     if isinstance(optim, str):
         raise TypeError(
-            "optim must be a Phydrax mirror or Riemannian optimizer, or an Optax "
-            "transformation, not a string."
+            "optim must be a Phydrax mirror or Riemannian optimizer, or an Optax transformation, not a string."
         )
 
     _opt_linesearch: optax.GradientTransformationExtraArgs | None = None
@@ -358,13 +357,11 @@ def solve_gradient(
         if gradient_composition is not None:
             if _opt_standard is None:
                 raise ValueError(
-                    "Functional gradient composition requires a standard Optax "
-                    "transformation."
+                    "Functional gradient composition requires a standard Optax transformation."
                 )
             if accumulation_steps != 1:
                 raise ValueError(
-                    "Functional gradient composition does not support gradient "
-                    "accumulation."
+                    "Functional gradient composition does not support gradient accumulation."
                 )
             if train_term_sample_size not in (None, len(self.terms)):
                 raise ValueError(
@@ -372,15 +369,13 @@ def solve_gradient(
                 )
             if model_loss_names:
                 raise ValueError(
-                    "Functional gradient composition does not yet support attached "
-                    "model losses."
+                    "Functional gradient composition does not yet support attached model losses."
                 )
         update_alignment = None if training is None else training.update_alignment
         if update_alignment is not None:
             if _opt_standard is None:
                 raise ValueError(
-                    "Functional update alignment requires a standard Optax "
-                    "transformation."
+                    "Functional update alignment requires a standard Optax transformation."
                 )
             if accumulation_steps != 1:
                 raise ValueError(
@@ -396,8 +391,7 @@ def solve_gradient(
                 )
             if model_loss_names:
                 raise ValueError(
-                    "Functional update alignment does not yet support attached "
-                    "model losses."
+                    "Functional update alignment does not yet support attached model losses."
                 )
         evaluation_term_names = tuple(_term_label(c) for c in self.evaluation_terms)
         term_sample_size = _train_term_sample_size(
@@ -480,7 +474,7 @@ def solve_gradient(
             )
             loss_value, flat_values, component_values = outputs
             gradients = []
-            for index in range(int(component_values.shape[0])):
+            for index in range(component_values.shape[0]):
                 component_cotangent = jnp.zeros_like(component_values).at[index].set(1)
                 gradient, _, _ = pullback(
                     (
@@ -554,7 +548,7 @@ def solve_gradient(
                 effective[:, None]
                 & effective[None, :]
                 & jnp.tril(
-                    jnp.ones_like(alignment.gradient_cosine_matrix, dtype=bool), -1
+                    jnp.ones_like(alignment.gradient_cosine_matrix, dtype=jnp.bool_), -1
                 )
             )
             return jnp.any(pairs & (alignment.gradient_cosine_matrix < -tolerance))
@@ -616,8 +610,7 @@ def solve_gradient(
                     )
                     if not pieces:
                         raise ValueError(
-                            "GeneralizedGaussNewton requires at least one active "
-                            "ResidualPenalty."
+                            "GeneralizedGaussNewton requires at least one active ResidualPenalty."
                         )
                     return jnp.concatenate(pieces, axis=0)
 
@@ -658,8 +651,7 @@ def solve_gradient(
                     if isinstance(prepared_, PreparedFunctionalUpdate):
                         if prepared_.residual is None:
                             raise ValueError(
-                                "Least-squares FunctionalSolver methods require "
-                                "residual roots."
+                                "Least-squares FunctionalSolver methods require residual roots."
                             )
                         return prepared_.residual.roots(p)
                     pieces = tuple(
@@ -674,8 +666,7 @@ def solve_gradient(
                     )
                     if not pieces:
                         raise ValueError(
-                            "Least-squares FunctionalSolver methods require at "
-                            "least one active ResidualPenalty."
+                            "Least-squares FunctionalSolver methods require at least one active ResidualPenalty."
                         )
                     return jnp.concatenate(pieces, axis=0)
 
@@ -965,7 +956,7 @@ def solve_gradient(
                         if training.term_balance is None
                         else len(training.term_balance.blocks)
                     ),
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 update_alignment_statistics=(
                     None
@@ -1095,11 +1086,11 @@ def solve_gradient(
             )
         )
         term_multipliers = (
-            jnp.zeros((0,), dtype=float)
+            jnp.zeros((0,), dtype=jnp.float64)
             if training is None or training.term_balance is None
             else resume_state.term_multipliers
             if resume_state is not None
-            else jnp.ones((len(training.term_balance.blocks),), dtype=float)
+            else jnp.ones((len(training.term_balance.blocks),), dtype=jnp.float64)
         )
         previous_gradient = (
             None if resume_state is None else resume_state.previous_gradient
@@ -1199,7 +1190,7 @@ def solve_gradient(
                 scale=term_scale,
                 evaluation_key=subkey,
                 sampling_key=jr.fold_in(subkey, 211),
-                iteration=jnp.asarray(iteration, dtype=float),
+                iteration=jnp.asarray(iteration, dtype=jnp.float64),
                 evaluation_kwargs=(
                     None
                     if target_state is None
@@ -1270,7 +1261,7 @@ def solve_gradient(
             completed = epoch
             try:
                 iter_start = time.perf_counter()
-                iter_ = jnp.asarray(epoch + 1, dtype=float)
+                iter_ = jnp.asarray(epoch + 1, dtype=jnp.float64)
                 update_alignment_result = None
                 gradient_conflict = None
                 constructed_conflict = None
@@ -1380,7 +1371,7 @@ def solve_gradient(
                         multiplier=training_evaluation_multiplier,
                         term_indices=active_term_indices,
                     )
-                    values_arr = jnp.asarray(term_values, dtype=float)
+                    values_arr = jnp.asarray(term_values, dtype=jnp.float64)
                     active_term_count = len(prepared.terms)
                     train_term_values = _expanded_train_terms(
                         values_arr[:active_term_count],
@@ -1433,7 +1424,7 @@ def solve_gradient(
                             micro_contribution,
                         )
                         loss_accumulator = loss_accumulator.add(micro_contribution)
-                        values_arr = jnp.asarray(micro_values, dtype=float)
+                        values_arr = jnp.asarray(micro_values, dtype=jnp.float64)
                         active_term_count = len(prepared.terms)
                         for local_index, term_index in enumerate(active_term_indices):
                             term_accumulators[term_index] = term_accumulators[
@@ -1477,13 +1468,13 @@ def solve_gradient(
                             jnp.nan if accumulator.is_empty else accumulator.value
                             for accumulator in term_accumulators
                         ),
-                        dtype=float,
+                        dtype=jnp.float64,
                     )
                     train_model_loss_terms = jnp.asarray(
                         tuple(
                             accumulator.value for accumulator in model_loss_accumulators
                         ),
-                        dtype=float,
+                        dtype=jnp.float64,
                     )
                     iterative_step_metrics = None
                     riemannian_linesearch_metrics = None
@@ -1601,7 +1592,7 @@ def solve_gradient(
                 train_data_metrics: tuple[dict[str, Any], ...] = tuple(
                     {} for _ in self.terms
                 )
-                eval_terms = jnp.zeros((0,), dtype=float)
+                eval_terms = jnp.zeros((0,), dtype=jnp.float64)
                 eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
                     {} for _ in self.evaluation_terms
                 )
@@ -1938,8 +1929,7 @@ def solve_gradient(
             mirror_geometry = _opt_mirror.parameter_geometry
             if not bool(mirror_geometry.contains(chosen)):
                 raise ValueError(
-                    "Returned parameters are outside their declared "
-                    "ParameterMirrorGeometry."
+                    "Returned parameters are outside their declared ParameterMirrorGeometry."
                 )
             mirror_metrics = _opt_mirror.step_metrics(opt_state)
             mirror_diagnostics = {

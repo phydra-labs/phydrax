@@ -48,17 +48,14 @@ def _scalar_reference(runtime, state, excitation: float, step_s: float):
         0.0,
     )
     adaptation = maximum_adaptation * (
-        1.0
-        - np.exp(-duration / float(parameters.adaptation_time_constant_s))
+        1.0 - np.exp(-duration / float(parameters.adaptation_time_constant_s))
     )
     if not runtime.plan.central_adaptation:
         adaptation = np.zeros_like(adaptation)
     firing_rate = np.maximum(unadapted - adaptation, 0.0)
     capacity_fraction = capacity / rested
     contraction_time = resting_time * (
-        1.0
-        + float(parameters.contraction_time_change_ratio)
-        * (1.0 - capacity_fraction)
+        1.0 + float(parameters.contraction_time_change_ratio) * (1.0 - capacity_fraction)
     )
     normalized_rate = contraction_time * firing_rate
     switch_force = 1.0 - np.exp(-2.0 * 0.4**3)
@@ -128,7 +125,8 @@ def _reference_step_qualification(runtime):
         )
     tolerance = 5.0e-12
     return {
-        "passed": maximum_error <= tolerance and all(case["successful"] for case in cases),
+        "passed": maximum_error <= tolerance
+        and all(case["successful"] for case in cases),
         "maximum_absolute_error": maximum_error,
         "tolerance": tolerance,
         "cases": cases,
@@ -139,17 +137,16 @@ def _target_endurance(runtime, target_fraction: float, maximum_time_s: float):
     step_s = 0.1
     step_count = round(maximum_time_s / step_s)
     excitation = (
-        jnp.arange(1, 6701, dtype=runtime.parameters.rested_twitch_force.dtype)
-        / 100.0
+        jnp.arange(1, 6701, dtype=runtime.parameters.rested_twitch_force.dtype) / 100.0
     )
     rested_maximum_force = runtime.rested_maximum_force()
     target_force = target_fraction * rested_maximum_force
 
     def protocol_step(carry, _):
         state, running = carry
-        force_curve = jax.vmap(
-            lambda drive: runtime.evaluate(state, drive).total_force
-        )(excitation)
+        force_curve = jax.vmap(lambda drive: runtime.evaluate(state, drive).total_force)(
+            excitation
+        )
         meets = force_curve >= target_force
         can_meet = jnp.any(meets)
         selected_index = jnp.argmax(meets)
@@ -186,12 +183,8 @@ def _target_endurance(runtime, target_fraction: float, maximum_time_s: float):
     )
     history = np.asarray(history)
     failed = np.flatnonzero(history[:, 0] == 0.0)
-    final_index = (
-        len(history) - 1 if failed.size == 0 else max(int(failed[0]) - 1, 0)
-    )
-    endurance_s = (
-        maximum_time_s if failed.size == 0 else float(failed[0]) * step_s
-    )
+    final_index = len(history) - 1 if failed.size == 0 else max(int(failed[0]) - 1, 0)
+    endurance_s = maximum_time_s if failed.size == 0 else float(failed[0]) * step_s
     return {
         "target_fraction": target_fraction,
         "endurance_s": endurance_s,
@@ -218,6 +211,7 @@ def _protocol_qualification(runtime):
     passed = all(case["absolute_endurance_error_s"] <= tolerance_s for case in compared)
     return {"passed": passed, "tolerance_s": tolerance_s, "cases": protocols}
 
+
 def _constant_excitation_endpoint(runtime, step_s: float):
     step_count = round(20.0 / step_s)
 
@@ -242,8 +236,7 @@ def _constant_excitation_endpoint(runtime, step_s: float):
 
 def _time_step_refinement(runtime):
     cases = [
-        _constant_excitation_endpoint(runtime, step_s)
-        for step_s in (0.1, 0.05, 0.025)
+        _constant_excitation_endpoint(runtime, step_s) for step_s in (0.1, 0.05, 0.025)
     ]
     ratios = {}
     for field in ("total_force", "capacity_fraction"):
@@ -254,8 +247,7 @@ def _time_step_refinement(runtime):
     ratio_limit = 0.55
     return {
         "passed": (
-            all(case["all_successful"] for case in cases)
-            and maximum_ratio <= ratio_limit
+            all(case["all_successful"] for case in cases) and maximum_ratio <= ratio_limit
         ),
         "cases": cases,
         "successive_error_ratios": ratios,

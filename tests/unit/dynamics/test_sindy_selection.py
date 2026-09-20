@@ -150,7 +150,7 @@ def test_sr3_l0_recovers_sparse_fourier_law_with_unbiased_refit():
     derivative = 1.2 * np.sin(state) - 0.7 * np.cos(2.0 * state)
     layout = phx.dynamics.StateLayout((1,), component_names=("angle",))
     data = phx.dynamics.TrajectoryData(
-        jnp.arange(state.shape[0], dtype=float),
+        jnp.arange(state.shape[0], dtype="float64"),
         state,
         state_layout=layout,
         derivatives=derivative,

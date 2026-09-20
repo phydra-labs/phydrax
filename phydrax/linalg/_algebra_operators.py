@@ -69,7 +69,7 @@ def lift_real_operator_to_algebra(
         transpose_action=transpose_action,
         operator_id=canonical_fingerprint(
             {
-                "kind": "algebra-coordinate-lifted-operator-v1",
+                "kind": "algebra-coordinate-lifted-operator",
                 "operator": operator.operator_id,
                 "algebra": algebra_space.algebra.algebra_id,
                 "source": algebra_space.space_id,
@@ -110,7 +110,7 @@ def complexify_real_operator(
         transpose_action=transpose_action,
         operator_id=canonical_fingerprint(
             {
-                "kind": "complexified-real-operator-v1",
+                "kind": "complexified-real-operator",
                 "operator": operator.operator_id,
                 "dtype": str(dtype),
             }

@@ -173,7 +173,7 @@ class HydrodynamicLoadPlan(StrictModule, NonTrainableState):
         interval = interval_id
         if not interval or interval != interval.strip():
             raise ValueError("interval_id must be a non-empty canonical identifier.")
-        count = int(self.body_ids.size)
+        count = self.body_ids.size
         vector_shape = (count, self.ambient_dimension)
         angular_shape = (count, 1 if self.ambient_dimension == 2 else 3)
         velocity_ = jnp.asarray(velocity)
@@ -205,9 +205,9 @@ class HydrodynamicLoadPlan(StrictModule, NonTrainableState):
                     f"Hydrodynamic {name} force/torque have incompatible shapes."
                 )
             if availability_value is None:
-                available = jnp.full((count,), supplied, dtype=bool)
+                available = jnp.full((count,), supplied, dtype=jnp.bool_)
             else:
-                raw_available = jnp.asarray(availability_value, dtype=bool)
+                raw_available = jnp.asarray(availability_value, dtype=jnp.bool_)
                 if raw_available.shape == ():
                     available = jnp.broadcast_to(raw_available, (count,))
                 elif raw_available.shape == (count,):
@@ -501,7 +501,7 @@ class MarkerFlowTrajectoryAdapter(StrictModule, NonTrainableState):
         events = jnp.asarray(event_parameter)
         counters = jnp.asarray(stochastic_counter)
         routes = jnp.asarray(route_epoch)
-        count = int(steps.size)
+        count = steps.size
         if (
             count <= 0
             or counters.shape != (count,)

@@ -97,7 +97,7 @@ class SpectralModeLayout(StrictModule, NonTrainableState):
         numbers_host = np.asarray(mode_numbers, dtype=np.int64).reshape((-1,))
         if numbers_host.size == 0 or len(set(numbers_host.tolist())) != numbers_host.size:
             raise ValueError("Spectral mode numbers must be non-empty and unique.")
-        count = int(numbers_host.size)
+        count = numbers_host.size
         conjugates_host = (
             np.arange(count, dtype=np.int64)
             if conjugate_indices is None
@@ -110,9 +110,9 @@ class SpectralModeLayout(StrictModule, NonTrainableState):
         if np.any(conjugates_host[conjugates_host] != np.arange(count)):
             raise ValueError("Spectral conjugate indices must be involutive.")
         nyquist_host = (
-            np.zeros((count,), dtype=bool)
+            np.zeros((count,), dtype=np.bool_)
             if nyquist_mask is None
-            else np.asarray(nyquist_mask, dtype=bool).reshape((-1,))
+            else np.asarray(nyquist_mask, dtype=np.bool_).reshape((-1,))
         )
         if nyquist_host.shape != (count,):
             raise ValueError("nyquist_mask must contain one value per mode.")
@@ -142,7 +142,7 @@ class SpectralModeLayout(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.mode_numbers.size)
+        return self.mode_numbers.size
 
 
 class AbstractSpectralBasisPlan(StrictModule, NonTrainableState):
@@ -350,7 +350,7 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
 
     @property
     def physical_count(self) -> int:
-        return int(self.nodes.size)
+        return self.nodes.size
 
     @property
     def bounds(self) -> Array | None:
@@ -473,7 +473,7 @@ class FourierBasisPlan(AbstractSpectralBasisPlan):
             [lookup.get(int(-value), index) for index, value in enumerate(numbers_host)],
             dtype=np.int64,
         )
-        nyquist = np.zeros((count,), dtype=bool)
+        nyquist = np.zeros((count,), dtype=np.bool_)
         if count % 2 == 0:
             nyquist[count // 2] = True
         modes = SpectralModeLayout(
@@ -687,8 +687,8 @@ class ChebyshevBasisPlan(AbstractSpectralBasisPlan):
             dtype=precision.physical_dtype,
             maximum_construction_bytes=self.maximum_construction_bytes,
         )
-        reference_nodes = np.asarray(data.nodes, dtype=float)
-        reference_weights = np.asarray(data.quadrature_weights, dtype=float)
+        reference_nodes = np.asarray(data.nodes, dtype=np.float64)
+        reference_weights = np.asarray(data.quadrature_weights, dtype=np.float64)
         half = 0.5 * (upper_value - lower_value)
         midpoint = 0.5 * (upper_value + lower_value)
         nodes = midpoint + half * reference_nodes
@@ -807,8 +807,8 @@ class LegendreBasisPlan(AbstractSpectralBasisPlan):
         if estimate > self.maximum_construction_bytes:
             raise ValueError("Legendre transform exceeds maximum_construction_bytes.")
         rule = legendre_rule_data(count, self.node_rule)
-        reference_nodes = np.asarray(rule.nodes, dtype=float)
-        reference_weights = np.asarray(rule.weights, dtype=float)
+        reference_nodes = np.asarray(rule.nodes, dtype=np.float64)
+        reference_weights = np.asarray(rule.weights, dtype=np.float64)
         half = 0.5 * (upper_value - lower_value)
         midpoint = 0.5 * (upper_value + lower_value)
         nodes = midpoint + half * reference_nodes
@@ -817,7 +817,7 @@ class LegendreBasisPlan(AbstractSpectralBasisPlan):
             standard_vandermonde("legendre", reference_nodes, count - 1)
         )
         normalizers = np.sqrt(
-            (2.0 * np.arange(count, dtype=float) + 1.0) / (upper_value - lower_value)
+            (2.0 * np.arange(count, dtype=np.float64) + 1.0) / (upper_value - lower_value)
         )
         synthesis = standard * normalizers[None, :]
         analysis = _analysis_from_synthesis(

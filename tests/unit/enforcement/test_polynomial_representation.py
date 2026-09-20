@@ -43,9 +43,9 @@ def _so3_action(support):
             ((0, 0, 1), (0, 0, 0), (-1, 0, 0)),
             ((0, -1, 0), (1, 0, 0), (0, 0, 0)),
         ),
-        dtype=int,
+        dtype="int64",
     )
-    structure = np.zeros((3, 3, 3), dtype=int)
+    structure = np.zeros((3, 3, 3), dtype="int64")
     structure[0, 1, 2] = structure[1, 2, 0] = structure[2, 0, 1] = 1
     structure[1, 0, 2] = structure[2, 1, 0] = structure[0, 2, 1] = -1
     return DeclaredReductivePolynomialAction(
@@ -99,7 +99,7 @@ def test_finite_cyclic_complex_weight_classes_partition_monomials():
         ((0,), (1,), (2,), (3,), (4,), (5,)),
     )
     omega = np.exp(2j * np.pi / 3)
-    table = np.fromfunction(lambda left, right: (left + right) % 3, (3, 3), dtype=int)
+    table = np.fromfunction(lambda left, right: (left + right) % 3, (3, 3), dtype="int64")
     variable_actions = np.asarray([[[omega**power]] for power in range(3)])
 
     classes = []
@@ -139,7 +139,7 @@ def test_finite_cyclic_complex_weight_classes_partition_monomials():
 
 def test_invalid_finite_generators_are_rejected_and_near_relations_are_ambiguous():
     support = SparsePolynomialSupport(("x",), ("p",), (0,), ((0,),))
-    table = np.asarray(((0, 1), (1, 0)), dtype=int)
+    table = np.asarray(((0, 1), (1, 0)), dtype="int64")
 
     with pytest.raises(ValueError, match="do not represent"):
         FinitePolynomialAction(

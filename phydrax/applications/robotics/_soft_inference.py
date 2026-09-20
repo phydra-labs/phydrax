@@ -106,7 +106,7 @@ class PositiveParameterMap(StrictModule, NonTrainableState):
     def to_physical(self, latent: ArrayLike, /) -> Array:
         value = jnp.asarray(latent)
         if not jnp.issubdtype(value.dtype, jnp.inexact):
-            value = value.astype(float)
+            value = value.astype("float64")
         if self.maximum is None:
             return self.minimum + jax.nn.softplus(value)
         return self.minimum + (self.maximum - self.minimum) * jax.nn.sigmoid(value)
@@ -114,7 +114,7 @@ class PositiveParameterMap(StrictModule, NonTrainableState):
     def to_latent(self, physical: ArrayLike, /) -> Array:
         value = jnp.asarray(physical)
         if not jnp.issubdtype(value.dtype, jnp.inexact):
-            value = value.astype(float)
+            value = value.astype("float64")
         if self.maximum is None:
             shifted = eqx.error_if(
                 value - self.minimum,
@@ -160,13 +160,13 @@ class BoundedParameterMap(StrictModule, NonTrainableState):
     def to_physical(self, latent: ArrayLike, /) -> Array:
         value = jnp.asarray(latent)
         if not jnp.issubdtype(value.dtype, jnp.inexact):
-            value = value.astype(float)
+            value = value.astype("float64")
         return self.lower + (self.upper - self.lower) * jax.nn.sigmoid(value)
 
     def to_latent(self, physical: ArrayLike, /) -> Array:
         value = jnp.asarray(physical)
         if not jnp.issubdtype(value.dtype, jnp.inexact):
-            value = value.astype(float)
+            value = value.astype("float64")
         unit = (value - self.lower) / (self.upper - self.lower)
         unit = eqx.error_if(
             unit,
@@ -221,7 +221,7 @@ class SPDParameterMap(StrictModule, NonTrainableState):
                 f"SPD latent coordinates must have shape {(self.coordinate_size,)}."
             )
         if not jnp.issubdtype(coordinates.dtype, jnp.inexact):
-            coordinates = coordinates.astype(float)
+            coordinates = coordinates.astype("float64")
         rows, columns = np.tril_indices(self.dimension)
         diagonal = np.flatnonzero(rows == columns)
         factor_coordinates = coordinates.at[diagonal].set(
@@ -241,7 +241,7 @@ class SPDParameterMap(StrictModule, NonTrainableState):
                 f"SPD physical matrix must have shape {(self.dimension, self.dimension)}."
             )
         if not jnp.issubdtype(matrix.dtype, jnp.inexact):
-            matrix = matrix.astype(float)
+            matrix = matrix.astype("float64")
         valid = (
             jnp.all(jnp.isfinite(matrix))
             & jnp.allclose(matrix, matrix.T)
@@ -604,7 +604,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
                 True
                 if experiment.route_valid is None
                 else experiment.route_valid(physical, args),
-                dtype=bool,
+                dtype=jnp.bool_,
             ).reshape(())
             for experiment, _ in selected
         )
@@ -676,7 +676,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
             self.relative_rank_tolerance * largest,
         )
         rank = jnp.sum(singular_values > threshold, dtype=jnp.int32)
-        parameter_count = int(flat_latent.size)
+        parameter_count = flat_latent.size
         full_rank = rank == parameter_count
         null_mask = jnp.arange(parameter_count, dtype=jnp.int32) >= rank
         null_projection = (
@@ -752,7 +752,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
             full_rank,
             accepted,
             parameter_count,
-            int(residuals.size),
+            residuals.size,
             self.problem_id,
             canonical_fingerprint(
                 {
@@ -846,7 +846,7 @@ def calibrate_reduced_rod(
         if problem.admissible is None
         else jnp.asarray(
             problem.admissible(candidate_physical, candidate_realization, args),
-            dtype=bool,
+            dtype=jnp.bool_,
         ).reshape(())
     )
     accepted = (
@@ -999,14 +999,14 @@ class FixedModeDerivativeEvidence(StrictModule, NonTrainableState):
         condition = jnp.asarray(condition_number).reshape(())
         jvp = jnp.asarray(jvp_residual).reshape(())
         vjp = jnp.asarray(vjp_residual).reshape(())
-        finite_ = jnp.asarray(finite, dtype=bool).reshape(()) & jnp.all(
+        finite_ = jnp.asarray(finite, dtype=jnp.bool_).reshape(()) & jnp.all(
             jnp.stack(
                 tuple(jnp.isfinite(value) for value in margins)
                 + (jnp.isfinite(condition), jnp.isfinite(jvp), jnp.isfinite(vjp))
             )
         )
-        primal = jnp.asarray(primal_accepted, dtype=bool).reshape(())
-        fixed = jnp.asarray(route_fixed, dtype=bool).reshape(())
+        primal = jnp.asarray(primal_accepted, dtype=jnp.bool_).reshape(())
+        fixed = jnp.asarray(route_fixed, dtype=jnp.bool_).reshape(())
         maximum_condition = float(maximum_condition_number)
         maximum_residual = float(maximum_derivative_residual)
         if np.isnan(maximum_condition) or maximum_condition < 0.0:
@@ -1412,7 +1412,7 @@ class SoftRobotCoDesignProblem(StrictModule, NonTrainableState):
             tuple(
                 jnp.asarray(
                     scenario.qualifies(state, physical, candidate_realization, args),
-                    dtype=bool,
+                    dtype=jnp.bool_,
                 ).reshape(())
                 for scenario in self.held_out_scenarios
             )
@@ -1422,11 +1422,11 @@ class SoftRobotCoDesignProblem(StrictModule, NonTrainableState):
             if self.realization_admissible is None
             else jnp.asarray(
                 self.realization_admissible(state, physical, candidate_realization, args),
-                dtype=bool,
+                dtype=jnp.bool_,
             ).reshape(())
         )
         optimization_successful = jnp.asarray(
-            optimization.successful, dtype=bool
+            optimization.successful, dtype=jnp.bool_
         ).reshape(())
         accepted = (
             optimization_successful

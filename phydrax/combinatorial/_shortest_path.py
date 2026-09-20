@@ -49,7 +49,7 @@ def _topology(
     vertices = relation.source_size
     source = np.asarray(relation.source_indices)
     target = np.asarray(relation.target_indices)
-    valid = np.asarray(relation.valid, dtype=bool)
+    valid = np.asarray(relation.valid, dtype=np.bool_)
     indegree = np.zeros((vertices,), dtype=np.int32)
     outgoing: list[list[int]] = [[] for _ in range(vertices)]
     incoming: list[list[int]] = [[] for _ in range(vertices)]
@@ -75,7 +75,7 @@ def _topology(
     width = max(1, max((len(edges) for edges in incoming), default=0))
     incoming_sources = np.zeros((vertices, width), dtype=np.int32)
     incoming_edges = np.full((vertices, width), relation.capacity, dtype=np.int32)
-    incoming_valid = np.zeros((vertices, width), dtype=bool)
+    incoming_valid = np.zeros((vertices, width), dtype=np.bool_)
     for vertex, edges in enumerate(incoming):
         for slot, edge in enumerate(sorted(edges)):
             incoming_sources[vertex, slot] = int(source[edge])
@@ -186,8 +186,7 @@ class ShortestPathSpace(AbstractCombinatorialSpace):
         length = jnp.asarray(decision.length, dtype=jnp.int32)
         if vertices.shape[-1:] != (self.vertex_count,):
             raise ValueError(
-                f"path vertices must end with shape {(self.vertex_count,)}; "
-                f"got {vertices.shape}."
+                f"path vertices must end with shape {(self.vertex_count,)}; got {vertices.shape}."
             )
         edge_capacity = max(self.vertex_count - 1, 0)
         if edges.shape[-1:] != (edge_capacity,):
@@ -214,11 +213,11 @@ class ShortestPathSpace(AbstractCombinatorialSpace):
     def encode(self, decision: PathDecision, /) -> Array:
         canonical = self.canonicalize(decision)
         if self.edge_count == 0:
-            return jnp.zeros(canonical.length.shape + (0,), dtype=float)
+            return jnp.zeros(canonical.length.shape + (0,), dtype=jnp.float64)
         encoded = jax.nn.one_hot(
             canonical.edges,
             self.edge_count,
-            dtype=float,
+            dtype=jnp.float64,
             axis=-1,
         )
         return jnp.sum(encoded, axis=-2)
@@ -249,7 +248,7 @@ class ShortestPathSpace(AbstractCombinatorialSpace):
                 expected_source = self.relation.source_indices[safe_edges]
                 expected_target = self.relation.target_indices[safe_edges]
             else:
-                relation_valid = jnp.zeros_like(edges, dtype=bool)
+                relation_valid = jnp.zeros_like(edges, dtype=jnp.bool_)
                 expected_source = jnp.zeros_like(edges)
                 expected_target = jnp.zeros_like(edges)
             transition_ok = (
@@ -279,7 +278,7 @@ class ShortestPathSpace(AbstractCombinatorialSpace):
         endpoint_residual += (~first_ok).astype(jnp.int32)
         endpoint_residual += (~last_ok).astype(jnp.int32)
         residual = endpoint_residual + edge_residual + duplicate_residual
-        return CombinatorialFeasibility(residual == 0, residual.astype(float))
+        return CombinatorialFeasibility(residual == 0, residual.astype("float64"))
 
 
 def _reconstruct_one(
@@ -566,7 +565,7 @@ class DAGShortestPath(AbstractLinearCombinatorialMethod):
             tie_margin=jnp.full(batch_shape, jnp.nan, dtype=raw_costs.dtype),
             dual_available=solved.reshape(batch_shape),
             gap_available=solved.reshape(batch_shape),
-            tie_available=jnp.zeros(batch_shape, dtype=bool),
+            tie_available=jnp.zeros(batch_shape, dtype=jnp.bool_),
         )
         provenance = CombinatorialProvenance(
             problem_id=problem.problem_id,

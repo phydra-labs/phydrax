@@ -24,17 +24,16 @@ from ..._array_archive import (
 )
 from ..._model import (
     artifact_value_id,
-    deserialise_model_leaf,
+    deserialize_model_leaf,
     model_from_structure_recipe,
     model_structure_recipe,
-    serialise_model_leaf,
+    serialize_model_leaf,
 )
 from .._contracts import FitResult
 from ._registry import register_native_ml_artifacts
 
 
 _ML_ARTIFACT_FORMAT = "phydrax-ml-artifact"
-_ML_ARTIFACT_VERSION = 1
 _ML_ARTIFACT_LIMITS = dataclasses.replace(
     DEFAULT_ARRAY_ARCHIVE_LIMITS,
     # Registered dataclass recipes legitimately nest through composed numerical
@@ -149,7 +148,7 @@ def save_ml_artifact(
     if recipe.get("kind") != "dataclass" or not isinstance(recipe.get("type"), str):
         raise TypeError("Native ML artifacts require a registered dataclass model.")
     stream = io.BytesIO()
-    eqx.tree_serialise_leaves(stream, model, filter_spec=serialise_model_leaf)
+    eqx.tree_serialise_leaves(stream, model, filter_spec=serialize_model_leaf)
     leaves = np.frombuffer(stream.getvalue(), dtype=np.uint8).copy()
     fit_metadata = _fit_metadata(fit_result)
     encoded_feature_schema = (
@@ -164,7 +163,6 @@ def save_ml_artifact(
     )
     manifest = {
         "format": _ML_ARTIFACT_FORMAT,
-        "version": _ML_ARTIFACT_VERSION,
         "model_type": recipe["type"],
         "model_recipe": recipe,
         "feature_schema": encoded_feature_schema,
@@ -177,6 +175,7 @@ def save_ml_artifact(
     return write_array_archive(
         path,
         manifest=manifest,
+        limits=_ML_ARTIFACT_LIMITS,
         arrays={"model/leaves": leaves},
     )
 
@@ -187,7 +186,6 @@ def read_ml_artifact(path: str | Path, /) -> MLArtifact:
     manifest, arrays = read_array_archive(path, limits=_ML_ARTIFACT_LIMITS)
     expected = {
         "format",
-        "version",
         "model_type",
         "model_recipe",
         "feature_schema",
@@ -200,10 +198,7 @@ def read_ml_artifact(path: str | Path, /) -> MLArtifact:
     }
     if set(manifest) != expected:
         raise ArrayArchiveCorruptionError("ML artifact manifest fields are invalid.")
-    if (
-        manifest["format"] != _ML_ARTIFACT_FORMAT
-        or manifest["version"] != _ML_ARTIFACT_VERSION
-    ):
+    if manifest["format"] != _ML_ARTIFACT_FORMAT:
         raise ArrayArchiveCorruptionError(
             "Archive is not a supported Phydrax ML artifact."
         )
@@ -217,8 +212,12 @@ def read_ml_artifact(path: str | Path, /) -> MLArtifact:
     model = eqx.tree_deserialise_leaves(
         io.BytesIO(payload),
         template,
-        filter_spec=deserialise_model_leaf,
+        filter_spec=deserialize_model_leaf,
     )
+    if model_structure_recipe(model) != recipe:
+        raise ArrayArchiveCorruptionError(
+            "ML artifact model structure changed during restoration."
+        )
     expected_type = artifact_value_id(type(model))
     if manifest["model_type"] != expected_type or recipe["type"] != expected_type:
         raise ArrayArchiveCorruptionError("ML artifact model type is inconsistent.")

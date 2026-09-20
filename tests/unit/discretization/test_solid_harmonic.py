@@ -193,4 +193,4 @@ def test_plan_dtype_validation_resources_and_provenance_contract():
     with pytest.raises(ValueError, match="dimension 3"):
         real.evaluate(coefficients, jnp.ones((2, 2)))
     with pytest.raises(TypeError):
-        real.evaluate(coefficients, jnp.ones((2, 3), dtype=complex))
+        real.evaluate(coefficients, jnp.ones((2, 3), dtype="complex128"))

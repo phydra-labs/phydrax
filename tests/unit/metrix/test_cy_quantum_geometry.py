@@ -24,7 +24,7 @@ def test_hermitian_spectrum_functions_and_sylvester_action():
 
 
 def test_bures_density_geometry_sld_distance_and_uhlmann():
-    density = 0.5 * jnp.eye(2, dtype=complex)
+    density = 0.5 * jnp.eye(2, dtype="complex128")
     tangent = jnp.asarray([[0.2, 0.1j], [-0.1j, -0.2]])
     manifold = phx.metrix.BuresDensityManifold(2)
     assert bool(manifold.contains(density))
@@ -70,7 +70,7 @@ def test_fixed_rank_density_projection_is_horizontal_for_nonuniform_gram():
 
 def test_density_rank_stratification_rejects_non_density_inputs():
     stratification = phx.metrix.DensityRankStratification(2)
-    density = jnp.diag(jnp.asarray([0.7, 0.3], dtype=complex))
+    density = jnp.diag(jnp.asarray([0.7, 0.3], dtype="complex128"))
     anti_hermitian = jnp.diag(jnp.asarray([10.0j, -10.0j]))
 
     assert bool(stratification.classify(density).valid)

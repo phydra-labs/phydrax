@@ -33,7 +33,7 @@ def _topology(*, periodic=False, tagged_cell=2):
     hierarchy = _hierarchy(periodic=periodic)
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     initial = compiler.initial_topology()
-    tags = jnp.zeros((2, 4), dtype=bool)
+    tags = jnp.zeros((2, 4), dtype="bool")
     tags = tags.at[tagged_cell // 4, tagged_cell % 4].set(True)
     result = compiler.compile(initial, (tags,))
     assert result.status.successful

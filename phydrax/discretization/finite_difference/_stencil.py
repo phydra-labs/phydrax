@@ -46,8 +46,8 @@ class StencilFootprint(StrictModule, NonTrainableState):
         /,
     ):
         names = tuple(str(name) for name in axis_names)
-        lower_ = tuple(int(value) for value in lower)
-        upper_ = tuple(int(value) for value in upper)
+        lower_ = tuple(lower)
+        upper_ = tuple(upper)
         if (
             not names
             or len(lower_) != len(names)
@@ -155,9 +155,9 @@ class LinearStencil(StrictModule, NonTrainableState):
         if indices_.ndim != 2 or weights_.shape != indices_.shape:
             raise ValueError("Stencil indices and weights must share rank-2 shape.")
         valid_ = (
-            np.ones(indices_.shape, dtype=bool)
+            np.ones(indices_.shape, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if valid_.shape != indices_.shape or np.any(indices_[valid_] < 0):
             raise ValueError(

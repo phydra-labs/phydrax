@@ -97,7 +97,7 @@ def _resistance_matrix(
     count = positions.shape[0]
     displacement = positions[:, None, :] - positions[None, :, :]
     squared = jnp.sum(displacement * displacement, axis=-1)
-    identity_pair = jnp.eye(count, dtype=bool)
+    identity_pair = jnp.eye(count, dtype=jnp.bool_)
     distance = jnp.sqrt(jnp.where(identity_pair, 1.0, squared))
     direction = jnp.where(
         identity_pair[..., None], 0.0, displacement / distance[..., None]
@@ -116,7 +116,7 @@ def _resistance_matrix(
     indices = jnp.arange(count)
     blocks = blocks.at[indices, indices].set(diagonal)
     matrix = jnp.transpose(blocks, (0, 2, 1, 3)).reshape((3 * count, 3 * count))
-    upper = jnp.triu(jnp.ones((count, count), dtype=bool), 1)
+    upper = jnp.triu(jnp.ones((count, count), dtype=jnp.bool_), 1)
     pair_count = jnp.sum((active_pair & upper).astype(jnp.int32))
     minimum = jnp.min(jnp.where(upper, gap, jnp.inf))
     admissible = jnp.all(jnp.where(upper, gap >= plan.minimum_gap, True))

@@ -8,16 +8,17 @@ import abc
 from collections.abc import Callable
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._temporal_precision import TemporalPrecisionPolicy
 from .._trainable import NonTrainableState
 
 
 class AbstractSSPRKStageTransform(StrictModule, NonTrainableState):
-    transform_id: AbstractAttribute[str]
+    transform_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def apply(
@@ -83,9 +84,9 @@ def _stage(
         raise ValueError("SSP stage transforms must preserve state shape and dtype.")
     if (
         result.applied.shape != ()
-        or result.applied.dtype != jnp.dtype(bool)
+        or result.applied.dtype != jnp.dtype(jnp.bool_)
         or result.successful.shape != ()
-        or result.successful.dtype != jnp.dtype(bool)
+        or result.successful.dtype != jnp.dtype(jnp.bool_)
         or result.correction_norm.shape != ()
     ):
         raise TypeError("SSP stage transform evidence must contain scalar arrays.")

@@ -188,7 +188,7 @@ def gravitational_focusing_speed(
     /,
 ) -> Array:
     """Exact zero-scattering speed at the surface from Kepler energy conservation."""
-    speed = jnp.asarray(speed_at_observation_m_s, dtype=float).reshape(())
+    speed = jnp.asarray(speed_at_observation_m_s, dtype=jnp.float64).reshape(())
     observation = jnp.asarray(observation_radius_m, dtype=speed.dtype).reshape(())
     body = jnp.asarray(body_radius_m, dtype=speed.dtype).reshape(())
     mass = jnp.asarray(central_mass_kg, dtype=speed.dtype).reshape(())
@@ -223,7 +223,7 @@ def stellar_specific_energy_evidence(
     """Evaluate energy by splitting every interior integral at profile knots."""
     if not isinstance(profile, SmoothStellarRadialProfile):
         raise TypeError("profile must be a SmoothStellarRadialProfile.")
-    packed = jnp.asarray(states, dtype=float)
+    packed = jnp.asarray(states, dtype=jnp.float64)
     if packed.shape[-1:] != (6,):
         raise ValueError("states must have a trailing packed axis of 6.")
     if not isinstance(quadrature_order, int) or quadrature_order < 4:
@@ -314,14 +314,14 @@ def classify_solar_outcomes(
     """Classify escaped, captured, and reflected paths as exclusive outcomes."""
     energy = jnp.asarray(specific_energy_m2_s2)
     count = jnp.asarray(scattering_count, dtype=jnp.int32)
-    observed = jnp.asarray(observation_outward, dtype=bool)
-    emerged = jnp.asarray(surface_outward, dtype=bool)
-    numerical = jnp.asarray(numerical_successful, dtype=bool)
+    observed = jnp.asarray(observation_outward, dtype=jnp.bool_)
+    emerged = jnp.asarray(surface_outward, dtype=jnp.bool_)
+    numerical = jnp.asarray(numerical_successful, dtype=jnp.bool_)
     sign_qualified = (
         jnp.isfinite(energy)
         if energy_sign_qualified is None
         else jnp.broadcast_to(
-            jnp.asarray(energy_sign_qualified, dtype=bool), energy.shape
+            jnp.asarray(energy_sign_qualified, dtype=jnp.bool_), energy.shape
         )
     )
     escaped = observed & sign_qualified & (energy >= 0.0)
@@ -346,7 +346,7 @@ def classify_solar_outcomes(
     ).astype(jnp.int32)
     return SolarOutcomeClassification(
         outcomes,
-        jax.nn.one_hot(outcomes, len(TransportOutcome), dtype=bool),
+        jax.nn.one_hot(outcomes, len(TransportOutcome), dtype=jnp.bool_),
     )
 
 
@@ -531,7 +531,7 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
             raise TypeError("initial_paths must be a WeightedSampleBatch.")
         if not isinstance(poisson, PoissonClockRealization):
             raise TypeError("poisson must be a PoissonClockRealization.")
-        raw_states = jnp.asarray(initial_paths.samples, dtype=float)
+        raw_states = jnp.asarray(initial_paths.samples, dtype=jnp.float64)
         if raw_states.ndim != 2 or raw_states.shape[0] == 0 or raw_states.shape[1] != 6:
             raise ValueError("initial path samples must have nonempty shape (path, 6).")
         if initial_paths.sample_axes != (0,):
@@ -539,15 +539,15 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
         if jnp.asarray(initial_paths.log_weights).shape != (raw_states.shape[0],):
             raise ValueError("initial path log weights must match the trajectory axis.")
         path_mask = (
-            jnp.ones((raw_states.shape[0],), dtype=bool)
+            jnp.ones((raw_states.shape[0],), dtype=jnp.bool_)
             if initial_paths.mask is None
-            else jnp.asarray(initial_paths.mask, dtype=bool)
+            else jnp.asarray(initial_paths.mask, dtype=jnp.bool_)
         )
         path_support = (
-            jnp.ones((raw_states.shape[0],), dtype=bool)
+            jnp.ones((raw_states.shape[0],), dtype=jnp.bool_)
             if initial_paths.support_valid is None
             else jnp.broadcast_to(
-                jnp.asarray(initial_paths.support_valid, dtype=bool),
+                jnp.asarray(initial_paths.support_valid, dtype=jnp.bool_),
                 (raw_states.shape[0],),
             )
         )
@@ -563,7 +563,7 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Poisson clocks do not provide the plan's jump-event capacity."
             )
-        times = jnp.asarray(save_times_s, dtype=float)
+        times = jnp.asarray(save_times_s, dtype=jnp.float64)
         if times.ndim != 1 or times.size < 2:
             raise ValueError("save_times_s must contain at least two times.")
         initial_radius = jnp.sqrt(jnp.sum(states[:, :3] ** 2, axis=-1))

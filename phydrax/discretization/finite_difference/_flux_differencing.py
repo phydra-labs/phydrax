@@ -78,7 +78,7 @@ class TensorSBPPlan(StrictModule, NonTrainableState):
         self.interior_order = order
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "tensor-sbp-plan-v1",
+                "kind": "tensor-sbp-plan",
                 "grid": grid.prepared_id,
                 "field": field,
                 "components": list(components),
@@ -150,7 +150,7 @@ class TensorSBPDiscretization(AbstractPreparedDiscretization):
                 "state_dofs": field.vector_space.size,
                 "axes": len(derivatives),
                 "stencil_entries": sum(
-                    int(derivative.operator.valid.size) for derivative in derivatives
+                    derivative.operator.valid.size for derivative in derivatives
                 ),
             },
         )
@@ -169,7 +169,7 @@ class TensorSBPDiscretization(AbstractPreparedDiscretization):
         )
         identifier = canonical_fingerprint(
             {
-                "kind": "tensor-sbp-discretization-v1",
+                "kind": "tensor-sbp-discretization",
                 "plan": plan.plan_id,
                 "derivatives": [value.prepared_id for value in derivatives],
                 "field": field.field_space_id,
@@ -187,7 +187,7 @@ class TensorSBPDiscretization(AbstractPreparedDiscretization):
         self.key = key
         self.plan_id = plan.plan_id
         self.prepared_id = identifier
-        self.numeric_version = "tensor-sbp-v1"
+        self.numeric_version = "tensor-sbp"
 
     @property
     def state_shape(self) -> tuple[int, ...]:
@@ -220,7 +220,7 @@ class SBPFluxDifferencingMethodPlan(StrictModule, NonTrainableState):
         self.entropy_diagnostics = bool(entropy_diagnostics)
         self.method_id = canonical_fingerprint(
             {
-                "kind": "sbp-flux-differencing-method-v1",
+                "kind": "sbp-flux-differencing-method",
                 "volume_flux": volume_flux.flux_id,
                 "entropy_diagnostics": bool(entropy_diagnostics),
             }
@@ -245,7 +245,7 @@ class SBPFluxDifferencingReport(StrictModule, NonTrainableState):
         *,
         dynamics_id: str,
     ):
-        counts = tuple(int(value) for value in pair_counts)
+        counts = tuple(pair_counts)
         dofs = int(state_dofs)
         dense = dofs * max(dofs - 1, 0) // 2
         sparse = all(count < dense for count in counts) if dofs > 2 else True
@@ -256,7 +256,7 @@ class SBPFluxDifferencingReport(StrictModule, NonTrainableState):
         self.passed = bool(counts) and all(value > 0 for value in counts) and sparse
         self.report_id = canonical_fingerprint(
             {
-                "kind": "sbp-flux-differencing-report-v1",
+                "kind": "sbp-flux-differencing-report",
                 "dynamics": dynamics_id,
                 "pair_counts": list(counts),
                 "state_dofs": dofs,
@@ -342,7 +342,7 @@ class PreparedSBPConservationDynamics(StrictModule):
             row_bounds.append(float(np.max(np.sum(np.abs(weights), axis=1))))
         identifier = canonical_fingerprint(
             {
-                "kind": "prepared-sbp-conservation-dynamics-v1",
+                "kind": "prepared-sbp-conservation-dynamics",
                 "system": system.system_id,
                 "discretization": discretization.prepared_id,
                 "method": method.method_id,

@@ -58,7 +58,7 @@ class FixedBodyRoutePlan(StrictModule):
         names = tuple(_identifier(name, "route name") for name in route_names)
         if not names or len(set(names)) != len(names):
             raise ValueError("route_names must be non-empty and unique.")
-        offsets = tuple(int(value) for value in point_offsets)
+        offsets = tuple(point_offsets)
         if len(offsets) != len(names) + 1 or offsets[0] != 0:
             raise ValueError("point_offsets must be CSR offsets beginning at zero.")
         if any(stop - start < 2 for start, stop in zip(offsets[:-1], offsets[1:])):
@@ -82,7 +82,7 @@ class FixedBodyRoutePlan(StrictModule):
             raise ValueError("route_mask must have one entry per route.")
         generated = canonical_fingerprint(
             {
-                "kind": "fixed-body-attached-route-plan-v1",
+                "kind": "fixed-body-attached-route-plan",
                 "route_names": list(names),
                 "point_offsets": list(offsets),
                 "body_ids": list(body_tuple),
@@ -198,11 +198,12 @@ class PreparedFixedBodyRoute(StrictModule):
             raise TypeError("plan must be FixedBodyRoutePlan.")
         if not isinstance(articulation, PreparedReducedArticulation):
             raise TypeError("articulation must be PreparedReducedArticulation.")
-        local = jnp.asarray(local_positions_m, dtype=articulation.reference_position.dtype)
+        local = jnp.asarray(
+            local_positions_m, dtype=articulation.reference_position.dtype
+        )
         if local.shape != (plan.point_capacity, 3):
             raise ValueError(
-                "local_positions_m must have fixed shape "
-                f"{(plan.point_capacity, 3)}."
+                f"local_positions_m must have fixed shape {(plan.point_capacity, 3)}."
             )
         if not bool(np.all(np.isfinite(np.asarray(local)))):
             raise ValueError("local_positions_m must be finite at preparation.")
@@ -233,7 +234,7 @@ class PreparedFixedBodyRoute(StrictModule):
         self.segment_route_indices = tuple(owners)
         self.prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-fixed-body-attached-route-v1",
+                "kind": "prepared-fixed-body-attached-route",
                 "plan": plan.plan_id,
                 "articulation": articulation.prepared_id,
                 "point_capacity": plan.point_capacity,
@@ -257,9 +258,7 @@ class PreparedFixedBodyRoute(StrictModule):
     def _configuration(self, value: ArrayLike, /) -> Array:
         configuration = jnp.asarray(value, dtype=self.local_positions_m.dtype)
         if configuration.shape != (self.articulation.nq,):
-            raise ValueError(
-                f"configuration must have shape {(self.articulation.nq,)}."
-            )
+            raise ValueError(f"configuration must have shape {(self.articulation.nq,)}.")
         return configuration
 
     def _velocity(self, value: ArrayLike, /) -> Array:
@@ -278,11 +277,14 @@ class PreparedFixedBodyRoute(StrictModule):
         point_transforms = body_transforms[
             jnp.asarray(self.point_body_indices, dtype=jnp.int32)
         ]
-        return contract(
-            "pij,pj->pi",
-            point_transforms[:, :3, :3],
-            self.local_positions_m,
-        ) + point_transforms[:, :3, 3]
+        return (
+            contract(
+                "pij,pj->pi",
+                point_transforms[:, :3, :3],
+                self.local_positions_m,
+            )
+            + point_transforms[:, :3, 3]
+        )
 
     def _length_geometry(
         self, configuration: Array, /
@@ -291,19 +293,17 @@ class PreparedFixedBodyRoute(StrictModule):
         start = jnp.asarray(self.segment_start_indices, dtype=jnp.int32)
         stop = jnp.asarray(self.segment_stop_indices, dtype=jnp.int32)
         owner = jnp.asarray(self.segment_route_indices, dtype=jnp.int32)
-        route_mask = jnp.asarray(self.plan.route_mask, dtype=bool)
+        route_mask = jnp.asarray(self.plan.route_mask, dtype=jnp.bool_)
         segment = points[stop] - points[start]
         squared_length = jnp.sum(segment * segment, axis=-1)
-        nondegenerate = (
-            squared_length > self.minimum_segment_length_m**2
-        )
+        nondegenerate = squared_length > self.minimum_segment_length_m**2
         safe_squared_length = jnp.where(nondegenerate, squared_length, 1.0)
-        segment_length = jnp.where(
-            nondegenerate, jnp.sqrt(safe_squared_length), 0.0
-        )
+        segment_length = jnp.where(nondegenerate, jnp.sqrt(safe_squared_length), 0.0)
         active_segment = route_mask[owner]
-        lengths = jnp.zeros((self.route_capacity,), dtype=points.dtype).at[owner].add(
-            jnp.where(active_segment, segment_length, 0.0)
+        lengths = (
+            jnp.zeros((self.route_capacity,), dtype=points.dtype)
+            .at[owner]
+            .add(jnp.where(active_segment, segment_length, 0.0))
         )
         return points, segment, segment_length, lengths
 
@@ -351,30 +351,30 @@ class PreparedFixedBodyRoute(StrictModule):
         world, segment, segment_length, lengths = self._length_geometry(point)
         rates = self.length_jacobian_operator(point).mv(velocity)
         owner = jnp.asarray(self.segment_route_indices, dtype=jnp.int32)
-        route_mask = jnp.asarray(self.plan.route_mask, dtype=bool)
-        segment_finite = (
-            jnp.all(jnp.isfinite(segment), axis=-1) & jnp.isfinite(segment_length)
+        route_mask = jnp.asarray(self.plan.route_mask, dtype=jnp.bool_)
+        segment_finite = jnp.all(jnp.isfinite(segment), axis=-1) & jnp.isfinite(
+            segment_length
         )
         segment_nondegenerate = segment_length > self.minimum_segment_length_m
-        finite_count = jnp.zeros((self.route_capacity,), dtype=jnp.int32).at[owner].add(
-            segment_finite.astype(jnp.int32)
+        finite_count = (
+            jnp.zeros((self.route_capacity,), dtype=jnp.int32)
+            .at[owner]
+            .add(segment_finite.astype(jnp.int32))
         )
-        valid_count = jnp.zeros((self.route_capacity,), dtype=jnp.int32).at[owner].add(
-            segment_nondegenerate.astype(jnp.int32)
+        valid_count = (
+            jnp.zeros((self.route_capacity,), dtype=jnp.int32)
+            .at[owner]
+            .add(segment_nondegenerate.astype(jnp.int32))
         )
         expected_count = jnp.asarray(
             tuple(
-                self.plan.point_offsets[index + 1]
-                - self.plan.point_offsets[index]
-                - 1
+                self.plan.point_offsets[index + 1] - self.plan.point_offsets[index] - 1
                 for index in range(self.route_capacity)
             ),
             dtype=jnp.int32,
         )
         route_finite = (~route_mask) | (
-            (finite_count == expected_count)
-            & jnp.isfinite(lengths)
-            & jnp.isfinite(rates)
+            (finite_count == expected_count) & jnp.isfinite(lengths) & jnp.isfinite(rates)
         )
         route_nondegenerate = (~route_mask) | (valid_count == expected_count)
         successful = route_finite & route_nondegenerate
@@ -413,11 +413,9 @@ class PreparedFixedBodyRoute(StrictModule):
         velocity = self._velocity(generalized_velocity)
         tension = jnp.asarray(tensile_force_N, dtype=point.dtype)
         if tension.shape != (self.route_capacity,):
-            raise ValueError(
-                f"tensile_force_N must have shape {(self.route_capacity,)}."
-            )
+            raise ValueError(f"tensile_force_N must have shape {(self.route_capacity,)}.")
         evaluation = self.evaluate(point, velocity)
-        route_mask = jnp.asarray(self.plan.route_mask, dtype=bool)
+        route_mask = jnp.asarray(self.plan.route_mask, dtype=jnp.bool_)
         tensile = (~route_mask) | (tension >= 0.0)
         finite_routes = evaluation.evidence.successful & jnp.isfinite(tension)
         active_tension = jnp.where(route_mask & tensile & finite_routes, tension, 0.0)
@@ -435,19 +433,13 @@ class PreparedFixedBodyRoute(StrictModule):
             jnp.all(finite_routes | ~route_mask)
             & jnp.all(jnp.isfinite(generalized_load))
             & jnp.all(
-                jnp.isfinite(
-                    jnp.stack((route_power, generalized_power, residual, scale))
-                )
+                jnp.isfinite(jnp.stack((route_power, generalized_power, residual, scale)))
             )
         )
         tolerance = jnp.finfo(point.dtype).eps * max(
             64, 8 * max(self.articulation.nv, 1) * self.route_capacity
         )
-        successful = (
-            finite
-            & jnp.all(tensile)
-            & (jnp.abs(residual) <= tolerance * scale)
-        )
+        successful = finite & jnp.all(tensile) & (jnp.abs(residual) <= tolerance * scale)
         evidence = FixedBodyRoutePullbackEvidence(
             tension,
             evaluation.route_length_rates_m_per_s,

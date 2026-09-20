@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 
+from phydrax._strict import StrictModule
+
 from ._graph import ensure_graph
 from ._ir import GraphIR
 from ._kernels import segment_sum
@@ -20,7 +22,7 @@ def _tree_leading_size(tree: Any, /) -> int:
     leaves = jtu.tree_leaves(tree)
     if not leaves:
         raise ValueError("Feature tree must contain at least one array leaf.")
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 def _mask_tree(tree: Any, mask: jnp.ndarray | None, /) -> Any:
@@ -54,7 +56,7 @@ def _tree_segment_reduce(
     if reduce != "mean":
         raise ValueError("Graph pool reduce must be 'sum' or 'mean'.")
     counts = segment_sum(
-        jnp.ones((segment_ids.shape[0],), dtype=float), segment_ids, num_segments
+        jnp.ones((segment_ids.shape[0],), dtype=jnp.float64), segment_ids, num_segments
     )
 
     def divide(value):
@@ -71,7 +73,7 @@ def _tree_take(tree: Any, index: jnp.ndarray, /) -> Any:
 
 
 def _filter_tree(tree: Any, mask: np.ndarray, /) -> Any:
-    mask_jnp = jnp.asarray(mask, dtype=bool)
+    mask_jnp = jnp.asarray(mask, dtype=jnp.bool_)
     return jtu.tree_map(lambda x: jnp.asarray(x)[mask_jnp], tree)
 
 
@@ -104,7 +106,7 @@ def pool_graph_by_cluster(
     node. This helper currently expects a single materialized graph.
     """
     graph = ensure_graph(graph, validate=False)
-    if int(graph.n_node.shape[0]) != 1:
+    if graph.n_node.shape[0] != 1:
         raise ValueError(
             "pool_graph_by_cluster currently expects one materialized graph."
         )
@@ -115,14 +117,14 @@ def pool_graph_by_cluster(
 
     cluster_ids = jnp.asarray(cluster_ids, dtype=jnp.int32)
     n_nodes = _tree_leading_size(graph.nodes)
-    if int(cluster_ids.shape[0]) != n_nodes:
+    if cluster_ids.shape[0] != n_nodes:
         raise ValueError(
             "cluster_ids length must match the node feature leading size; "
             f"got {cluster_ids.shape[0]} for {n_nodes} nodes."
         )
     valid_nodes = _valid_node_mask(graph, cluster_ids)
     valid_cluster_ids = cluster_ids[valid_nodes]
-    if int(valid_cluster_ids.shape[0]) == 0:
+    if valid_cluster_ids.shape[0] == 0:
         raise ValueError("cluster_ids must select at least one node.")
     n_cluster = int(jnp.max(valid_cluster_ids)) + 1
 
@@ -152,7 +154,7 @@ def pool_graph_by_cluster(
         edges = None
         if graph.edges is not None:
             edges = _filter_tree(
-                graph.edges, np.zeros((int(graph.senders.shape[0]),), dtype=bool)
+                graph.edges, np.zeros((graph.senders.shape[0],), dtype=np.bool_)
             )
     else:
         keys = coarse_senders_np * n_cluster + coarse_receivers_np
@@ -163,7 +165,7 @@ def pool_graph_by_cluster(
         if graph.edges is not None:
             filtered_edges = _filter_tree(graph.edges, valid_edge_np)
             edges = _coalesce_tree(
-                filtered_edges, inverse, int(unique_keys.shape[0]), reduce_edges
+                filtered_edges, inverse, unique_keys.shape[0], reduce_edges
             )
 
     return GraphIR(
@@ -173,7 +175,7 @@ def pool_graph_by_cluster(
         receivers=receivers,
         globals=graph.globals,
         n_node=jnp.asarray([n_cluster], dtype=jnp.int32),
-        n_edge=jnp.asarray([int(senders.shape[0])], dtype=jnp.int32),
+        n_edge=jnp.asarray([senders.shape[0]], dtype=jnp.int32),
         validate=False,
     )
 
@@ -202,7 +204,7 @@ def unpool_nodes_by_cluster(
     return jtu.tree_map(unpool_leaf, coarse_nodes)
 
 
-class GraphClusterPool(eqx.Module):
+class GraphClusterPool(StrictModule):
     """`GraphIR -> GraphIR` cluster pooling block."""
 
     cluster_ids: jnp.ndarray
@@ -234,7 +236,7 @@ class GraphClusterPool(eqx.Module):
         )
 
 
-class GraphMultiscaleBlock(eqx.Module):
+class GraphMultiscaleBlock(StrictModule):
     """Pool, process on a coarse graph, unpool, and fuse with fine nodes."""
 
     cluster_ids: jnp.ndarray

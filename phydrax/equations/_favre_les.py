@@ -196,7 +196,7 @@ class FavreLESInputs(StrictModule):
             raise TypeError("fields must be a FavreLESFieldContract.")
         density_ = jnp.asarray(density)
         if not jnp.issubdtype(density_.dtype, jnp.inexact):
-            density_ = density_.astype(jnp.result_type(density_, float))
+            density_ = density_.astype(jnp.result_type(density_, jnp.float64))
         temperature_ = jnp.asarray(temperature, dtype=density_.dtype)
         velocity = jnp.asarray(favre_velocity, dtype=density_.dtype)
         velocity_gradient = jnp.asarray(favre_velocity_gradient, dtype=density_.dtype)
@@ -379,13 +379,11 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
             )
         if not np.isfinite(dissipation_coefficient) or dissipation_coefficient < 0.0:
             raise ValueError(
-                "Favre SGS kinetic-energy dissipation coefficient must be finite "
-                "and nonnegative."
+                "Favre SGS kinetic-energy dissipation coefficient must be finite and nonnegative."
             )
         if not np.isfinite(kinetic_schmidt) or kinetic_schmidt <= 0.0:
             raise ValueError(
-                "Favre SGS kinetic-energy turbulent Schmidt number must be finite "
-                "and positive."
+                "Favre SGS kinetic-energy turbulent Schmidt number must be finite and positive."
             )
         if isotropic_trace_policy not in (
             "neglected",
@@ -506,8 +504,7 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
                 or inputs.specific_sgs_kinetic_energy_gradient is not None
             ):
                 raise ValueError(
-                    "The neglected isotropic trace policy forbids SGS kinetic "
-                    "energy and its gradient."
+                    "The neglected isotropic trace policy forbids SGS kinetic energy and its gradient."
                 )
             kinetic_energy = jnp.zeros_like(inputs.density)
             kinetic_energy_gradient = jnp.zeros(
@@ -519,8 +516,7 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
                 or inputs.specific_sgs_kinetic_energy_gradient is None
             ):
                 raise ValueError(
-                    "The provided isotropic trace policy requires SGS kinetic "
-                    "energy and its gradient."
+                    "The provided isotropic trace policy requires SGS kinetic energy and its gradient."
                 )
             kinetic_energy = inputs.specific_sgs_kinetic_energy
             kinetic_energy_gradient = inputs.specific_sgs_kinetic_energy_gradient
@@ -599,8 +595,7 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
                 | ~viscosity_nonnegative
                 | ~viscosity_within_bound
             ),
-            "Favre LES eddy viscosity is non-finite, negative, or exceeds its "
-            "configured timestep-control bound.",
+            "Favre LES eddy viscosity is non-finite, negative, or exceeds its configured timestep-control bound.",
         )
         dynamic_viscosity = density * checked_viscosity
         deviatoric_stress = (

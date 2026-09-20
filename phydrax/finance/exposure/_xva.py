@@ -30,7 +30,7 @@ def _profile_id(profile: ExposureProfile, /) -> str:
             "value_state_id": profile.value_state_id,
             "weighting_id": profile.weighting_id,
             "wrong_way_link_id": profile.wrong_way_link_id,
-            "time_count": int(profile.times.shape[0]),
+            "time_count": profile.times.shape[0],
         }
     )
 
@@ -44,7 +44,7 @@ def _vector(
     nonnegative: bool = False,
     positive: bool = False,
 ) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if result.shape == ():
         result = jnp.broadcast_to(result, shape)
     if result.shape != shape:
@@ -60,7 +60,7 @@ def _vector(
 
 
 def _recovery(value: ArrayLike, name: str, /) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     host = float(np.asarray(jax.device_get(result)))
@@ -105,8 +105,8 @@ class FundingPolicy(StrictModule):
         policy_id: str,
         funding_curve_id: str,
     ):
-        borrowing = jnp.asarray(borrowing_spreads, dtype=float)
-        lending = jnp.asarray(lending_spreads, dtype=float)
+        borrowing = jnp.asarray(borrowing_spreads, dtype=jnp.float64)
+        lending = jnp.asarray(lending_spreads, dtype=jnp.float64)
         if (
             borrowing.ndim != 1
             or lending.shape != borrowing.shape
@@ -145,7 +145,7 @@ class MarginFundingPolicy(StrictModule):
         funding_curve_id: str,
         policy_id: str,
     ):
-        spreads = jnp.asarray(funding_spreads, dtype=float)
+        spreads = jnp.asarray(funding_spreads, dtype=jnp.float64)
         host = np.asarray(jax.device_get(spreads))
         if spreads.ndim != 1 or spreads.shape[0] < 2:
             raise ValueError(
@@ -173,8 +173,8 @@ class EconomicCapitalPolicy(StrictModule):
         *,
         policy_id: str,
     ):
-        capital = jnp.asarray(capital_profile, dtype=float)
-        cost = jnp.asarray(cost_of_capital, dtype=float)
+        capital = jnp.asarray(capital_profile, dtype=jnp.float64)
+        cost = jnp.asarray(cost_of_capital, dtype=jnp.float64)
         if (
             capital.ndim != 1
             or capital.shape[0] < 2
@@ -360,7 +360,7 @@ def compute_fva(
     discounts = _discounts(discount_factors, shape)
     borrowing = -discounts * policy.borrowing_spreads * profile.expected_positive_exposure
     lending = discounts * policy.lending_spreads * profile.expected_negative_exposure
-    valid = jnp.ones(shape, dtype=bool)
+    valid = jnp.ones(shape, dtype=jnp.bool_)
     adjustment = _time_integral(borrowing + lending, profile.times, valid)
     return FVAResult(
         borrowing,
@@ -402,7 +402,7 @@ def compute_mva(
     )
     discounts = _discounts(discount_factors, shape)
     buckets = -discounts * policy.funding_spreads * margin
-    adjustment = _time_integral(buckets, profile.times, jnp.ones(shape, dtype=bool))
+    adjustment = _time_integral(buckets, profile.times, jnp.ones(shape, dtype=jnp.bool_))
     return MVAResult(
         buckets,
         adjustment,
@@ -433,7 +433,7 @@ def compute_kva(
         raise ValueError("Economic capital policy must align with exposure times.")
     discounts = _discounts(discount_factors, shape)
     buckets = -discounts * policy.cost_of_capital * policy.capital_profile
-    adjustment = _time_integral(buckets, profile.times, jnp.ones(shape, dtype=bool))
+    adjustment = _time_integral(buckets, profile.times, jnp.ones(shape, dtype=jnp.bool_))
     return KVAResult(
         buckets,
         adjustment,

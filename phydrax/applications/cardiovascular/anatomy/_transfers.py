@@ -235,12 +235,12 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
                 "Cardiac transfers require non-empty source and target spaces."
             )
         source_mask_host = (
-            np.ones((transfer.source.vector_space.size,), dtype=bool)
+            np.ones((transfer.source.vector_space.size,), dtype=np.bool_)
             if source_covered is None
             else np.asarray(source_covered)
         )
         target_mask_host = (
-            np.ones((transfer.target.vector_space.size,), dtype=bool)
+            np.ones((transfer.target.vector_space.size,), dtype=np.bool_)
             if target_covered is None
             else np.asarray(target_covered)
         )
@@ -261,8 +261,8 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
             or adjoint_tolerance_ < 0.0
         ):
             raise ValueError("Transfer tolerances must be finite and non-negative.")
-        source_mask = jnp.asarray(source_mask_host, dtype=bool)
-        target_mask = jnp.asarray(target_mask_host, dtype=bool)
+        source_mask = jnp.asarray(source_mask_host, dtype=jnp.bool_)
+        target_mask = jnp.asarray(target_mask_host, dtype=jnp.bool_)
         payload = {
             "kind": "cardiac-field-transfer",
             "field_transfer": transfer.transfer_id,

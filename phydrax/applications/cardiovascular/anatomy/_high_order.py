@@ -112,8 +112,7 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
             block.cell_kind not in ("tetrahedron", "hexahedron") for block in mesh.blocks
         ):
             raise ValueError(
-                "High-order cardiac geometry supports P2 tetrahedra and Q2 "
-                "hexahedra only."
+                "High-order cardiac geometry supports P2 tetrahedra and Q2 hexahedra only."
             )
         elements, routes, coordinates = coordinate_spec.resolve(mesh)
         if coordinates.ndim != 2 or coordinates.shape[1] != 3:
@@ -212,8 +211,7 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
         )
         if not bool(np.asarray(initial.evidence.accepted)):
             raise ValueError(
-                "Default high-order cardiac coordinates failed Jacobian or measure "
-                "qualification."
+                "Default high-order cardiac coordinates failed Jacobian or measure qualification."
             )
         return prepared
 

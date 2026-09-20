@@ -54,13 +54,13 @@ class OperatorPromptState(StrictModule):
         capacity: int,
         tokens_per_example: int,
     ):
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         values_ = jnp.asarray(values)
         if values_.ndim != len(cases) + 2:
             raise ValueError("Prompt state values require case/token/channel axes.")
-        expected = cases + (int(values_.shape[-2]),)
+        expected = cases + (values_.shape[-2],)
         weights_ = jnp.asarray(weights)
-        mask_ = jnp.asarray(mask, dtype=bool)
+        mask_ = jnp.asarray(mask, dtype=jnp.bool_)
         if weights_.shape != expected or mask_.shape != expected:
             raise ValueError("Prompt state weights and mask must match its tokens.")
         self.values = values_
@@ -72,7 +72,7 @@ class OperatorPromptState(StrictModule):
 
     @property
     def num_tokens(self) -> int:
-        return int(self.values.shape[-2])
+        return self.values.shape[-2]
 
 
 class InContextOperatorState(StrictModule):
@@ -95,13 +95,13 @@ class InContextOperatorState(StrictModule):
     ):
         self.values = jnp.asarray(values)
         self.weights = jnp.asarray(weights)
-        self.mask = jnp.asarray(mask, dtype=bool)
-        self.case_shape = tuple(int(size) for size in case_shape)
+        self.mask = jnp.asarray(mask, dtype=jnp.bool_)
+        self.case_shape = tuple(case_shape)
         self.prompt_state = prompt_state
 
     @property
     def num_tokens(self) -> int:
-        return int(self.values.shape[-2])
+        return self.values.shape[-2]
 
 
 class InContextOperator(AbstractEncodedOperatorModel):
@@ -271,10 +271,9 @@ class InContextOperator(AbstractEncodedOperatorModel):
         source = self._source(batch)
         values = _flatten_function_values(source, batch.case_shape, self.in_channels)
         coordinates, weights, mask = _flatten_geometry(source, batch.case_shape)
-        if int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
-                f"Expected source coordinate dimension {self.coord_dim}; "
-                f"got {coordinates.shape[-1]}."
+                f"Expected source coordinate dimension {self.coord_dim}; got {coordinates.shape[-1]}."
             )
         features = self.source_lift(jnp.concatenate((values, coordinates), axis=-1))
         return features, weights, mask
@@ -295,10 +294,9 @@ class InContextOperator(AbstractEncodedOperatorModel):
         )
         values = _flatten_function_values(query, batch.case_shape, self.out_channels)
         coordinates, weights, mask = _flatten_geometry(query, batch.case_shape)
-        if int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
-                f"Expected target coordinate dimension {self.coord_dim}; "
-                f"got {coordinates.shape[-1]}."
+                f"Expected target coordinate dimension {self.coord_dim}; got {coordinates.shape[-1]}."
             )
         features = self.target_lift(jnp.concatenate((values, coordinates), axis=-1))
         return features, weights, mask
@@ -314,7 +312,7 @@ class InContextOperator(AbstractEncodedOperatorModel):
         /,
     ) -> Array:
         cases = prod(case_shape) if case_shape else 1
-        sample_count = int(features.shape[-2])
+        sample_count = features.shape[-2]
         source = features.reshape((cases, sample_count, self.width))
         tokens = jnp.broadcast_to(
             self.token_bank + self.role_embeddings[role_index],
@@ -389,12 +387,12 @@ class InContextOperator(AbstractEncodedOperatorModel):
             raise ValueError("Prompt state and query batch case shapes must match.")
         features, weights, source_mask = self._physical_features(batch)
         cases = prod(batch.case_shape) if batch.case_shape else 1
-        source_count = int(features.shape[-2])
+        source_count = features.shape[-2]
         tokens = jnp.broadcast_to(
             self.token_bank + self.role_embeddings[2],
             (cases, self.num_tokens, self.width),
         )
-        token_mask = jnp.ones((cases, self.num_tokens), dtype=bool)
+        token_mask = jnp.ones((cases, self.num_tokens), dtype=jnp.bool_)
         tokens = tokens + self.current_attention(
             features.reshape((cases, source_count, self.width)),
             tokens,
@@ -445,10 +443,9 @@ class InContextOperator(AbstractEncodedOperatorModel):
     ) -> Array:
         del key
         coordinates = query.coordinates_array(case_shape=state.case_shape, flatten=True)
-        if int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
-                f"Expected query coordinate dimension {self.coord_dim}; "
-                f"got {coordinates.shape[-1]}."
+                f"Expected query coordinate dimension {self.coord_dim}; got {coordinates.shape[-1]}."
             )
         cases = prod(state.case_shape) if state.case_shape else 1
         query_count = prod(query.sample_shape)

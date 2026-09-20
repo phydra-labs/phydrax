@@ -268,7 +268,7 @@ def qualify(case, *, bandlimit, levels, dt, steps, refine=False):
         "baroclinic": "Unbalanced sheared thermal perturbation, not a published balanced benchmark.",
         "held_suarez": "Standard-form Newtonian cooling/Rayleigh drag; short runs do not qualify climate.",
         "moist": "Mixed-phase relaxation, precipitation, radiation and real reservoirs with global PDE.",
-        "aquaplanet": "Prescribed flux/grey cooling idealization; no ocean, convection or forecast skill.",
+        "aquaplanet": "Prescribed flux/gray cooling idealization; no ocean, convection or forecast skill.",
     }[case]
     return result
 

@@ -98,8 +98,7 @@ def _boundary_piece_where(
         return local
     if global_filter.deps != (var,):
         raise ValueError(
-            "Boundary blend where_all filters must depend only on the boundary "
-            f"variable {var!r}."
+            f"Boundary blend where_all filters must depend only on the boundary variable {var!r}."
         )
     if local is None:
         return global_filter.func
@@ -238,20 +237,26 @@ class InteriorAnchors(StrictModule):
             self.points = None
         else:
             self.points = frozendict(
-                {k: jnp.asarray(v, dtype=float) for k, v in points.items()}
+                {k: jnp.asarray(v, dtype=jnp.float64) for k, v in points.items()}
             )
 
         if values is None:
             self.values = None
         else:
-            self.values = jnp.asarray(values, dtype=float)
+            self.values = jnp.asarray(values, dtype=jnp.float64)
 
-        self.sensors = None if sensors is None else jnp.asarray(sensors, dtype=float)
+        self.sensors = (
+            None if sensors is None else jnp.asarray(sensors, dtype=jnp.float64)
+        )
         self.times = (
-            None if times is None else jnp.asarray(times, dtype=float).reshape((-1,))
+            None
+            if times is None
+            else jnp.asarray(times, dtype=jnp.float64).reshape((-1,))
         )
         self.sensor_values = (
-            None if sensor_values is None else jnp.asarray(sensor_values, dtype=float)
+            None
+            if sensor_values is None
+            else jnp.asarray(sensor_values, dtype=jnp.float64)
         )
 
         self.idw_exponent = float(idw_exponent)
@@ -274,8 +279,7 @@ class InteriorAnchors(StrictModule):
         if self.points is None:
             if self.sensors is None or self.times is None or self.sensor_values is None:
                 raise ValueError(
-                    "InteriorAnchors requires either (points, values) or "
-                    "(sensors, times, sensor_values)."
+                    "InteriorAnchors requires either (points, values) or (sensors, times, sensor_values)."
                 )
         else:
             if self.values is None:
@@ -290,8 +294,10 @@ class InteriorAnchors(StrictModule):
             missing = [lbl for lbl in labels if lbl not in self.points]
             if missing:
                 raise KeyError(f"Interior anchors missing labels {tuple(missing)!r}.")
-            anchors = {lbl: jnp.asarray(self.points[lbl], dtype=float) for lbl in labels}
-            y = jnp.asarray(self.values, dtype=float)
+            anchors = {
+                lbl: jnp.asarray(self.points[lbl], dtype=jnp.float64) for lbl in labels
+            }
+            y = jnp.asarray(self.values, dtype=jnp.float64)
             return frozendict(anchors), y
 
         if self.time_interp == "hermite":
@@ -310,18 +316,18 @@ class InteriorAnchors(StrictModule):
                 "Sensor-track anchors require domain labels exactly (space_label, time_label)."
             )
 
-        sensors = jnp.asarray(self.sensors, dtype=float)
+        sensors = jnp.asarray(self.sensors, dtype=jnp.float64)
         if sensors.ndim == 1:
             sensors = sensors.reshape((1, -1))
-        times = jnp.asarray(self.times, dtype=float).reshape((-1,))
-        values = jnp.asarray(self.sensor_values, dtype=float)
+        times = jnp.asarray(self.times, dtype=jnp.float64).reshape((-1,))
+        values = jnp.asarray(self.sensor_values, dtype=jnp.float64)
         if values.ndim == 1:
             values = values.reshape((1, -1, 1))
         elif values.ndim == 2:
             values = values.reshape((values.shape[0], values.shape[1], 1))
 
-        m = int(sensors.shape[0])
-        n = int(times.shape[0])
+        m = sensors.shape[0]
+        n = times.shape[0]
         if values.shape[0] != m or values.shape[1] != n:
             raise ValueError(
                 "sensor_values must have shape (M, N) or (M, N, C) matching sensors/times."
@@ -343,18 +349,18 @@ class InteriorAnchors(StrictModule):
             and self.times is not None
             and self.sensor_values is not None
         )
-        sensors = jnp.asarray(self.sensors, dtype=float)
+        sensors = jnp.asarray(self.sensors, dtype=jnp.float64)
         if sensors.ndim == 1:
             sensors = sensors.reshape((1, -1))
-        times = jnp.asarray(self.times, dtype=float).reshape((-1,))
-        values = jnp.asarray(self.sensor_values, dtype=float)
+        times = jnp.asarray(self.times, dtype=jnp.float64).reshape((-1,))
+        values = jnp.asarray(self.sensor_values, dtype=jnp.float64)
         if values.ndim == 1:
             values = values.reshape((1, -1, 1))
         elif values.ndim == 2:
             values = values.reshape((values.shape[0], values.shape[1], 1))
 
-        m = int(sensors.shape[0])
-        n = int(times.shape[0])
+        m = sensors.shape[0]
+        n = times.shape[0]
         if values.shape[0] != m or values.shape[1] != n:
             raise ValueError(
                 "sensor_values must have shape (M, N) or (M, N, C) matching sensors/times."
@@ -410,7 +416,7 @@ class _UnifiedAnchorSet:
 
 
 def _normalize_anchor_values(y: Array, /) -> Array:
-    y = jnp.asarray(y, dtype=float)
+    y = jnp.asarray(y, dtype=jnp.float64)
     if y.ndim == 1:
         return y
     if y.ndim == 2:
@@ -422,7 +428,7 @@ def _normalize_anchor_values(y: Array, /) -> Array:
 
 def _as_anchor_array(domain: Domain, label: str, x: Array, /) -> Array:
     factor = _unwrap_factor(domain.factor(label))
-    arr = jnp.asarray(x, dtype=float)
+    arr = jnp.asarray(x, dtype=jnp.float64)
 
     if isinstance(factor, AbstractGeometry):
         if arr.ndim == 1:
@@ -528,7 +534,7 @@ def _build_anchor_set(
     ls_list: dict[str, list[Array]] = {lbl: [] for lbl in labels}
 
     for si, a, y, idw_exp_src, eps_src, ls_src in static_sources:
-        n = int(next(iter(a.values())).shape[0])
+        n = next(iter(a.values())).shape[0]
         if y.shape[0] != n:
             raise ValueError(
                 f"Interior data values must have leading dim N={n}, got {y.shape[0]}."
@@ -536,11 +542,11 @@ def _build_anchor_set(
         for lbl in labels:
             anchors[lbl].append(a[lbl])
             ls_val = float(ls_src.get(lbl, 1.0))
-            ls_list[lbl].append(jnp.full((n,), ls_val, dtype=float))
+            ls_list[lbl].append(jnp.full((n,), ls_val, dtype=jnp.float64))
         values_list.append(y)
         src_index_list.append(jnp.full((n,), int(si), dtype=jnp.int32))
-        idw_list.append(jnp.full((n,), float(idw_exp_src), dtype=float))
-        eps_list.append(jnp.full((n,), float(eps_src), dtype=float))
+        idw_list.append(jnp.full((n,), float(idw_exp_src), dtype=jnp.float64))
+        eps_list.append(jnp.full((n,), float(eps_src), dtype=jnp.float64))
 
     if values_list:
         anchors_cat = {lbl: jnp.concatenate(anchors[lbl], axis=0) for lbl in labels}
@@ -555,27 +561,29 @@ def _build_anchor_set(
         for lbl in labels:
             factor = _unwrap_factor(domain.factor(lbl))
             if isinstance(factor, AbstractGeometry):
-                anchors_cat[lbl] = jnp.zeros((0, int(factor.spatial_dim)), dtype=float)
+                anchors_cat[lbl] = jnp.zeros(
+                    (0, int(factor.spatial_dim)), dtype=jnp.float64
+                )
             elif isinstance(factor, AbstractScalarDomain):
-                anchors_cat[lbl] = jnp.zeros((0,), dtype=float)
+                anchors_cat[lbl] = jnp.zeros((0,), dtype=jnp.float64)
             else:
                 raise TypeError(
                     f"Unsupported anchor domain factor {type(factor).__name__} for label {lbl!r}."
                 )
-            lengthscales[lbl] = jnp.zeros((0,), dtype=float)
-        values_cat = jnp.zeros((0,), dtype=float)
+            lengthscales[lbl] = jnp.zeros((0,), dtype=jnp.float64)
+        values_cat = jnp.zeros((0,), dtype=jnp.float64)
         source_index = jnp.zeros((0,), dtype=jnp.int32)
-        idw_exp = jnp.zeros((0,), dtype=float)
-        eps_snap = jnp.zeros((0,), dtype=float)
+        idw_exp = jnp.zeros((0,), dtype=jnp.float64)
+        eps_snap = jnp.zeros((0,), dtype=jnp.float64)
 
     # Dedupe coincident anchors and raise errors on conflicts.
     # Coincidence uses the same directional snap metric as the runtime overlay:
     # anchor i considers j coincident if d2_i(z_j) < eps_snap_i (and vice-versa).
     import numpy as np
 
-    n_total = int(eps_snap.shape[0])
+    n_total = eps_snap.shape[0]
     if n_total > 0:
-        keep = np.ones((n_total,), dtype=bool)
+        keep = np.ones((n_total,), dtype=np.bool_)
 
         anchors_np = {lbl: np.asarray(anchors_cat[lbl]) for lbl in labels}
         values_np = np.asarray(values_cat)
@@ -620,16 +628,18 @@ def _build_anchor_set(
         if not np.all(keep):
             idx_keep = np.nonzero(keep)[0]
             anchors_cat = {
-                lbl: jnp.asarray(anchors_np[lbl][idx_keep], dtype=float) for lbl in labels
+                lbl: jnp.asarray(anchors_np[lbl][idx_keep], dtype=jnp.float64)
+                for lbl in labels
             }
-            values_cat = jnp.asarray(values_np[idx_keep], dtype=float)
+            values_cat = jnp.asarray(values_np[idx_keep], dtype=jnp.float64)
             source_index = jnp.asarray(
                 np.asarray(source_index)[idx_keep], dtype=jnp.int32
             )
-            idw_exp = jnp.asarray(np.asarray(idw_exp)[idx_keep], dtype=float)
-            eps_snap = jnp.asarray(eps_np[idx_keep], dtype=float)
+            idw_exp = jnp.asarray(np.asarray(idw_exp)[idx_keep], dtype=jnp.float64)
+            eps_snap = jnp.asarray(eps_np[idx_keep], dtype=jnp.float64)
             lengthscales = {
-                lbl: jnp.asarray(ls_np[lbl][idx_keep], dtype=float) for lbl in labels
+                lbl: jnp.asarray(ls_np[lbl][idx_keep], dtype=jnp.float64)
+                for lbl in labels
             }
 
     return _UnifiedAnchorSet(
@@ -641,7 +651,7 @@ def _build_anchor_set(
         eps_snap=eps_snap,
         lengthscales=frozendict(lengthscales),
         envelope_enabled=tuple(envelope_enabled),
-        envelope_scale=jnp.asarray(envelope_scale, dtype=float),
+        envelope_scale=jnp.asarray(envelope_scale, dtype=jnp.float64),
         track_sources=tuple(track_sources),
     )
 
@@ -742,7 +752,7 @@ def _initial_overlay_boundary_compatible(
             )
         )
         if not non_fixed_labels:
-            vals = jnp.asarray(diff.func(key=jr.fold_in(key, i)), dtype=float)
+            vals = jnp.asarray(diff.func(key=jr.fold_in(key, i)), dtype=jnp.float64)
         else:
             structure = SampleLayout((non_fixed_labels,))
             batch = component.sample(
@@ -790,8 +800,8 @@ class _BoundaryWeightedQuotientCallable(StrictModule):
         self.base_pos = base_pos
 
     def __call__(self, *args, key=None, **kwargs):
-        num = jnp.asarray(0.0, dtype=float)
-        den = jnp.asarray(0.0, dtype=float)
+        num = jnp.asarray(0.0, dtype=jnp.float64)
+        den = jnp.asarray(0.0, dtype=jnp.float64)
 
         for w, p, w_pos, p_pos in zip(
             self.weights,
@@ -1056,8 +1066,8 @@ def _idw_weights(
     idw_exponent: Array,
     eps: float,
 ) -> Array:
-    distances = jnp.asarray(d2, dtype=float)
-    count = int(distances.shape[0])
+    distances = jnp.asarray(d2, dtype=jnp.float64)
+    count = distances.shape[0]
     stencil = inverse_distance_stencil(
         jnp.arange(count, dtype=jnp.int32),
         distances,
@@ -1102,7 +1112,7 @@ class _InteriorAnchorOverlay(StrictModule):
         if self.evolution_var in domain.labels:
             factor = _unwrap_factor(domain.factor(self.evolution_var))
             if isinstance(factor, AbstractScalarDomain):
-                t0 = jnp.asarray(factor.fixed("start"), dtype=float).reshape(())
+                t0 = jnp.asarray(factor.fixed("start"), dtype=jnp.float64).reshape(())
         self.t0 = t0
 
         gates: dict[str, Callable[[Array], Array]] = {}
@@ -1120,10 +1130,10 @@ class _InteriorAnchorOverlay(StrictModule):
         self.geometry_gates = frozendict(gates)
 
         # Precompute M(anchor_i) to validate anchors and reuse inside the overlay.
-        n = int(self.anchor_set.source_index.shape[0])
-        m_anchor = jnp.ones((n,), dtype=float)
+        n = self.anchor_set.source_index.shape[0]
+        m_anchor = jnp.ones((n,), dtype=jnp.float64)
         for lbl, p in self.gate_exponents.items():
-            x = jnp.asarray(self.anchor_set.anchors[lbl], dtype=float)
+            x = jnp.asarray(self.anchor_set.anchors[lbl], dtype=jnp.float64)
             gate = self.geometry_gates[lbl](x)
             m_anchor = m_anchor * (jnp.abs(gate) ** int(p))
 
@@ -1136,7 +1146,7 @@ class _InteriorAnchorOverlay(StrictModule):
                     f"Missing evolution_var {self.evolution_var!r} in interior anchors."
                 )
             t = jnp.asarray(
-                self.anchor_set.anchors[self.evolution_var], dtype=float
+                self.anchor_set.anchors[self.evolution_var], dtype=jnp.float64
             ).reshape((-1,))
             m_anchor = m_anchor * (jnp.maximum(t - self.t0, 0.0) ** int(q))
 
@@ -1155,17 +1165,17 @@ class _InteriorAnchorOverlay(StrictModule):
                     "Hermite sensor tracks must use the same space label as boundary gating."
                 )
 
-            sensors = jnp.asarray(src.sensors, dtype=float)
-            times = jnp.asarray(src.times, dtype=float).reshape((-1,))
-            values = jnp.asarray(src.values, dtype=float)
-            m_count = int(sensors.shape[0])
-            n_count = int(times.shape[0])
+            sensors = jnp.asarray(src.sensors, dtype=jnp.float64)
+            times = jnp.asarray(src.times, dtype=jnp.float64).reshape((-1,))
+            values = jnp.asarray(src.values, dtype=jnp.float64)
+            m_count = sensors.shape[0]
+            n_count = times.shape[0]
             if values.shape[0] != m_count or values.shape[1] != n_count:
                 raise ValueError(
                     "sensor_values must have shape (M, N, C) matching sensors/times."
                 )
 
-            m_track = jnp.ones((m_count, n_count), dtype=float)
+            m_track = jnp.ones((m_count, n_count), dtype=jnp.float64)
             for lbl, p in self.gate_exponents.items():
                 if lbl != src.space_label:
                     raise ValueError(
@@ -1211,7 +1221,7 @@ class _InteriorAnchorOverlay(StrictModule):
         idx = {lbl: i for i, lbl in enumerate(deps)}
 
         anchors = self.anchor_set.anchors
-        values = jnp.asarray(self.anchor_set.values, dtype=float)
+        values = jnp.asarray(self.anchor_set.values, dtype=jnp.float64)
         src_index = self.anchor_set.source_index
         idw_exp = self.anchor_set.idw_exponent
         eps_snap = self.anchor_set.eps_snap
@@ -1224,21 +1234,21 @@ class _InteriorAnchorOverlay(StrictModule):
         gate_exps = dict(self.gate_exponents)
         geom_gates = dict(self.geometry_gates)
         q = (self.max_init_order + 1) if self.max_init_order >= 0 else 0
-        t0 = self.t0 if self.t0 is not None else jnp.asarray(0.0, dtype=float)
+        t0 = self.t0 if self.t0 is not None else jnp.asarray(0.0, dtype=jnp.float64)
         evolution_var = self.evolution_var
 
         if values.shape[0] == 0 and not track_sources:
             raise ValueError("Interior data overlay has no anchors or tracks.")
 
         def _M_query(z_by_label: Mapping[str, Array], /) -> Array:
-            m = jnp.asarray(1.0, dtype=float)
+            m = jnp.asarray(1.0, dtype=jnp.float64)
             for lbl, p in gate_exps.items():
-                gate = jnp.asarray(geom_gates[lbl](z_by_label[lbl]), dtype=float).reshape(
-                    ()
-                )
+                gate = jnp.asarray(
+                    geom_gates[lbl](z_by_label[lbl]), dtype=jnp.float64
+                ).reshape(())
                 m = m * (jnp.abs(gate) ** int(p))
             if q > 0:
-                t = jnp.asarray(z_by_label[evolution_var], dtype=float).reshape(())
+                t = jnp.asarray(z_by_label[evolution_var], dtype=jnp.float64).reshape(())
                 m = m * (jnp.maximum(t - t0, 0.0) ** int(q))
             return m
 
@@ -1246,7 +1256,9 @@ class _InteriorAnchorOverlay(StrictModule):
             z = {lbl: args[idx[lbl]] for lbl in deps}
 
             def _u0_at_anchor(*dep_vals):
-                return jnp.asarray(u0.func(*dep_vals, key=key, **kwargs), dtype=float)
+                return jnp.asarray(
+                    u0.func(*dep_vals, key=key, **kwargs), dtype=jnp.float64
+                )
 
             coord_indices = [i for i, arg in enumerate(args) if isinstance(arg, tuple)]
             if coord_indices and track_sources:
@@ -1267,7 +1279,7 @@ class _InteriorAnchorOverlay(StrictModule):
                             *(anchors[lbl] for lbl in u0.deps)
                         )
                     else:
-                        base = jnp.asarray(u0.func(key=key, **kwargs), dtype=float)
+                        base = jnp.asarray(u0.func(key=key, **kwargs), dtype=jnp.float64)
                         u_anchor = jnp.broadcast_to(base, values.shape)
 
                     y = values
@@ -1282,7 +1294,7 @@ class _InteriorAnchorOverlay(StrictModule):
                         else (y - u_anchor) / m_anchor
                     )
 
-                    d2_static = jnp.asarray(0.0, dtype=float)
+                    d2_static = jnp.asarray(0.0, dtype=jnp.float64)
                     for lbl in deps:
                         a = anchors[lbl]
                         ls = lengthscales[lbl]
@@ -1303,8 +1315,8 @@ class _InteriorAnchorOverlay(StrictModule):
                 for track in track_sources:
                     sensors = track.sensors
                     times = track.times
-                    m_count = int(sensors.shape[0])
-                    n_count = int(times.shape[0])
+                    m_count = sensors.shape[0]
+                    n_count = times.shape[0]
 
                     if u0.deps:
                         xs = jnp.broadcast_to(
@@ -1327,7 +1339,7 @@ class _InteriorAnchorOverlay(StrictModule):
                                 )
                         u_anchor_flat = jax.vmap(_u0_at_anchor)(*dep_vals)
                     else:
-                        base = jnp.asarray(u0.func(key=key, **kwargs), dtype=float)
+                        base = jnp.asarray(u0.func(key=key, **kwargs), dtype=jnp.float64)
                         u_anchor_flat = jnp.broadcast_to(base, (m_count * n_count,))
 
                     if u_anchor_flat.ndim == 1:
@@ -1353,7 +1365,7 @@ class _InteriorAnchorOverlay(StrictModule):
                         u_scaled_t = u_scaled_t[..., None]
 
                     slopes_u_scaled_t = local_cubic_slopes(times, u_scaled_t)
-                    t_query = jnp.asarray(z[track.time_label], dtype=float)
+                    t_query = jnp.asarray(z[track.time_label], dtype=jnp.float64)
                     y_scaled = cubic_hermite_interpolate(
                         times,
                         track.values_scaled_t,
@@ -1372,7 +1384,7 @@ class _InteriorAnchorOverlay(StrictModule):
                     if r_track.ndim == 2 and r_track.shape[1] == 1:
                         r_track = r_track.reshape((-1,))
 
-                    zq = jnp.asarray(z[track.space_label], dtype=float)
+                    zq = jnp.asarray(z[track.space_label], dtype=jnp.float64)
                     if zq.ndim == 0:
                         zq_vec = zq.reshape((1,))
                     else:
@@ -1383,9 +1395,11 @@ class _InteriorAnchorOverlay(StrictModule):
                     r_parts.append(r_track)
                     d2_parts.append(d2_track)
                     idw_parts.append(
-                        jnp.full((m_count,), track.idw_exponent, dtype=float)
+                        jnp.full((m_count,), track.idw_exponent, dtype=jnp.float64)
                     )
-                    eps_parts.append(jnp.full((m_count,), track.eps_snap, dtype=float))
+                    eps_parts.append(
+                        jnp.full((m_count,), track.eps_snap, dtype=jnp.float64)
+                    )
                     src_parts.append(
                         jnp.full((m_count,), track.source_index, dtype=jnp.int32)
                     )
@@ -1410,8 +1424,8 @@ class _InteriorAnchorOverlay(StrictModule):
                             r_aligned.append(r.reshape((-1, 1)))
                         else:
                             if width is None:
-                                width = int(r.shape[1])
-                            if int(r.shape[1]) != width:
+                                width = r.shape[1]
+                            if r.shape[1] != width:
                                 raise ValueError(
                                     "Inconsistent interior anchor value shapes."
                                 )
@@ -1423,19 +1437,19 @@ class _InteriorAnchorOverlay(StrictModule):
                 eps_all = jnp.concatenate(eps_parts, axis=0)
                 src_all = jnp.concatenate(src_parts, axis=0)
 
-                n = int(d2.shape[0])
+                n = d2.shape[0]
                 jstar = jnp.argmin(d2)
                 is_snap = d2[jstar] < eps_all[jstar]
 
                 w_idw = _idw_weights(d2, idw_exponent=idw_all, eps=1e-12)
-                w_snap = jnp.eye(n, dtype=float)[jstar]
+                w_snap = jnp.eye(n, dtype=jnp.float64)[jstar]
                 w = jnp.where(is_snap, w_snap, w_idw)
 
                 if any(env_enabled):
                     psi_src: list[Array] = []
                     for si, enabled in enumerate(env_enabled):
                         if not enabled:
-                            psi_src.append(jnp.asarray(1.0, dtype=float))
+                            psi_src.append(jnp.asarray(1.0, dtype=jnp.float64))
                             continue
                         mask = src_all == si
                         d2_min = jnp.min(jnp.where(mask, d2, jnp.asarray(jnp.inf)))
@@ -1458,7 +1472,7 @@ class _InteriorAnchorOverlay(StrictModule):
             if u0.deps:
                 u_anchor = jax.vmap(_u0_at_anchor)(*(anchors[lbl] for lbl in u0.deps))
             else:
-                base = jnp.asarray(u0.func(key=key, **kwargs), dtype=float)
+                base = jnp.asarray(u0.func(key=key, **kwargs), dtype=jnp.float64)
                 u_anchor = jnp.broadcast_to(base, values.shape)
 
             y = values
@@ -1485,22 +1499,22 @@ class _InteriorAnchorOverlay(StrictModule):
             for i in coord_indices:
                 coords = args[i]
                 for j, coord in enumerate(coords):
-                    arr = jnp.asarray(coord, dtype=float).reshape((-1,))
+                    arr = jnp.asarray(coord, dtype=jnp.float64).reshape((-1,))
                     shape = [1] * total_axes
-                    shape[axis_pos[(i, j)]] = int(arr.shape[0])
+                    shape[axis_pos[(i, j)]] = arr.shape[0]
                     coord_axes[(i, j)] = jnp.reshape(arr, tuple(shape))
 
             def _geom_coords(label: str, /) -> Array:
                 zq = z[label]
                 if not isinstance(zq, tuple):
-                    return jnp.asarray(zq, dtype=float)
+                    return jnp.asarray(zq, dtype=jnp.float64)
                 i = idx[label]
                 coords = [coord_axes[(i, j)] for j in range(len(zq))]
                 if len(coords) == 1:
                     return coords[0]
                 return jnp.stack(coords, axis=-1)
 
-            d2 = jnp.asarray(0.0, dtype=float)
+            d2 = jnp.asarray(0.0, dtype=jnp.float64)
             if values.shape[0] == 0:
                 raise ValueError(
                     "coord-separable interior data requires explicit anchors."
@@ -1518,7 +1532,7 @@ class _InteriorAnchorOverlay(StrictModule):
                         raise ValueError(
                             f"coord-separable {lbl!r} expects {a.shape[1]} axes, got {len(zq)}."
                         )
-                    diff2 = jnp.asarray(0.0, dtype=float)
+                    diff2 = jnp.asarray(0.0, dtype=jnp.float64)
                     for j in range(a.shape[1]):
                         coord = coord_axes[(idx[lbl], j)]
                         a_j = a[:, j].reshape((a.shape[0],) + (1,) * total_axes)
@@ -1537,7 +1551,7 @@ class _InteriorAnchorOverlay(StrictModule):
                         d2_add = d2_add.reshape((d2_add.shape[0],) + (1,) * total_axes)
                     d2 = d2 + d2_add
 
-            n = int(src_index.shape[0])
+            n = src_index.shape[0]
             distance_squared = jnp.moveaxis(d2, 0, -1)
             candidate_indices = jnp.broadcast_to(
                 jnp.arange(n, dtype=jnp.int32),
@@ -1559,7 +1573,7 @@ class _InteriorAnchorOverlay(StrictModule):
                 mask_shape = (n,) + (1,) * total_axes
                 for si, enabled in enumerate(env_enabled):
                     if not enabled:
-                        psi_src.append(jnp.asarray(1.0, dtype=float))
+                        psi_src.append(jnp.asarray(1.0, dtype=jnp.float64))
                         continue
                     mask = (src_index == si).reshape(mask_shape)
                     d2_min = jnp.min(jnp.where(mask, d2, jnp.asarray(jnp.inf)), axis=0)
@@ -1578,12 +1592,12 @@ class _InteriorAnchorOverlay(StrictModule):
                 r_b = r.reshape((r.shape[0],) + (1,) * total_axes + (r.shape[1],))
                 corr = jnp.sum(wpsi[..., None] * r_b, axis=0)
 
-            m_q = jnp.asarray(1.0, dtype=float)
+            m_q = jnp.asarray(1.0, dtype=jnp.float64)
             for lbl, power in gate_exps.items():
-                gate = jnp.asarray(geom_gates[lbl](_geom_coords(lbl)), dtype=float)
+                gate = jnp.asarray(geom_gates[lbl](_geom_coords(lbl)), dtype=jnp.float64)
                 m_q = m_q * (jnp.abs(gate) ** int(power))
             if q > 0:
-                t = jnp.asarray(z[evolution_var], dtype=float).reshape(())
+                t = jnp.asarray(z[evolution_var], dtype=jnp.float64).reshape(())
                 m_q = m_q * (jnp.maximum(t - t0, 0.0) ** int(q))
 
             return m_q * corr
@@ -1849,7 +1863,7 @@ class _FieldEnforcementPipeline(StrictModule):
 
             def _gate(*args, key=None, **kwargs):
                 del key, kwargs
-                value = jnp.asarray(1.0, dtype=float)
+                value = jnp.asarray(1.0, dtype=jnp.float64)
                 for arg, gate, power in zip(
                     args,
                     gate_functions,
@@ -1857,7 +1871,7 @@ class _FieldEnforcementPipeline(StrictModule):
                     strict=True,
                 ):
                     gate_value = jnp.clip(
-                        jnp.abs(jnp.asarray(gate(arg), dtype=float)),
+                        jnp.abs(jnp.asarray(gate(arg), dtype=jnp.float64)),
                         0.0,
                         1.0,
                     )

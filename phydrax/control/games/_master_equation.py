@@ -321,8 +321,7 @@ class FiniteStateMasterEquationProblem(StrictModule):
         else:
             if aggregate_law_transition_id is None:
                 raise ValueError(
-                    "aggregate_law_transition_id is required for a declared "
-                    "aggregate transition."
+                    "aggregate_law_transition_id is required for a declared aggregate transition."
                 )
             aggregate_id = _identifier(
                 aggregate_law_transition_id, "aggregate_law_transition_id"
@@ -579,7 +578,7 @@ def _exact_population_law_transition(
                 )
         distribution = convolved
 
-    probabilities = np.zeros((len(count_to_index),), dtype=float)
+    probabilities = np.zeros((len(count_to_index),), dtype=np.float64)
     for counts, probability in distribution.items():
         probabilities[count_to_index[counts]] = probability
     return probabilities
@@ -591,7 +590,7 @@ def _declared_population_law_transition(
     /,
 ) -> np.ndarray | None:
     if isinstance(declared, Mapping):
-        probabilities = np.zeros((lattice.num_laws,), dtype=float)
+        probabilities = np.zeros((lattice.num_laws,), dtype=np.float64)
         try:
             for key, value in declared.items():
                 if isinstance(key, Integral) and not isinstance(key, bool):
@@ -616,7 +615,7 @@ def _declared_population_law_transition(
     ):
         return None
     try:
-        return np.asarray(raw_probabilities, dtype=float)
+        return np.asarray(raw_probabilities, dtype=np.float64)
     except (TypeError, ValueError):
         return None
 
@@ -627,7 +626,7 @@ def _neighbor_transfer_differences(
     sources = np.asarray(lattice.neighbor_from_indices, dtype=np.int64)
     destinations = np.asarray(lattice.neighbor_to_indices, dtype=np.int64)
     if sources.size == 0:
-        return np.empty((values.shape[0], values.shape[1], 0), dtype=float)
+        return np.empty((values.shape[0], values.shape[1], 0), dtype=np.float64)
     return values[:, :, destinations] - values[:, :, sources]
 
 
@@ -685,24 +684,26 @@ def solve_finite_state_master_equation_reference(
     count_rows = tuple(tuple(map(int, row)) for row in counts_np)
     count_to_index = {row: index for index, row in enumerate(count_rows)}
 
-    values = np.full((horizon + 1, num_states, num_laws), np.nan, dtype=float)
+    values = np.full((horizon + 1, num_states, num_laws), np.nan, dtype=np.float64)
     action_values = np.full(
-        (horizon, num_states, num_laws, num_actions), np.nan, dtype=float
+        (horizon, num_states, num_laws, num_actions), np.nan, dtype=np.float64
     )
     selectors = np.full((horizon, num_states, num_laws), -1, dtype=np.int32)
-    law_transition_table = np.full((horizon, num_laws, num_laws), np.nan, dtype=float)
+    law_transition_table = np.full(
+        (horizon, num_laws, num_laws), np.nan, dtype=np.float64
+    )
     physical_transitions = np.full(
         (horizon, num_laws, num_states, num_actions, num_states),
         np.nan,
-        dtype=float,
+        dtype=np.float64,
     )
     running_costs = np.full(
-        (horizon, num_laws, num_states, num_actions), np.nan, dtype=float
+        (horizon, num_laws, num_states, num_actions), np.nan, dtype=np.float64
     )
     physical_simplex_residuals = np.full(
-        (horizon, num_laws, num_states, num_actions), np.nan, dtype=float
+        (horizon, num_laws, num_states, num_actions), np.nan, dtype=np.float64
     )
-    law_simplex_residuals = np.full((horizon, num_laws), np.nan, dtype=float)
+    law_simplex_residuals = np.full((horizon, num_laws), np.nan, dtype=np.float64)
     bellman_residuals = np.full((horizon, num_states, num_laws), np.nan)
     action_minimum_residuals = np.full((horizon, num_states, num_laws), np.nan)
     terminal_residuals = np.full((num_states, num_laws), np.nan)
@@ -730,7 +731,7 @@ def solve_finite_state_master_equation_reference(
             detail,
         )
 
-    terminal_reference = np.full((num_states, num_laws), np.nan, dtype=float)
+    terminal_reference = np.full((num_states, num_laws), np.nan, dtype=np.float64)
     for state_index, state in enumerate(problem.states):
         for law_index in range(num_laws):
             law = jnp.asarray(laws_np[law_index])
@@ -766,12 +767,12 @@ def solve_finite_state_master_equation_reference(
                             )
                         )
                         transition = (
-                            np.empty((0,), dtype=float)
+                            np.empty((0,), dtype=np.float64)
                             if np.iscomplexobj(raw_transition)
-                            else np.asarray(raw_transition, dtype=float)
+                            else np.asarray(raw_transition, dtype=np.float64)
                         )
                     except (TypeError, ValueError):
-                        transition = np.empty((0,), dtype=float)
+                        transition = np.empty((0,), dtype=np.float64)
                     residual = _probability_simplex_residual(transition)
                     physical_simplex_residuals[
                         time_index, law_index, state_index, action_index
@@ -843,7 +844,7 @@ def solve_finite_state_master_equation_reference(
                     )
 
                 continuation_by_state = values[time_index + 1] @ law_probabilities
-                q_values = np.empty((num_states, num_actions), dtype=float)
+                q_values = np.empty((num_states, num_actions), dtype=np.float64)
                 for state_index in range(num_states):
                     for action_index in range(num_actions):
                         q_values[state_index, action_index] = running_costs[

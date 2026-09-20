@@ -121,7 +121,7 @@ class ScalarCrackSideMetadata3D(StrictModule, NonTrainableState):
         self.evaluation_route = "single-layer-same-normal-derivative-jump"
         self.metadata_id = canonical_fingerprint(
             {
-                "kind": "scalar-crack-side-metadata-3d-v1",
+                "kind": "scalar-crack-side-metadata-3d",
                 "minus": minus,
                 "plus": plus,
                 "normal": self.oriented_normal,
@@ -279,7 +279,7 @@ def _support_arrays(
         support = support.model
     if isinstance(support, SurfaceModel):
         mesh = support.mesh
-        vertices = np.asarray(mesh.coordinates, dtype=float)
+        vertices = np.asarray(mesh.coordinates, dtype=np.float64)
         faces = np.asarray(mesh.connectivity.cell_vertices, dtype=np.int32)
         kinds = np.asarray(mesh.connectivity.cell_kinds, dtype=np.int32)
         if faces.ndim != 2 or kinds.shape != (faces.shape[0],) or np.any(kinds != 3):
@@ -289,7 +289,7 @@ def _support_arrays(
         support = support.triangle_mesh
     if isinstance(support, TriangleMesh):
         return (
-            np.asarray(support.vertices, dtype=float),
+            np.asarray(support.vertices, dtype=np.float64),
             np.asarray(support.faces, dtype=np.int32),
             support.source_id,
         )
@@ -315,13 +315,13 @@ def _components(
     records: dict[tuple[int, int], list[tuple[int, int]]],
     /,
 ) -> tuple[np.ndarray, int]:
-    neighbours: list[list[int]] = [[] for _ in range(face_count)]
+    neighbors: list[list[int]] = [[] for _ in range(face_count)]
     for incidents in records.values():
         incident_faces = tuple(item[0] for item in incidents)
         for index, left in enumerate(incident_faces):
             for right in incident_faces[index + 1 :]:
-                neighbours[left].append(right)
-                neighbours[right].append(left)
+                neighbors[left].append(right)
+                neighbors[right].append(left)
     labels = np.full((face_count,), -1, dtype=np.int32)
     count = 0
     for first in range(face_count):
@@ -331,10 +331,10 @@ def _components(
         pending = [first]
         while pending:
             face = pending.pop()
-            for neighbour in neighbours[face]:
-                if labels[neighbour] < 0:
-                    labels[neighbour] = count
-                    pending.append(neighbour)
+            for neighbor in neighbors[face]:
+                if labels[neighbor] < 0:
+                    labels[neighbor] = count
+                    pending.append(neighbor)
         count += 1
     return labels, count
 
@@ -361,7 +361,7 @@ def scalar_screen_junction_evidence_3d(
         maximum_incidence=maximum,
         evidence_id=canonical_fingerprint(
             {
-                "kind": "scalar-screen-junction-incidence-3d-v1",
+                "kind": "scalar-screen-junction-incidence-3d",
                 "support": support_id,
                 "edges": edges,
                 "incident_faces": incident_faces,
@@ -396,7 +396,7 @@ def _topology_evidence(
     doubled_areas = np.linalg.norm(crosses, axis=1)
     scale = max(float(np.max(np.ptp(vertices, axis=0))), 1.0)
     if np.any(~np.isfinite(doubled_areas)) or np.any(
-        doubled_areas <= 64.0 * np.finfo(float).eps * scale * scale
+        doubled_areas <= 64.0 * np.finfo(np.float64).eps * scale * scale
     ):
         raise ValueError("Scalar screen triangles must be finite and nondegenerate.")
 
@@ -413,7 +413,7 @@ def _topology_evidence(
         maximum_incidence=max((len(item[1]) for item in junction_pairs), default=0),
         evidence_id=canonical_fingerprint(
             {
-                "kind": "scalar-screen-junction-incidence-3d-v1",
+                "kind": "scalar-screen-junction-incidence-3d",
                 "support": support_id,
                 "junctions": junction_pairs,
             }
@@ -440,7 +440,7 @@ def _topology_evidence(
         raise ValueError(
             "Scalar screen preparation requires an open support; closed surfaces must use a closed-surface formulation."
         )
-    component_has_boundary = np.zeros((component_count,), dtype=bool)
+    component_has_boundary = np.zeros((component_count,), dtype=np.bool_)
     for incidents in records.values():
         if len(incidents) == 1:
             component_has_boundary[labels[incidents[0][0]]] = True
@@ -467,7 +467,7 @@ def _topology_evidence(
     )
     topology_id = canonical_fingerprint(
         {
-            "kind": "oriented-open-scalar-screen-topology-3d-v1",
+            "kind": "oriented-open-scalar-screen-topology-3d",
             "support": support_id,
             "faces": array_tree_fingerprint(faces),
             "edges": array_tree_fingerprint(edge_vertices_host),
@@ -604,7 +604,7 @@ def prepare_scalar_screen_single_layer_dp0_3d(
         dtype=jnp.asarray(exception_values).dtype,
         space_id=canonical_fingerprint(
             {
-                "kind": "scalar-screen-dp0-space-3d-v1",
+                "kind": "scalar-screen-dp0-space-3d",
                 "topology": topology.topology_id,
                 "kernel-dtype": family.scalar_dtype,
             }
@@ -621,7 +621,7 @@ def prepare_scalar_screen_single_layer_dp0_3d(
         source_block_size=selected.source_block_size,
         operator_id=canonical_fingerprint(
             {
-                "kind": "scalar-screen-single-layer-weak-blocked-3d-v1",
+                "kind": "scalar-screen-single-layer-weak-blocked-3d",
                 "topology": topology.topology_id,
                 "policy": selected.policy_id,
                 "kernel": family.kernel_id,
@@ -637,7 +637,7 @@ def prepare_scalar_screen_single_layer_dp0_3d(
         target=DualSpace(space),
         operator_id=canonical_fingerprint(
             {
-                "kind": "scalar-screen-single-layer-weak-dense-3d-v1",
+                "kind": "scalar-screen-single-layer-weak-dense-3d",
                 "topology": topology.topology_id,
                 "kernel": family.kernel_id,
             }
@@ -649,13 +649,13 @@ def prepare_scalar_screen_single_layer_dp0_3d(
         target=space,
         operator_id=canonical_fingerprint(
             {
-                "kind": "scalar-screen-single-layer-strong-dense-3d-v1",
+                "kind": "scalar-screen-single-layer-strong-dense-3d",
                 "topology": topology.topology_id,
                 "kernel": family.kernel_id,
             }
         ),
     )
-    dense_operator_bytes = int(weak_matrix.nbytes + strong_matrix.nbytes)
+    dense_operator_bytes = weak_matrix.nbytes + strong_matrix.nbytes
     topology_bytes = int(
         topology.edge_vertices.nbytes
         + topology.edge_incidence_counts.nbytes
@@ -663,7 +663,7 @@ def prepare_scalar_screen_single_layer_dp0_3d(
         + topology.boundary_edge_lengths.nbytes
         + topology.face_component_ids.nbytes
     )
-    resident_bytes = dense_operator_bytes + int(areas.nbytes) + topology_bytes
+    resident_bytes = dense_operator_bytes + areas.nbytes + topology_bytes
     if resident_bytes > selected.max_resident_bytes:
         raise LinearCapabilityError(
             "Scalar screen prepared state exceeds max_resident_bytes."
@@ -686,7 +686,7 @@ def prepare_scalar_screen_single_layer_dp0_3d(
     )
     report_id = canonical_fingerprint(
         {
-            "kind": "scalar-screen-assembly-report-3d-v1",
+            "kind": "scalar-screen-assembly-report-3d",
             "topology": topology.topology_id,
             "kernel": family.kernel_id,
             "policy": selected.policy_id,
@@ -706,7 +706,7 @@ def prepare_scalar_screen_single_layer_dp0_3d(
         boundary_edge_count=topology.boundary_edge_count,
         component_count=topology.component_count,
         pair_counts=pair_data.counts,
-        exception_count=int(pair_data.targets.shape[0]),
+        exception_count=pair_data.targets.shape[0],
         quadrature_maximum_errors=maximum_errors,
         quadrature_evaluations=evaluations,
         preparation_workspace_bytes=max(
@@ -727,7 +727,7 @@ def prepare_scalar_screen_single_layer_dp0_3d(
     )
     preparation_id = canonical_fingerprint(
         {
-            "kind": "scalar-screen-single-layer-preparation-3d-v1",
+            "kind": "scalar-screen-single-layer-preparation-3d",
             "operator": strong.operator_id,
             "report": report.report_id,
             "crack-sides": sides.metadata_id,

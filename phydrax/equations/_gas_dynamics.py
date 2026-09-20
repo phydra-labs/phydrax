@@ -751,12 +751,11 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
             or species_diffusivities is not None
         ):
             raise ValueError(
-                "Complete mixture transport must bind the exact thermodynamics "
-                "and owns species diffusion."
+                "Complete mixture transport must bind the exact thermodynamics and owns species diffusion."
             )
         diffusivities = None
         if species_diffusivities is not None:
-            values = np.asarray(species_diffusivities, dtype=float)
+            values = np.asarray(species_diffusivities, dtype=np.float64)
             if (
                 values.shape != (inviscid.species_count,)
                 or np.any(~np.isfinite(values))

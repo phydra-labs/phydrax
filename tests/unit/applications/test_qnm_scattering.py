@@ -274,9 +274,9 @@ def test_computed_scalar_schwarzschild_scattering_closes_flux_and_low_frequency_
     )
     assert bool(jnp.all(result.evidence.neighboring_resolved))
     assert float(result.evidence.decomposition_residual) < 1.0e-10
-    assert float(result.evidence.greybody_refinement_error) < plan.refinement_tolerance
+    assert float(result.evidence.graybody_refinement_error) < plan.refinement_tolerance
     np.testing.assert_allclose(
-        np.asarray(result.greybody_factor),
+        np.asarray(result.graybody_factor),
         np.asarray(16.0 * (plan.radial_plan.mass * result.angular_frequency) ** 2),
         rtol=plan.low_frequency_relative_tolerance,
     )
@@ -350,7 +350,7 @@ def test_real_frequency_scattering_closes_flux_and_requires_explicit_qualificati
         mode,
         True,
         radial_source_id=source_id,
-        source_id="flux-reference-v1",
+        source_id="flux-reference",
     )
     result = solve_black_hole_scattering(
         plan,
@@ -365,7 +365,7 @@ def test_real_frequency_scattering_closes_flux_and_requires_explicit_qualificati
     )
 
     np.testing.assert_allclose(np.asarray(result.flux_residual), 0.0, atol=2.0e-8)
-    np.testing.assert_allclose(np.asarray(result.greybody_factor), 0.3, atol=2.0e-8)
+    np.testing.assert_allclose(np.asarray(result.graybody_factor), 0.3, atol=2.0e-8)
     assert bool(result.successful)
     assert bool(result.qualified)
     assert bool(result.derivative_valid)
@@ -416,13 +416,13 @@ def test_kerr_superradiance_preserves_negative_signed_absorption():
             mode,
             True,
             radial_source_id=source_id,
-            source_id="superradiant-flux-reference-v1",
+            source_id="superradiant-flux-reference",
         ),
     )
 
     np.testing.assert_allclose(np.asarray(result.flux_residual), 0.0, atol=2.0e-8)
     np.testing.assert_allclose(np.asarray(result.horizon_flux), -0.02, atol=2.0e-8)
-    np.testing.assert_allclose(np.asarray(result.greybody_factor), -0.1, atol=2.0e-8)
+    np.testing.assert_allclose(np.asarray(result.graybody_factor), -0.1, atol=2.0e-8)
     np.testing.assert_allclose(np.asarray(result.amplification_factor), 0.1, atol=2.0e-8)
     assert bool(result.superradiant)
     assert bool(result.successful)

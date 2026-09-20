@@ -23,9 +23,9 @@ DGTraceRouteKind = Literal["conforming", "mortar", "boundary", "periodic"]
 class PreparedDGTraceRoute(StrictModule, NonTrainableState):
     route_kind: DGTraceRouteKind = eqx.field(static=True)
     owner_dofs: Array
-    neighbour_dofs: Array
+    neighbor_dofs: Array
     owner_basis: Array
-    neighbour_basis: Array
+    neighbor_basis: Array
     owner_gradients: Array
     physical_points: Array
     physical_weights: Array
@@ -42,9 +42,9 @@ class PreparedDGTraceRoute(StrictModule, NonTrainableState):
         owner_dofs: ArrayLike,
         /,
         *,
-        neighbour_dofs: ArrayLike = (),
+        neighbor_dofs: ArrayLike = (),
         owner_basis: ArrayLike = (),
-        neighbour_basis: ArrayLike = (),
+        neighbor_basis: ArrayLike = (),
         owner_gradients: ArrayLike = (),
         physical_points: ArrayLike = (),
         physical_weights: ArrayLike = (),
@@ -58,9 +58,9 @@ class PreparedDGTraceRoute(StrictModule, NonTrainableState):
         if route_kind not in ("conforming", "mortar", "boundary", "periodic"):
             raise ValueError("Unknown DG trace route kind.")
         owner = jnp.asarray(owner_dofs, dtype=jnp.int32)
-        neighbour = jnp.asarray(neighbour_dofs, dtype=jnp.int32)
+        neighbor = jnp.asarray(neighbor_dofs, dtype=jnp.int32)
         owner_basis_ = jnp.asarray(owner_basis)
-        neighbour_basis_ = jnp.asarray(neighbour_basis)
+        neighbor_basis_ = jnp.asarray(neighbor_basis)
         gradients = jnp.asarray(owner_gradients)
         points = jnp.asarray(physical_points)
         weights = jnp.asarray(physical_weights)
@@ -71,16 +71,16 @@ class PreparedDGTraceRoute(StrictModule, NonTrainableState):
         if owner.ndim != 1 or not identifier:
             raise ValueError("DG trace route owner DOFs and ID are required.")
         if route_kind == "mortar":
-            if not isinstance(mortar, FiniteElementMortarPlan) or neighbour.ndim != 1:
-                raise ValueError("Mortar routes require mortar and neighbour DOFs.")
+            if not isinstance(mortar, FiniteElementMortarPlan) or neighbor.ndim != 1:
+                raise ValueError("Mortar routes require mortar and neighbor DOFs.")
         elif route_kind == "boundary":
             if not isinstance(boundary, AbstractConservationBoundary):
                 raise ValueError("Boundary routes require a conservation boundary.")
         else:
             if (
-                neighbour.ndim != 1
+                neighbor.ndim != 1
                 or owner_basis_.ndim != 2
-                or neighbour_basis_.ndim != 2
+                or neighbor_basis_.ndim != 2
                 or weights.ndim != 1
                 or normal_.ndim != 2
             ):
@@ -93,9 +93,9 @@ class PreparedDGTraceRoute(StrictModule, NonTrainableState):
             )
         self.route_kind = route_kind
         self.owner_dofs = owner
-        self.neighbour_dofs = neighbour
+        self.neighbor_dofs = neighbor
         self.owner_basis = owner_basis_
-        self.neighbour_basis = neighbour_basis_
+        self.neighbor_basis = neighbor_basis_
         self.owner_gradients = gradients
         self.physical_points = points
         self.physical_weights = weights
@@ -109,8 +109,8 @@ class PreparedDGTraceRoute(StrictModule, NonTrainableState):
                 "kind": "prepared-dg-trace-route",
                 "route_kind": route_kind,
                 "source_route": identifier,
-                "owner_width": int(owner.size),
-                "neighbour_width": int(neighbour.size),
+                "owner_width": owner.size,
+                "neighbor_width": neighbor.size,
                 "mortar": None if mortar is None else mortar.plan_id,
                 "boundary": None if boundary is None else boundary.boundary_id,
                 "component_transform_shape": tuple(component_transform_.shape),
@@ -121,7 +121,7 @@ class PreparedDGTraceRoute(StrictModule, NonTrainableState):
 
 class PreparedDGMortarBatch(StrictModule, NonTrainableState):
     owner_dofs: Array
-    neighbour_dofs: Array
+    neighbor_dofs: Array
     left_interpolation: Array
     right_interpolation: Array
     left_dual_pullback: Array
@@ -143,7 +143,7 @@ class PreparedDGMortarBatch(StrictModule, NonTrainableState):
         shapes = {
             (
                 route.owner_dofs.shape,
-                route.neighbour_dofs.shape,
+                route.neighbor_dofs.shape,
                 route.mortar.left_interpolation.shape,
                 route.mortar.right_interpolation.shape,
             )
@@ -152,7 +152,7 @@ class PreparedDGMortarBatch(StrictModule, NonTrainableState):
         if len(shapes) != 1:
             raise ValueError("Mortar batch route shapes differ.")
         self.owner_dofs = jnp.stack(tuple(route.owner_dofs for route in values))
-        self.neighbour_dofs = jnp.stack(tuple(route.neighbour_dofs for route in values))
+        self.neighbor_dofs = jnp.stack(tuple(route.neighbor_dofs for route in values))
         self.left_interpolation = jnp.stack(
             tuple(route.mortar.left_interpolation for route in values)
         )
@@ -188,7 +188,7 @@ def batch_dg_mortar_routes(
             raise ValueError("Mortar route has no mortar plan.")
         key = (
             route.owner_dofs.shape,
-            route.neighbour_dofs.shape,
+            route.neighbor_dofs.shape,
             route.mortar.left_interpolation.shape,
             route.mortar.right_interpolation.shape,
         )

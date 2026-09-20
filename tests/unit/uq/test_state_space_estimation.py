@@ -453,7 +453,7 @@ def test_custom_likelihood_rejects_cached_backend_with_matching_user_ids():
 
     with pytest.raises(
         ValueError,
-        match="exact evaluated StateSpaceProblem.*cached or relabelled",
+        match="exact evaluated StateSpaceProblem.*cached or relabeled",
     ):
         experiment.evaluate({"offset": jnp.asarray(0.5)})
 

@@ -158,8 +158,8 @@ class PreparedMortonTreeParticleNeighborhood(AbstractPreparedParticleNeighborhoo
         if plan.box.ambient_dimension != particles.ambient_dimension:
             raise ValueError("ParticleBox dimension does not match particle support.")
         address = MortonAddressPlan(
-            tuple(np.asarray(plan.box.lower, dtype=float)),
-            tuple(np.asarray(plan.box.upper, dtype=float)),
+            tuple(np.asarray(plan.box.lower, dtype=np.float64)),
+            tuple(np.asarray(plan.box.upper, dtype=np.float64)),
             plan.maximum_depth,
             periodic_axes=plan.box.periodic_axes,
         )
@@ -250,7 +250,7 @@ class PreparedMortonTreeParticleNeighborhood(AbstractPreparedParticleNeighborhoo
             raise ValueError(f"Particle positions must have shape {expected}.")
         active = self.active_mask
         if active_mask is not None:
-            requested = jnp.asarray(active_mask, dtype=bool)
+            requested = jnp.asarray(active_mask, dtype=jnp.bool_)
             if requested.shape != (self.particle_capacity,):
                 raise ValueError("active_mask must have particle-capacity shape.")
             active = active & requested

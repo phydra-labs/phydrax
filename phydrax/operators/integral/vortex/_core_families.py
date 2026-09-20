@@ -57,9 +57,9 @@ class SingularVortexKernel2D(StrictModule):
         if delta.shape[-1:] != (2,) or gamma.shape != delta.shape[:-1]:
             raise ValueError("Singular 2-D vortex arrays have incompatible shapes.")
         own = (
-            jnp.zeros(gamma.shape, dtype=bool)
+            jnp.zeros(gamma.shape, dtype=jnp.bool_)
             if self_mask is None
-            else jnp.asarray(self_mask, dtype=bool)
+            else jnp.asarray(self_mask, dtype=jnp.bool_)
         )
         if own.shape != gamma.shape:
             raise ValueError("self_mask must match the vortex interaction shape.")
@@ -173,7 +173,7 @@ class RosenheadVortexKernel2D(StrictModule):
             gradient,
             vorticity,
             finite,
-            jnp.zeros_like(gamma, dtype=bool),
+            jnp.zeros_like(gamma, dtype=jnp.bool_),
             self.core_id,
         )
 
@@ -201,9 +201,9 @@ class SingularVortexKernel3D(StrictModule):
                 "Singular 3-D vortex arrays require matching trailing dimension three."
             )
         own = (
-            jnp.zeros(delta.shape[:-1], dtype=bool)
+            jnp.zeros(delta.shape[:-1], dtype=jnp.bool_)
             if self_mask is None
-            else jnp.asarray(self_mask, dtype=bool)
+            else jnp.asarray(self_mask, dtype=jnp.bool_)
         )
         if own.shape != delta.shape[:-1]:
             raise ValueError("self_mask must match the vortex interaction shape.")
@@ -298,7 +298,7 @@ class RosenheadVortexKernel3D(StrictModule):
             gradient,
             vorticity,
             finite,
-            jnp.zeros_like(core, dtype=bool),
+            jnp.zeros_like(core, dtype=jnp.bool_),
             self.core_id,
         )
 

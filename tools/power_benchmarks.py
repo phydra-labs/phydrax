@@ -57,7 +57,7 @@ def main():
                 "aggregate_reactive_load": 0.05 * (size - 1),
                 "minimum_voltage_magnitude": float(abs(result.voltage).min()),
                 "maximum_voltage_deviation": float(abs(result.voltage - 1).max()),
-                "admittance_entries": int(compiled.admittance.coefficients.size),
+                "admittance_entries": compiled.admittance.coefficients.size,
                 "prepare_seconds": prepare_seconds,
                 "first_solve_seconds": first_seconds,
                 "warm_solve_seconds": warm.median_seconds,

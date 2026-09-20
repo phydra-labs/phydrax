@@ -100,13 +100,12 @@ class ContinuationRepresentationPolicy(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "residual_execution_space must match the residual coordinate-map "
-                "structure."
+                "residual_execution_space must match the residual coordinate-map structure."
             )
         identifier = (
             canonical_fingerprint(
                 {
-                    "kind": "continuation-representation-v1",
+                    "kind": "continuation-representation",
                     "state_coordinates": (
                         "identity"
                         if state_coordinates is None
@@ -220,7 +219,7 @@ class ContinuationGeometry(StrictModule, NonTrainableState):
         self.coordinate_scale = scale
         self.geometry_id = canonical_fingerprint(
             {
-                "kind": "continuation-geometry-v1",
+                "kind": "continuation-geometry",
                 "public_state_space": public_state_space.space_id,
                 "public_residual_space": public_residual_space.space_id,
                 "execution_state_space": execution_state_space.space_id,

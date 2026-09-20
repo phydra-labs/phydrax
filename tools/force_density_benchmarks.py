@@ -158,9 +158,7 @@ def run_arch(node_count: int, /) -> dict[str, object]:
 
     def objective(magnitude, _):
         inputs = decode(magnitude, None)
-        state = fd.solve_force_density(
-            fd.prepare_force_density(plan, inputs)
-        ).state
+        state = fd.solve_force_density(fd.prepare_force_density(plan, inputs)).state
         return fd.force_density_load_path(state)
 
     initial = fd.force_density_equilibrium(equilibrium, sample)
@@ -321,7 +319,7 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
-    sizes = (25,) if args.smoke else tuple(int(value) for value in args.sizes)
+    sizes = (25,) if args.smoke else tuple(args.sizes)
     repeats = 1 if args.smoke else int(args.repeats)
     payload = {
         "forward": [run_forward(size, repeats) for size in sizes],

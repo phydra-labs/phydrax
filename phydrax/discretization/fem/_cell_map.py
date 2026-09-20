@@ -67,7 +67,7 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
         self.block_name = block.name
         self.block_index = index
         self.cell_count = block.cell_count
-        self.coordinate_count = int(discretization.default_runtime.coordinates.shape[0])
+        self.coordinate_count = discretization.default_runtime.coordinates.shape[0]
         self.reference_dimension = block.topological_dimension
         self.ambient_dimension = discretization.mesh.ambient_dimension
         self.topology_id = discretization.mesh.topology_id

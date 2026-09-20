@@ -105,8 +105,7 @@ class ForecastLaw(StrictModule):
             scenarios = jnp.asarray(scenario_returns, dtype=expected.dtype)
             if scenarios.ndim not in (2, 3) or scenarios.shape[-1] != count:
                 raise ValueError(
-                    "scenario_returns must have shape (scenario, asset) or "
-                    "(scenario, stage, asset)."
+                    "scenario_returns must have shape (scenario, asset) or (scenario, stage, asset)."
                 )
             if 0 in scenarios.shape or not bool(
                 np.all(np.isfinite(np.asarray(scenarios)))
@@ -150,7 +149,7 @@ class ForecastLaw(StrictModule):
 
     @property
     def scenario_count(self) -> int:
-        return 0 if self.scenario_returns is None else int(self.scenario_returns.shape[0])
+        return 0 if self.scenario_returns is None else self.scenario_returns.shape[0]
 
 
 class PortfolioScaling(StrictModule):

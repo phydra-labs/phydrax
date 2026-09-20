@@ -46,9 +46,9 @@ class ActuatorLineFlowPlan(StrictModule, NonTrainableState):
         if not isinstance(rotor, BladeElementRotorPlan) or float(core_radius) <= 0.0:
             raise ValueError("Actuator line requires rotor and positive core radius.")
         azimuth, hub, axis_ = (
-            jnp.asarray(blade_azimuth, dtype=float),
-            jnp.asarray(hub_position, dtype=float),
-            jnp.asarray(axis, dtype=float),
+            jnp.asarray(blade_azimuth, dtype=jnp.float64),
+            jnp.asarray(hub_position, dtype=jnp.float64),
+            jnp.asarray(axis, dtype=jnp.float64),
         )
         if (
             azimuth.shape != (rotor.blade_count,)

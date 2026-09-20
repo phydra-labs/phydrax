@@ -32,7 +32,7 @@ def _real(value: ArrayLike, shape: tuple[int, ...], name: str) -> Array:
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 

@@ -76,8 +76,8 @@ class PartialFractionRationalFunction(StrictModule):
         structure = canonical_fingerprint(
             {
                 "kind": "partial-fraction-rational-structure",
-                "num_poles": int(poles_.size),
-                "polynomial_size": int(polynomial_.size),
+                "num_poles": poles_.size,
+                "polynomial_size": polynomial_.size,
                 "dtype": np.dtype(dtype).str,
                 "convention": "pole-minus-argument",
             }
@@ -103,11 +103,11 @@ class PartialFractionRationalFunction(StrictModule):
 
     @property
     def num_poles(self) -> int:
-        return int(self.poles.size)
+        return self.poles.size
 
     @property
     def polynomial_degree(self) -> int:
-        return int(self.polynomial_coefficients.size - 1)
+        return self.polynomial_coefficients.size - 1
 
     def __call__(self, value: ArrayLike, /) -> Array:
         argument = jnp.asarray(value)
@@ -395,8 +395,7 @@ def rational_function_action(
             or spectral_interval is not None
         ):
             raise ValueError(
-                "vector, function, policy, and spectral_interval must be omitted "
-                "for prepared rational state."
+                "vector, function, policy, and spectral_interval must be omitted for prepared rational state."
             )
         prepared = operator_or_prepared
     elif isinstance(operator_or_prepared, AbstractLinearOperator):

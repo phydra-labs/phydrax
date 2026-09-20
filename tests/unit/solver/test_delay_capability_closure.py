@@ -72,7 +72,7 @@ def test_archived_primal_backsolve_reports_advanced_coverage():
     tape = DelayPrimalTape(
         times,
         states,
-        jnp.ones((5,), dtype=bool),
+        jnp.ones((5,), dtype="bool"),
         problem_id="linear-retarded",
     )
     gradient, _, evidence = backsolve_delay_adjoint(
@@ -93,7 +93,7 @@ def test_padded_primal_backsolve_matches_compact_active_prefix():
     compact = DelayPrimalTape(
         times,
         states,
-        jnp.ones((5,), dtype=bool),
+        jnp.ones((5,), dtype="bool"),
         problem_id="padded-linear-retarded",
     )
     padded = DelayPrimalTape(
@@ -236,7 +236,7 @@ def test_primal_backsolve_rejects_nonfinite_active_data_and_masks_parameter_adjo
 
 def test_primal_backsolve_rejects_invalid_active_prefix_with_evidence():
     invalid_masks = (
-        jnp.zeros((0,), dtype=bool),
+        jnp.zeros((0,), dtype="bool"),
         jnp.asarray([False, False, False]),
         jnp.asarray([True, False, True]),
     )
@@ -245,7 +245,7 @@ def test_primal_backsolve_rejects_invalid_active_prefix_with_evidence():
 
     for active in invalid_masks:
         tape = DelayPrimalTape(
-            jnp.arange(active.size, dtype=float),
+            jnp.arange(active.size, dtype="float64"),
             jnp.zeros((active.size, 1)),
             active,
             problem_id="invalid-active-prefix",

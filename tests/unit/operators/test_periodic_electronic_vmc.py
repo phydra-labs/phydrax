@@ -39,7 +39,7 @@ def _structure(charges, positions, cell, scale, *, name):
         jnp.ones((len(charges),), dtype=jnp.float64),
         scale,
         cell=jnp.asarray(cell, dtype=jnp.float64),
-        periodic_axes=jnp.ones((3,), dtype=bool),
+        periodic_axes=jnp.ones((3,), dtype="bool"),
         name=name,
     )
 

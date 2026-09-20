@@ -111,7 +111,7 @@ def main() -> None:
     )
     report = {
         "benchmark": "iteration-execution",
-        "state_size": int(initial.size),
+        "state_size": initial.size,
         "step_count": 256,
         "warmup": warmup,
         "repeats": repeats,

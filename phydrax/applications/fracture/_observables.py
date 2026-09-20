@@ -57,7 +57,7 @@ class StressIntensityFactors(StrictModule, NonTrainableState):
         radii = np.asarray(contour_radii)
         path_defect = np.asarray(path_independence_defect)
         energy_defect = np.asarray(energy_consistency_defect)
-        qualified_ = np.asarray(qualified, dtype=bool)
+        qualified_ = np.asarray(qualified, dtype=np.bool_)
         topology_identifier = str(topology_id)
         quadrature_identifier = str(quadrature_id)
         version = int(state_version)

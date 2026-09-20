@@ -77,8 +77,7 @@ class EmpiricalInterpolationArtifact:
         error = float(self.maximum_reproduction_error)
         if not source or not plan or not support or not measure or not geometry:
             raise ValueError(
-                "Empirical interpolation source, support, measure, geometry, "
-                "and plan IDs must be non-empty."
+                "Empirical interpolation source, support, measure, geometry, and plan IDs must be non-empty."
             )
         if role not in ("state", "nonlinear-term", "residual", "roq"):
             raise ValueError("basis_role must identify one supported basis role.")
@@ -178,7 +177,7 @@ class PreparedEmpiricalInterpolation(StrictModule, NonTrainableState):
 
     def interpolate(self, node_values: ArrayLike, /) -> Array:
         values = jnp.asarray(node_values)
-        if values.shape[-1:] != (int(self.node_indices.size),):
+        if values.shape[-1:] != (self.node_indices.size,):
             raise ValueError("Node values must end in the empirical node axis.")
         if values.dtype != self.reconstruction_matrix.dtype:
             raise TypeError(
@@ -198,7 +197,7 @@ def prepare_empirical_interpolation(
     if not isinstance(policy, EmpiricalInterpolationPlan):
         raise TypeError("plan must be EmpiricalInterpolationPlan or None.")
     basis = np.asarray(artifact.basis_matrix)
-    rank = int(basis.shape[1])
+    rank = basis.shape[1]
     nodes = [int(np.argmax(np.abs(basis[:, 0])))]
     if abs(basis[nodes[0], 0]) <= policy.minimum_residual:
         raise ValueError("First empirical basis vector has no resolvable node.")

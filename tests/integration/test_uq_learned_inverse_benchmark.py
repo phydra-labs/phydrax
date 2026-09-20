@@ -517,9 +517,9 @@ def _rank_correlation(left, right) -> float:
     def ranks(values):
         order = jnp.argsort(values)
         return (
-            jnp.zeros(values.shape, dtype=float)
+            jnp.zeros(values.shape, dtype="float64")
             .at[order]
-            .set(jnp.arange(values.size, dtype=float))
+            .set(jnp.arange(values.size, dtype="float64"))
         )
 
     left_rank = ranks(left)

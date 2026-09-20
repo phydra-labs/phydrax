@@ -126,8 +126,7 @@ class InterfaceFeatureLift(_AbstractBaseModel):
         point = jnp.asarray(x)
         if point.shape != (self.in_size,) or jnp.iscomplexobj(point):
             raise ValueError(
-                f"InterfaceFeatureLift input must be one real vector of shape "
-                f"{(self.in_size,)}, got {point.shape}."
+                f"InterfaceFeatureLift input must be one real vector of shape {(self.in_size,)}, got {point.shape}."
             )
         distance = self._distance(point, key)
         features = []

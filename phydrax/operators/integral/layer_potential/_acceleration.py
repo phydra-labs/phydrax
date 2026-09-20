@@ -56,7 +56,7 @@ class DirectNearFarReferenceBackend2D(AbstractLayerBackend):
 
     @property
     def backend_id(self) -> str:
-        return "direct-near-far-reference-2d-v1"
+        return "direct-near-far-reference-2d"
 
     def evaluate(
         self,
@@ -68,7 +68,7 @@ class DirectNearFarReferenceBackend2D(AbstractLayerBackend):
     ) -> LayerBackendEvaluation2D:
         if not isinstance(potential.panelization, BoundaryPanelization2D):
             raise TypeError("DirectNearFarReferenceBackend2D requires 2D panelization.")
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("Backend targets must have shape (target_count, 2).")
         interactions = classify_panel_interactions_2d(

@@ -10,6 +10,8 @@ operators, and graph neural network modules. The canonical representation is
 global features.
 """
 
+from importlib import import_module
+
 from . import compat, nn
 from ._abelian_gauge import (
     abelian_current_continuity,
@@ -93,7 +95,6 @@ from ._equivariant import (
     euclidean_edge_features,
     gaussian_radial_basis,
 )
-from ._gauge_transport import *  # noqa: F403
 from ._gauge_transport import __all__ as _gauge_transport_all
 from ._generators import (
     get_fully_connected_graph,
@@ -302,6 +303,23 @@ from ._typed import (
     typed_nodes_component,
 )
 from .nn import GCNConv, GINConv, SAGEConv
+
+
+_FACADE_EXPORT_MODULES = ("._gauge_transport",)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

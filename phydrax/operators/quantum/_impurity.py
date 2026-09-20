@@ -87,9 +87,9 @@ class MatsubaraHybridization(StrictModule):
         if values_.shape != indices_.shape:
             raise ValueError("Hybridization values must match the Matsubara indices.")
         if sample_active is None:
-            active = jnp.ones(indices_.shape, dtype=bool)
+            active = jnp.ones(indices_.shape, dtype=jnp.bool_)
         else:
-            active = jnp.asarray(sample_active, dtype=bool)
+            active = jnp.asarray(sample_active, dtype=jnp.bool_)
             if active.shape != indices_.shape:
                 raise ValueError("sample_active must match the Matsubara indices.")
         if moments is not None and not isinstance(moments, HybridizationMoments):
@@ -235,7 +235,7 @@ class AndersonBath(StrictModule):
 
     @property
     def site_count(self) -> int:
-        return int(self.site_energies.shape[0])
+        return self.site_energies.shape[0]
 
 
 class ImpurityEnvironment(StrictModule):

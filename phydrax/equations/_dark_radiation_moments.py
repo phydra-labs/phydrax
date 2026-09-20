@@ -303,7 +303,7 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
         if beam_limit > 1.0:
             raise ValueError("beam_risk_limit cannot exceed one.")
         transport = MultigroupM1RadiationSystem(
-            int(edges.size - 1),
+            edges.size - 1,
             int(dimension),
             reduced_light_speed=reduced,
             energy_floor=energy_floor,
@@ -903,14 +903,14 @@ class DarkRadiationBoltzmannHierarchyPlan(StrictModule, NonTrainableState):
         if scale.shape != () or time.shape != ():
             raise ValueError("Hierarchy scale factor and conformal time must be scalar.")
         active_k = (
-            jnp.ones((self.wave_numbers.size,), dtype=bool)
+            jnp.ones((self.wave_numbers.size,), dtype=jnp.bool_)
             if k_active is None
-            else jnp.asarray(k_active, dtype=bool)
+            else jnp.asarray(k_active, dtype=jnp.bool_)
         )
         active_q = (
-            jnp.ones((self.momentum_nodes.size,), dtype=bool)
+            jnp.ones((self.momentum_nodes.size,), dtype=jnp.bool_)
             if momentum_active is None
-            else jnp.asarray(momentum_active, dtype=bool)
+            else jnp.asarray(momentum_active, dtype=jnp.bool_)
         )
         if active_k.shape != (self.wave_numbers.size,) or active_q.shape != (
             self.momentum_nodes.size,

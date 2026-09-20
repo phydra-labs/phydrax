@@ -50,12 +50,12 @@ class PlanarRefractiveStack(StrictModule, NonTrainableState):
         *,
         interface_active: ArrayLike | None = None,
     ):
-        points_host = np.asarray(interface_points, dtype=float)
-        normals_host = np.asarray(interface_normals, dtype=float)
-        indices_host = np.asarray(refractive_indices, dtype=float)
+        points_host = np.asarray(interface_points, dtype=np.float64)
+        normals_host = np.asarray(interface_normals, dtype=np.float64)
+        indices_host = np.asarray(refractive_indices, dtype=np.float64)
         if points_host.ndim != 2 or points_host.shape[1:] != (3,):
             raise ValueError("interface_points must have shape (capacity, 3).")
-        capacity = int(points_host.shape[0])
+        capacity = points_host.shape[0]
         if normals_host.shape != (capacity, 3):
             raise ValueError("interface_normals must have shape (capacity, 3).")
         if indices_host.shape != (capacity + 1,):
@@ -72,13 +72,15 @@ class PlanarRefractiveStack(StrictModule, NonTrainableState):
         if np.any(indices_host <= 0.0):
             raise ValueError("Refractive indices must be positive.")
         if interface_active is None:
-            active_host = np.ones((capacity,), dtype=bool)
+            active_host = np.ones((capacity,), dtype=np.bool_)
         else:
-            active_host = np.asarray(interface_active, dtype=bool)
+            active_host = np.asarray(interface_active, dtype=np.bool_)
             if active_host.shape != (capacity,):
                 raise ValueError("interface_active must have shape (capacity,).")
         active_count = int(np.sum(active_host))
-        if not np.array_equal(active_host, np.arange(capacity, dtype=int) < active_count):
+        if not np.array_equal(
+            active_host, np.arange(capacity, dtype=np.int64) < active_count
+        ):
             raise ValueError("Active interfaces must form a prefix of the stack.")
         normalized = normals_host / normal_norms[:, None] if capacity else normals_host
         self.interface_points = jnp.asarray(points_host)

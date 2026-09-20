@@ -60,7 +60,7 @@ class PulseTimeSpace(StrictModule, NonTrainableState):
             )
         elif not axis.lower_endpoint_included or not axis.upper_endpoint_included:
             raise ValueError("finite-window pulse time requires both physical endpoints.")
-        nodes = np.asarray(axis.nodes, dtype=float)
+        nodes = np.asarray(axis.nodes, dtype=np.float64)
         if nodes.size < 2:
             raise ValueError("Pulse time requires at least two samples.")
         differences = np.diff(nodes)
@@ -101,7 +101,7 @@ class PulseTimeSpace(StrictModule, NonTrainableState):
 
     @property
     def sample_spacing(self) -> float:
-        nodes = np.asarray(self.coordinates, dtype=float)
+        nodes = np.asarray(self.coordinates, dtype=np.float64)
         return float(nodes[1] - nodes[0])
 
     @property
@@ -111,7 +111,7 @@ class PulseTimeSpace(StrictModule, NonTrainableState):
         bounds = self.temporal_grid.axes[0].bounds
         if bounds is None:
             raise RuntimeError("A periodic pulse-time axis must have finite bounds.")
-        values = np.asarray(bounds, dtype=float)
+        values = np.asarray(bounds, dtype=np.float64)
         return float(values[1] - values[0])
 
 

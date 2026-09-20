@@ -28,16 +28,16 @@ class TimeGrid(StrictModule):
 
     def __init__(self, times: ArrayLike, /, *, time_id: str):
         values = jnp.asarray(times)
-        if values.ndim != 1 or int(values.shape[0]) < 2:
+        if values.ndim != 1 or values.shape[0] < 2:
             raise ValueError("TimeGrid times must be rank one with at least two entries.")
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("TimeGrid times must be real-valued.")
-        host = np.asarray(values, dtype=float)
+        host = np.asarray(values, dtype=np.float64)
         if not np.all(np.isfinite(host)):
             raise ValueError("TimeGrid times must be finite.")
         if np.any(np.diff(host) <= 0.0):
             raise ValueError("TimeGrid times must be strictly increasing.")
-        self.times = values.astype(jnp.result_type(values, float))
+        self.times = values.astype(jnp.result_type(values, jnp.float64))
         self.time_id = _identifier(time_id, "TimeGrid time_id")
 
     @property
@@ -54,7 +54,7 @@ class TimeGrid(StrictModule):
 
     @property
     def num_points(self) -> int:
-        return int(self.times.shape[0])
+        return self.times.shape[0]
 
     @property
     def num_times(self) -> int:
@@ -85,7 +85,7 @@ class IterationGrid(StrictModule):
 
     def __init__(self, iterations: ArrayLike, /, *, iteration_id: str):
         values = jnp.asarray(iterations)
-        if values.ndim != 1 or int(values.shape[0]) < 2:
+        if values.ndim != 1 or values.shape[0] < 2:
             raise ValueError(
                 "IterationGrid iterations must be rank one with at least two entries."
             )
@@ -131,7 +131,7 @@ class IterationGrid(StrictModule):
 
     @property
     def num_points(self) -> int:
-        return int(self.iterations.shape[0])
+        return self.iterations.shape[0]
 
     @property
     def num_steps(self) -> int:

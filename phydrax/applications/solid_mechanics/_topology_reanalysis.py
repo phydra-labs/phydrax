@@ -271,7 +271,7 @@ class TopologyReanalysisReport(StrictModule):
         return self.evidence.accepted
 
 
-def reanalyse_topology_design(
+def reanalyze_topology_design(
     result: TopologyOptimizationResult,
     plan: TopologyReanalysisPlan,
     initial_reference_state: PyTree[Any],
@@ -370,5 +370,5 @@ __all__ = [
     "TopologyReanalysisEvidence",
     "TopologyReanalysisPlan",
     "TopologyReanalysisReport",
-    "reanalyse_topology_design",
+    "reanalyze_topology_design",
 ]

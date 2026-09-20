@@ -385,7 +385,7 @@ def verify_open_system_artifact(
     digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     verification = _OpenSystemArtifactVerification(
         digest,
-        np.asarray(_records_equal(stored, reproduced), dtype=bool),
+        np.asarray(_records_equal(stored, reproduced), dtype="bool"),
     )
     return VerifiedOpenSystemCampaign(stored, verification)
 

@@ -180,16 +180,18 @@ class CompressibleOperatorDatasetPlan(StrictModule, NonTrainableState):
                 "Geometry and query coordinates must align by case and dimension."
             )
         geometry_mask_ = (
-            jnp.ones(geometry.shape[:-1], dtype=bool)
+            jnp.ones(geometry.shape[:-1], dtype=jnp.bool_)
             if geometry_mask is None
             else jnp.broadcast_to(
-                jnp.asarray(geometry_mask, dtype=bool), geometry.shape[:-1]
+                jnp.asarray(geometry_mask, dtype=jnp.bool_), geometry.shape[:-1]
             )
         )
         query_mask_ = (
-            jnp.ones(query.shape[:-1], dtype=bool)
+            jnp.ones(query.shape[:-1], dtype=jnp.bool_)
             if query_mask is None
-            else jnp.broadcast_to(jnp.asarray(query_mask, dtype=bool), query.shape[:-1])
+            else jnp.broadcast_to(
+                jnp.asarray(query_mask, dtype=jnp.bool_), query.shape[:-1]
+            )
         )
         query_weights = (
             None

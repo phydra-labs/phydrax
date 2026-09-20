@@ -49,7 +49,7 @@ def _periodic_inputs(k_points: int, bands: int):
     centers = (np.arange(bands) - 0.5 * (bands - 1)) * 0.35 * _E
     energies = centers[None, :] + 0.08 * _E * np.cos(2.0 * np.pi * coordinate[:, None])
     dimension = 3
-    velocity = np.zeros((k_points, bands, bands, dimension), dtype=complex)
+    velocity = np.zeros((k_points, bands, bands, dimension), dtype="complex128")
     diagonal = 1.5e5 * np.sin(2.0 * np.pi * coordinate)
     for band in range(bands):
         velocity[:, band, band, :] = diagonal[:, None] * np.asarray(
@@ -155,7 +155,7 @@ def run_case(
     disorder_values = jnp.linspace(0.8, 1.2, disorder_realizations)[:, None]
     disorder, disorder_timing = measure_repeated(
         lambda: evaluate_elastic_disorder_ensemble(
-            disorder_plan, disorder_values, jnp.ones(disorder_realizations, dtype=bool)
+            disorder_plan, disorder_values, jnp.ones(disorder_realizations, dtype="bool")
         ),
         warmup=warmup,
         repeats=repeats,

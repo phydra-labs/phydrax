@@ -98,7 +98,7 @@ class BosonicFockSpace(StrictModule):
         *,
         precision: GeometryPrecisionPolicy | None = None,
     ):
-        cutoffs_ = tuple(int(value) for value in cutoffs)
+        cutoffs_ = tuple(cutoffs)
         if not cutoffs_ or any(value < 2 for value in cutoffs_):
             raise ValueError("Every Fock cutoff must be at least two.")
         precision_ = GeometryPrecisionPolicy() if precision is None else precision
@@ -169,7 +169,7 @@ class BosonicFockSpace(StrictModule):
         result = matrices[0]
         for matrix in matrices[1:]:
             result = jnp.kron(result, matrix)
-        return result.astype(complex)
+        return result.astype("complex128")
 
     def creation_matrix(self, mode: int, /) -> Array:
         return jnp.conj(self.annihilation_matrix(mode).T)
@@ -238,7 +238,7 @@ def kerr_hamiltonian(
     /,
 ) -> Array:
     number = space.number_matrix(mode)
-    identity = jnp.eye(space.dimension, dtype=complex)
+    identity = jnp.eye(space.dimension, dtype=jnp.complex128)
     return float(frequency) * number + 0.5 * float(nonlinearity) * number @ (
         number - identity
     )
@@ -254,9 +254,9 @@ def jaynes_cummings_hamiltonian(
     cavity = BosonicFockSpace((int(cutoff),))
     annihilation = cavity.annihilation_matrix(0)
     creation = jnp.conj(annihilation.T)
-    sigma_plus = jnp.asarray([[0, 1], [0, 0]], dtype=complex)
+    sigma_plus = jnp.asarray([[0, 1], [0, 0]], dtype=jnp.complex128)
     sigma_minus = jnp.conj(sigma_plus.T)
-    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=complex)
+    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=jnp.complex128)
     number = cavity.number_matrix(0)
     hamiltonian = (
         float(cavity_frequency) * jnp.kron(number, jnp.eye(2))

@@ -82,9 +82,9 @@ def main():
         samples.append(time.perf_counter() - started)
     steady = float(np.median(samples))
     report = {
-        "vertices": int(vertices.shape[0]),
+        "vertices": vertices.shape[0],
         "cells": discretization.cell_count,
-        "faces": int(discretization.face_measures.size),
+        "faces": discretization.face_measures.size,
         "preparation_seconds": preparation,
         "compile_and_first_seconds": compile_and_first,
         "steady_median_seconds": steady,

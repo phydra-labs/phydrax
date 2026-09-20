@@ -106,7 +106,7 @@ class WeightSpaceOperator(AbstractOperatorModel):
         if values.shape != expected:
             raise ValueError(f"Source observations must have shape {expected}.")
         times = source.coordinates_array(case_shape=case_shape, flatten=True)
-        if int(times.shape[-1]) != 1:
+        if times.shape[-1] != 1:
             raise ValueError(
                 "Weight-space source coordinates must contain physical time only."
             )
@@ -153,7 +153,7 @@ class WeightSpaceOperator(AbstractOperatorModel):
             case_shape=batch.case_shape,
             flatten=True,
         )
-        if int(query_coordinates.shape[-1]) != self.query_size:
+        if query_coordinates.shape[-1] != self.query_size:
             raise ValueError(f"Query coordinates must have dimension {self.query_size}.")
         decoded = self.model.evaluate_final(observations, query_coordinates, key=key)
         self._validate_output_shape(tuple(decoded.shape[len(batch.case_shape) + 1 :]))

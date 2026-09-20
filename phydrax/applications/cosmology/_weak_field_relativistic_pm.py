@@ -362,7 +362,7 @@ class WeakFieldRelativisticPMPlan(StrictModule, NonTrainableState):
         cell_widths = []
         domain_lengths = []
         for axis in spectral.axes:
-            nodes = np.asarray(axis.nodes, dtype=float)
+            nodes = np.asarray(axis.nodes, dtype=np.float64)
             if nodes.size < 2:
                 raise ValueError("Each weak-field Fourier axis needs at least two nodes.")
             spacing = np.diff(np.sort(nodes))
@@ -538,8 +538,8 @@ class WeakFieldRelativisticPMPlan(StrictModule, NonTrainableState):
         vector_fraction = jnp.max(jnp.abs(candidate_shift), initial=0.0) / c
         tensor_fraction = jnp.max(jnp.abs(candidate_tensor), initial=0.0)
         omitted = jnp.maximum(vector_fraction, tensor_fraction)
-        shift_modes = jnp.where(self.scalar_only, 0.0, candidate_shift_modes)
-        tensor_modes = jnp.where(self.scalar_only, 0.0, candidate_tensor_modes)
+        jnp.where(self.scalar_only, 0.0, candidate_shift_modes)
+        jnp.where(self.scalar_only, 0.0, candidate_tensor_modes)
         shift = jnp.where(self.scalar_only, 0.0, candidate_shift)
         tensor = jnp.where(self.scalar_only, 0.0, candidate_tensor)
 

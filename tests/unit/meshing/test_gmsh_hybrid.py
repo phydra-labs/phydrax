@@ -45,10 +45,7 @@ def _face_indices(source, axis, coordinate):
     triangles = points[np.asarray(source.mesh_faces)]
     face_ids = np.asarray(source.triangle_face_ids)
     return tuple(
-        int(value)
-        for value in np.unique(
-            face_ids[np.all(np.isclose(triangles[:, :, axis], coordinate), axis=1)]
-        )
+        np.unique(face_ids[np.all(np.isclose(triangles[:, :, axis], coordinate), axis=1)])
     )
 
 
@@ -211,9 +208,9 @@ def test_real_full_width_prism_slab_meets_tetra_core_on_exact_triangles(tmp_path
         )
     )
     owners = np.asarray(connectivity.face_owner)
-    neighbours = np.asarray(connectivity.face_neighbour)
+    neighbors = np.asarray(connectivity.face_neighbor)
     assert all(
-        {str(cell_kinds[owners[row]]), str(cell_kinds[neighbours[row]])}
+        {str(cell_kinds[owners[row]]), str(cell_kinds[neighbors[row]])}
         == {"prism", "tetrahedron"}
         for row in interface_rows
     )

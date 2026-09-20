@@ -74,26 +74,26 @@ def _feature_id(value: str | None, prefix: str) -> str:
 
 
 def _validate_vector(value: Any, dimension: int, *, name: str) -> Array:
-    host = np.asarray(value, dtype=float)
+    host = np.asarray(value, dtype=np.float64)
     if host.shape != (dimension,):
         raise ValueError(f"{name} must have shape ({dimension},), got {host.shape}.")
     if not np.all(np.isfinite(host)):
         raise ValueError(f"{name} must contain only finite values.")
-    return jnp.asarray(host, dtype=float)
+    return jnp.asarray(host, dtype=jnp.float64)
 
 
 def _validate_positive_scalar(value: Any, *, name: str) -> Array:
-    host = np.asarray(value, dtype=float)
+    host = np.asarray(value, dtype=np.float64)
     if host.shape != ():
         raise ValueError(f"{name} must be scalar, got shape {host.shape}.")
     scalar = float(host)
     if not math.isfinite(scalar) or scalar <= 0.0:
         raise ValueError(f"{name} must be finite and positive.")
-    return jnp.asarray(scalar, dtype=float)
+    return jnp.asarray(scalar, dtype=jnp.float64)
 
 
 def _check_points(points: Array, dimension: int) -> Array:
-    points_ = jnp.asarray(points, dtype=float)
+    points_ = jnp.asarray(points, dtype=jnp.float64)
     if points_.ndim == 0 or points_.shape[-1] != dimension:
         raise ValueError(f"points must have trailing dimension {dimension}.")
     return points_
@@ -110,8 +110,8 @@ class _RadialCubatureMap(AbstractCubatureMap):
         radius: Array,
         reference: CubatureReference,
     ):
-        self.center = jnp.asarray(center, dtype=float)
-        self.radius = jnp.asarray(radius, dtype=float).reshape(())
+        self.center = jnp.asarray(center, dtype=jnp.float64)
+        self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
         self.reference = reference
 
     @property
@@ -124,7 +124,7 @@ class _RadialCubatureMap(AbstractCubatureMap):
 
     @property
     def ambient_dimension(self) -> int:
-        return int(self.center.shape[0])
+        return self.center.shape[0]
 
     def map(self, chart_indices: Array, reference: Array, /) -> Array:
         del chart_indices
@@ -145,7 +145,7 @@ class _RadialCubatureMap(AbstractCubatureMap):
 
     def reference_mask(self, chart_indices: Array, reference: Array, /) -> Array:
         del reference
-        return jnp.ones(jnp.asarray(chart_indices).shape, dtype=bool)
+        return jnp.ones(jnp.asarray(chart_indices).shape, dtype=jnp.bool_)
 
     def evaluate(
         self,

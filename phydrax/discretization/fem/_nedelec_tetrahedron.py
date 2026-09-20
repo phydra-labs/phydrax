@@ -9,6 +9,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
+
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -78,11 +80,11 @@ class TetrahedralNedelecSpace(StrictModule, NonTrainableState):
         cells = np.concatenate(
             [np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks]
         )
-        coordinates = np.asarray(mesh.coordinates, dtype=float)
+        coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
         edges = np.asarray(connectivity.edges, dtype=np.int32)
         edge_lookup = {tuple(edge): index for index, edge in enumerate(edges)}
         cell_edges = np.empty((cells.shape[0], 6), dtype=np.int32)
-        signs = np.empty_like(cell_edges, dtype=float)
+        signs = np.empty_like(cell_edges, dtype=np.float64)
         for cell, vertices in enumerate(cells):
             for local, (left, right) in enumerate(_LOCAL_EDGES):
                 a, b = int(vertices[left]), int(vertices[right])
@@ -106,8 +108,8 @@ class TetrahedralNedelecSpace(StrictModule, NonTrainableState):
                 "H(curl) tetrahedra must have finite nonsingular affine Jacobians."
             )
         inverse_transpose = np.linalg.inv(jacobians).transpose((0, 2, 1))
-        reference_basis = np.empty((4, 6, 3), dtype=float)
-        reference_curl = np.empty((6, 3), dtype=float)
+        reference_basis = np.empty((4, 6, 3), dtype=np.float64)
+        reference_curl = np.empty((6, 3), dtype=np.float64)
         for edge, (left, right) in enumerate(_LOCAL_EDGES):
             reference_basis[:, edge] = (
                 _QUADRATURE_BARYCENTRIC[:, left, None] * _REFERENCE_GRADIENTS[right]
@@ -116,9 +118,9 @@ class TetrahedralNedelecSpace(StrictModule, NonTrainableState):
             reference_curl[edge] = 2.0 * np.cross(
                 _REFERENCE_GRADIENTS[left], _REFERENCE_GRADIENTS[right]
             )
-        basis = np.einsum("cij,qej->cqei", inverse_transpose, reference_basis)
+        basis = ein.contract("cij,qej->cqei", inverse_transpose, reference_basis)
         curl = (
-            np.einsum("cij,ej->cei", jacobians, reference_curl)
+            ein.contract("cij,ej->cei", jacobians, reference_curl)
             / determinants[:, None, None]
         )
         basis *= signs[:, None, :, None]

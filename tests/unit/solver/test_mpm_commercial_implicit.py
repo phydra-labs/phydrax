@@ -87,7 +87,7 @@ def test_compact_residual_jvp_transpose_match_dense_operator():
 
 
 def test_implicit_unknown_layout_and_contact_generalized_actions():
-    free = jnp.ones((2, 1, 2), dtype=bool)
+    free = jnp.ones((2, 1, 2), dtype="bool")
     essential = jnp.zeros_like(free).at[0, 0, 1].set(True)
     free = free & ~essential
     layout = phx.solver.MPMImplicitUnknownLayout(

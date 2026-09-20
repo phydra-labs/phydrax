@@ -36,7 +36,7 @@ def svec(matrix: ArrayLike, /) -> Array:
     if values.ndim < 2 or values.shape[-2] != values.shape[-1]:
         raise ValueError("svec requires square trailing matrix axes.")
     values = values.astype(jnp.result_type(values, 0.0))
-    dimension = int(values.shape[-1])
+    dimension = values.shape[-1]
     rows, columns = jnp.triu_indices(dimension)
     packed = values[..., rows, columns]
     scale = jnp.where(rows == columns, 1.0, jnp.sqrt(2.0)).astype(packed.dtype)
@@ -52,12 +52,12 @@ def smat(vector: ArrayLike, /, *, matrix_dimension: int | None = None) -> Array:
         raise ValueError("smat requires a trailing packed-coordinate axis.")
     values = values.astype(jnp.result_type(values, 0.0))
     dimension = (
-        symmetric_matrix_dimension(int(values.shape[-1]))
+        symmetric_matrix_dimension(values.shape[-1])
         if matrix_dimension is None
         else int(matrix_dimension)
     )
     expected = symmetric_packed_dimension(dimension)
-    if int(values.shape[-1]) != expected:
+    if values.shape[-1] != expected:
         raise ValueError(
             f"smat expected trailing packed dimension {expected}; got {values.shape}."
         )

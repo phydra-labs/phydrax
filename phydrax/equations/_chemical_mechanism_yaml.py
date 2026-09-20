@@ -256,7 +256,7 @@ def _thermodynamics(schema, payload, species_payload, units):
             for record in records:
                 if not isinstance(record, Mapping):
                     raise ValueError("NASA intervals must be mappings.")
-                coefficients = np.asarray(record["coefficients"], dtype=float)
+                coefficients = np.asarray(record["coefficients"], dtype=np.float64)
                 if coefficients.shape != (coefficient_count,):
                     raise ValueError("NASA coefficient count does not match model.")
                 parsed.append(
@@ -288,7 +288,9 @@ def _thermodynamics(schema, payload, species_payload, units):
         entropy = []
         for species in species_payload:
             record = _mapping(by_species, _string(species, "name"))
-            coefficients.append(np.asarray(record["heat-capacity-volume"], dtype=float))
+            coefficients.append(
+                np.asarray(record["heat-capacity-volume"], dtype=np.float64)
+            )
             energy.append(
                 float(record.get("reference-internal-energy", 0.0))
                 * units["energy"]
@@ -456,7 +458,7 @@ def _rate(payload, schema, units, pre_factor, concentration_factor):
             ],
         )
     if kind == "chebyshev":
-        coefficients = np.asarray(payload["coefficients"], dtype=float).copy()
+        coefficients = np.asarray(payload["coefficients"], dtype=np.float64).copy()
         coefficients[0, 0] = coefficients[0, 0] + np.log10(pre_factor)
         return ChebyshevRatePlan(
             coefficients,

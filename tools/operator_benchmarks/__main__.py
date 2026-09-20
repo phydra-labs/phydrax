@@ -9,6 +9,14 @@ import jax.random as jr
 import phydrax as phx
 
 from .matrix import run_benchmark_matrix, save_benchmark_artifacts
+from .protocol import (
+    ComparisonMode,
+    load_family_parity_evidence,
+    OperatorBenchmarkProtocol,
+    run_operator_benchmark_protocol,
+    save_benchmark_protocol_artifacts,
+    standard_operator_benchmark_ladders,
+)
 from .runner import run_operator_benchmark
 from .scenarios import (
     green_function_scenario,
@@ -21,14 +29,6 @@ from .uq import (
     run_operator_uq_suite,
     save_operator_uq_artifacts,
 )
-from .v2 import (
-    ComparisonMode,
-    load_family_parity_evidence,
-    OperatorBenchmarkProtocol,
-    run_operator_benchmark_v2,
-    save_benchmark_v2_artifacts,
-    standard_operator_benchmark_ladders,
-)
 
 
 def _comma_tuple(value: str) -> tuple[str, ...]:
@@ -36,7 +36,7 @@ def _comma_tuple(value: str) -> tuple[str, ...]:
 
 
 def _seed_tuple(value: str) -> tuple[int, ...]:
-    return tuple(int(item) for item in _comma_tuple(value))
+    return tuple(_comma_tuple(value))
 
 
 def _float_tuple(value: str) -> tuple[float, ...]:
@@ -72,7 +72,7 @@ def main() -> None:
     parser.add_argument("--alpha", type=float, default=0.1)
     parser.add_argument("--posterior-samples", type=int, default=32)
     parser.add_argument("--skip-laplace", action="store_true")
-    parser.add_argument("--v2", action="store_true")
+    parser.add_argument("--protocol", action="store_true")
     parser.add_argument(
         "--comparison",
         choices=("native", "capacity", "compute", "pareto"),
@@ -104,15 +104,15 @@ def main() -> None:
     )
     if arguments.seeds:
         seeds = _seed_tuple(arguments.seeds)
-    elif arguments.v2 and benchmark_quick:
+    elif arguments.protocol and benchmark_quick:
         seeds = (0,)
-    elif arguments.v2:
+    elif arguments.protocol:
         seeds = (0, 1, 2, 3, 4)
     else:
         seeds = (0, 1, 2)
     if arguments.steps is not None:
         steps = int(arguments.steps)
-    elif arguments.v2:
+    elif arguments.protocol:
         steps = {
             "smoke": 1,
             "shortlist": 300,
@@ -121,7 +121,7 @@ def main() -> None:
     else:
         steps = 20
 
-    if arguments.v2:
+    if arguments.protocol:
         requested_ladders = set(_comma_tuple(arguments.ladders))
         ladders = standard_operator_benchmark_ladders(
             quick=benchmark_quick,
@@ -132,7 +132,7 @@ def main() -> None:
                 ladder for ladder in ladders if ladder.name in requested_ladders
             )
         if not ladders:
-            raise ValueError("No benchmark-v2 difficulty ladders were selected.")
+            raise ValueError("No benchmark difficulty ladders were selected.")
         architectures = _comma_tuple(arguments.architectures)
         if not architectures and benchmark_profile != "smoke":
             architectures = (
@@ -209,7 +209,7 @@ def main() -> None:
             if not arguments.parity_evidence
             else load_family_parity_evidence(arguments.parity_evidence)
         )
-        result = run_operator_benchmark_v2(
+        result = run_operator_benchmark_protocol(
             ladders,
             protocol=protocol,
             architecture_names=None if not architectures else architectures,
@@ -217,7 +217,7 @@ def main() -> None:
             difficulty=None if arguments.difficulty == "all" else arguments.difficulty,
         )
         if arguments.output:
-            paths = save_benchmark_v2_artifacts(arguments.output, result)
+            paths = save_benchmark_protocol_artifacts(arguments.output, result)
             summary = {
                 "artifacts": [str(path) for path in paths],
                 "scenarios": len(result.audits),

@@ -86,7 +86,7 @@ class PhysicalPODPlan(StrictModule, NonTrainableState):
         values = jnp.asarray(snapshots)
         if values.ndim != 2 or values.shape[1] != space.size:
             raise ValueError("snapshots must have shape (samples, space.size).")
-        sample_count = int(values.shape[0])
+        sample_count = values.shape[0]
         weights = (
             jnp.ones((sample_count,), dtype=values.real.dtype)
             if sample_weights is None

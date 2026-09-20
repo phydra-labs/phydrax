@@ -44,8 +44,7 @@ def _freeze_json(value: Any, /, *, path: str = "metadata") -> Any:
             for index, item in enumerate(value)
         )
     raise TypeError(
-        f"{path} must contain only JSON-compatible immutable values; "
-        f"got {type(value).__name__}."
+        f"{path} must contain only JSON-compatible immutable values; got {type(value).__name__}."
     )
 
 
@@ -275,8 +274,7 @@ class OperatorTask(StrictModule):
             }
             if missing_axes:
                 raise ValueError(
-                    f"Field {field.name!r} dimension uses axes absent from "
-                    f"dimension_basis: {sorted(missing_axes)}."
+                    f"Field {field.name!r} dimension uses axes absent from dimension_basis: {sorted(missing_axes)}."
                 )
             if field.is_source:
                 assert field.source_name is not None
@@ -285,8 +283,7 @@ class OperatorTask(StrictModule):
                 assert field.query_name is not None
                 if field.query_name not in query_lookup:
                     raise ValueError(
-                        f"Target field {field.name!r} references unknown query "
-                        f"{field.query_name!r}."
+                        f"Target field {field.name!r} references unknown query {field.query_name!r}."
                     )
                 output_bindings.append(field.name)
         if len(set(source_bindings)) != len(source_bindings):
@@ -343,8 +340,7 @@ class OperatorTask(StrictModule):
             }
             if missing_axes:
                 raise ValueError(
-                    "Embedded PDE dimensions use axes absent from dimension_basis: "
-                    f"{sorted(missing_axes)}."
+                    f"Embedded PDE dimensions use axes absent from dimension_basis: {sorted(missing_axes)}."
                 )
         frozen_metadata = _freeze_json({} if metadata is None else metadata)
         self.task_id = resolved_id
@@ -398,8 +394,7 @@ class OperatorTask(StrictModule):
                 query_coordinates = query_lookup[field.query_name].coordinate_components
                 if any(name not in query_coordinates for name in pde_field.coordinates):
                     raise ValueError(
-                        f"PDE field {pde_field.name!r} coordinates are absent from query "
-                        f"{field.query_name!r}."
+                        f"PDE field {pde_field.name!r} coordinates are absent from query {field.query_name!r}."
                     )
         pde_ir_to_dict(pde)
 
@@ -509,10 +504,9 @@ class OperatorTask(StrictModule):
             sample_ndim = len(samples.sample_shape)
             trailing = values.shape[len(batch.case_shape) + sample_ndim :]
             expected = () if field.channels == "scalar" else (field.channel_count,)
-            if tuple(int(size) for size in trailing) != expected:
+            if tuple(trailing) != expected:
                 raise ValueError(
-                    f"Source {field.source_name!r} expected trailing field shape "
-                    f"{expected}; got {trailing}."
+                    f"Source {field.source_name!r} expected trailing field shape {expected}; got {trailing}."
                 )
         expected_queries = tuple(query.name for query in self.queries)
         if set(batch.queries) != set(expected_queries):
@@ -525,8 +519,7 @@ class OperatorTask(StrictModule):
             actual_kind = self._geometry_kind(samples)
             if actual_kind != query_spec.geometry_kind:
                 raise ValueError(
-                    f"Query {query_spec.name!r} requires geometry "
-                    f"{query_spec.geometry_kind!r}; got {actual_kind!r}."
+                    f"Query {query_spec.name!r} requires geometry {query_spec.geometry_kind!r}; got {actual_kind!r}."
                 )
             if query_spec.topology_site is not None and (
                 samples.topology is None
@@ -538,7 +531,7 @@ class OperatorTask(StrictModule):
                     f"{query_spec.topology_site!r}; got {actual_site!r}."
                 )
             coordinates = samples.coordinates_array(flatten=True)
-            if int(coordinates.shape[-1]) != query_spec.coordinate_dimension:
+            if coordinates.shape[-1] != query_spec.coordinate_dimension:
                 raise ValueError(
                     f"Query {query_spec.name!r} requires coordinate dimension "
                     f"{query_spec.coordinate_dimension}; got {coordinates.shape[-1]}."

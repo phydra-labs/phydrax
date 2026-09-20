@@ -233,7 +233,7 @@ class MarkerFlowReplayPlan(StrictModule, NonTrainableState):
             raise ValueError("Replay record belongs to another plan.")
         if not callable(step):
             raise TypeError("step must be callable.")
-        count = int(record.accepted_time.size)
+        count = record.accepted_time.size
         arrays = (
             record.attempted_step,
             record.accepted,

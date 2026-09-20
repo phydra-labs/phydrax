@@ -77,7 +77,7 @@ def _safe_halo_exchange(
         destination = jnp.any(
             jnp.asarray(
                 [target == part for _, target in permutation],
-                dtype=bool,
+                dtype=jnp.bool_,
             )
         )
         values = jax.lax.cond(
@@ -264,7 +264,7 @@ class _PackedCompositeRoutes(StrictModule, NonTrainableState):
         diffusion: Any,
         /,
     ):
-        flat_leaf = np.asarray(layout.flat_leaf_mask, dtype=bool)
+        flat_leaf = np.asarray(layout.flat_leaf_mask, dtype=np.bool_)
         leaf_cells = np.flatnonzero(flat_leaf).astype(np.int32)
         compact = np.full((flat_leaf.size,), -1, dtype=np.int32)
         compact[leaf_cells] = np.arange(leaf_cells.size, dtype=np.int32)
@@ -314,8 +314,8 @@ class _PackedCompositeRoutes(StrictModule, NonTrainableState):
         adjacency = np.stack((left, right), axis=1)
         halo = DistributedHaloPlan(entity_owner, adjacency, part_count)
         halo_ids = np.asarray(halo.local_global_ids, dtype=np.int32)
-        halo_valid = np.asarray(halo.local_valid, dtype=bool)
-        halo_owned = np.asarray(halo.local_owned, dtype=bool)
+        halo_valid = np.asarray(halo.local_valid, dtype=np.bool_)
+        halo_owned = np.asarray(halo.local_owned, dtype=np.bool_)
         owned_packed = np.zeros_like(halo_ids)
         local_entity_ids = np.zeros_like(halo_ids)
         measures = np.ones(halo_ids.shape, dtype=np.dtype(layout.real_dtype))
@@ -343,7 +343,7 @@ class _PackedCompositeRoutes(StrictModule, NonTrainableState):
         edge_weight = np.asarray(diffusion.edge_weights)
         edge_axis = np.asarray(face_routes.edge_axis, dtype=np.int32)
         edge_area = np.asarray(face_routes.edge_area)
-        level_jump = np.asarray(face_routes.edge_level_jump, dtype=bool)
+        level_jump = np.asarray(face_routes.edge_level_jump, dtype=np.bool_)
         crossing = 0
         for index, (left_entity, right_entity) in enumerate(
             zip(left, right, strict=True)
@@ -367,8 +367,8 @@ class _PackedCompositeRoutes(StrictModule, NonTrainableState):
         weights = np.zeros((part_count, edge_capacity), dtype=edge_weight.dtype)
         axes = np.zeros((part_count, edge_capacity), dtype=np.int32)
         areas = np.zeros((part_count, edge_capacity), dtype=edge_area.dtype)
-        jumps = np.zeros((part_count, edge_capacity), dtype=bool)
-        valid = np.zeros((part_count, edge_capacity), dtype=bool)
+        jumps = np.zeros((part_count, edge_capacity), dtype=np.bool_)
+        valid = np.zeros((part_count, edge_capacity), dtype=np.bool_)
         for part, part_records in enumerate(records):
             count = len(part_records)
             if count == 0:
@@ -699,7 +699,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                 "Distributed Wave AMR state must be finite, positive in scale/global "
                 "probability, and zero on inactive or covered storage."
             )
-        if accepted.shape != () or accepted.dtype != jnp.dtype(bool):
+        if accepted.shape != () or accepted.dtype != jnp.dtype(jnp.bool_):
             raise ValueError(
                 "Distributed Wave AMR accepted-boundary state must be Boolean scalar."
             )
@@ -1183,8 +1183,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
             or float(end_host) <= float(start_host)
         ):
             raise ValueError(
-                "Distributed Wave AMR end scale must be finite and strictly increasing "
-                "before collective execution."
+                "Distributed Wave AMR end scale must be finite and strictly increasing before collective execution."
             )
         end = self._replicate_scalar(end_scale_factor, self.real_dtype)
         kick = self._replicate_scalar(kick_factor, self.real_dtype)
@@ -2040,7 +2039,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
             transition.leaf_routes.relation.target_indices, dtype=np.int32
         )
         relation_weights = np.asarray(transition.leaf_routes.weights)
-        relation_valid = np.asarray(transition.leaf_routes.relation.valid, dtype=bool)
+        relation_valid = np.asarray(transition.leaf_routes.relation.valid, dtype=np.bool_)
         overlap_by_target: list[set[int]] = [set() for _ in range(target_cells)]
         nearest = np.zeros((target_cells,), dtype=np.int32)
         best = np.full((target_cells,), -np.inf)
@@ -2142,7 +2141,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
             int(np.max(overlap_counts, initial=0)),
         )
         integer_bytes = np.dtype(np.int32).itemsize
-        boolean_bytes = np.dtype(bool).itemsize
+        boolean_bytes = np.dtype(np.bool_).itemsize
         real_bytes = source.real_dtype.itemsize
         complex_bytes = source.complex_dtype.itemsize
         target_rows = parts * local_target_capacity
@@ -2196,8 +2195,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
             or source.physics_id != target.physics_id
         ):
             raise ValueError(
-                "Distributed topology transfer requires consecutive epochs on one mesh "
-                "with one physics identity."
+                "Distributed topology transfer requires consecutive epochs on one mesh with one physics identity."
             )
         source_storage = []
         source_offsets = []
@@ -2230,7 +2228,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
         relation_source = np.asarray(leaf_routes.relation.source_indices, dtype=np.int32)
         relation_target = np.asarray(leaf_routes.relation.target_indices, dtype=np.int32)
         relation_weights = np.asarray(leaf_routes.weights)
-        relation_valid = np.asarray(leaf_routes.relation.valid, dtype=bool)
+        relation_valid = np.asarray(leaf_routes.relation.valid, dtype=np.bool_)
         if (
             leaf_routes.relation.source_size != source_count
             or leaf_routes.relation.target_size != target_count
@@ -2255,7 +2253,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
                 np.asarray(axis.bounds)
                 for axis in transition.source_topology.plan.grid.structured_axes
             ],
-            dtype=float,
+            dtype=np.float64,
         )
         lengths = bounds[:, 1] - bounds[:, 0]
 
@@ -2361,8 +2359,8 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
             source.hierarchy.partition.part_count,
         )
         halo_ids = np.asarray(halo.local_global_ids, dtype=np.int32)
-        halo_valid = np.asarray(halo.local_valid, dtype=bool)
-        halo_owned = np.asarray(halo.local_owned, dtype=bool)
+        halo_valid = np.asarray(halo.local_valid, dtype=np.bool_)
+        halo_owned = np.asarray(halo.local_owned, dtype=np.bool_)
         local_maps = tuple(
             {
                 int(entity): local
@@ -2394,7 +2392,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
             (source.hierarchy.partition.part_count, local_target_capacity),
             dtype=np.int32,
         )
-        target_valid = np.zeros_like(target_packed_indices, dtype=bool)
+        target_valid = np.zeros_like(target_packed_indices, dtype=np.bool_)
         target_measures = np.ones(target_packed_indices.shape, dtype=source.real_dtype)
         overlap_source_indices = np.zeros(
             (
@@ -2405,7 +2403,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
             dtype=np.int32,
         )
         overlap_weights = np.zeros(overlap_source_indices.shape, dtype=source.real_dtype)
-        overlap_valid = np.zeros(overlap_source_indices.shape, dtype=bool)
+        overlap_valid = np.zeros(overlap_source_indices.shape, dtype=np.bool_)
         nearest_source_indices = np.zeros_like(target_packed_indices)
         plus_source_indices = np.zeros(
             target_packed_indices.shape + (dimension,), dtype=np.int32
@@ -2530,7 +2528,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
                 "relative_node_floor must lie strictly between zero and one."
             )
         axis_name = self.source.hierarchy.partition.axis_name
-        dimension = self.target_displacements.shape[-1]
+        self.target_displacements.shape[-1]
         source_shapes = self.source.routes.level_local_shapes
         target_shapes = self.target.routes.level_local_shapes
         target_sizes = self.target.routes.level_local_sizes
@@ -2570,7 +2568,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
                 destination = jnp.any(
                     jnp.asarray(
                         [target_part == part for _, target_part in permutation],
-                        dtype=bool,
+                        dtype=jnp.bool_,
                     )
                 )
                 full = jax.lax.cond(
@@ -2777,7 +2775,7 @@ def _entity_centers(topology: Any, storage_indices: np.ndarray, /) -> np.ndarray
         next_offset += level_plan.maximum_blocks * prod(level_plan.block_shape)
     bounds = np.asarray(
         [np.asarray(axis.bounds) for axis in topology.plan.grid.structured_axes],
-        dtype=float,
+        dtype=np.float64,
     )
     centers = []
     for storage in storage_indices:

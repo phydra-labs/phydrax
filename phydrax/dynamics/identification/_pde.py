@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import weighted_total_degree_indices
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from .._layout import StateLayout
 from ._sindy_design import _make_equation_design, SINDyDesign
 from ._sparse_regression import AbstractSparseRegression, SparseRegressionResult
@@ -26,7 +26,7 @@ def _shape_tail(values: Array, shape: tuple[int, ...], /) -> tuple[int, ...]:
 
 
 def _quadrature_weights(coordinates: tuple[Array, ...], /) -> Array:
-    shape = tuple(int(coordinate.size) for coordinate in coordinates)
+    shape = tuple(coordinate.size for coordinate in coordinates)
     result = jnp.ones(shape)
     for axis, coordinate in enumerate(coordinates):
         widths = jnp.empty_like(coordinate)
@@ -35,7 +35,7 @@ def _quadrature_weights(coordinates: tuple[Array, ...], /) -> Array:
         if coordinate.size > 2:
             widths = widths.at[1:-1].set(0.5 * (coordinate[2:] - coordinate[:-2]))
         axis_shape = [1] * len(coordinates)
-        axis_shape[axis] = int(coordinate.size)
+        axis_shape[axis] = coordinate.size
         result = result * widths.reshape(tuple(axis_shape))
     return result
 
@@ -81,7 +81,7 @@ class StructuredPDEData(StrictModule):
                 raise ValueError(
                     "Each PDE coordinate axis must be a rank-one array with at least three points."
                 )
-            host = np.asarray(coordinate, dtype=float)
+            host = np.asarray(coordinate, dtype=np.float64)
             if not np.all(np.isfinite(host)) or not np.all(np.diff(host) > 0.0):
                 raise ValueError(
                     "PDE coordinates must be finite and strictly increasing."
@@ -93,9 +93,9 @@ class StructuredPDEData(StrictModule):
             raise ValueError("source_id must be a non-empty string.")
         field_values = jnp.asarray(values)
         if not jnp.issubdtype(field_values.dtype, jnp.inexact):
-            field_values = field_values.astype(float)
+            field_values = field_values.astype("float64")
         batch_shape = _shape_tail(field_values, state_layout.shape)
-        grid_shape = tuple(int(item.size) for item in coordinate_values)
+        grid_shape = tuple(item.size for item in coordinate_values)
         if (
             len(batch_shape) < len(grid_shape)
             or tuple(batch_shape[-len(grid_shape) :]) != grid_shape
@@ -110,7 +110,7 @@ class StructuredPDEData(StrictModule):
         if sample_valid is None:
             valid = finite
         else:
-            requested = jnp.asarray(sample_valid, dtype=bool)
+            requested = jnp.asarray(sample_valid, dtype=jnp.bool_)
             if requested.shape != sample_shape:
                 raise ValueError(
                     f"sample_valid must have shape {sample_shape}; got {requested.shape}."
@@ -181,7 +181,7 @@ class PDEDerivative(StrictModule):
         *,
         name: str | None = None,
     ):
-        resolved_orders = tuple(int(order) for order in orders)
+        resolved_orders = tuple(orders)
         if not resolved_orders or any(order < 0 for order in resolved_orders):
             raise ValueError("orders must be a non-empty nonnegative multi-index.")
         resolved_name = None if name is None else str(name)
@@ -202,7 +202,7 @@ class PDEDerivativeEvaluation(StrictModule):
 class AbstractPDEDerivative(StrictModule):
     """Derivative policy over one structured field component."""
 
-    method_id: AbstractAttribute[str]
+    method_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -299,7 +299,7 @@ class PDELibraryTerm(StrictModule):
         derivative: PDEDerivative | None = None,
         name: str,
     ):
-        powers = tuple(int(power) for power in state_powers)
+        powers = tuple(state_powers)
         if not powers or any(power < 0 for power in powers):
             raise ValueError("state_powers must be a non-empty nonnegative tuple.")
         if derivative is not None and not isinstance(derivative, PDEDerivative):
@@ -314,9 +314,9 @@ class PDELibraryTerm(StrictModule):
 class AbstractPDEFeatureLibrary(StrictModule):
     """Ordered PDE-FIND term contract."""
 
-    terms: AbstractAttribute[tuple[PDELibraryTerm, ...]]
-    feature_names: AbstractAttribute[tuple[str, ...]]
-    library_id: AbstractAttribute[str]
+    terms: eqx.AbstractVar[tuple[PDELibraryTerm, ...]]
+    feature_names: eqx.AbstractVar[tuple[str, ...]]
+    library_id: eqx.AbstractVar[str]
 
     @property
     def num_features(self) -> int:

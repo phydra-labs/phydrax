@@ -66,7 +66,7 @@ def test_directional_3d_loto_splits_only_longitudinal_optical_mode():
     values = np.asarray([identity, -identity, -identity, identity])
     ifc = _ifc(
         relation,
-        np.zeros((4, 3), dtype=int),
+        np.zeros((4, 3), dtype="int64"),
         values,
         [[0, 0, 0], [0.5, 0, 0]],
         cell,

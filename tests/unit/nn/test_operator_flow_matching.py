@@ -59,7 +59,7 @@ def test_operator_flow_matching_metric_integrates_with_generic_term():
         target=target,
         source_indices=jnp.arange(8),
         target_indices=jnp.arange(8),
-        valid=jnp.ones((8,), dtype=bool),
+        valid=jnp.ones((8,), dtype="bool"),
         log_weights=jnp.zeros((8,)),
         coupling_id="operator-paired",
         provenance="unit-test",

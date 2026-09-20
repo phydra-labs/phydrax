@@ -38,7 +38,7 @@ def _array(value: ArrayLike, name: str, ndim: int, /) -> Array:
     if result.ndim != ndim:
         raise ValueError(f"{name} must have rank {ndim}.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 
@@ -62,7 +62,7 @@ class PrescribedFiberStimulusSchedule(StrictModule, NonTrainableState):
         onset = _array(onset_ms, "onset_ms", 1)
         duration = _array(duration_ms, "duration_ms", 1)
         amplitude = _array(amplitude_uA_per_cm2, "amplitude_uA_per_cm2", 1)
-        mask = jnp.asarray(target_mask, dtype=bool)
+        mask = jnp.asarray(target_mask, dtype=jnp.bool_)
         pulse_count = onset.shape[0]
         if duration.shape != (pulse_count,) or amplitude.shape != (pulse_count,):
             raise ValueError("Pulse time and amplitude arrays must agree in shape.")
@@ -75,7 +75,9 @@ class PrescribedFiberStimulusSchedule(StrictModule, NonTrainableState):
             and np.all(np.asarray(duration) > 0.0)
             and np.all(np.diff(np.asarray(onset)) >= 0.0)
         ):
-            raise ValueError("Pulse schedules require finite ordered onsets and duration > 0.")
+            raise ValueError(
+                "Pulse schedules require finite ordered onsets and duration > 0."
+            )
         self.onset_ms = onset
         self.duration_ms = duration
         self.amplitude_uA_per_cm2 = amplitude
@@ -101,9 +103,7 @@ class PrescribedFiberStimulusSchedule(StrictModule, NonTrainableState):
 
     def current(self, time_ms: ArrayLike, /) -> Array:
         time = jnp.asarray(time_ms, dtype=self.onset_ms.dtype)
-        active = (time >= self.onset_ms) & (
-            time < self.onset_ms + self.duration_ms
-        )
+        active = (time >= self.onset_ms) & (time < self.onset_ms + self.duration_ms)
         return jnp.sum(
             jnp.where(
                 active[:, None, None] & self.target_mask,
@@ -225,7 +225,9 @@ class SkeletalFiberBundlePlan(StrictModule, NonTrainableState):
             and np.all(np.isfinite(np.asarray(diffusion)))
             and np.all(np.asarray(diffusion) >= 0.0)
         ):
-            raise ValueError("Fiber lengths must be positive and diffusivities nonnegative.")
+            raise ValueError(
+                "Fiber lengths must be positive and diffusivities nonnegative."
+            )
         if not isinstance(
             stimulus, (PrescribedFiberStimulusSchedule, MotorUnitEndplateStimulus)
         ):
@@ -304,9 +306,7 @@ class _FiberBundleDrift(StrictModule):
         ) * inverse_square[:, None]
         left = 2.0 * (potential[:, 1] - potential[:, 0]) * inverse_square
         right = 2.0 * (potential[:, -2] - potential[:, -1]) * inverse_square
-        laplacian = jnp.concatenate(
-            (left[:, None], interior, right[:, None]), axis=1
-        )
+        laplacian = jnp.concatenate((left[:, None], interior, right[:, None]), axis=1)
         diffusion = self.plan.diffusivity_mm2_per_ms[:, None] * laplacian
         return reaction.at[..., 0].add(diffusion)
 
@@ -317,9 +317,7 @@ class PreparedSkeletalFiberBundle(StrictModule):
     solver: dfx.Kvaerno5
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(
-        self, plan: SkeletalFiberBundlePlan, model: ShortenFastTwitchModel, /
-    ):
+    def __init__(self, plan: SkeletalFiberBundlePlan, model: ShortenFastTwitchModel, /):
         if not isinstance(plan, SkeletalFiberBundlePlan):
             raise TypeError("plan must be SkeletalFiberBundlePlan.")
         if not isinstance(model, ShortenFastTwitchModel):
@@ -336,9 +334,7 @@ class PreparedSkeletalFiberBundle(StrictModule):
         )
 
     def initialize(self, time_ms: ArrayLike = 0.0, /) -> SkeletalFiberBundleState:
-        values = self.model.initialize(
-            (len(self.plan.fiber_ids), self.plan.node_count)
-        )
+        values = self.model.initialize((len(self.plan.fiber_ids), self.plan.node_count))
         return SkeletalFiberBundleState(time_ms, values)
 
     def output(self, state: SkeletalFiberBundleState, /) -> SkeletalFiberBundleOutput:
@@ -367,8 +363,8 @@ class PreparedSkeletalFiberBundle(StrictModule):
         step = jnp.asarray(step_ms, dtype=state.values.dtype)
         if step.shape != ():
             raise ValueError("step_ms must be scalar.")
-        step_valid = jnp.isfinite(step) & (step > 0.0) & (
-            step <= self.plan.maximum_step_ms
+        step_valid = (
+            jnp.isfinite(step) & (step > 0.0) & (step <= self.plan.maximum_step_ms)
         )
         safe_step = jnp.where(
             step_valid,

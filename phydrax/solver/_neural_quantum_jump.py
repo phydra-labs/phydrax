@@ -181,9 +181,9 @@ class NeuralNoJumpTDVPResult(StrictModule):
         self.event_times = jnp.asarray(event_times)
         self.event_channels = jnp.asarray(event_channels, dtype=jnp.int32)
         self.projection_residuals = jnp.asarray(projection_residuals)
-        self.active_events = jnp.asarray(active_events, dtype=bool)
-        self.saturated = jnp.asarray(saturated, dtype=bool)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.active_events = jnp.asarray(active_events, dtype=jnp.bool_)
+        self.saturated = jnp.asarray(saturated, dtype=jnp.bool_)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.valid = (
             jnp.all(jnp.isfinite(self.parameter_history))
             & jnp.all(jnp.isfinite(self.rate_history))
@@ -229,7 +229,7 @@ def solve_neural_no_jump_tdvp(
     event_times = jnp.zeros((capacity,))
     event_channels = -jnp.ones((capacity,), dtype=jnp.int32)
     projection_residuals = jnp.zeros((capacity,))
-    active = jnp.zeros((capacity,), dtype=bool)
+    active = jnp.zeros((capacity,), dtype=jnp.bool_)
     threshold_address = SampleAddress(
         "neural-quantum-trajectory",
         "jump-threshold",

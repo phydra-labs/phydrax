@@ -230,8 +230,8 @@ def _select_endpoint_disjoint(
     /,
 ) -> Array:
     order = jnp.lexsort((pairs.right_particle_ids, pairs.left_particle_ids, priority))
-    selected = jnp.zeros(proposed.shape, dtype=bool)
-    used = jnp.zeros((particle_capacity,), dtype=bool)
+    selected = jnp.zeros(proposed.shape, dtype=jnp.bool_)
+    used = jnp.zeros((particle_capacity,), dtype=jnp.bool_)
 
     def body(index, carry):
         accepted, occupied = carry
@@ -286,8 +286,7 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
             cross_section, (SIDMCrossSectionPlan, TwoBodyDifferentialKernelPlan)
         ):
             raise TypeError(
-                "cross_section must be SIDMCrossSectionPlan or "
-                "TwoBodyDifferentialKernelPlan."
+                "cross_section must be SIDMCrossSectionPlan or TwoBodyDifferentialKernelPlan."
             )
         scattering_kernel = (
             cross_section.kernel
@@ -497,7 +496,7 @@ class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
         ):
             directions = _isotropic_directions(direction_keys, dtype)
             sampled_cosine, sampled_azimuth = angles_from_direction(relative, directions)
-            angular_sample_successful = jnp.ones(relative_speed.shape, dtype=bool)
+            angular_sample_successful = jnp.ones(relative_speed.shape, dtype=jnp.bool_)
         else:
             angular_samples = jax.vmap(self.scattering_kernel.sample_angles)(
                 direction_keys, relative_speed

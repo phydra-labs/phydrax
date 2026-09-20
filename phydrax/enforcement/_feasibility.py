@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._tree_math import tree_allfinite
 from ..linalg import AbstractLinearOperator
 from ..ml._numerics import project_simplex
@@ -75,9 +75,9 @@ class FeasibilityEvidence(StrictModule):
 class AbstractFeasibilityMap(StrictModule):
     """Array-level projection or parameterization with explicit set semantics."""
 
-    scope: AbstractAttribute[FeasibilityScope]
-    topology: AbstractAttribute[FeasibleSetTopology]
-    kind: AbstractAttribute[FeasibilityKind]
+    scope: eqx.AbstractVar[FeasibilityScope]
+    topology: eqx.AbstractVar[FeasibleSetTopology]
+    kind: eqx.AbstractVar[FeasibilityKind]
 
     @abc.abstractmethod
     def apply(self, value: Any, /) -> Array:
@@ -296,7 +296,7 @@ class SimplexProjection(AbstractFeasibilityMap):
 
     def apply(self, value: Any, /) -> Array:
         source = _real_array(value, "simplex projection input")
-        if source.ndim < 1 or int(source.shape[-1]) < 1:
+        if source.ndim < 1 or source.shape[-1] < 1:
             raise ValueError("Simplex projection requires a nonempty trailing axis.")
         return project_simplex(source)
 
@@ -603,7 +603,7 @@ class FeasibleParameterization(AbstractFeasibilityMap):
             return margin, violation
         if result.ndim < 2 or result.shape[-2] != result.shape[-1]:
             raise ValueError("Matrix parameterizations require square trailing axes.")
-        matrix_size = int(result.shape[-1])
+        matrix_size = result.shape[-1]
         cone = PositiveSemidefiniteCone(matrix_size)
         symmetric = 0.5 * (result + jnp.swapaxes(result, -1, -2))
         asymmetry = jnp.linalg.norm(result - symmetric)
@@ -715,7 +715,7 @@ class AbstractCoefficientPropertyProvider(StrictModule):
 
     representation: Any
     operator: AbstractLinearOperator
-    provider_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
 
     def __init__(self, representation: Any, operator: AbstractLinearOperator, /):
         from ._linear_representation import AbstractLinearRepresentation

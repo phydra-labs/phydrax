@@ -114,8 +114,7 @@ def prepare_dense(problem, plan: LinearSolvePlan, /) -> Any:
     )
     if matrix.dtype not in supported_dtypes:
         raise TypeError(
-            "Dense solve backends require float32, float64, complex64, or complex128 "
-            f"coordinates; got {matrix.dtype}."
+            f"Dense solve backends require float32, float64, complex64, or complex128 coordinates; got {matrix.dtype}."
         )
     method = plan.policy.method
     if method.name == "auto":
@@ -284,7 +283,7 @@ def solve_dense_transformed(
 
 
 def _prepare_lu(matrix: Array, batch_shape: tuple[int, ...], /) -> DenseLUState:
-    size = int(matrix.shape[-1])
+    size = matrix.shape[-1]
     count = prod(batch_shape) if batch_shape else 1
     flattened = matrix.reshape((count, size, size))
     factor, pivots = jax.vmap(jsp.linalg.lu_factor)(flattened)
@@ -335,7 +334,7 @@ def _prepare_mixed_precision_lu(
         raise LinearCapabilityError(rejection)
 
     low_matrix = matrix.astype(factorization_dtype)
-    size = int(low_matrix.shape[-1])
+    size = low_matrix.shape[-1]
     count = prod(batch_shape) if batch_shape else 1
     flattened = low_matrix.reshape((count, size, size))
     factor, pivots = jax.vmap(jsp.linalg.lu_factor)(flattened)
@@ -500,7 +499,7 @@ def _prepare_qr(
 ) -> DenseQRState:
     if source_inverse_square_root is not None:
         raise ValueError("Dense QR does not implement minimum-norm semantics.")
-    rows, columns = (int(size) for size in design.shape[-2:])
+    rows, columns = (size for size in design.shape[-2:])
     if rows < columns:
         raise ValueError("Dense QR requires at least as many rows as columns.")
     q, r = jnp.linalg.qr(design, mode="reduced")
@@ -551,7 +550,7 @@ def _prepare_svd(
         _, reported_singular_values, rank_vh = jnp.linalg.svd(
             rank_design, full_matrices=False
         )
-        rank_rows, rank_columns = (int(size) for size in rank_design.shape[-2:])
+        rank_rows, rank_columns = (size for size in rank_design.shape[-2:])
         rank_retained, rank, condition = _rank_data(
             reported_singular_values,
             rank_rows,
@@ -563,7 +562,7 @@ def _prepare_svd(
         )
         factor_design = jnp.matmul(design, source_projection)
         u, singular_values, vh = jnp.linalg.svd(factor_design, full_matrices=False)
-        factor_rows, factor_columns = (int(size) for size in factor_design.shape[-2:])
+        factor_rows, factor_columns = (size for size in factor_design.shape[-2:])
         retained, _, _ = _rank_data(
             singular_values,
             factor_rows,
@@ -755,7 +754,7 @@ def _transformed_rhs(
     target = rhs[..., : state.target_size, :]
     if state.square_root_weights is not None:
         target = state.square_root_weights[..., :, None] * target
-    extra_rows = int(state.design.shape[-2]) - state.target_size
+    extra_rows = state.design.shape[-2] - state.target_size
     if extra_rows:
         zeros = jnp.zeros(rhs.shape[:-2] + (extra_rows, rhs.shape[-1]), dtype=rhs.dtype)
         target = jnp.concatenate((target, zeros), axis=-2)

@@ -18,7 +18,7 @@ def main():
     parser.add_argument("--source-id", required=True)
     parser.add_argument("--url", required=True)
     parser.add_argument("--revision", required=True)
-    parser.add_argument("--licence", type=Path, required=True)
+    parser.add_argument("--license", type=Path, required=True)
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--concept", action="append", required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -28,7 +28,7 @@ def main():
         "repository_url": args.url,
         "revision": args.revision,
         "archive_digest": digest(args.archive),
-        "licence_digest": digest(args.licence),
+        "license_digest": digest(args.license),
         "concepts": sorted(args.concept),
         "review_status": "unreviewed",
     }

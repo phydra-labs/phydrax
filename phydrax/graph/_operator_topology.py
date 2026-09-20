@@ -46,7 +46,7 @@ def _graph_leading_size(tree: Any, /) -> int | None:
     leaves = jax.tree_util.tree_leaves(tree)
     if not leaves:
         return None
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 def _entity_counts(graph: GraphIR, entity: OperatorTopologyEntity, /) -> Array:
@@ -146,7 +146,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
     ):
         if not isinstance(graph, GraphIR):
             raise TypeError("OperatorTopology graph must be a GraphIR.")
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("OperatorTopology case dimensions must be positive.")
         if kind not in ("graph", "simplicial", "cell_complex"):
@@ -165,26 +165,23 @@ class OperatorTopology(StrictModule, NonTrainableState):
         mapping = mapping.astype(jnp.int32)
         if mapping.ndim <= len(cases) or tuple(mapping.shape[: len(cases)]) != cases:
             raise ValueError(
-                "OperatorTopology sample_entities must have shape "
-                "case_shape + non-empty sample_shape."
+                "OperatorTopology sample_entities must have shape case_shape + non-empty sample_shape."
             )
         expected_graphs = prod(cases) if cases else 1
         if graph.num_graphs != expected_graphs:
             raise ValueError(
-                f"OperatorTopology requires {expected_graphs} graph(s) for case shape "
-                f"{cases}; got {graph.num_graphs}."
+                f"OperatorTopology requires {expected_graphs} graph(s) for case shape {cases}; got {graph.num_graphs}."
             )
         counts = _entity_counts(graph, entity)
         payload = _entity_payload(graph, entity)
         leading = _graph_leading_size(payload)
         mask = _entity_mask(graph, entity)
         if leading is None and mask is not None:
-            leading = int(mask.shape[0])
+            leading = mask.shape[0]
         if leading is None:
             if _contains_tracer(counts):
                 raise ValueError(
-                    "Traced topology graphs without entity payloads require eager "
-                    "construction."
+                    "Traced topology graphs without entity payloads require eager construction."
                 )
             leading = int(np.asarray(counts).sum())
         self.graph = graph
@@ -209,9 +206,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
 
     @property
     def sample_shape(self) -> tuple[int, ...]:
-        return tuple(
-            int(size) for size in self.sample_entities.shape[len(self.case_shape) :]
-        )
+        return tuple(self.sample_entities.shape[len(self.case_shape) :])
 
     @classmethod
     def from_graph(
@@ -227,7 +222,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
     ) -> "OperatorTopology":
         """Bind sampled sites to entities of an existing canonical graph."""
 
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         resolved_entity: OperatorTopologyEntity
         if entity is None:
             resolved_entity = (
@@ -348,15 +343,15 @@ class OperatorTopology(StrictModule, NonTrainableState):
         mappings = np.asarray(self.sample_entities).reshape((counts.size, -1))
         offsets = np.concatenate((np.zeros((1,), dtype=np.int64), np.cumsum(counts[:-1])))
         graph_mask = (
-            np.ones((counts.size,), dtype=bool)
+            np.ones((counts.size,), dtype=np.bool_)
             if self.graph.graph_mask is None
-            else np.asarray(self.graph.graph_mask, dtype=bool)
+            else np.asarray(self.graph.graph_mask, dtype=np.bool_)
         )
         entity_mask_array = _entity_mask(self.graph, self.entity)
         entity_mask = (
             None
             if entity_mask_array is None
-            else np.asarray(entity_mask_array, dtype=bool)
+            else np.asarray(entity_mask_array, dtype=np.bool_)
         )
         for case, (mapping, count, offset, graph_valid) in enumerate(
             zip(mappings, counts, offsets, graph_mask, strict=True)
@@ -364,8 +359,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
             valid = mapping >= 0
             if np.any(mapping < -1) or np.any(mapping[valid] >= count):
                 raise ValueError(
-                    f"OperatorTopology sample_entities for graph {case} must lie in "
-                    f"[-1, {int(count)})."
+                    f"OperatorTopology sample_entities for graph {case} must lie in [-1, {int(count)})."
                 )
             selected = mapping[valid]
             if np.unique(selected).size != selected.size:
@@ -503,9 +497,7 @@ def slice_operator_topology(
     if isinstance(index, (int, np.integer)):
         case_shape = topology.case_shape[:position] + topology.case_shape[position + 1 :]
     else:
-        case_shape = tuple(
-            int(size) for size in selected_entities.shape[: len(topology.case_shape)]
-        )
+        case_shape = tuple(selected_entities.shape[: len(topology.case_shape)])
     return OperatorTopology(
         selected_graph,
         selected_entities,
@@ -535,7 +527,7 @@ def broadcast_operator_topology(
 ) -> OperatorTopology:
     """Broadcast topology across new leading operator case axes."""
 
-    target = tuple(int(size) for size in case_shape)
+    target = tuple(case_shape)
     if topology.case_shape == target:
         return topology
     source = topology.case_shape
@@ -566,7 +558,7 @@ def broadcast_operator_topology(
     if graph.senders is not None and graph.receivers is not None:
         offsets = jnp.repeat(
             jnp.arange(repetitions, dtype=jnp.int32) * node_stride,
-            int(graph.senders.shape[0]),
+            graph.senders.shape[0],
         )
         senders = jnp.tile(graph.senders, repetitions) + offsets
         receivers = jnp.tile(graph.receivers, repetitions) + offsets

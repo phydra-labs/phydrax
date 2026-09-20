@@ -218,8 +218,7 @@ class OperatorProblemSpec:
             "independent",
         ):
             raise ValueError(
-                "source_query_relation must be 'coincident', 'shared_topology', "
-                "'independent', or None."
+                "source_query_relation must be 'coincident', 'shared_topology', 'independent', or None."
             )
         if int(self.rollout_steps) <= 0:
             raise ValueError("rollout_steps must be positive.")
@@ -323,7 +322,7 @@ def _coordinate_dimension(samples: FunctionSamples, /) -> int | None:
     if samples.axes:
         return len(samples.axes)
     if samples.coordinates is not None:
-        return int(samples.coordinates.shape[-1])
+        return samples.coordinates.shape[-1]
     return None
 
 
@@ -426,7 +425,7 @@ def _mapped_node_payload(samples: FunctionSamples, key: str, /) -> np.ndarray | 
         isinstance(leaf, jax_core.Tracer)
         for leaf in jax.tree_util.tree_leaves((mapping_values, node_values))
     ):
-        return np.empty((0,), dtype=float)
+        return np.empty((0,), dtype=np.float64)
     mapping = np.asarray(mapping_values)
     valid = mapping >= 0
     values = np.asarray(node_values)
@@ -786,8 +785,7 @@ def validate_operator_contract(
                     issues.append(
                         _issue(
                             "UNSUPPORTED_FIELD_REPRESENTATION",
-                            f"{field.representation!r} is not one of "
-                            f"{capability.input_representations}",
+                            f"{field.representation!r} is not one of {capability.input_representations}",
                             field.name,
                         )
                     )
@@ -796,8 +794,7 @@ def validate_operator_contract(
                 issues.append(
                     _issue(
                         "UNSUPPORTED_OUTPUT_REPRESENTATION",
-                        f"{field.representation!r} is not one of "
-                        f"{capability.output_representations}",
+                        f"{field.representation!r} is not one of {capability.output_representations}",
                         field.name,
                     )
                 )

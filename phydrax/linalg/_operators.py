@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import Any, cast, Protocol
+from typing import Any, cast, ClassVar, Protocol
 
 import equinox as eqx
 import jax
@@ -47,7 +47,7 @@ def _id(value: str | None, payload: dict[str, Any], /) -> str:
 
 
 def _batch_shape(value: Sequence[int], /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size < 0 for size in shape):
         raise ValueError("Operator batch dimensions must be nonnegative.")
     return shape
@@ -77,8 +77,7 @@ def _validate_properties(
     )
     if square_required and not source.compatible(target):
         raise ValueError(
-            "Diagonal, triangular, self-adjoint, and definite properties "
-            "require identical source and target spaces."
+            "Diagonal, triangular, self-adjoint, and definite properties require identical source and target spaces."
         )
 
 
@@ -158,12 +157,11 @@ def _array_value(
         value = jnp.broadcast_to(value, batch_shape + value.shape)
     else:
         raise ValueError(
-            f"{name} must begin with shape {prefix} or shared event shape "
-            f"{space.shape}; got {value.shape}."
+            f"{name} must begin with shape {prefix} or shared event shape {space.shape}; got {value.shape}."
         )
     if np.dtype(value.dtype) != space.dtype:
         raise TypeError(f"{name} must have dtype {space.dtype}; got {value.dtype}.")
-    return value, tuple(int(size) for size in rhs_shape)
+    return value, tuple(rhs_shape)
 
 
 def _array_pairing_action(
@@ -291,7 +289,7 @@ def _operator_block_action(
             f"coordinate size {input_space.size}, and one block axis; "
             f"got {coordinates.shape}."
         )
-    block_size = int(coordinates.shape[-1])
+    block_size = coordinates.shape[-1]
     if operator.supports_fused_block_action:
         if not isinstance(input_space, ArraySpace) or not isinstance(
             output_space, ArraySpace
@@ -325,6 +323,8 @@ def _operator_block_action(
 class AbstractLinearOperator(StrictModule):
     """Rectangular linear map between explicitly declared vector spaces."""
 
+    _fused_block_action_kind: ClassVar[str] = "generic"
+
     source: AbstractVectorSpace
     target: AbstractVectorSpace
     properties: OperatorProperties
@@ -351,7 +351,18 @@ class AbstractLinearOperator(StrictModule):
     @property
     def supports_fused_block_action(self) -> bool:
         """Whether block methods use a real shared block action rather than vmap."""
-        return False
+        if self._fused_block_action_kind == "dense":
+            return (
+                isinstance(self.source, ArraySpace)
+                and isinstance(self.target, ArraySpace)
+                and _has_diagonal_pairing(self.source)
+                and _has_diagonal_pairing(self.target)
+            )
+        if self._fused_block_action_kind == "diagonal":
+            return isinstance(self.source, ArraySpace) and _has_diagonal_pairing(
+                self.source
+            )
+        return self._fused_block_action_kind == "fused"
 
     def mv_block(self, vectors: ArrayLike, /) -> Array:
         """Apply to canonical ``(source.size, block_size)`` coordinates."""
@@ -433,6 +444,8 @@ def _assemble_operator_diagonal(
 class DenseLinearOperator(AbstractLinearOperator):
     """Explicit dense matrix over flattened source and target event coordinates."""
 
+    _fused_block_action_kind: ClassVar[str] = "dense"
+
     matrix: Array
 
     def __init__(
@@ -449,8 +462,8 @@ class DenseLinearOperator(AbstractLinearOperator):
         if matrix_.ndim < 2:
             raise ValueError("matrix must have at least two dimensions.")
         if not jnp.issubdtype(matrix_.dtype, jnp.inexact):
-            matrix_ = matrix_.astype(float)
-        target_size, source_size = (int(size) for size in matrix_.shape[-2:])
+            matrix_ = matrix_.astype("float64")
+        target_size, source_size = (size for size in matrix_.shape[-2:])
         source_ = (
             ArraySpace((source_size,), dtype=matrix_.dtype) if source is None else source
         )
@@ -494,15 +507,6 @@ class DenseLinearOperator(AbstractLinearOperator):
                 "target": target_.space_id,
                 "batch_shape": list(batch),
             },
-        )
-
-    @property
-    def supports_fused_block_action(self) -> bool:
-        return (
-            isinstance(self.source, ArraySpace)
-            and isinstance(self.target, ArraySpace)
-            and _has_diagonal_pairing(self.source)
-            and _has_diagonal_pairing(self.target)
         )
 
     def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
@@ -559,6 +563,8 @@ class DenseLinearOperator(AbstractLinearOperator):
 class DiagonalLinearOperator(AbstractLinearOperator):
     """Diagonal endomorphism in canonical flattened coordinates."""
 
+    _fused_block_action_kind: ClassVar[str] = "diagonal"
+
     diagonal: Array
 
     def __init__(
@@ -574,8 +580,8 @@ class DiagonalLinearOperator(AbstractLinearOperator):
         if diagonal_.ndim < 1:
             raise ValueError("diagonal must have at least one dimension.")
         if not jnp.issubdtype(diagonal_.dtype, jnp.inexact):
-            diagonal_ = diagonal_.astype(float)
-        size = int(diagonal_.shape[-1])
+            diagonal_ = diagonal_.astype("float64")
+        size = diagonal_.shape[-1]
         space_ = ArraySpace((size,), dtype=diagonal_.dtype) if space is None else space
         if not isinstance(space_, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
@@ -640,10 +646,6 @@ class DiagonalLinearOperator(AbstractLinearOperator):
             raise ValueError("Batched diagonal operators require ArraySpace values.")
         coordinates = self.source.flatten(vector)
         return self.source.unflatten(diagonal * coordinates)
-
-    @property
-    def supports_fused_block_action(self) -> bool:
-        return isinstance(self.source, ArraySpace) and _has_diagonal_pairing(self.source)
 
     def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self._action(self.diagonal, vector)
@@ -1404,7 +1406,7 @@ class BlockLinearOperator(AbstractLinearOperator):
 
 
 def _space_storage_bytes(space: AbstractVectorSpace, /) -> int:
-    return int(space.size * np.dtype(_coordinate_dtype(space)).itemsize)
+    return space.size * np.dtype(_coordinate_dtype(space)).itemsize
 
 
 def _operator_action_workspace(
@@ -1476,17 +1478,13 @@ def _operator_action_workspace(
     if isinstance(operator, TransformDiagonalLinearOperator):
         return 3 * vector_bytes, True, "transform-diagonal-action"
     if isinstance(operator, LowRankLinearOperator):
-        rank_bytes = int(
-            operator.left_factor.shape[-1] * operator.left_factor.dtype.itemsize
-        )
+        rank_bytes = operator.left_factor.shape[-1] * operator.left_factor.dtype.itemsize
         return rank_bytes, True, "low-rank-action"
     if isinstance(operator, SymmetricLowRankLinearOperator):
-        rank_bytes = int(operator.factor.shape[-1] * operator.factor.dtype.itemsize)
+        rank_bytes = operator.factor.shape[-1] * operator.factor.dtype.itemsize
         return rank_bytes, True, "low-rank-action"
     if isinstance(operator, DiagonalPlusLowRankLinearOperator):
-        rank_bytes = int(
-            operator.left_factor.shape[-1] * operator.left_factor.dtype.itemsize
-        )
+        rank_bytes = operator.left_factor.shape[-1] * operator.left_factor.dtype.itemsize
         return target_bytes + rank_bytes, True, "low-rank-action"
     if isinstance(operator, BasePlusLowRankLinearOperator):
         base_workspace, base_exact, _ = _operator_action_workspace(operator.base)

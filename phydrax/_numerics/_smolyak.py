@@ -153,7 +153,7 @@ class SmolyakIndexSet(StrictModule, NonTrainableState):
         dimension_ = int(dimension)
         if dimension_ < 1:
             raise ValueError("Smolyak index-set dimension must be positive.")
-        normalized = tuple(tuple(int(level) for level in index) for index in indices)
+        normalized = tuple(tuple(index) for index in indices)
         if not normalized:
             raise ValueError("Smolyak index sets cannot be empty.")
         if any(
@@ -177,8 +177,7 @@ class SmolyakIndexSet(StrictModule, NonTrainableState):
                 predecessor[axis] -= 1
                 if tuple(predecessor) not in unique:
                     raise ValueError(
-                        "Smolyak index set is not downward closed; "
-                        f"missing predecessor {tuple(predecessor)!r}."
+                        f"Smolyak index set is not downward closed; missing predecessor {tuple(predecessor)!r}."
                     )
         self.dimension = dimension_
         self.indices = tuple(sorted(unique, key=lambda index: (sum(index), index)))
@@ -244,7 +243,7 @@ class SmolyakIndexSet(StrictModule, NonTrainableState):
         )
 
     def add(self, index: Sequence[int], /) -> SmolyakIndexSet:
-        candidate = tuple(int(level) for level in index)
+        candidate = tuple(index)
         if candidate not in self.frontier().candidates:
             raise ValueError("Only admissible Smolyak frontier indices may be added.")
         return SmolyakIndexSet(self.dimension, (*self.indices, candidate))
@@ -376,9 +375,9 @@ def smolyak_terms(
 
 
 def _normalized_barycentric_weights(nodes: np.ndarray, /) -> np.ndarray:
-    count = int(nodes.shape[0])
+    count = nodes.shape[0]
     if count == 1:
-        return np.ones((1,), dtype=float)
+        return np.ones((1,), dtype=np.float64)
     differences = nodes[:, None] - nodes[None, :]
     differences[np.diag_indices(count)] = 1.0
     weights = 1.0 / np.prod(differences, axis=1)
@@ -426,13 +425,13 @@ def smolyak_axis_data(rule: SmolyakAxisRule, level: int, /) -> SmolyakAxisData:
         raise ValueError("Smolyak axis level must be non-negative.")
     if rule == "clenshaw-curtis":
         if level_ == 0:
-            nodes = np.asarray([0.0], dtype=float)
-            quadrature_weights = np.asarray([2.0], dtype=float)
+            nodes = np.asarray([0.0], dtype=np.float64)
+            quadrature_weights = np.asarray([2.0], dtype=np.float64)
         else:
             data = clenshaw_curtis_data(2**level_ + 1)
-            nodes = np.asarray(data.nodes, dtype=float)
-            quadrature_weights = np.asarray(data.weights, dtype=float)
-        count = int(nodes.shape[0])
+            nodes = np.asarray(data.nodes, dtype=np.float64)
+            quadrature_weights = np.asarray(data.weights, dtype=np.float64)
+        count = nodes.shape[0]
         signs = np.where(np.arange(count) % 2 == 0, 1.0, -1.0)
         if count > 1:
             signs[0] *= 0.5
@@ -446,7 +445,7 @@ def smolyak_axis_data(rule: SmolyakAxisRule, level: int, /) -> SmolyakAxisData:
             "uniform",
         )
     if rule == "leja":
-        nodes = np.asarray(_leja_nodes(level_ + 1), dtype=float)
+        nodes = np.asarray(_leja_nodes(level_ + 1), dtype=np.float64)
         return SmolyakAxisData(
             nodes,
             None,
@@ -457,8 +456,8 @@ def smolyak_axis_data(rule: SmolyakAxisRule, level: int, /) -> SmolyakAxisData:
         )
     if rule == "gauss-hermite":
         rule_data = standard_normal_hermite_rule_data(level_ + 1)
-        nodes = np.asarray(rule_data.nodes, dtype=float)
-        quadrature_weights = np.asarray(rule_data.weights, dtype=float)
+        nodes = np.asarray(rule_data.nodes, dtype=np.float64)
+        quadrature_weights = np.asarray(rule_data.weights, dtype=np.float64)
         return SmolyakAxisData(
             nodes,
             quadrature_weights,

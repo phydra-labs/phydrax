@@ -74,7 +74,7 @@ def prepare_fourier_modal_case_batch(
     *,
     policy: FourierModalSolvePolicy | None = None,
 ) -> PreparedFourierModalCaseBatch:
-    shape = tuple(int(value) for value in case_shape)
+    shape = tuple(case_shape)
     if not shape or any(value < 1 for value in shape):
         raise ValueError("case_shape must contain positive dimensions.")
     problem_tuple = tuple(problems)

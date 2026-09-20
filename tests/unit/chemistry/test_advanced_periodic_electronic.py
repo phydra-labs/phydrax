@@ -297,7 +297,7 @@ def test_generic_periodic_provider_binds_method_task_result_and_provenance():
     method = phx.chemistry.ExternalElectronicMethodPlan(
         "provider-scalar-relativistic",
         phx.chemistry.ElectronicReferenceKind.RESTRICTED,
-        definition_ids=("scalar-relativistic-v1", "gth-fixture-v1"),
+        definition_ids=("scalar-relativistic", "gth-fixture"),
     )
     model = phx.chemistry.ElectronicModelChemistryPlan(
         method,

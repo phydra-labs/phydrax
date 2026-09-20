@@ -27,7 +27,7 @@ class HydrostaticLayerCoupling(StrictModule, NonTrainableState):
 
     @classmethod
     def from_densities(cls, densities: ArrayLike, gravity: float = 9.81, /):
-        rho, gravity_ = np.asarray(densities, dtype=float), float(gravity)
+        rho, gravity_ = np.asarray(densities, dtype=np.float64), float(gravity)
         if (
             rho.ndim != 1
             or rho.size == 0
@@ -59,7 +59,7 @@ class HydrostaticLayerCoupling(StrictModule, NonTrainableState):
 
     @property
     def layer_count(self) -> int:
-        return int(self.densities.size)
+        return self.densities.size
 
     def potential_energy(self, depths: ArrayLike, /) -> Array:
         values = jnp.asarray(depths)

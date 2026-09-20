@@ -75,7 +75,7 @@ class StateTrackingResult(StrictModule, NonTrainableState):
         self.subspace_singular_values = singular
         self.unitarity_residual = unitary_residual
         self.minimum_overlap = minimum
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(()) & (
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(()) & (
             unitary_residual <= 1.0e-8
         )
         self.previous_manifold_id = str(previous_manifold_id)
@@ -143,7 +143,7 @@ def track_excited_states(
     alignment = permutation_matrix.copy()
     singular_values = np.empty((roots,), dtype=np.asarray(overlap.real).dtype)
     for cluster in previous.clusters:
-        indices = np.asarray(cluster, dtype=int)
+        indices = np.asarray(cluster, dtype=np.int64)
         assigned = permutation[indices]
         block = overlap[np.ix_(indices, assigned)]
         left_vectors, singular, right_vectors_h = np.linalg.svd(block)

@@ -69,7 +69,7 @@ class AlgebraClaimEvidence(StrictModule, NonTrainableState):
         self.work = work_
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "algebra-claim-evidence-v1",
+                "kind": "algebra-claim-evidence",
                 "property": name,
                 "status": status,
                 "source": source,
@@ -95,7 +95,7 @@ class AlgebraPropertyEvidence(StrictModule, NonTrainableState):
         self.claims = values
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "algebra-property-evidence-v1",
+                "kind": "algebra-property-evidence",
                 "claims": [value.evidence_id for value in values],
             }
         )

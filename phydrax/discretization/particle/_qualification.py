@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -89,7 +89,7 @@ class ParticleClaimEvidence(StrictModule, NonTrainableState):
             raise ValueError("Particle claim evidence ID must be non-empty.")
         self.claim = claim
         self.evidence_id = identifier
-        self.satisfied = jnp.asarray(satisfied, dtype=bool)
+        self.satisfied = jnp.asarray(satisfied, dtype=jnp.bool_)
 
 
 class ParticleDerivativeQualification(StrictModule, NonTrainableState):
@@ -112,7 +112,7 @@ class ParticleConstraintResiduals(StrictModule):
 
 
 class AbstractParticleQualificationProfile(StrictModule, NonTrainableState):
-    profile_id: AbstractAttribute[str]
+    profile_id: eqx.AbstractVar[str]
 
 
 class ParticleQualificationProfile(AbstractParticleQualificationProfile):
@@ -206,8 +206,8 @@ class ParticleQualificationResult(StrictModule, NonTrainableState):
             if evidence
             else jnp.asarray(maturity is ParticleMethodMaturity.EXPERIMENTAL)
         )
-        execution = jnp.asarray(execution_successful, dtype=bool)
-        constraints = jnp.asarray(numerical_constraints_satisfied, dtype=bool)
+        execution = jnp.asarray(execution_successful, dtype=jnp.bool_)
+        constraints = jnp.asarray(numerical_constraints_satisfied, dtype=jnp.bool_)
         production = (
             execution
             & constraints
@@ -258,7 +258,7 @@ def particle_constraint_residuals(
     reference = jnp.asarray(reference_density, dtype=density_.dtype)
     volume = jnp.asarray(volumes, dtype=density_.dtype)
     active = (
-        jnp.ones(density_.shape, dtype=bool)
+        jnp.ones(density_.shape, dtype=jnp.bool_)
         if active_mask is None
         else jnp.asarray(active_mask, bool)
     )

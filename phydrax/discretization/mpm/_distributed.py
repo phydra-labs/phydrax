@@ -38,8 +38,8 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
         particle_capacity_per_device: int,
         halo_blocks: int = 1,
     ):
-        grid = tuple(int(value) for value in logical_grid_shape)
-        block = tuple(int(value) for value in block_shape)
+        grid = tuple(logical_grid_shape)
+        block = tuple(block_shape)
         owners = np.asarray(block_owner, dtype=np.int32)
         devices = int(device_count)
         capacity = int(particle_capacity_per_device)
@@ -169,7 +169,7 @@ def migrate_particles(
 ) -> MPMParticleMigration:
     owner = particle_owners(plan, position, bounds)
     previous = jnp.asarray(previous_owner, dtype=jnp.int32)
-    active_ = jnp.asarray(active, dtype=bool)
+    active_ = jnp.asarray(active, dtype=jnp.bool_)
     if owner.shape != previous.shape or owner.shape != active_.shape:
         raise ValueError("Distributed particle ownership arrays changed shape.")
     counts = jnp.bincount(
@@ -226,7 +226,7 @@ def distributed_global_transaction(
     accepted_generation: ArrayLike,
     /,
 ) -> MPMDistributedTransaction:
-    success = jnp.asarray(local_success, dtype=bool)
+    success = jnp.asarray(local_success, dtype=jnp.bool_)
     generation = jnp.asarray(accepted_generation, dtype=jnp.int32)
     global_success = jnp.all(success)
     failures = jnp.nonzero(~success, size=success.size, fill_value=-1)[0]

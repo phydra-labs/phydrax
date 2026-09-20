@@ -1,7 +1,7 @@
 # Specialized cardiac cellular models
 
 PhydraX provides separate, typed cellular families for atrial working
-myocytes, sinoatrial and atrioventricular nodal cells, and Purkinje fibres.
+myocytes, sinoatrial and atrioventricular nodal cells, and Purkinje fibers.
 These models do not select a phenotype with a boolean and do not pad every
 cell into one ventricular state vector. Each family owns a fixed named
 structure-of-arrays (SoA) schema, coefficients, current record, calcium
@@ -14,7 +14,7 @@ record, evidence record, and deterministic identity.
 | `CourtemancheAtrialModel` | Human working atrial myocyte, Courtemanche–Ramirez–Nattel 1998 informed | fast sodium; atrial `I_to` and `I_Kur`; `I_Kr`, `I_Ks`, `I_K1`; L-type Ca; Na/K pump; Na/Ca exchange; sarcolemmal Ca pump; one SR pool | Reduced 15-state membrane/Ca subsystem, not the full published 21-state cell |
 | `ZhangSinoatrialModel` | Rabbit peripheral SAN, Zhang et al. 2000 informed | `I_f`; L- and T-type Ca; rapid/slow and inward-rectifier K; one SR pool | Reduced autonomous pacemaker subsystem, not a central/peripheral parameter sweep |
 | `InadaAtrioventricularModel` | Rabbit compact AV node, Inada et al. 2009 informed | compact-node fast Na; L-type Ca; `I_to`; `I_Kr`, `I_K1`; `I_f`; cytosolic Ca removal | Reduced compact N-cell subsystem, not the complete AN–N–NH tissue model |
-| `StewartPurkinjeModel` | Human Purkinje fibre, Stewart et al. 2009 informed | fast Na; L-type Ca; `I_to`; `I_Kr`, `I_Ks`, `I_K1`; `I_f`; pump/exchange; one SR pool | Reduced 13-state cellular subsystem, not the full published ion-handling model |
+| `StewartPurkinjeModel` | Human Purkinje fiber, Stewart et al. 2009 informed | fast Na; L-type Ca; `I_to`; `I_Kr`, `I_Ks`, `I_K1`; `I_f`; pump/exchange; one SR pool | Reduced 13-state cellular subsystem, not the full published ion-handling model |
 
 The qualification names are part of each parameter fingerprint. A result
 must therefore be described with the exact reduced identity above; it must
@@ -201,6 +201,6 @@ A production stepping workflow should therefore be:
   cells*. Biophysical Journal 97, 2117–2127 (2009), PMID 19843444.
   [Physiome model record](https://models.cellml.org/exposure/d724fc43a0766bd29bedc1ca27f3380d)
 - Stewart P, Aslanidi OV, Noble D, Noble PJ, Boyett MR, Zhang H. *Mathematical
-  models of the electrical action potential of Purkinje fibre cells*.
+  models of the electrical action potential of Purkinje fiber cells*.
   Philosophical Transactions of the Royal Society A 367, 2225–2255 (2009),
   PMID 19414454. [Physiome model record](https://models.cellml.org/exposure/38cf8387b0707f0ef6947f009710aeb5/stewart_aslanidi_noble_noble_boyett_zhang_2009.cellml/view)

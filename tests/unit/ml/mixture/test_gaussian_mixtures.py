@@ -342,7 +342,7 @@ def test_mixture_reports_empty_singleton_constant_nonfinite_and_nonconvergence()
         initialization="first",
         max_iterations=2,
         tolerance=1e6,
-    ).fit_batch(MLBatch(_DATA[:3], sample_mask=jnp.zeros(3, dtype=bool)))
+    ).fit_batch(MLBatch(_DATA[:3], sample_mask=jnp.zeros(3, dtype="bool")))
     singleton = GaussianMixture(
         1,
         initialization="first",

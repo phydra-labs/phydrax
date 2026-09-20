@@ -465,7 +465,7 @@ class HaloCatalog(StrictModule):
         position = jax.lax.stop_gradient(jnp.asarray(positions))
         velocity = jax.lax.stop_gradient(jnp.asarray(velocities, dtype=position.dtype))
         mass = jax.lax.stop_gradient(jnp.asarray(masses, dtype=position.dtype))
-        active = jax.lax.stop_gradient(jnp.asarray(active_mask, dtype=bool))
+        active = jax.lax.stop_gradient(jnp.asarray(active_mask, dtype=jnp.bool_))
         scale = jax.lax.stop_gradient(jnp.asarray(scale_factor, dtype=position.dtype))
         if (
             ids.ndim != 1
@@ -524,7 +524,7 @@ class HaloCatalog(StrictModule):
             positions = np.asarray(handle[position_dataset])
             velocities = np.asarray(handle[velocity_dataset])
             masses = np.asarray(handle[mass_dataset])
-        active = np.ones(ids.shape, dtype=bool)
+        active = np.ones(ids.shape, dtype=np.bool_)
         return cls(
             ids,
             positions,

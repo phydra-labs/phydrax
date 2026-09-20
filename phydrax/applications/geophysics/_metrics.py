@@ -85,7 +85,7 @@ def fit_geophysical_climatology(
         )
     if not np.all(np.isfinite(weights) & (weights >= 0)):
         raise ValueError("Climatology time weights must be finite and nonnegative.")
-    active = jnp.broadcast_to(jnp.asarray(mask, dtype=bool), data.shape)
+    active = jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), data.shape)
     if not np.all(np.asarray(~active | jnp.isfinite(data))):
         raise ValueError("Active climatology samples must be finite.")
     weight = jnp.asarray(weights)[:, None, None, None] * active
@@ -165,7 +165,7 @@ def geophysical_forecast_metrics(
     """
     true, forecast = jnp.asarray(truth), jnp.asarray(ensemble)
     quantities = tuple(quantities)
-    leads = np.asarray(lead_seconds, dtype=float)
+    leads = np.asarray(lead_seconds, dtype=np.float64)
     members = tuple(member_ids)
     if (
         true.ndim != 5
@@ -206,7 +206,7 @@ def geophysical_forecast_metrics(
         raise ValueError("Area/time/layer weights must match their explicit axes.")
     if not all(np.all(np.isfinite(w) & (w >= 0)) for w in (area, duration, layer)):
         raise ValueError("Physical verification weights must be finite and nonnegative.")
-    included = jnp.asarray(mask, dtype=bool)
+    included = jnp.asarray(mask, dtype=jnp.bool_)
     if included.shape != true.shape:
         raise ValueError("The verification mask must have truth's full shape.")
     measure = jnp.broadcast_to(
@@ -234,7 +234,11 @@ def geophysical_forecast_metrics(
             )
         if climatology.quantity_ids != tuple(
             q.quantity_id for q in quantities
-        ) or climatology.values.shape != (na, nz, nv):
+        ) or climatology.values.shape != (
+            na,
+            nz,
+            nv,
+        ):
             raise ValueError(
                 "Climatology geometry/physical variable order does not match verification."
             )
@@ -372,7 +376,7 @@ def geophysical_extreme_reliability(
         raise ValueError(
             "Extreme threshold must be finite in the physical quantity unit."
         )
-    edges = np.asarray(bin_edges, dtype=float)
+    edges = np.asarray(bin_edges, dtype=np.float64)
     if (
         edges.ndim != 1
         or len(edges) < 2
@@ -381,7 +385,7 @@ def geophysical_extreme_reliability(
         or not np.all(np.diff(edges) > 0)
     ):
         raise ValueError("Reliability edges must strictly partition [0,1].")
-    active = jnp.broadcast_to(jnp.asarray(mask, dtype=bool), true.shape)
+    active = jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), true.shape)
     weights = jnp.broadcast_to(jnp.asarray(sample_weights), true.shape)
     if not np.all(np.isfinite(np.asarray(weights)) & (np.asarray(weights) >= 0)):
         raise ValueError("Reliability weights must be finite and nonnegative.")

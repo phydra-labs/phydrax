@@ -9,6 +9,8 @@ from typing import Any
 import equinox as eqx
 from jaxtyping import Array, Key
 
+from phydrax._strict import StrictModule
+
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._score_field import StateTimeScoreField
@@ -17,7 +19,7 @@ from ...dynamics import ContinuousSystem, StateLayout
 from ...stochastic._gaussian_diffusion import AbstractGaussianDiffusion
 
 
-class ProbabilityFlowVectorField(eqx.Module):
+class ProbabilityFlowVectorField(StrictModule):
     """Reverse-coordinate probability-flow field induced by one learned score."""
 
     process: AbstractGaussianDiffusion
@@ -54,7 +56,9 @@ def probability_flow_system(
     if state_layout.shape != process.state_shape:
         raise ValueError("state_layout shape must match the diffusion process.")
     if not state_layout.geometry.trivial:
-        raise ValueError("Probability flow initially requires trivial Euclidean geometry.")
+        raise ValueError(
+            "Probability flow initially requires trivial Euclidean geometry."
+        )
     if not isinstance(score_id, str) or not score_id:
         raise ValueError("score_id must be a non-empty string.")
     adapter = StateTimeScoreField(

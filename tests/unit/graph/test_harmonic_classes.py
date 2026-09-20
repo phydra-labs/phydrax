@@ -43,7 +43,9 @@ def test_conley_homology_requires_isolating_pair():
     neighborhood = phx.topology.CellSubcomplex.full(topology)
     exit_set = phx.topology.CellSubcomplex(
         topology,
-        tuple(np.zeros_like(np.asarray(mask), dtype=bool) for mask in neighborhood.masks),
+        tuple(
+            np.zeros_like(np.asarray(mask), dtype="bool") for mask in neighborhood.masks
+        ),
     )
     relation = phx.sparse.EdgeRelation(
         np.asarray([0]),

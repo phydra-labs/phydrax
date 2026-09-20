@@ -104,7 +104,7 @@ def _maximum_tree_difference(left, right) -> float:
 
 
 def _interleaved_work_quanta(integration_steps, *, chunk_size: int) -> int:
-    draws = int(integration_steps.shape[1])
+    draws = integration_steps.shape[1]
     total = 0
     for start in range(0, draws, chunk_size):
         chunk = integration_steps[:, start : start + chunk_size]

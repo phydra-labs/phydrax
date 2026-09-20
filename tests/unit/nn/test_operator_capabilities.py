@@ -20,11 +20,11 @@ def _grid_batch(
     nodes=None,
 ):
     nodes = (
-        jnp.arange(size, dtype=float) / max(size, 1)
+        jnp.arange(size, dtype="float64") / max(size, 1)
         if nodes is None
-        else jnp.asarray(nodes, dtype=float)
+        else jnp.asarray(nodes, dtype="float64")
     )
-    size = int(nodes.size)
+    size = nodes.size
     weights = jnp.ones(size) if physical_quadrature else None
     axes = (
         phx.nn.operator.OperatorAxis(
@@ -159,7 +159,7 @@ def test_model_instance_contract_tracks_capability_affecting_constructor_state()
 
 
 def test_capability_report_accepts_supported_fno_inputs():
-    masked = jnp.ones((2, 5, 5), dtype=bool).at[0, 0, 0].set(False)
+    masked = jnp.ones((2, 5, 5), dtype="bool").at[0, 0, 0].set(False)
     batch = _grid_batch(periodic=False, mask=masked)
     report = phx.nn.operator.validate_operator_architecture("FNO", batch)
 
@@ -184,7 +184,7 @@ def test_grid_operator_contracts_accept_resolution_transfer_and_rollout(architec
 
 
 def test_cno_and_uno_declare_their_actual_measure_and_mask_support():
-    masked = jnp.ones((2, 5, 5), dtype=bool).at[0, 2, 3].set(False)
+    masked = jnp.ones((2, 5, 5), dtype="bool").at[0, 2, 3].set(False)
     cno_masked = phx.nn.operator.validate_operator_architecture(
         "CNO", _grid_batch(mask=masked)
     )

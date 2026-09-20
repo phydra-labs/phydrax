@@ -751,7 +751,7 @@ def _run_periodic_static(case: Mapping[str, object], _reference):
 
     step_size = float(timesteps["step_size"])
     steps = int(timesteps["steps"])
-    resolutions = tuple(int(value) for value in grids["campaign"])
+    resolutions = tuple(grids["campaign"])
     unforced_success = True
     forced_success = True
     maximum_divergence = 0.0
@@ -762,7 +762,7 @@ def _run_periodic_static(case: Mapping[str, object], _reference):
             campaign_space, model, coefficient, oversampling[0]
         )
         initial = unforced.project_state(_periodic_velocity(campaign_space))
-        times = jnp.arange(steps + 1, dtype=float) * step_size
+        times = jnp.arange(steps + 1, dtype="float64") * step_size
         unforced_result = phx.solver.solve_etdrk(
             phx.solver.ETDRKMethod(2), unforced.semilinear_drift, initial, times
         )
@@ -1378,7 +1378,7 @@ def _run_channel(case: Mapping[str, object], _reference):
     grids = _mapping(case["grids"], "channel grids")
     coefficients = _mapping(case["coefficients"], "channel coefficients")
     timesteps = _mapping(case["timesteps"], "channel timesteps")
-    shape = tuple(int(value) for value in grids["shape"])
+    shape = tuple(grids["shape"])
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(shape[0]),
@@ -2637,7 +2637,7 @@ def _run_channel_wall_owner(case: Mapping[str, object], _reference):
     coefficients = _mapping(case["coefficients"], "channel wall coefficients")
     parameters = _mapping(case["parameters"], "channel wall parameters")
     grids = _mapping(case["grids"], "channel wall grids")
-    shape = tuple(int(value) for value in grids["shape"])
+    shape = tuple(grids["shape"])
     _, off, initial_off = _boundary_channel(
         "velocity",
         float(coefficients["viscosity"]),
@@ -2710,7 +2710,7 @@ def _run_channel_restriction(case: Mapping[str, object], _reference):
     coefficients = _mapping(case["coefficients"], "channel restriction coefficients")
     parameters = _mapping(case["parameters"], "channel restriction parameters")
     grids = _mapping(case["grids"], "channel restriction grids")
-    shape = tuple(int(value) for value in grids["shape"])
+    shape = tuple(grids["shape"])
     _, dynamics, initial = _boundary_channel(
         "velocity",
         float(coefficients["viscosity"]),
@@ -2911,10 +2911,7 @@ def _run_favre_dg_energy(case: Mapping[str, object], _reference):
             component_shape=(system.component_count,),
         ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},
@@ -3218,7 +3215,7 @@ def _run_unstructured_pressure(case: Mapping[str, object], _reference):
             negative_raw_production,
             jnp.zeros_like(
                 first.rate.ksgs.evidence.production_nonnegative,
-                dtype=bool,
+                dtype="bool",
             ),
         ),
     )

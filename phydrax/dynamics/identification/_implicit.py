@@ -13,7 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from .._layout import InputLayout, StateLayout
 from .._trajectory import TrajectoryData
 from ._features import AbstractFeatureLibrary, FeatureEvaluation, PolynomialFeatureLibrary
@@ -29,10 +29,10 @@ from ._sparse_regression import AbstractSparseRegression, SparseRegressionResult
 class AbstractImplicitFeatureLibrary(StrictModule):
     """Feature dictionary over state, derivative, and optional input values."""
 
-    state_layout: AbstractAttribute[StateLayout]
-    input_layout: AbstractAttribute[InputLayout | None]
-    feature_names: AbstractAttribute[tuple[str, ...]]
-    library_id: AbstractAttribute[str]
+    state_layout: eqx.AbstractVar[StateLayout]
+    input_layout: eqx.AbstractVar[InputLayout | None]
+    feature_names: eqx.AbstractVar[tuple[str, ...]]
+    library_id: eqx.AbstractVar[str]
 
     @property
     def num_features(self) -> int:

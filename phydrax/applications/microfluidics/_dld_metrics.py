@@ -29,7 +29,7 @@ class DLDOutletPlan(StrictModule, NonTrainableState):
 
     def __init__(self, outlet_x: float, transverse_edges: ArrayLike, /) -> None:
         location = float(outlet_x)
-        edges = np.asarray(transverse_edges, dtype=float)
+        edges = np.asarray(transverse_edges, dtype=np.float64)
         if (
             not np.isfinite(location)
             or edges.ndim != 1
@@ -57,7 +57,7 @@ class DLDOutletPlan(StrictModule, NonTrainableState):
         self, positions: ArrayLike, active: ArrayLike, /
     ) -> DLDOutletClassification:
         position = jnp.asarray(positions)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if (
             position.ndim != 2
             or position.shape[1] != 2
@@ -128,7 +128,7 @@ class DLDMetricPlan(StrictModule, NonTrainableState):
                 "kind": "dld-separation-metrics",
                 "class_count": classes,
                 "outlet_count": outlets,
-                "target_outlet_by_class": tuple(int(value) for value in target),
+                "target_outlet_by_class": tuple(target),
             }
         )
 
@@ -143,7 +143,7 @@ class DLDMetricPlan(StrictModule, NonTrainableState):
         /,
     ) -> DLDSeparationMetrics:
         particle_class_ = jnp.asarray(particle_class, dtype=jnp.int32)
-        initial = jnp.asarray(initial_active, dtype=bool)
+        initial = jnp.asarray(initial_active, dtype=jnp.bool_)
         terminal = jnp.asarray(terminal_code, dtype=jnp.int32)
         time = jnp.asarray(terminal_time)
         flow = jnp.asarray(volume_flow, dtype=time.dtype)

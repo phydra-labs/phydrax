@@ -21,7 +21,7 @@ def _canonical_bitmaps(
     bitmaps: Iterable[int],
     /,
 ) -> tuple[int, ...]:
-    values = tuple(int(value) for value in bitmaps)
+    values = tuple(bitmaps)
     if any(value < 0 or value >> algebra.dimension for value in values):
         raise ValueError("Clifford blade bitmap exceeds the algebra dimension.")
     if len(set(values)) != len(values):
@@ -61,7 +61,7 @@ class CliffordBladeLayout(StrictModule, NonTrainableState):
         self.axes = axes
         self.layout_id = canonical_fingerprint(
             {
-                "kind": "clifford-blade-layout-v1",
+                "kind": "clifford-blade-layout",
                 "algebra": algebra.algebra_id,
                 "bitmaps": list(resolved),
             }
@@ -79,7 +79,7 @@ class CliffordBladeLayout(StrictModule, NonTrainableState):
         grades: Sequence[int],
         /,
     ) -> "CliffordBladeLayout":
-        selected = tuple(int(value) for value in grades)
+        selected = tuple(grades)
         if any(value < 0 or value > algebra.dimension for value in selected):
             raise ValueError("Clifford grades must lie in the algebra dimension.")
         if len(set(selected)) != len(selected):

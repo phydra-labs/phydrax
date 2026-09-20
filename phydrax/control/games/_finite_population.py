@@ -92,9 +92,9 @@ class FinitePopulationJointPolicyEvaluation(StrictModule):
             raise ValueError("policy_ids must contain one ID per player.")
         labels = _integer_labels(cluster_labels, num_paths)
         validity = (
-            jnp.ones((num_paths,), dtype=bool)
+            jnp.ones((num_paths,), dtype=jnp.bool_)
             if path_valid is None
-            else jnp.asarray(path_valid, dtype=bool)
+            else jnp.asarray(path_valid, dtype=jnp.bool_)
         )
         if validity.shape != (num_paths,):
             raise ValueError("path_valid must contain one flag per path.")
@@ -173,8 +173,8 @@ class FinitePopulationBestResponseEvidence(StrictModule):
         value = _real_scalar(best_response_value, "best_response_value")
         numerical = _optional_bound(numerical_error_bound, value.dtype)
         statistical = _optional_bound(statistical_error_bound, value.dtype)
-        validity = jnp.asarray(valid, dtype=bool)
-        certification = jnp.asarray(certified, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
+        certification = jnp.asarray(certified, dtype=jnp.bool_)
         clusters = jnp.asarray(independent_cluster_count)
         if validity.shape != () or certification.shape != () or clusters.shape != ():
             raise ValueError(
@@ -489,7 +489,9 @@ def _real_scalar(value: ArrayLike, owner: str, /) -> Array:
         or jnp.issubdtype(result.dtype, jnp.complexfloating)
     ):
         raise ValueError(f"{owner} must be a real numeric scalar.")
-    return result if jnp.issubdtype(result.dtype, jnp.inexact) else result.astype(float)
+    return (
+        result if jnp.issubdtype(result.dtype, jnp.inexact) else result.astype("float64")
+    )
 
 
 def _real_matrix(value: ArrayLike, owner: str, /) -> Array:
@@ -500,7 +502,9 @@ def _real_matrix(value: ArrayLike, owner: str, /) -> Array:
         or jnp.issubdtype(result.dtype, jnp.complexfloating)
     ):
         raise ValueError(f"{owner} must be a two-dimensional real numeric array.")
-    return result if jnp.issubdtype(result.dtype, jnp.inexact) else result.astype(float)
+    return (
+        result if jnp.issubdtype(result.dtype, jnp.inexact) else result.astype("float64")
+    )
 
 
 def _optional_bound(value: ArrayLike | None, dtype: Any, /) -> Array:
@@ -597,9 +601,9 @@ def evaluate_finite_population_continuation(
         raise ValueError("plan and problem IDs must match.")
 
     size = problem.population_size
-    dtype = jnp.result_type(problem.fixed_point_result.flow.particles, float)
+    dtype = jnp.result_type(problem.fixed_point_result.flow.particles, jnp.float64)
     nan_players = jnp.full((size,), jnp.nan, dtype=dtype)
-    false_players = jnp.zeros((size,), dtype=bool)
+    false_players = jnp.zeros((size,), dtype=jnp.bool_)
     zero_counts = jnp.zeros((size,), dtype=jnp.int32)
     mfg_valid = _validated_mfg(problem.fixed_point_result)
     joint: FinitePopulationJointPolicyEvaluation | None = None
@@ -695,8 +699,8 @@ def evaluate_finite_population_continuation(
     numerical_errors = jnp.full((size,), jnp.nan, dtype=profile_values.dtype)
     statistical_errors = jnp.full((size,), jnp.nan, dtype=profile_values.dtype)
     upper_bounds = jnp.full((size,), jnp.nan, dtype=profile_values.dtype)
-    response_valid = jnp.zeros((size,), dtype=bool)
-    bound_available = jnp.zeros((size,), dtype=bool)
+    response_valid = jnp.zeros((size,), dtype=jnp.bool_)
+    bound_available = jnp.zeros((size,), dtype=jnp.bool_)
     cluster_counts = jnp.zeros((size,), dtype=jnp.int32)
     deviation_policy_ids: list[str | None] = [None] * size
     missing = False

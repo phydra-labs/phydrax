@@ -49,12 +49,8 @@ def _time_derivative(values: Array, times: Array, /) -> Array:
 
     previous_width = times[1:-1] - times[:-2]
     next_width = times[2:] - times[1:-1]
-    previous_weight = -next_width / (
-        previous_width * (previous_width + next_width)
-    )
-    center_weight = (next_width - previous_width) / (
-        previous_width * next_width
-    )
+    previous_weight = -next_width / (previous_width * (previous_width + next_width))
+    center_weight = (next_width - previous_width) / (previous_width * next_width)
     next_weight = previous_width / (next_width * (previous_width + next_width))
     extra_axes = (1,) * (values.ndim - 1)
     interior = (
@@ -135,8 +131,9 @@ class CharacteristicWorldtubeHistory(StrictModule, NonTrainableState):
             raise TypeError("mode_l and mode_m must be nonempty integer vectors.")
         if np.any(ell < 2) or np.any(np.abs(emm) > ell):
             raise ValueError("Radiative shear modes require l >= 2 and |m| <= l.")
-        if len({(int(l_value), int(m_value)) for l_value, m_value in zip(ell, emm)}) != int(
-            ell.size
+        if (
+            len({(int(l_value), int(m_value)) for l_value, m_value in zip(ell, emm)})
+            != ell.size
         ):
             raise ValueError("Characteristic mode pairs must be unique.")
         expected_boundary = (times.size, ell.size)
@@ -156,9 +153,9 @@ class CharacteristicWorldtubeHistory(StrictModule, NonTrainableState):
         self.mode_m = jnp.asarray(emm, dtype=jnp.int32)
         self.worldtube_shear_coefficient = jnp.asarray(boundary)
         self.radial_source = jnp.asarray(source)
-        self.time_capacity = int(times.size)
-        self.radial_capacity = int(radius.size)
-        self.mode_capacity = int(ell.size)
+        self.time_capacity = times.size
+        self.radial_capacity = radius.size
+        self.mode_capacity = ell.size
         self.history_id = canonical_fingerprint(
             {
                 "kind": "completed-characteristic-worldtube-history",
@@ -236,9 +233,7 @@ class CharacteristicEvolutionPlan(StrictModule, NonTrainableState):
         plan_name: str = "bondi-sachs-characteristic-evolution",
     ):
         time_count = _positive_capacity(time_capacity, "time_capacity", minimum=3)
-        radial_count = _positive_capacity(
-            radial_capacity, "radial_capacity", minimum=2
-        )
+        radial_count = _positive_capacity(radial_capacity, "radial_capacity", minimum=2)
         mode_count = _positive_capacity(mode_capacity, "mode_capacity")
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
@@ -279,8 +274,10 @@ class CharacteristicEvolutionPlan(StrictModule, NonTrainableState):
             raise ValueError("Worldtube history does not match prepared capacities.")
 
         radial_step = history.inverse_radius[1:] - history.inverse_radius[:-1]
-        increments = 0.5 * radial_step[None, :, None] * (
-            history.radial_source[:, :-1] + history.radial_source[:, 1:]
+        increments = (
+            0.5
+            * radial_step[None, :, None]
+            * (history.radial_source[:, :-1] + history.radial_source[:, 1:])
         )
         radial_tail = history.worldtube_shear_coefficient[:, None, :] + jnp.cumsum(
             increments, axis=1
@@ -289,9 +286,7 @@ class CharacteristicEvolutionPlan(StrictModule, NonTrainableState):
             (history.worldtube_shear_coefficient[:, None, :], radial_tail), axis=1
         )
         radial_derivative = jnp.swapaxes(
-            _time_derivative(
-                jnp.swapaxes(radial_field, 0, 1), history.inverse_radius
-            ),
+            _time_derivative(jnp.swapaxes(radial_field, 0, 1), history.inverse_radius),
             0,
             1,
         )
@@ -307,9 +302,11 @@ class CharacteristicEvolutionPlan(StrictModule, NonTrainableState):
         psi4 = _time_derivative(news, history.retarded_times)
         mode_power = jnp.real(news * jnp.conj(news))
         energy_flux = ein.contract("tm->t", mode_power) / (16.0 * jnp.pi)
-        energy_increment = 0.5 * (
-            energy_flux[1:] + energy_flux[:-1]
-        ) * (history.retarded_times[1:] - history.retarded_times[:-1])
+        energy_increment = (
+            0.5
+            * (energy_flux[1:] + energy_flux[:-1])
+            * (history.retarded_times[1:] - history.retarded_times[:-1])
+        )
         radiated_energy = jnp.concatenate(
             (jnp.zeros((1,), dtype=energy_flux.dtype), jnp.cumsum(energy_increment))
         )
@@ -331,9 +328,11 @@ class CharacteristicEvolutionPlan(StrictModule, NonTrainableState):
             radiated_energy[1:] >= radiated_energy[:-1]
         )
         physically_valid = mode_valid & energy_valid
-        derivative_valid = finite & jnp.all(
-            jnp.isfinite(news[derivative_mask])
-        ) & jnp.all(jnp.isfinite(psi4[derivative_mask]))
+        derivative_valid = (
+            finite
+            & jnp.all(jnp.isfinite(news[derivative_mask]))
+            & jnp.all(jnp.isfinite(psi4[derivative_mask]))
+        )
         qualified = finite & converged & physically_valid & derivative_valid
 
         status = jnp.asarray(int(CharacteristicStatus.SUCCESS), dtype=jnp.int32)

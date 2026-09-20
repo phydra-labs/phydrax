@@ -46,7 +46,7 @@ class QuantumLatticeVMCOperator(AbstractDiscreteQuantumOperator):
             raise ValueError(
                 f"configurations must end in shape {self.configuration_shape}."
             )
-        batch_shape = tuple(int(value) for value in values.shape[:-1])
+        batch_shape = tuple(values.shape[:-1])
         count = prod(batch_shape) if batch_shape else 1
         return values.reshape((count,) + self.configuration_shape), batch_shape
 

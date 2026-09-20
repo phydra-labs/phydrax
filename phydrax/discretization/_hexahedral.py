@@ -118,7 +118,7 @@ def _quadrilateral_tensor_permutation(
 ):
     """Map one local C-order tensor grid to canonical face positions."""
 
-    permutation = tuple(int(value) for value in vertex_permutation)
+    permutation = tuple(vertex_permutation)
     _cycle_permutation(list(range(4)), permutation)
     widths = (int(width_u), int(width_v))
     if any(width <= 0 for width in widths):
@@ -176,7 +176,7 @@ def hexahedral_connectivity(
     edge_map = {key: index for index, key in enumerate(edge_keys)}
     edges = np.asarray(edge_keys, dtype=np.int32)
     cell_edges = np.empty((len(cells), 12), dtype=np.int32)
-    cell_edge_signs = np.empty((len(cells), 12), dtype=float)
+    cell_edge_signs = np.empty((len(cells), 12), dtype=np.float64)
     for cell_index, cell in enumerate(cells):
         for local_edge, (start, stop) in enumerate(_EDGES):
             pair = (int(cell[start]), int(cell[stop]))
@@ -207,7 +207,7 @@ def hexahedral_connectivity(
     faces = np.asarray([face_cycles[key] for key in face_keys], dtype=np.int32)
     counts = np.asarray([face_counts[key] for key in face_keys], dtype=np.int32)
     cell_faces = np.empty((len(cells), 6), dtype=np.int32)
-    cell_face_signs = np.empty((len(cells), 6), dtype=float)
+    cell_face_signs = np.empty((len(cells), 6), dtype=np.float64)
     cell_face_vertex_permutations = np.empty(
         (len(cells), 6, 4),
         dtype=np.int32,
@@ -228,7 +228,7 @@ def hexahedral_connectivity(
         raise ValueError("Shared hexahedral faces must have opposite orientation.")
 
     face_edges = np.empty((len(faces), 4), dtype=np.int32)
-    face_edge_signs = np.empty((len(faces), 4), dtype=float)
+    face_edge_signs = np.empty((len(faces), 4), dtype=np.float64)
     for face_index, face in enumerate(faces):
         for position in range(4):
             pair = (
@@ -239,8 +239,8 @@ def hexahedral_connectivity(
             face_edges[face_index, position] = edge_map[key]
             face_edge_signs[face_index, position] = 1.0 if pair == key else -1.0
     boundary_faces = counts == 1
-    boundary_edges = np.zeros(len(edges), dtype=bool)
-    boundary_vertices = np.zeros(vertices, dtype=bool)
+    boundary_edges = np.zeros(len(edges), dtype=np.bool_)
+    boundary_vertices = np.zeros(vertices, dtype=np.bool_)
     if np.any(boundary_faces):
         boundary_edges[np.unique(face_edges[boundary_faces])] = True
         boundary_vertices[np.unique(faces[boundary_faces])] = True

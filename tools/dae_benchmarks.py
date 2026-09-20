@@ -373,8 +373,8 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
     adaptive_observed = solution.grid_origin == "controller"
     accepted_count = int(solution.step_history.count)
     attempt_count = int(solution.attempt_history.count)
-    accepted_valid = np.asarray(solution.step_history.valid, dtype=bool)
-    attempt_valid = np.asarray(solution.attempt_history.valid, dtype=bool)
+    accepted_valid = np.asarray(solution.step_history.valid, dtype="bool")
+    attempt_valid = np.asarray(solution.attempt_history.valid, dtype="bool")
     accepted_errors = np.asarray(solution.step_history.error_ratios)[accepted_valid]
     accepted_orders = np.asarray(solution.step_history.orders)[accepted_valid]
     attempt_status = np.asarray(solution.attempt_history.status)[attempt_valid]
@@ -411,7 +411,7 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
         and replay.estimated_memory_bytes == case.prepared.plan.replay_memory_bytes
     )
     consistency_status = int(solution.regularity.consistency_status)
-    regularity_valid = np.asarray(solution.regularity.stage_valid, dtype=bool)
+    regularity_valid = np.asarray(solution.regularity.stage_valid, dtype="bool")
     regularity_status = np.asarray(solution.regularity.stage_status)[regularity_valid]
     regularity_ranks = np.asarray(solution.regularity.stage_rank)[regularity_valid]
     regularity_conditions = np.asarray(solution.regularity.stage_condition_estimate)[
@@ -460,7 +460,7 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
         "time_id": solution.time_id,
         "plan_id": solution.plan_id,
         "prepared_id": solution.prepared_id,
-        "grid_points": int(solution.times.size),
+        "grid_points": solution.times.size,
         "state_shape": list(solution.state_shape),
         "successful": bool(solution.successful),
         "finite_outputs": finite_outputs,
@@ -530,7 +530,7 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
                 "consistency_condition_estimate": _finite_float(
                     solution.regularity.consistency_condition_estimate
                 ),
-                "stage_probe_count": int(regularity_status.size),
+                "stage_probe_count": regularity_status.size,
                 "stage_status_histogram": _enum_histogram(
                     regularity_status,
                     phx.solver.DAERegularityStatus,
@@ -636,13 +636,12 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
         },
         "storage": {
             "scope": (
-                "logical array payloads; excludes allocator pools and compiled "
-                "executables"
+                "logical array payloads; excludes allocator pools and compiled executables"
             ),
             "prepared_array_bytes": logical_array_bytes(case.prepared),
             "solution_array_bytes": logical_array_bytes(solution),
-            "state_trajectory_bytes": int(solution.states.nbytes),
-            "state_rate_trajectory_bytes": int(solution.state_rates.nbytes),
+            "state_trajectory_bytes": solution.states.nbytes,
+            "state_rate_trajectory_bytes": solution.state_rates.nbytes,
             "accepted_history_bytes": logical_array_bytes(solution.step_history),
             "attempt_history_bytes": logical_array_bytes(solution.attempt_history),
             "regularity_evidence_bytes": logical_array_bytes(solution.regularity),
@@ -1083,7 +1082,6 @@ def main() -> None:
     cases = fixed_cases + adaptive_cases
     records = tuple(_benchmark_case(case, repeats) for case in cases)
     report = {
-        "schema_version": "phydrax-dae-benchmark-v3",
         "protocol": {
             "timing": (
                 "model setup, solver preparation, lowering, compilation, first "
@@ -1096,12 +1094,10 @@ def main() -> None:
                 "symmetric finite-difference reference"
             ),
             "regularity": (
-                "local consistency and BDF-stage operator evidence only; no global "
-                "DAE-index claim"
+                "local consistency and BDF-stage operator evidence only; no global DAE-index claim"
             ),
             "memory": (
-                "logical result payloads and replay-plan estimates only; no "
-                "cumulative allocator counters"
+                "logical result payloads and replay-plan estimates only; no cumulative allocator counters"
             ),
         },
         "configuration": {

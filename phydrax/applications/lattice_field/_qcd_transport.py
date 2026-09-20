@@ -46,11 +46,11 @@ class QCDTransportTable(StrictModule, NonTrainableState):
         source_kind: QCDTransportSourceKind,
         source_id: str,
     ):
-        temperatures_ = np.asarray(temperatures, dtype=float)
-        chemical = np.asarray(baryon_chemical_potentials, dtype=float)
-        shear = np.asarray(shear_viscosity_over_entropy, dtype=float)
-        bulk = np.asarray(bulk_viscosity_over_entropy, dtype=float)
-        diffusion = np.asarray(baryon_diffusion, dtype=float)
+        temperatures_ = np.asarray(temperatures, dtype=np.float64)
+        chemical = np.asarray(baryon_chemical_potentials, dtype=np.float64)
+        shear = np.asarray(shear_viscosity_over_entropy, dtype=np.float64)
+        bulk = np.asarray(bulk_viscosity_over_entropy, dtype=np.float64)
+        diffusion = np.asarray(baryon_diffusion, dtype=np.float64)
         if (
             temperatures_.ndim != 1
             or chemical.ndim != 1
@@ -68,9 +68,9 @@ class QCDTransportTable(StrictModule, NonTrainableState):
         ):
             raise ValueError("QCD transport fields must align with table axes.")
         valid_ = (
-            np.ones(expected, dtype=bool)
+            np.ones(expected, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if (
             valid_.shape != expected

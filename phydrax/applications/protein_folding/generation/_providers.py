@@ -353,7 +353,7 @@ def sample_protein_coordinate_proposals(
     sparse = generic.qualification
     failures = ProteinCoordinateFailureEvidence(
         raw_nonfinite,
-        ~jnp.asarray(generic.solver_valid, dtype=bool),
+        ~jnp.asarray(generic.solver_valid, dtype=jnp.bool_),
         ~jnp.all(decoded.periodic_valid, axis=1),
         closure_failed,
         ~decoded.finite,
@@ -366,7 +366,7 @@ def sample_protein_coordinate_proposals(
         ~jnp.all(full.peptide_planar, axis=1),
         ~jnp.all(full.torsion_valid, axis=1),
         (
-            jnp.asarray(generic.solver_valid, dtype=bool)
+            jnp.asarray(generic.solver_valid, dtype=jnp.bool_)
             & decoded.valid
             & sparse.accepted
             & full.successful

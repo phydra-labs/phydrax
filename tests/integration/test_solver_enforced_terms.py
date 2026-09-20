@@ -38,9 +38,11 @@ def _paired_batch(domain, xs, ts):
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
+                jnp.asarray(xs, dtype="float64").reshape((-1, 1)), dims=(axis, None)
             ),
-            "t": cx.AxisArray(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
+            "t": cx.AxisArray(
+                jnp.asarray(ts, dtype="float64").reshape((-1,)), dims=(axis,)
+            ),
         }
     )
     return PointBatch(points=points, structure=structure)
@@ -66,10 +68,10 @@ def test_functional_solver_builds_enforced_pipeline_terms():
     )
 
     anchors = {
-        "x": jnp.array([[0.25], [0.75]], dtype=float),
-        "t": jnp.array([0.6, 0.4], dtype=float),
+        "x": jnp.array([[0.25], [0.75]], dtype="float64"),
+        "t": jnp.array([0.6, 0.4], dtype="float64"),
     }
-    anchor_values = jnp.array([3.0, 4.0], dtype=float)
+    anchor_values = jnp.array([3.0, 4.0], dtype="float64")
     interior = InteriorAnchors(
         "u",
         points=anchors,

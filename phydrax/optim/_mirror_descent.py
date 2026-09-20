@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._mirror_geometry import ParameterMirrorGeometry
 
 
@@ -59,8 +59,8 @@ class MirrorDescentState(StrictModule):
 class AbstractMirrorOptimizer(StrictModule):
     """Optimizer contract whose updates translate declared dual coordinates."""
 
-    optimizer_id: AbstractAttribute[str]
-    parameter_geometry: AbstractAttribute[ParameterMirrorGeometry]
+    optimizer_id: eqx.AbstractVar[str]
+    parameter_geometry: eqx.AbstractVar[ParameterMirrorGeometry]
 
     @abstractmethod
     def init(self, parameters: PyTree[Any], /) -> Any:

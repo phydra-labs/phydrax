@@ -6,11 +6,11 @@ from phydrax.metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 
 
 _IDS = {
-    "chart_id": "cartesian-v1",
-    "convention_id": "relativity-convention-v1",
-    "scale_id": "relativity-scale-v1",
-    "topology_id": "grid-topology-v1",
-    "geometry_lineage_id": "adm-geometry-v1",
+    "chart_id": "cartesian",
+    "convention_id": "relativity-convention",
+    "scale_id": "relativity-scale",
+    "topology_id": "grid-topology",
+    "geometry_lineage_id": "adm-geometry",
 }
 
 
@@ -83,8 +83,8 @@ def test_adm_grid_geometry_detects_non_spatial_metric_and_inverse_defects_per_la
         inverse,
         jnp.ones(2, dtype=dtype),
         jnp.zeros((2, 3, 3), dtype=dtype),
-        jnp.ones(2, dtype=bool),
-        jnp.ones(2, dtype=bool),
+        jnp.ones(2, dtype="bool"),
+        jnp.ones(2, dtype="bool"),
         snapshot_token=jnp.asarray(0, dtype=jnp.int32),
         **_IDS,
     )
@@ -119,7 +119,7 @@ def test_stress_energy_projection_preserves_defects_and_geometry_binding():
         convention_id=geometry.convention_id,
         scale_id=geometry.scale_id,
         topology_id=geometry.topology_id,
-        projection_id="stress-energy-v1",
+        projection_id="stress-energy",
     )
 
     finite, physically_valid, all_valid = jax.jit(
@@ -141,8 +141,8 @@ def test_stress_energy_compatibility_rejects_changed_geometry_lineage():
         jnp.ones(2, dtype=dtype),
         jnp.zeros((2, 3), dtype=dtype),
         jnp.zeros((2, 3, 3), dtype=dtype),
-        jnp.ones(2, dtype=bool),
-        jnp.ones(2, dtype=bool),
+        jnp.ones(2, dtype="bool"),
+        jnp.ones(2, dtype="bool"),
         jnp.zeros(2, dtype=dtype),
         jnp.zeros(2, dtype=dtype),
         snapshot_token=geometry.snapshot_token,
@@ -150,7 +150,7 @@ def test_stress_energy_compatibility_rejects_changed_geometry_lineage():
         convention_id=geometry.convention_id,
         scale_id=geometry.scale_id,
         topology_id=geometry.topology_id,
-        projection_id="stress-energy-v1",
+        projection_id="stress-energy",
     )
 
     assert not bool(projection.compatible_with(geometry))
@@ -163,8 +163,8 @@ def test_stress_energy_compatibility_rejects_stale_dynamic_stage_under_jit():
         jnp.ones(2, dtype=dtype),
         jnp.zeros((2, 3), dtype=dtype),
         jnp.zeros((2, 3, 3), dtype=dtype),
-        jnp.ones(2, dtype=bool),
-        jnp.ones(2, dtype=bool),
+        jnp.ones(2, dtype="bool"),
+        jnp.ones(2, dtype="bool"),
         jnp.zeros(2, dtype=dtype),
         jnp.zeros(2, dtype=dtype),
         snapshot_token=jnp.asarray(6, dtype=jnp.int32),
@@ -172,7 +172,7 @@ def test_stress_energy_compatibility_rejects_stale_dynamic_stage_under_jit():
         convention_id=geometry.convention_id,
         scale_id=geometry.scale_id,
         topology_id=geometry.topology_id,
-        projection_id="stress-energy-v1",
+        projection_id="stress-energy",
     )
 
     compatible = jax.jit(
@@ -193,8 +193,8 @@ def test_exchange_records_reject_misaligned_shapes_and_invalid_identities():
             identity,
             jnp.ones(2, dtype=dtype),
             jnp.zeros((2, 3, 3), dtype=dtype),
-            jnp.ones(2, dtype=bool),
-            jnp.ones(2, dtype=bool),
+            jnp.ones(2, dtype="bool"),
+            jnp.ones(2, dtype="bool"),
             snapshot_token=jnp.asarray(0, dtype=jnp.int32),
             **_IDS,
         )
@@ -206,8 +206,8 @@ def test_exchange_records_reject_misaligned_shapes_and_invalid_identities():
             identity,
             jnp.ones(2, dtype=dtype),
             jnp.zeros((2, 3, 3), dtype=dtype),
-            jnp.ones(2, dtype=bool),
-            jnp.ones(2, dtype=bool),
+            jnp.ones(2, dtype="bool"),
+            jnp.ones(2, dtype="bool"),
             snapshot_token=jnp.zeros(2, dtype=jnp.int32),
             **_IDS,
         )
@@ -216,8 +216,8 @@ def test_exchange_records_reject_misaligned_shapes_and_invalid_identities():
             jnp.ones(2, dtype=dtype),
             jnp.zeros((2, 3), dtype=dtype),
             identity,
-            jnp.ones(2, dtype=bool),
-            jnp.ones(2, dtype=bool),
+            jnp.ones(2, dtype="bool"),
+            jnp.ones(2, dtype="bool"),
             jnp.zeros(2, dtype=dtype),
             jnp.zeros(2, dtype=dtype),
             snapshot_token=jnp.asarray(0, dtype=jnp.int32),

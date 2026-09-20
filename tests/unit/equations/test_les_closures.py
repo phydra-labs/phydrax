@@ -120,7 +120,7 @@ def test_les_filter_scale_and_provenance_validate_physical_semantics():
     assert first.provenance_id == _provenance().provenance_id
     assert first.provenance_id != _provenance(filter_name="box").provenance_id
     assert first.provenance_id != _provenance(discretization_id="grid-b").provenance_id
-    assert first.provenance_id != _provenance(regime="wall-modelled").provenance_id
+    assert first.provenance_id != _provenance(regime="wall-modeled").provenance_id
     literature = _provenance(
         source_kind="literature", evidence_ids=("doi:10.example/les",)
     )
@@ -154,7 +154,7 @@ def test_model_and_prepared_identities_separate_formula_from_binding():
     assert prepared.prepared_id != changed.prepare(provenance).prepared_id
     assert (
         prepared.prepared_id
-        != model.prepare(_provenance(regime="wall-modelled")).prepared_id
+        != model.prepare(_provenance(regime="wall-modeled")).prepared_id
     )
 
     for model_type in (

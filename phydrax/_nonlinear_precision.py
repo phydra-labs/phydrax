@@ -174,8 +174,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
             for value in reduction_inputs
         ):
             raise ValueError(
-                "Nonlinear accumulation precision cannot be narrower than "
-                "residual or direction precision."
+                "Nonlinear accumulation precision cannot be narrower than residual or direction precision."
             )
         effective_accumulation = (
             accumulation
@@ -248,8 +247,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
             )
         if self.residual_dtype is not None and residual_dtype != self.residual_dtype:
             raise TypeError(
-                "Nonlinear residual dtype "
-                f"{residual_dtype} does not match {self.residual_dtype}."
+                f"Nonlinear residual dtype {residual_dtype} does not match {self.residual_dtype}."
             )
         return state_dtype, residual_dtype
 

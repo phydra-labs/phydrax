@@ -38,8 +38,8 @@ class GaugeRenormalizationEvidence(StrictModule):
         self.function_residual = jnp.asarray(function_residual)
         self.operator_residual = jnp.asarray(operator_residual)
         self.state_residual = jnp.asarray(state_residual)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.gauge_kind = str(gauge_kind)
 
 

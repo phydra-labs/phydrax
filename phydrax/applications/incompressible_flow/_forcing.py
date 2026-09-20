@@ -40,8 +40,8 @@ def _periodic_modal_geometry(
     conjugates = np.ravel_multi_index(conjugate_multi, shape)
     if conjugates.shape != (modal_size,):
         raise ValueError("Periodic modal conjugate geometry is inconsistent.")
-    magnitude = np.sqrt(np.asarray(projector.wavenumber_squared, dtype=float))
-    admissible = np.asarray(projector.admissibility_mask, dtype=bool)
+    magnitude = np.sqrt(np.asarray(projector.wavenumber_squared, dtype=np.float64))
+    admissible = np.asarray(projector.admissibility_mask, dtype=np.bool_)
     volume = float(np.prod([float(axis.length) for axis in discretization.axes]))
     if (
         magnitude.shape != shape
@@ -182,7 +182,7 @@ class ConstantPowerFourierForcingPlan(StrictModule, NonTrainableState):
         if np.any(flat_mask != flat_mask[conjugates]):
             raise ValueError("The declared forcing interval is not Hermitian closed.")
         index_dtype = np.dtype(np.int32)
-        preparation_bytes = int(mask.nbytes + conjugates.size * index_dtype.itemsize)
+        preparation_bytes = mask.nbytes + conjugates.size * index_dtype.itemsize
         if preparation_bytes > maximum_bytes:
             raise ValueError(
                 "Constant-power forcing preparation exceeds maximum_preparation_bytes."
@@ -344,7 +344,8 @@ class SolenoidalHermitianFourierBasis(StrictModule, NonTrainableState):
         dimension = projector.spatial_dimension
         polarization_count = dimension - 1
         flat_waves = tuple(
-            np.asarray(wave, dtype=float).reshape((-1,)) for wave in projector.wavenumbers
+            np.asarray(wave, dtype=np.float64).reshape((-1,))
+            for wave in projector.wavenumbers
         )
         polarizations = np.empty(
             (representatives.size, polarization_count, dimension),
@@ -353,14 +354,14 @@ class SolenoidalHermitianFourierBasis(StrictModule, NonTrainableState):
         for row, modal_index in enumerate(representatives):
             wave = np.asarray(
                 [component[modal_index] for component in flat_waves],
-                dtype=float,
+                dtype=np.float64,
             )
             unit = wave / np.linalg.norm(wave)
             if dimension == 2:
                 polarizations[row, 0] = np.asarray((-unit[1], unit[0]))
             else:
                 pivot = int(np.argmin(np.abs(unit)))
-                reference = np.zeros((3,), dtype=float)
+                reference = np.zeros((3,), dtype=np.float64)
                 reference[pivot] = 1.0
                 first = np.cross(unit, reference)
                 first /= np.linalg.norm(first)
@@ -386,7 +387,7 @@ class SolenoidalHermitianFourierBasis(StrictModule, NonTrainableState):
         self.forced_mask = jnp.asarray(mask)
         self.minimum_wavenumber = minimum_wave
         self.maximum_wavenumber = maximum_wave
-        self.pair_count = int(representatives.size)
+        self.pair_count = representatives.size
         self.polarization_count = polarization_count
         self.coordinate_size = coordinate_size
         self.volume = volume

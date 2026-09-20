@@ -52,7 +52,7 @@ class VortexParticleFlowProblem(StrictModule, NonTrainableState):
     ):
         name_ = str(name)
         dimension_ = int(dimension)
-        viscosity = jnp.asarray(kinematic_viscosity, dtype=float)
+        viscosity = jnp.asarray(kinematic_viscosity, dtype=jnp.float64)
         if not name_:
             raise ValueError("Vortex problem name must be nonempty.")
         if dimension_ not in (2, 3):

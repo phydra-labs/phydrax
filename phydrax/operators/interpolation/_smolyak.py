@@ -76,13 +76,13 @@ class SmolyakInterpolationBlock(StrictModule, NonTrainableState):
         signature: tuple[int, ...],
     ):
         self.axes = jnp.asarray(axes, dtype=jnp.int32)
-        self.nodes = tuple(jnp.asarray(value, dtype=float) for value in nodes)
+        self.nodes = tuple(jnp.asarray(value, dtype=jnp.float64) for value in nodes)
         self.barycentric_weights = tuple(
-            jnp.asarray(value, dtype=float) for value in barycentric_weights
+            jnp.asarray(value, dtype=jnp.float64) for value in barycentric_weights
         )
         self.values = jnp.asarray(values)
         self.coefficients = jnp.asarray(coefficients)
-        self.signature = tuple(int(value) for value in signature)
+        self.signature = tuple(signature)
 
     def evaluate(self, reference: Array, /) -> Array:
         term_values = self.values
@@ -98,9 +98,7 @@ class SmolyakInterpolationBlock(StrictModule, NonTrainableState):
                     axes=((0,), (0,)),
                 )
             )(basis, term_values)
-        coefficient_shape = (int(self.coefficients.shape[0]),) + (1,) * (
-            term_values.ndim - 1
-        )
+        coefficient_shape = (self.coefficients.shape[0],) + (1,) * (term_values.ndim - 1)
         weighted = term_values * jnp.reshape(self.coefficients, coefficient_shape)
         return jnp.sum(weighted, axis=0)
 
@@ -133,8 +131,7 @@ def _resolve_axis_rules(
             expected = "standard-normal" if rule_ == "gauss-hermite" else "uniform"
             if transport.reference_measure != expected:
                 raise ValueError(
-                    f"Interpolation rule {rule_!r} on probability axis {axis} "
-                    f"requires reference measure {expected!r}."
+                    f"Interpolation rule {rule_!r} on probability axis {axis} requires reference measure {expected!r}."
                 )
         elif rule_ == "gauss-hermite":
             raise TypeError(
@@ -145,7 +142,7 @@ def _resolve_axis_rules(
 
 
 def _from_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /):
-    reference = jnp.asarray(value, dtype=float)
+    reference = jnp.asarray(value, dtype=jnp.float64)
     if isinstance(factor, ProbabilityDomain):
         return factor.reference_transport.from_reference(reference)
     if rule == "gauss-hermite":
@@ -156,7 +153,7 @@ def _from_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: 
 
 
 def _to_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /):
-    physical = jnp.asarray(value, dtype=float)
+    physical = jnp.asarray(value, dtype=jnp.float64)
     if isinstance(factor, ProbabilityDomain):
         return factor.reference_transport.to_reference(physical)
     if rule == "gauss-hermite":
@@ -188,7 +185,7 @@ def _build_topology(
             smolyak_axis_data(rule, axis_level(term.index, axis))
             for axis, rule in enumerate(rules)
         )
-        shape = tuple(int(data.nodes.shape[0]) for data in axis_data)
+        shape = tuple(data.nodes.shape[0] for data in axis_data)
         local_indices: list[int] = []
         ranges = tuple(range(count) for count in shape)
         for position in itertools.product(*ranges):
@@ -226,7 +223,9 @@ def _build_topology(
                 np.asarray(gather, dtype=np.int32),
             )
         )
-    return np.asarray(points, dtype=float).reshape((-1, dimension)), tuple(topologies)
+    return np.asarray(points, dtype=np.float64).reshape((-1, dimension)), tuple(
+        topologies
+    )
 
 
 def _build_blocks(
@@ -341,8 +340,7 @@ class SmolyakInterpolant(StrictModule, NonTrainableState):
             raise TypeError(f"SmolyakInterpolant received unsupported keywords: {names}.")
         if len(coordinates) != len(self.factors):
             raise ValueError(
-                f"Expected {len(self.factors)} interpolation coordinates, "
-                f"got {len(coordinates)}."
+                f"Expected {len(self.factors)} interpolation coordinates, got {len(coordinates)}."
             )
         reference = jnp.stack(
             tuple(
@@ -379,8 +377,7 @@ def interpolate_smolyak(
     dependencies = tuple(function.deps)
     if len(dependencies) != plan.dimension:
         raise ValueError(
-            f"SmolyakInterpolationPlan dimension={plan.dimension} but function has "
-            f"{len(dependencies)} dependencies."
+            f"SmolyakInterpolationPlan dimension={plan.dimension} but function has {len(dependencies)} dependencies."
         )
     raw_factors = tuple(function.domain.factor(label) for label in dependencies)
     factors = tuple(_unwrap(factor) for factor in raw_factors)
@@ -398,7 +395,7 @@ def interpolate_smolyak(
         _from_reference(
             factor,
             rule,
-            jnp.asarray(canonical_points[:, axis], dtype=float),
+            jnp.asarray(canonical_points[:, axis], dtype=jnp.float64),
         )
         for axis, (factor, rule) in enumerate(zip(scalar_factors, rules, strict=True))
     )
@@ -424,8 +421,8 @@ def interpolate_smolyak(
     )
     evaluated = fitting_function(points, key=key)
     values = jnp.asarray(evaluated.data)
-    num_evaluations = int(canonical_points.shape[0])
-    if values.ndim < 1 or int(values.shape[0]) != num_evaluations:
+    num_evaluations = canonical_points.shape[0]
+    if values.ndim < 1 or values.shape[0] != num_evaluations:
         raise ValueError(
             "Smolyak source evaluation must return one leading value per node."
         )
@@ -439,7 +436,7 @@ def interpolate_smolyak(
         axis_rules=rules,
         anisotropy=plan.anisotropy,
         level=plan.level,
-        output_shape=tuple(int(value) for value in values.shape[1:]),
+        output_shape=tuple(values.shape[1:]),
         num_terms=len(topologies),
         num_evaluations=num_evaluations,
         maximum_active_dimension=max(len(topology.axes) for topology in topologies),
@@ -493,7 +490,7 @@ def _interpolate_index_set(
         _from_reference(
             factor,
             rule,
-            jnp.asarray(canonical_points[:, axis], dtype=float),
+            jnp.asarray(canonical_points[:, axis], dtype=jnp.float64),
         )
         for axis, (factor, rule) in enumerate(zip(scalar_factors, rules, strict=True))
     )
@@ -518,7 +515,7 @@ def _interpolate_index_set(
         metadata={},
     )
     values = jnp.asarray(fitting_function(points, key=key).data)
-    if values.ndim < 1 or int(values.shape[0]) != int(canonical_points.shape[0]):
+    if values.ndim < 1 or values.shape[0] != canonical_points.shape[0]:
         raise ValueError(
             "Adaptive Smolyak source evaluation must preserve the node axis."
         )
@@ -532,9 +529,9 @@ def _interpolate_index_set(
         axis_rules=rules,
         anisotropy=plan.anisotropy,
         level=max(sum(index) for index in index_set.indices) + 1,
-        output_shape=tuple(int(size) for size in values.shape[1:]),
+        output_shape=tuple(values.shape[1:]),
         num_terms=len(topologies),
-        num_evaluations=int(canonical_points.shape[0]),
+        num_evaluations=canonical_points.shape[0],
         maximum_active_dimension=max(len(topology.axes) for topology in topologies),
     )
     return (
@@ -682,7 +679,7 @@ def interpolate_adaptive_smolyak(
             )
             work = max(
                 1,
-                proposed_nodes - int(current_points.shape[0]),
+                proposed_nodes - current_points.shape[0],
             )
             if proposed_nodes > plan.max_nodes:
                 node_limited = True
@@ -698,7 +695,7 @@ def interpolate_adaptive_smolyak(
                 _from_reference(
                     factor,
                     rule,
-                    jnp.asarray(proposed_points[:, axis], dtype=float),
+                    jnp.asarray(proposed_points[:, axis], dtype=jnp.float64),
                 )
                 for axis, (factor, rule) in enumerate(
                     zip(factors, proposed_rules, strict=True)
@@ -708,7 +705,7 @@ def interpolate_adaptive_smolyak(
                 tuple(
                     proposed_function.func(*(column[row] for column in physical))
                     - current.func(*(column[row] for column in physical))
-                    for row in range(int(proposed_points.shape[0]))
+                    for row in range(proposed_points.shape[0])
                 )
             )
             indicator = _adaptive_indicator(differences, plan.indicator_norm)
@@ -798,7 +795,7 @@ def interpolate_adaptive_smolyak(
         status=status,
         frontier_indicator=frontier_indicator,
         accepted_indices=len(index_set.indices),
-        num_unique_nodes=int(current_points.shape[0]),
+        num_unique_nodes=current_points.shape[0],
         num_rounds=len(epochs),
     )
     return AdaptiveSmolyakInterpolationResult(

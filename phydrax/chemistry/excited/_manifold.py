@@ -63,7 +63,7 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
         electric = electric_input.astype(property_dtype)
         oscillator = jnp.asarray(oscillator_strengths, dtype=excitation.real.dtype)
         residual = jnp.asarray(residuals, dtype=excitation.real.dtype)
-        roots = int(excitation.size)
+        roots = excitation.size
         magnetic = (
             None
             if magnetic_transition_dipoles is None
@@ -106,7 +106,7 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
         self.oscillator_strengths = oscillator
         self.rotatory_strengths = rotatory
         self.residuals = residual
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.method = method_
         self.spin_sector = spin
         self.symmetry_sector = symmetry

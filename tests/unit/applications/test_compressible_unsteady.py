@@ -26,7 +26,7 @@ def test_shock_tracking_recovers_moving_compression_location():
 def test_snapshot_metric_is_volume_weighted_and_invertible():
     volumes = jnp.asarray(((1.0, 4.0), (9.0, 16.0)))
     plan = CompressibleSnapshotMetricPlan(volumes, (0, 2), (2.0, 5.0))
-    state = jnp.arange(2 * 4 * 3, dtype=float).reshape((2, 2, 2, 3))
+    state = jnp.arange(2 * 4 * 3, dtype="float64").reshape((2, 2, 2, 3))
     encoded = plan.encode(state)
     decoded = plan.decode(encoded)
 

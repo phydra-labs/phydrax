@@ -717,7 +717,7 @@ def _augmented_harmonic_ritz_sources(
     capacity: int,
     /,
 ) -> tuple[Array, Array, Array]:
-    dimension = int(search_sources.shape[1])
+    dimension = search_sources.shape[1]
     active = search_active[:, None] & search_active[None, :]
     image_gram = _coordinate_cross_gram(space, search_images, search_images)
     coupling = _coordinate_cross_gram(space, search_images, search_sources)
@@ -754,7 +754,7 @@ def _augmented_harmonic_ritz_sources(
         )
         output_sources = output_sources.at[:, :selected_count].set(sources)
         output_images = output_images.at[:, :selected_count].set(images)
-        output_active = jnp.zeros((capacity,), dtype=bool)
+        output_active = jnp.zeros((capacity,), dtype=jnp.bool_)
         output_active = output_active.at[:selected_count].set(active_columns)
         return output_sources, output_images, output_active
 
@@ -797,7 +797,7 @@ def _augmented_harmonic_ritz_sources(
         select_real_block,
         (
             jnp.asarray(0, dtype=jnp.int32),
-            jnp.zeros((2 * selected_count,), dtype=bool),
+            jnp.zeros((2 * selected_count,), dtype=jnp.bool_),
         ),
     )
     sources = search_sources @ coefficients_pool
@@ -812,7 +812,7 @@ def _augmented_harmonic_ritz_sources(
     )
     output_sources = output_sources.at[:, : 2 * selected_count].set(sources)
     output_images = output_images.at[:, : 2 * selected_count].set(images)
-    output_active = jnp.zeros((2 * capacity,), dtype=bool)
+    output_active = jnp.zeros((2 * capacity,), dtype=jnp.bool_)
     output_active = output_active.at[: 2 * selected_count].set(active_pool)
     return output_sources, output_images, output_active
 

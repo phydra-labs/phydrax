@@ -1,7 +1,6 @@
 #
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-# ruff: noqa: F405
 
 
 """
@@ -314,7 +313,6 @@ from ._convergence import (
     weak_observable_estimate,
     WeakObservableEstimate,
 )
-from ._convolution_quadrature import *  # noqa: F403
 from ._convolution_quadrature import __all__ as _convolution_quadrature_all
 from ._coupled import (
     CoupledCost,
@@ -442,7 +440,6 @@ from ._delay_segmented import (
     SegmentedDelayResult,
     solve_diffrax_delay_segmented,
 )
-from ._deterministic_ensemble import *  # noqa: F403
 from ._deterministic_ensemble import __all__ as _deterministic_ensemble_all
 from ._differential import (
     DifferentialInterpretation,
@@ -570,7 +567,6 @@ from ._dynamic_vector_cq import (
     PreparedDynamicVectorFEMBEM3D,
 )
 from ._dynamics_evolution import DiffraxEvolution
-from ._elasticity_boundary import *  # noqa: F403
 from ._elasticity_boundary import __all__ as _elasticity_boundary_all
 from ._electrode_reaction import (
     MACReactiveElectrodeBinding,
@@ -623,9 +619,7 @@ from ._fbsde import (
     CoupledFBSDEResult,
     solve_coupled_fbsde_explicit,
 )
-from ._fem_bem_scalar import *  # noqa: F403
 from ._fem_bem_scalar import __all__ as _fem_bem_scalar_all
-from ._fem_bem_vector import *  # noqa: F403
 from ._fem_bem_vector import __all__ as _fem_bem_vector_all
 from ._fem_multirate import (
     conservative_multirate_flux,
@@ -1067,7 +1061,6 @@ from ._hybrid_schedule import (
     replay_hybrid_schedule,
     ScheduledHybridGuard,
 )
-from ._hydrodynamic_response import *  # noqa: F403
 from ._hydrodynamic_response import __all__ as _hydrodynamic_response_all
 from ._hydrostatic_free_surface import (
     HydrostaticFreeSurfaceResult,
@@ -1085,7 +1078,6 @@ from ._implicit_runge_kutta import (
     GaussLegendreIRK,
     solve_implicit_runge_kutta,
 )
-from ._impurity import *  # noqa: F403
 from ._impurity import __all__ as _impurity_all
 from ._jump import (
     finite_state_generator,
@@ -1134,7 +1126,6 @@ from ._levy import (
     LevySmallJumpApproximation,
     solve_levy_sde,
 )
-from ._lifting_complete import *  # noqa: F403
 from ._lifting_complete import __all__ as _lifting_complete_all
 from ._lindblad import (
     amplitude_damping_problem,
@@ -1475,7 +1466,6 @@ from ._material_point_adaptive import (
 )
 from ._material_point_checkpoint import (
     MPMCheckpointManifest,
-    MPMCheckpointMigration,
     MPMCheckpointPlan,
 )
 from ._material_point_commercial_implicit import (
@@ -1540,7 +1530,6 @@ from ._matrix_product_tdvp import (
     refresh_finite_tdvp,
     solve_finite_tdvp,
 )
-from ._maxwell_boundary import *  # noqa: F403
 from ._maxwell_boundary import __all__ as _maxwell_boundary_all
 from ._maxwell_reduced import (
     CompatibleMaxwell1DPlan,
@@ -1693,9 +1682,7 @@ from ._open_certificates import (
     FiniteSteadyStateCertificate,
     ProcessIdentifiabilityCertificate,
 )
-from ._panel_complete import *  # noqa: F403
 from ._panel_complete import __all__ as _panel_complete_all
-from ._panels3d_complete import *  # noqa: F403
 from ._panels3d_complete import __all__ as _panels3d_complete_all
 from ._particle_conversion import (
     advance_particle_conversion,
@@ -1771,7 +1758,6 @@ from ._passive_tracer import (
     MACPassiveTracerContinuationState,
     MACPassiveTracerFixedStepMethod,
 )
-from ._periodic_vector_boundary import *  # noqa: F403
 from ._periodic_vector_boundary import __all__ as _periodic_vector_boundary_all
 from ._phase_equilibrium import (
     FixedTwoPhaseTPFlashPlan,
@@ -1798,9 +1784,7 @@ from ._poisson_nernst_planck import (
     PoissonNernstPlanckPlan,
     PoissonNernstPlanckStepResult,
 )
-from ._polar_complete import *  # noqa: F403
 from ._polar_complete import __all__ as _polar_complete_all
-from ._potential_flow_hydrodynamics import *  # noqa: F403
 from ._potential_flow_hydrodynamics import __all__ as _hydrodynamics_all
 from ._probabilistic_ode import (
     PROBABILISTIC_ODE_NONFINITE,
@@ -1944,9 +1928,7 @@ from ._quantum_jump_generic import (
     quantum_jump_differential_problem,
     solve_quantum_jump_generic,
 )
-from ._quantum_lattice import *  # noqa: F403
 from ._quantum_lattice import __all__ as _quantum_lattice_all
-from ._quantum_lifecycle import *  # noqa: F403
 from ._quantum_lifecycle import __all__ as _quantum_lifecycle_all
 from ._quantum_measurement import (
     apply_dense_quantum_instrument,
@@ -1981,7 +1963,6 @@ from ._quantum_propagation import (
     UnitaryPropagatorProblem,
     UnitaryPropagatorSolution,
 )
-from ._quantum_response import *  # noqa: F403
 from ._quantum_response import __all__ as _quantum_response_all
 from ._quantum_service import (
     admit_quantum_service_request,
@@ -2136,7 +2117,6 @@ from ._rosenbrock_replay import (
     solve_rosenbrock,
     solve_scheduled_rosenbrock,
 )
-from ._rotor import *  # noqa: F403
 from ._rotor import __all__ as _rotor_all
 from ._rough import (
     AbstractRoughSolver,
@@ -2185,9 +2165,7 @@ from ._runtime_lifecycle import (
     UnsupportedReplayError,
     write_runtime_checkpoint,
 )
-from ._scalar_boundary3d import *  # noqa: F403
 from ._scalar_boundary3d import __all__ as _scalar_boundary_all
-from ._scalar_interfaces3d import *  # noqa: F403
 from ._scalar_interfaces3d import __all__ as _scalar_interfaces_all
 from ._scalar_screen_junction3d import (
     prepare_scalar_screen_junction_solve_3d,
@@ -2292,7 +2270,6 @@ from ._stinespring_tomography import (
     StinespringTomographyProblem,
     StinespringTomographyResult,
 )
-from ._stokes_boundary import *  # noqa: F403
 from ._stokes_boundary import __all__ as _stokes_boundary_all
 from ._structured_incompressible import (
     MACPressureClosureReport,
@@ -2344,7 +2321,6 @@ from ._tensor_open_quantum import (
     MPOLindbladianActionResult,
     solve_lpdo_steady_state,
 )
-from ._thermal_pure_quantum import *  # noqa: F403
 from ._thermal_pure_quantum import __all__ as _thermal_pure_quantum_all
 from ._thermochemical_source import (
     FixedWorkThermochemicalSourcePlan,
@@ -2417,7 +2393,6 @@ from ._unstructured_stage_runtime import (
     UnstructuredSSPRK3EpochResult,
     UnstructuredSSPRK3EpochStageResult,
 )
-from ._uvlm import *  # noqa: F403  # noqa: F403
 from ._uvlm import __all__ as _uvlm_all
 from ._variable_patch_checkpoint import (
     read_variable_patch_checkpoint,
@@ -2425,7 +2400,6 @@ from ._variable_patch_checkpoint import (
     VariablePatchCheckpointPlan,
     write_variable_patch_checkpoint,
 )
-from ._variable_sector_vmc import *  # noqa: F403
 from ._variable_sector_vmc import __all__ as _variable_sector_vmc_all
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
@@ -2467,19 +2441,12 @@ from ._variational_tdvp import (
     VariationalTDVPPolicy,
     VariationalTDVPResult,
 )
-from ._viscous_vortex_wall import *  # noqa: F403
 from ._viscous_vortex_wall import __all__ as _viscous_vortex_wall_all
-from ._vortex_immersed import *  # noqa: F403
 from ._vortex_immersed import __all__ as _vortex_immersed_all
-from ._vortex_lattice import *  # noqa: F403  # noqa: F403
 from ._vortex_lattice import __all__ as _vortex_lattice_all
-from ._vortex_loads import *  # noqa: F403
 from ._vortex_loads import __all__ as _vortex_loads_all
-from ._vortex_panels import *  # noqa: F403  # noqa: F403
 from ._vortex_panels import __all__ as _vortex_panels_all
-from ._vortex_step import *  # noqa: F403  # noqa: F403
 from ._vortex_step import __all__ as _vortex_step_all
-from ._wake_complete import *  # noqa: F403
 from ._wake_complete import __all__ as _wake_complete_all
 from ._wiener_operator import WienerNoiseBlock, WienerNoiseLayout
 from ._xxz_open import (
@@ -2598,6 +2565,41 @@ _CHARACTERISTIC_PROJECTION_EXPORTS = frozenset(
 )
 
 
+_FACADE_EXPORT_MODULES = (
+    "._convolution_quadrature",
+    "._deterministic_ensemble",
+    "._elasticity_boundary",
+    "._fem_bem_scalar",
+    "._fem_bem_vector",
+    "._hydrodynamic_response",
+    "._impurity",
+    "._lifting_complete",
+    "._maxwell_boundary",
+    "._panel_complete",
+    "._panels3d_complete",
+    "._periodic_vector_boundary",
+    "._polar_complete",
+    "._potential_flow_hydrodynamics",
+    "._quantum_lattice",
+    "._quantum_lifecycle",
+    "._quantum_response",
+    "._rotor",
+    "._scalar_boundary3d",
+    "._scalar_interfaces3d",
+    "._stokes_boundary",
+    "._thermal_pure_quantum",
+    "._uvlm",
+    "._variable_sector_vmc",
+    "._viscous_vortex_wall",
+    "._vortex_immersed",
+    "._vortex_lattice",
+    "._vortex_loads",
+    "._vortex_panels",
+    "._vortex_step",
+    "._wake_complete",
+)
+
+
 def __getattr__(name: str):
     if name in _FUNCTIONAL_DECOMPOSITION_EXPORTS:
         from importlib import import_module
@@ -2622,7 +2624,19 @@ def __getattr__(name: str):
             "trace_diffusive_characteristics": module.trace_diffusive_characteristics,
         }
         return exports[name]
+    from importlib import import_module
+
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [
@@ -4062,7 +4076,6 @@ __all__ = [
     "MPMBoundedOutputBuffer",
     "MPMBlockJacobiPreconditioner",
     "MPMCheckpointManifest",
-    "MPMCheckpointMigration",
     "MPMCheckpointPlan",
     "MPMCompactImplicitOperator",
     "MPMCompactOperatorResult",

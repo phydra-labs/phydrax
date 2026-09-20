@@ -148,7 +148,7 @@ def _compiled_lbfgs_step(
         next_position,
         state=next_optimizer_state,
     )
-    next_objective = jnp.asarray(next_objective, dtype=float).reshape(())
+    next_objective = jnp.asarray(next_objective, dtype=jnp.float64).reshape(())
     return (
         next_position,
         next_optimizer_state,
@@ -215,7 +215,7 @@ def find_map(
     objective, gradient, gradient_norm = compiled_initial_evaluation(position, problem)
     jax.block_until_ready(gradient_norm)
     initial_evaluation_seconds = time.perf_counter() - evaluation_started
-    objective = jnp.asarray(objective, dtype=float).reshape(())
+    objective = jnp.asarray(objective, dtype=jnp.float64).reshape(())
     _validate_evaluation(objective, gradient)
     objective_history = [objective]
     converged = float(gradient_norm) <= gradient_gate
@@ -267,7 +267,7 @@ def find_map(
         jax.block_until_ready(next_gradient_norm)
         optimization_seconds += time.perf_counter() - step_started
         objective_evaluations += _line_search_evaluations(optimizer_state)
-        next_objective = jnp.asarray(next_objective, dtype=float).reshape(())
+        next_objective = jnp.asarray(next_objective, dtype=jnp.float64).reshape(())
         num_steps = step
 
         try:
@@ -282,8 +282,8 @@ def find_map(
             break
 
         objective_history.append(next_objective)
-        previous_value = float(jnp.asarray(objective, dtype=float).reshape(()))
-        next_value = float(jnp.asarray(next_objective, dtype=float).reshape(()))
+        previous_value = float(jnp.asarray(objective, dtype=jnp.float64).reshape(()))
+        next_value = float(jnp.asarray(next_objective, dtype=jnp.float64).reshape(()))
         position = next_position
         objective = next_objective
         gradient = next_gradient

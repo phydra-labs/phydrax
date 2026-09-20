@@ -43,7 +43,7 @@ class SplineAxisPlan(StrictModule, NonTrainableState):
             raise ValueError("Spline knots must be a sufficiently long rank-1 array.")
         if not np.issubdtype(knots_host.dtype, np.number):
             raise TypeError("Spline knots must be numeric.")
-        knots_host = knots_host.astype(float, copy=False)
+        knots_host = knots_host.astype("float64", copy=False)
         if np.any(~np.isfinite(knots_host)) or np.any(np.diff(knots_host) < 0):
             raise ValueError("Spline knots must be finite and nondecreasing.")
         control_count = knots_host.size - degree_ - 1
@@ -85,7 +85,7 @@ class SplineAxisPlan(StrictModule, NonTrainableState):
 
     @property
     def span_count(self) -> int:
-        return int(self.span_indices.shape[0])
+        return self.span_indices.shape[0]
 
     @property
     def parameter_interval(self) -> tuple[float, float]:
@@ -218,7 +218,7 @@ class IsogeometricFieldSpec(StrictModule, NonTrainableState):
     ):
         name_, components, conformity_, mapping_ = (
             str(name),
-            tuple(int(x) for x in component_shape),
+            tuple(component_shape),
             str(conformity),
             str(mapping),
         )
@@ -288,9 +288,7 @@ class IsogeometricQuadraturePolicy(StrictModule, NonTrainableState):
 
     def __init__(self, points_per_axis: int | Sequence[int], /):
         scalar = isinstance(points_per_axis, (int, np.integer))
-        values = (
-            (int(points_per_axis),) if scalar else tuple(int(x) for x in points_per_axis)
-        )
+        values = (int(points_per_axis),) if scalar else tuple(points_per_axis)
         if not values or len(values) > 3 or any(x <= 0 for x in values):
             raise ValueError(
                 "Quadrature points_per_axis must be one to three positive counts."

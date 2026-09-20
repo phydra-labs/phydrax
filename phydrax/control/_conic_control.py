@@ -45,7 +45,7 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -168,7 +168,7 @@ def _validate_stage_constraint(
     control = problem.control_size
     if constraint.left_state.ndim < 3:
         raise ValueError("stage left_state must include stage, cone, and state axes.")
-    cone_dimension = int(constraint.left_state.shape[-2])
+    cone_dimension = constraint.left_state.shape[-2]
     expected = batch + (horizon, cone_dimension, state)
     if tuple(constraint.left_state.shape) != expected:
         raise ValueError(f"stage left_state must have shape {expected}.")
@@ -198,7 +198,7 @@ def _validate_terminal_constraint(
     state = problem.state_size
     if constraint.left_state.ndim < 2:
         raise ValueError("terminal left_state must include cone and state axes.")
-    cone_dimension = int(constraint.left_state.shape[-2])
+    cone_dimension = constraint.left_state.shape[-2]
     if tuple(constraint.left_state.shape) != batch + (cone_dimension, state):
         raise ValueError("terminal left_state has incompatible shape.")
     if tuple(constraint.left_offset.shape) != batch + (cone_dimension,):

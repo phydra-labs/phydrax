@@ -58,15 +58,14 @@ class OperatorContextModel(_AbstractBaseModel):
             resolved_query = str(query_name)
             if resolved_query not in batch.queries:
                 raise KeyError(
-                    f"Unknown context query {resolved_query!r}; "
-                    f"expected one of {tuple(batch.queries)!r}."
+                    f"Unknown context query {resolved_query!r}; expected one of {tuple(batch.queries)!r}."
                 )
         query = batch.query(resolved_query)
         if coord_dim is None:
             if query.axes:
                 dimension = len(query.axes)
             elif query.coordinates is not None:
-                dimension = int(query.coordinates.shape[-1])
+                dimension = query.coordinates.shape[-1]
             else:
                 raise ValueError("Operator query geometry has no coordinate dimension.")
         else:
@@ -117,7 +116,7 @@ class OperatorContextModel(_AbstractBaseModel):
             coordinates = jnp.asarray(values[0])
             if coordinates.ndim == 0 and self.coord_dim == 1:
                 return coordinates.reshape((1,))
-            if coordinates.ndim >= 1 and int(coordinates.shape[-1]) == self.coord_dim:
+            if coordinates.ndim >= 1 and coordinates.shape[-1] == self.coord_dim:
                 return coordinates
             if self.coord_dim == 1:
                 return coordinates[..., None]
@@ -157,7 +156,7 @@ class OperatorContextModel(_AbstractBaseModel):
         key: EvalKey = DOC_KEY0,
     ) -> Array:
         coordinates = self._coordinates(values)
-        point_shape = tuple(int(size) for size in coordinates.shape[:-1])
+        point_shape = tuple(coordinates.shape[:-1])
         query = FunctionSamples(
             values=None,
             coordinates=coordinates.reshape((-1, self.coord_dim)),
@@ -190,8 +189,7 @@ class OperatorContextModel(_AbstractBaseModel):
         )
         if len(labels) not in (1, self.coord_dim):
             raise ValueError(
-                f"Expected one vector label or {self.coord_dim} scalar coordinate "
-                f"labels, got {len(labels)}."
+                f"Expected one vector label or {self.coord_dim} scalar coordinate labels, got {len(labels)}."
             )
         if len(set(labels)) != len(labels):
             raise ValueError("coordinate_labels must be unique.")

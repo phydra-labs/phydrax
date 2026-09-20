@@ -73,7 +73,7 @@ class BFSSFermionPlan(StrictModule):
             raise ValueError(
                 "gamma_matrices must have shape (matrix_count, spinor, spinor)."
             )
-        spinor = int(gamma.shape[1])
+        spinor = gamma.shape[1]
         if gamma.shape[2] != spinor or charge.shape != (spinor, spinor):
             raise ValueError(
                 "Gamma and charge-conjugation matrices have incompatible shapes."

@@ -45,8 +45,7 @@ def _state_array(
     state = jnp.asarray(value)
     if state.ndim < 1 or state.shape[-1] != component_count:
         raise ValueError(
-            f"{name} must have trailing component dimension {component_count}; "
-            f"got {state.shape}."
+            f"{name} must have trailing component dimension {component_count}; got {state.shape}."
         )
     if not jnp.issubdtype(state.dtype, jnp.floating):
         raise TypeError(f"{name} must use real floating-point coordinates.")
@@ -157,8 +156,7 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
         valid_array = self.admissible(state)
         if valid_array.shape != state.shape[:-1]:
             raise ValueError(
-                "Entropy admissibility must return the state leading shape; "
-                f"got {valid_array.shape} for {state.shape}."
+                f"Entropy admissibility must return the state leading shape; got {valid_array.shape} for {state.shape}."
             )
         return eqx.error_if(
             state,
@@ -178,8 +176,7 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
             )
         if valid.shape != value.shape[:-1]:
             raise ValueError(
-                "Entropy admissibility must return the state leading shape; "
-                f"got {valid.shape} for {value.shape}."
+                f"Entropy admissibility must return the state leading shape; got {valid.shape} for {value.shape}."
             )
         return valid & jnp.all(jnp.isfinite(value), axis=-1)
 
@@ -481,9 +478,9 @@ class ConvexEntropyValidationReport(StrictModule):
             raise TypeError("metric_validation must be a MetricValidationReport.")
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be a PrecisionEvidenceEnvelope.")
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.admissible = jnp.asarray(admissible, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.admissible = jnp.asarray(admissible, dtype=jnp.bool_)
         self.maximum_entropy_variable_residual = jnp.asarray(
             maximum_entropy_variable_residual
         )
@@ -499,7 +496,7 @@ class ConvexEntropyValidationReport(StrictModule):
             maximum_diagonal_relative_entropy
         )
         self.metric_validation = metric_validation
-        self.axes = tuple(int(axis) for axis in axes)
+        self.axes = tuple(axes)
         self.precision_evidence = precision_evidence
 
 
@@ -520,7 +517,7 @@ def _maximum_abs(value: Array, precision: GeometryPrecisionPolicy, /) -> Array:
 def _axis_tuple(axes: Sequence[int] | None, dimension: int, /) -> tuple[int, ...]:
     if axes is None:
         return tuple(range(dimension))
-    result = tuple(int(axis) for axis in axes)
+    result = tuple(axes)
     if not result:
         raise ValueError("Entropy axes must be non-empty.")
     if len(set(result)) != len(result):
@@ -810,8 +807,7 @@ def ideal_gas_euler_entropy_pair(
     """Return the mathematical ideal-gas entropy pair matching Euler variables."""
     if not isinstance(system, (EulerSystem, CompressibleNavierStokesSystem)):
         raise TypeError(
-            "ideal_gas_euler_entropy_pair requires EulerSystem or "
-            "CompressibleNavierStokesSystem."
+            "ideal_gas_euler_entropy_pair requires EulerSystem or CompressibleNavierStokesSystem."
         )
     return ConvexEntropyPair(
         system,

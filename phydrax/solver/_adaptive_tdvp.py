@@ -128,7 +128,7 @@ def solve_adaptive_tdvp(
         raise TypeError("vector_field/plan types are invalid.")
     parameters = jnp.asarray(initial_parameters)
     time = jnp.asarray(
-        plan.time_start, dtype=jnp.result_type(parameters.real.dtype, float)
+        plan.time_start, dtype=jnp.result_type(parameters.real.dtype, jnp.float64)
     )
     step_size = jnp.asarray(plan.initial_step_size, dtype=time.dtype)
     accepted_count = jnp.asarray(0, dtype=jnp.int32)
@@ -147,7 +147,7 @@ def solve_adaptive_tdvp(
         .set(parameters)
     )
     accepted_mask = (
-        jnp.zeros((plan.maximum_accepted_steps + 1,), dtype=bool).at[0].set(True)
+        jnp.zeros((plan.maximum_accepted_steps + 1,), dtype=jnp.bool_).at[0].set(True)
     )
     attempt_times = []
     sizes = []

@@ -212,7 +212,7 @@ def _entropic_risk(losses: np.ndarray, radius: float, /) -> float:
         tau = np.sqrt(lower * upper)
         shifted = losses / tau + logarithms
         maximum = float(np.max(shifted))
-        log_partition = maximum + float(np.log(np.sum(np.exp(shifted - maximum))))
+        maximum + float(np.log(np.sum(np.exp(shifted - maximum))))
         tilted = np.exp(shifted - maximum)
         tilted /= np.sum(tilted)
         divergence = float(np.sum(tilted * (np.log(tilted) - logarithms)))

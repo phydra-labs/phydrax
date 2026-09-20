@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._fractional import FractionalGaussianRealization
 
 
@@ -42,13 +42,13 @@ def _rough_control_id(
 class AbstractRoughControl(StrictModule):
     """Finite-depth geometric control on one explicit integration partition."""
 
-    times: AbstractAttribute[Array]
-    realization: AbstractAttribute[FractionalGaussianRealization | None]
-    sample_shape: AbstractAttribute[tuple[int, ...]]
-    dimension: AbstractAttribute[int]
-    num_steps: AbstractAttribute[int]
-    depth: AbstractAttribute[int]
-    control_id: AbstractAttribute[str]
+    times: eqx.AbstractVar[Array]
+    realization: eqx.AbstractVar[FractionalGaussianRealization | None]
+    sample_shape: eqx.AbstractVar[tuple[int, ...]]
+    dimension: eqx.AbstractVar[int]
+    num_steps: eqx.AbstractVar[int]
+    depth: eqx.AbstractVar[int]
+    control_id: eqx.AbstractVar[str]
 
     @property
     @abstractmethod
@@ -114,22 +114,22 @@ class GeometricRoughPath(AbstractRoughControl):
         realization: FractionalGaussianRealization | None = None,
         driver_id: str | None = None,
     ):
-        nodes = jnp.asarray(times, dtype=float)
-        if nodes.ndim != 1 or int(nodes.size) < 2:
+        nodes = jnp.asarray(times, dtype=jnp.float64)
+        if nodes.ndim != 1 or nodes.size < 2:
             raise ValueError("times must contain at least two partition nodes.")
         if bool(jnp.any(~jnp.isfinite(nodes))) or bool(jnp.any(jnp.diff(nodes) <= 0.0)):
             raise ValueError("times must be finite and strictly increasing.")
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
         first = jnp.asarray(first_level)
         second = jnp.asarray(second_level)
-        step_count = int(nodes.size) - 1
+        step_count = nodes.size - 1
         if first.ndim != len(samples) + 2:
             raise ValueError(
                 "first_level must have shape sample_shape + (num_steps, dimension)."
             )
-        dimension = int(first.shape[-1])
+        dimension = first.shape[-1]
         expected_first = samples + (step_count, dimension)
         expected_second = samples + (step_count, dimension, dimension)
         if first.shape != expected_first or second.shape != expected_second:
@@ -194,9 +194,9 @@ class GeometricRoughPath(AbstractRoughControl):
         driver_id: str | None = None,
     ) -> GeometricRoughPath:
         """Lift one piecewise-linear path to its canonical geometric second level."""
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         path_values = jnp.asarray(values)
-        nodes = jnp.asarray(times, dtype=float)
+        nodes = jnp.asarray(times, dtype=jnp.float64)
         if path_values.ndim != len(samples) + 2:
             raise ValueError(
                 "values must have shape sample_shape + (num_times, dimension)."
@@ -265,7 +265,7 @@ class GeometricRoughPath(AbstractRoughControl):
 
     def coarsen(self, node_indices: Sequence[int], /) -> GeometricRoughPath:
         """Coarsen the partition exactly while preserving Chen-consistent levels."""
-        indices = tuple(int(index) for index in node_indices)
+        indices = tuple(node_indices)
         if (
             len(indices) < 2
             or indices[0] != 0

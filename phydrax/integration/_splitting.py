@@ -140,10 +140,10 @@ class AdaptiveSplittingDiagnostics(StrictModule):
         initial_trajectory_ids: tuple[str, ...],
         population_trajectory_ids: tuple[tuple[str, ...], ...],
     ):
-        level_values = jnp.asarray(levels, dtype=float).reshape((-1,))
-        survival = jnp.asarray(survival_probabilities, dtype=float).reshape((-1,))
+        level_values = jnp.asarray(levels, dtype=jnp.float64).reshape((-1,))
+        survival = jnp.asarray(survival_probabilities, dtype=jnp.float64).reshape((-1,))
         counts = jnp.asarray(killed_counts, dtype=jnp.int32).reshape((-1,))
-        killed = jnp.asarray(killed_masks, dtype=bool)
+        killed = jnp.asarray(killed_masks, dtype=jnp.bool_)
         parents = jnp.asarray(parent_indices, dtype=jnp.int32)
         branches = jnp.asarray(branch_indices, dtype=jnp.int32)
         num_rounds = level_values.shape[0]
@@ -153,7 +153,7 @@ class AdaptiveSplittingDiagnostics(StrictModule):
             raise ValueError("killed_masks must have shape (round, population).")
         if parents.shape != killed.shape or branches.shape != killed.shape:
             raise ValueError("Genealogy arrays must share killed_masks shape.")
-        terminal = jnp.asarray(terminal_reached, dtype=bool).reshape((-1,))
+        terminal = jnp.asarray(terminal_reached, dtype=jnp.bool_).reshape((-1,))
         if killed.shape[1:] != terminal.shape:
             raise ValueError("terminal_reached must have one entry per trajectory.")
         populations = tuple(tuple(ids) for ids in population_trajectory_ids)
@@ -173,7 +173,7 @@ class AdaptiveSplittingDiagnostics(StrictModule):
 
     @property
     def num_rounds(self) -> int:
-        return int(self.levels.shape[0])
+        return self.levels.shape[0]
 
     @property
     def terminal_success_count(self) -> Array:
@@ -204,8 +204,8 @@ class AdaptiveMultilevelSplittingResult(StrictModule):
         diagnostics: AdaptiveSplittingDiagnostics,
         /,
     ):
-        self.probability = jnp.asarray(probability, dtype=float).reshape(())
-        self.log_probability = jnp.asarray(log_probability, dtype=float).reshape(())
+        self.probability = jnp.asarray(probability, dtype=jnp.float64).reshape(())
+        self.log_probability = jnp.asarray(log_probability, dtype=jnp.float64).reshape(())
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
         self.population = population
         self.event_result = event_result
@@ -466,13 +466,13 @@ def adaptive_multilevel_splitting(
         probability = jnp.asarray(jnp.nan)
         log_probability = jnp.asarray(jnp.nan)
     diagnostics = AdaptiveSplittingDiagnostics(
-        jnp.asarray(levels, dtype=float),
-        jnp.asarray(survival_probabilities, dtype=float),
+        jnp.asarray(levels, dtype=jnp.float64),
+        jnp.asarray(survival_probabilities, dtype=jnp.float64),
         jnp.asarray(killed_counts, dtype=jnp.int32),
         (
             jnp.stack(killed_masks)
             if killed_masks
-            else _empty_round_matrix(plan.population_size, dtype=bool)
+            else _empty_round_matrix(plan.population_size, dtype=jnp.bool_)
         ),
         (
             jnp.stack(parent_history)

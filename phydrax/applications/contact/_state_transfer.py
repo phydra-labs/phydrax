@@ -33,7 +33,7 @@ class ContactStateTransferPlan(StrictModule, NonTrainableState):
     ):
         keys = np.asarray(new_route_keys)
         parents = np.asarray(parent_route_slots)
-        weights = np.asarray(parent_weights, dtype=float)
+        weights = np.asarray(parent_weights, dtype=np.float64)
         if keys.ndim != 1 or not np.issubdtype(keys.dtype, np.integer):
             raise TypeError("New contact route keys must be one integer vector.")
         if (
@@ -43,9 +43,9 @@ class ContactStateTransferPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Contact state parent slots/weights are incompatible.")
         active = (
-            np.ones((keys.size,), dtype=bool)
+            np.ones((keys.size,), dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if active.shape != (keys.size,):
             raise ValueError("Contact state transfer valid mask has invalid shape.")

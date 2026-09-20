@@ -19,7 +19,7 @@ construct `ReducedPathPotential`. `cross_evaluate_path_potentials` requires orde
 state IDs, a phase-space measure ID, run identity, and chain/draw/repeat/dependence
 lineage. It returns a `PathCrossEvaluation` containing an authenticated
 `uq.ReducedPotentialDataset`; `path_fep_work` returns an oriented
-`uq.ReducedWorkDataset`, not an unlabelled work array. Deterministic and surrogate
+`uq.ReducedWorkDataset`, not an unlabeled work array. Deterministic and surrogate
 actions fail closed, as does nonfinite or incomplete active cross evaluation.
 
 ## Moves and detailed balance evidence

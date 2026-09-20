@@ -72,7 +72,7 @@ class SegmentTopology(StrictModule):
     def cell_complex_topology(self, /) -> CellComplexTopology:
         """Return the canonical oriented one-complex view."""
         edges = np.asarray(self.edges, dtype=np.int32)
-        boundary_vertices = np.zeros((self.num_vertices,), dtype=bool)
+        boundary_vertices = np.zeros((self.num_vertices,), dtype=np.bool_)
         degree = np.bincount(edges.reshape((-1,)), minlength=self.num_vertices)
         boundary_vertices[degree == 1] = True
         vertices = EntitySet(
@@ -88,7 +88,7 @@ class SegmentTopology(StrictModule):
             subsets=(
                 EntitySubset(
                     "boundary",
-                    np.zeros((self.num_edges,), dtype=bool),
+                    np.zeros((self.num_edges,), dtype=np.bool_),
                 ),
             ),
         )
@@ -251,10 +251,10 @@ class TriangleTopology(StrictModule):
                     twin = int(halfedge_twin[halfedge])
                     if twin < 0:
                         continue
-                    neighbour = int(halfedge_face[twin])
-                    if face_component_ids[neighbour] < 0:
-                        face_component_ids[neighbour] = face_component_count
-                        pending.append(neighbour)
+                    neighbor = int(halfedge_face[twin])
+                    if face_component_ids[neighbor] < 0:
+                        face_component_ids[neighbor] = face_component_count
+                        pending.append(neighbor)
             face_component_count += 1
 
         self.faces = jnp.asarray(faces_host, dtype=jnp.int32)
@@ -311,7 +311,7 @@ class TriangleTopology(StrictModule):
             -1.0,
         )
         boundary_edges = np.asarray(self.edge_halfedges)[:, 1] < 0
-        boundary_vertices = np.zeros((self.num_vertices,), dtype=bool)
+        boundary_vertices = np.zeros((self.num_vertices,), dtype=np.bool_)
         boundary_vertices[np.unique(edges[boundary_edges].reshape((-1,)))] = True
         vertices = EntitySet(
             "vertices",
@@ -332,7 +332,7 @@ class TriangleTopology(StrictModule):
             subsets=(
                 EntitySubset(
                     "boundary",
-                    np.zeros((self.num_faces,), dtype=bool),
+                    np.zeros((self.num_faces,), dtype=np.bool_),
                 ),
             ),
         )

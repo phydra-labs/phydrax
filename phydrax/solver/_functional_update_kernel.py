@@ -104,7 +104,7 @@ class FunctionalUpdateEvidence(StrictModule):
 
     def __init__(self, loss: Array, accepted: Array, /):
         self.loss = jnp.asarray(loss).reshape(())
-        self.accepted = jnp.asarray(accepted, dtype=bool).reshape(())
+        self.accepted = jnp.asarray(accepted, dtype=jnp.bool_).reshape(())
 
 
 class FunctionalUpdateKernel(StrictModule):

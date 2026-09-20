@@ -93,8 +93,8 @@ def _schedule(years=4):
         start_ordinals,
         end_ordinals,
         end_ordinals,
-        np.ones((years,), dtype=float),
-        np.ones((years,), dtype=bool),
+        np.ones((years,), dtype="float64"),
+        np.ones((years,), dtype="bool"),
         "weekdays",
         "calendar-snapshot",
         "annual-schedule",
@@ -103,7 +103,7 @@ def _schedule(years=4):
 
 
 def _curve(currency, representation, values, *, curve_id, role, method):
-    grid = CurveGrid(jnp.arange(len(values), dtype=float))
+    grid = CurveGrid(jnp.arange(len(values), dtype="float64"))
     policy = InterpolationPolicy(
         method,
         left_extrapolation=ExtrapolationMode.FORBID,
@@ -118,7 +118,7 @@ def _curve(currency, representation, values, *, curve_id, role, method):
         grid=grid,
         interpolation=policy,
     )
-    return PreparedCurve(definition, jnp.asarray(values, dtype=float))
+    return PreparedCurve(definition, jnp.asarray(values, dtype="float64"))
 
 
 def _credit_fixture(years=4, hazard=0.02, spread=0.0):
@@ -170,7 +170,7 @@ def _credit_fixture(years=4, hazard=0.02, spread=0.0):
         schedule,
         CurrencyAmount(currency, 100_00),
         spread,
-        jnp.arange(1, years + 1, dtype=float),
+        jnp.arange(1, years + 1, dtype="float64"),
         recovery,
         payoff,
         contract_id="cds-contract",

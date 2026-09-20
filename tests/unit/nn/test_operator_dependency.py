@@ -83,7 +83,7 @@ def test_measure_convolution_authors_dilated_directional_reach():
     assert support.evidence == "conservative"
     periodic_axis = phx.nn.operator.OperatorAxis(
         "x",
-        jnp.arange(5, dtype=float) / 5,
+        jnp.arange(5, dtype="float64") / 5,
         basis="fourier",
         periodic=True,
     )
@@ -151,7 +151,7 @@ def test_periodic_operator_instances_classify_their_authored_dependency():
 
     axis = phx.nn.operator.OperatorAxis(
         "x",
-        2.0 * jnp.arange(16, dtype=float) / 16,
+        2.0 * jnp.arange(16, dtype="float64") / 16,
         basis="fourier",
         periodic=True,
     )
@@ -161,7 +161,7 @@ def test_periodic_operator_instances_classify_their_authored_dependency():
 
     saturated_axis = phx.nn.operator.OperatorAxis(
         "x",
-        jnp.arange(9, dtype=float) / 9,
+        jnp.arange(9, dtype="float64") / 9,
         basis="fourier",
         periodic=True,
     )

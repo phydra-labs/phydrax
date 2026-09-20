@@ -82,9 +82,9 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("reference_weights must be positive and finite.")
         active = (
-            np.ones(ids.shape, dtype=bool)
+            np.ones(ids.shape, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != ids.shape or not np.any(active):
             raise ValueError("active_mask must activate at least one marker.")

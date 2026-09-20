@@ -150,7 +150,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
             raise TypeError("mobility must be AbstractHydrodynamicMobilityPlan.")
         if dynamics.constraints is not None:
             raise ValueError("Hydrodynamic Brownian dynamics does not admit constraints.")
-        active = np.asarray(dynamics.system.active_mask, dtype=bool)
+        active = np.asarray(dynamics.system.active_mask, dtype=np.bool_)
         active_slots = np.flatnonzero(active)
         prepared_mobility = mobility.prepare(dynamics.system, active_slots)
         from ..solver._mac_stochastic_immersed import FIBOverdampedPlan

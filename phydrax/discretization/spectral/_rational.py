@@ -169,7 +169,7 @@ def _plan_values(
     /,
 ) -> tuple[int, Array, int]:
     count = int(mode_count)
-    scale_ = jnp.asarray(scale, dtype=float).reshape(())
+    scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
     maximum = int(maximum_construction_bytes)
     if count < 2 or maximum <= 0:
         raise ValueError("Rational Chebyshev mode count and budget must be positive.")
@@ -194,8 +194,8 @@ def _prepare_rational(
     if estimate > plan.maximum_construction_bytes:
         raise ValueError("Rational Chebyshev construction exceeds its byte budget.")
     rule = fejer_first_data(count)
-    reference = np.asarray(rule.nodes, dtype=float)
-    reference_weights = np.asarray(rule.weights, dtype=float)
+    reference = np.asarray(rule.nodes, dtype=np.float64)
+    reference_weights = np.asarray(rule.weights, dtype=np.float64)
     nodes, jacobian = mapping(reference)
     weights = reference_weights * jacobian
     if (
@@ -266,7 +266,7 @@ def _derivative_closure_residual(
     /,
 ) -> float:
     validation = fejer_first_data(2 * count + 1)
-    reference = np.asarray(validation.nodes, dtype=float)
+    reference = np.asarray(validation.nodes, dtype=np.float64)
     _, jacobian = mapping(reference)
     synthesis = np.asarray(standard_vandermonde("chebyshev", reference, count - 1))
     derivative_reference = np.asarray(

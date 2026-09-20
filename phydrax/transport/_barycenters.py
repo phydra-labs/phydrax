@@ -123,7 +123,7 @@ class FixedSupportBarycenterProblem(StrictModule):
             raise ValueError(
                 "All encoded measures and support must have a common feature size."
             )
-        weights = jnp.asarray(measure_weights, dtype=float)
+        weights = jnp.asarray(measure_weights, dtype=jnp.float64)
         if weights.shape != (len(lowered),):
             raise ValueError("measure_weights must contain one value per measure.")
         weights = eqx.error_if(
@@ -183,15 +183,15 @@ class FixedSupportBarycenterProblem(StrictModule):
 
     @property
     def padded_atom_count(self) -> int:
-        return int(self.measure_points.shape[1])
+        return self.measure_points.shape[1]
 
     @property
     def support_atom_count(self) -> int:
-        return int(self.support_points.shape[0])
+        return self.support_points.shape[0]
 
     @property
     def feature_size(self) -> int:
-        return int(self.support_points.shape[1])
+        return self.support_points.shape[1]
 
     def cost_matrices(self) -> Array:
         """Materialize padded measure-to-support cost matrices."""
@@ -383,9 +383,9 @@ class SinkhornBarycenter(StrictModule):
             raise ValueError("block_size must be positive or None.")
         if patience < 0:
             raise ValueError("stagnation_patience must be nonnegative.")
-        epsilon_ = jnp.asarray(epsilon, dtype=float).reshape(())
-        tolerance_ = jnp.asarray(tolerance, dtype=float).reshape(())
-        stagnation_ = jnp.asarray(stagnation_tolerance, dtype=float).reshape(())
+        epsilon_ = jnp.asarray(epsilon, dtype=jnp.float64).reshape(())
+        tolerance_ = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
+        stagnation_ = jnp.asarray(stagnation_tolerance, dtype=jnp.float64).reshape(())
         self.epsilon = eqx.error_if(
             epsilon_,
             ~jnp.isfinite(epsilon_) | (epsilon_ <= 0.0),
@@ -909,9 +909,9 @@ class FreeSupportBarycenter(StrictModule):
             raise ValueError("max_iterations must be positive.")
         if patience < 0:
             raise ValueError("stagnation_patience must be nonnegative.")
-        tolerance_ = jnp.asarray(tolerance, dtype=float).reshape(())
-        collapse_ = jnp.asarray(collapse_tolerance, dtype=float).reshape(())
-        stagnation_ = jnp.asarray(stagnation_tolerance, dtype=float).reshape(())
+        tolerance_ = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
+        collapse_ = jnp.asarray(collapse_tolerance, dtype=jnp.float64).reshape(())
+        stagnation_ = jnp.asarray(stagnation_tolerance, dtype=jnp.float64).reshape(())
         self.inner_solver = inner_solver
         self.tolerance = eqx.error_if(
             tolerance_,
@@ -1003,7 +1003,7 @@ class FreeSupportBarycenter(StrictModule):
                 & jnp.triu(
                     jnp.ones(
                         (problem.support_atom_count, problem.support_atom_count),
-                        dtype=bool,
+                        dtype=jnp.bool_,
                     ),
                     k=1,
                 )
@@ -1193,8 +1193,7 @@ def _finite_target(
             "WeightedSampleTarget for finite barycenter transport."
         )
     raise TypeError(
-        f"{name} must be a DiscreteMeasureTarget, WeightedSampleTarget, or "
-        "finite IntegrationRealization."
+        f"{name} must be a DiscreteMeasureTarget, WeightedSampleTarget, or finite IntegrationRealization."
     )
 
 

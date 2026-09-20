@@ -69,7 +69,7 @@ class OceanAxisConvention(StrictModule, NonTrainableState):
         value = float(jnp.asarray(magnitude))
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("Ocean gravity magnitude must be finite and positive.")
-        output = jnp.zeros((3,), dtype=float)
+        output = jnp.zeros((3,), dtype=jnp.float64)
         sign = -1.0 if self.positive_up else 1.0
         return output.at[self.vertical_axis].set(sign * value)
 

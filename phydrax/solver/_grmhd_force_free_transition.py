@@ -190,9 +190,9 @@ class GRMHDForceFreeTransitionPlan(StrictModule, NonTrainableState):
         if conserved.shape[:-1] != geometry.leading_shape:
             raise ValueError("Hybrid initial state must match ADM geometry.")
         mask = (
-            jnp.zeros(geometry.leading_shape, dtype=bool)
+            jnp.zeros(geometry.leading_shape, dtype=jnp.bool_)
             if force_free_mask is None
-            else jnp.asarray(force_free_mask, dtype=bool)
+            else jnp.asarray(force_free_mask, dtype=jnp.bool_)
         )
         if mask.shape != geometry.leading_shape:
             raise ValueError("Force-free mask must match ADM geometry.")
@@ -225,14 +225,14 @@ class GRMHDForceFreeTransitionPlan(StrictModule, NonTrainableState):
         )
         if material_support is None:
             support = state.grmhd_conserved
-            support_available = jnp.zeros(geometry.leading_shape, dtype=bool)
+            support_available = jnp.zeros(geometry.leading_shape, dtype=jnp.bool_)
         else:
             support = self.grmhd._state(
                 material_support, "Force-free restoration material support"
             )
             if support.shape[:-1] != geometry.leading_shape:
                 raise ValueError("Material support must match ADM geometry.")
-            support_available = jnp.ones(geometry.leading_shape, dtype=bool)
+            support_available = jnp.ones(geometry.leading_shape, dtype=jnp.bool_)
         support_recovery = self.grmhd.recover(support, geometry, composition)
         effective_magnetization = jnp.where(
             state.force_free_mask,

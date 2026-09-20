@@ -94,11 +94,7 @@ class AMRTimeSchedulePlan(StrictModule, NonTrainableState):
         default_edges = tuple(
             level.refinement_ratio if subcycling else 1 for level in level_plans[:-1]
         )
-        edges = (
-            default_edges
-            if edge_substeps is None
-            else tuple(int(value) for value in edge_substeps)
-        )
+        edges = default_edges if edge_substeps is None else tuple(edge_substeps)
         if len(edges) != len(level_plans) - 1 or any(value <= 0 for value in edges):
             raise ValueError("AMR edge substeps must be positive and align with levels.")
         if not subcycling and any(value != 1 for value in edges):
@@ -275,7 +271,7 @@ class _BlockAMREdgeRoute(StrictModule, NonTrainableState):
         ):
             raise ValueError("AMR interface orientations must be unit signs.")
         factors = coarse_orientation[mapping] / fine_orientation
-        mask = np.ones((coarse_coordinates.shape[0],), dtype=bool)
+        mask = np.ones((coarse_coordinates.shape[0],), dtype=np.bool_)
         self.level = int(coarse.level)
         self.coarse_block_id = coarse.block_id
         self.fine_block_id = fine.block_id
@@ -567,7 +563,9 @@ class PreparedBlockAMRRuntime(StrictModule, NonTrainableState):
         active = self.dynamics.topology.levels[level].active.reshape(
             (values.shape[0],) + (1,) * (values.ndim - 2)
         )
-        admissible = jnp.asarray(self.dynamics.plan.system.admissible(values), dtype=bool)
+        admissible = jnp.asarray(
+            self.dynamics.plan.system.admissible(values), dtype=jnp.bool_
+        )
         if admissible.shape != values.shape[:-1]:
             raise ValueError("Conservation-system admissibility has the wrong shape.")
         return jnp.all(jnp.where(active, admissible, True))
@@ -870,7 +868,7 @@ class PreparedBlockAMRRuntime(StrictModule, NonTrainableState):
 
         def record(condition: ArrayLike, level: int, phase: BlockAMRAdvancePhase) -> None:
             nonlocal successful, failed_level, failed_phase
-            condition_ = jnp.asarray(condition, dtype=bool).reshape(())
+            condition_ = jnp.asarray(condition, dtype=jnp.bool_).reshape(())
             first_failure = successful & ~condition_
             failed_level = jnp.where(first_failure, level, failed_level)
             failed_phase = jnp.where(first_failure, int(phase), failed_phase)
@@ -919,7 +917,7 @@ class PreparedBlockAMRRuntime(StrictModule, NonTrainableState):
                     coarse_old_time=coarse_start,
                     coarse_new_time=coarse_end,
                 )
-                fill_ok = jnp.asarray(fill.complete, dtype=bool).reshape(())
+                fill_ok = jnp.asarray(fill.complete, dtype=jnp.bool_).reshape(())
                 record(fill_ok, level, BlockAMRAdvancePhase.FILL_PATCH)
                 local_ok = local_ok & fill_ok
                 result = self.dynamics.evaluate(
@@ -931,7 +929,9 @@ class PreparedBlockAMRRuntime(StrictModule, NonTrainableState):
                     evidence_version=accepted_id,
                 )
                 level_ledger = self._level_stage_ledger(result.ledger, level)
-                ledger_ok = jnp.asarray(level_ledger.accepted, dtype=bool).reshape(())
+                ledger_ok = jnp.asarray(level_ledger.accepted, dtype=jnp.bool_).reshape(
+                    ()
+                )
                 record(ledger_ok, level, BlockAMRAdvancePhase.STAGE_LEDGER)
                 local_ok = local_ok & ledger_ok
                 rate_ok = jnp.isfinite(result.maximum_rate)
@@ -1111,13 +1111,12 @@ class PreparedBlockAMRRuntime(StrictModule, NonTrainableState):
                     and isinstance(specialist_result[0], BlockHierarchyState)
                 ):
                     specialist_state = specialist_result[0]
-                    specialist_ok = jnp.asarray(specialist_result[1], dtype=bool).reshape(
-                        ()
-                    )
+                    specialist_ok = jnp.asarray(
+                        specialist_result[1], dtype=jnp.bool_
+                    ).reshape(())
                 else:
                     raise TypeError(
-                        "specialist_synchronization must return BlockHierarchyState "
-                        "or (BlockHierarchyState, accepted)."
+                        "specialist_synchronization must return BlockHierarchyState or (BlockHierarchyState, accepted)."
                     )
                 if specialist_state.topology.epoch.epoch_id != (
                     working.topology.epoch.epoch_id

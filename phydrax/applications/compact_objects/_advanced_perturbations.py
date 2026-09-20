@@ -104,7 +104,7 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
         charge = float(np.asarray(black_hole_charge))
         particle_mass = float(np.asarray(field_mass))
         particle_charge = float(np.asarray(field_charge))
-        nodes = np.asarray(radial_nodes, dtype=float)
+        nodes = np.asarray(radial_nodes, dtype=np.float64)
         ell_value = int(ell)
         azimuthal_value = int(azimuthal)
         overtone_value = int(overtone)
@@ -116,8 +116,7 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
             or discriminant <= 0.0
         ):
             raise ValueError(
-                "A quasi-bound plan requires a finite subextremal Kerr--Newman "
-                "black hole and a positive field mass."
+                "A quasi-bound plan requires a finite subextremal Kerr--Newman black hole and a positive field mass."
             )
         outer_horizon = mass + np.sqrt(discriminant)
         if (
@@ -128,8 +127,7 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
             or nodes[0] <= outer_horizon
         ):
             raise ValueError(
-                "radial_nodes must be a finite increasing exterior grid with at "
-                "least eight nodes."
+                "radial_nodes must be a finite increasing exterior grid with at least eight nodes."
             )
         if ell_value < 0 or abs(azimuthal_value) > ell_value or overtone_value < 0:
             raise ValueError("Mode indices require ell >= |m| and overtone >= 0.")
@@ -512,9 +510,9 @@ class ExcitationResiduePlan(StrictModule, NonTrainableState):
         derivative_floor=1.0e-12,
         pole_separation_floor=1.0e-10,
     ):
-        poles = np.asarray(pole_frequency, dtype=complex)
-        numerators = np.asarray(excitation_numerator, dtype=complex)
-        derivatives = np.asarray(wronskian_derivative, dtype=complex)
+        poles = np.asarray(pole_frequency, dtype=np.complex128)
+        numerators = np.asarray(excitation_numerator, dtype=np.complex128)
+        derivatives = np.asarray(wronskian_derivative, dtype=np.complex128)
         if (
             poles.ndim != 1
             or poles.size == 0
@@ -553,7 +551,7 @@ class ExcitationResiduePlan(StrictModule, NonTrainableState):
         residue = self.excitation_numerator / self.wronskian_derivative
         distances = jnp.abs(self.pole_frequency[:, None] - self.pole_frequency[None, :])
         distances = jnp.where(
-            jnp.eye(self.pole_frequency.size, dtype=bool), jnp.inf, distances
+            jnp.eye(self.pole_frequency.size, dtype=jnp.bool_), jnp.inf, distances
         )
         nearest = jnp.min(distances, axis=1)
         nearest = jnp.where(self.pole_frequency.size == 1, jnp.inf, nearest)
@@ -710,9 +708,9 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
         *,
         resonance_tolerance=1.0e-8,
     ):
-        poles = np.asarray(pole_frequency, dtype=complex)
-        amplitudes = np.asarray(linear_amplitude, dtype=complex)
-        coefficients = np.asarray(coupling, dtype=complex)
+        poles = np.asarray(pole_frequency, dtype=np.complex128)
+        amplitudes = np.asarray(linear_amplitude, dtype=np.complex128)
+        coefficients = np.asarray(coupling, dtype=np.complex128)
         if (
             poles.ndim != 1
             or poles.size == 0
@@ -723,8 +721,7 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
             or np.any(~np.isfinite(coefficients))
         ):
             raise ValueError(
-                "Ringdown poles, amplitudes, and child-parent-parent coupling "
-                "must be finite and shape-compatible."
+                "Ringdown poles, amplitudes, and child-parent-parent coupling must be finite and shape-compatible."
             )
         if resonance_tolerance <= 0.0:
             raise ValueError("resonance_tolerance must be positive.")

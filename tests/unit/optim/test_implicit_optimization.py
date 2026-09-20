@@ -194,7 +194,7 @@ def test_native_implicit_derivative_agrees_with_optimistix():
         )[0]
 
     def upstream(target):
-        return optx.minimise(
+        return optx.minimize(
             objective,
             optx.BFGS(rtol=1e-10, atol=1e-10),
             jnp.array([0.0]),

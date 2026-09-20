@@ -121,7 +121,9 @@ def _solve_record(problem, right_hand_side, policy, *, warmup, repeats):
             )
         )
     )
-    relative_residual = residual_norm / max(right_hand_side_norm, np.finfo(float).tiny)
+    relative_residual = residual_norm / max(
+        right_hand_side_norm, np.finfo(np.float64).tiny
+    )
     return {
         "successful": bool(np.asarray(result.successful)),
         "status": int(np.asarray(result.status)),
@@ -233,8 +235,8 @@ def run_quick(*, size=31, modes=4, warmup=1, repeats=3):
     direct_builder = phx.nn.operator.TrainedOperatorPreconditionerBuilder(
         binding,
         phx.nn.operator.OperatorCorrectionCost(
-            preparation_workspace_bytes=int(direct_matrix.nbytes),
-            inference_workspace_bytes_per_rhs=int(direct_matrix.nbytes),
+            preparation_workspace_bytes=direct_matrix.nbytes,
+            inference_workspace_bytes_per_rhs=direct_matrix.nbytes,
         ),
     )
     operator = phx.linalg.DenseLinearOperator(

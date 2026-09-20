@@ -194,7 +194,7 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
     def _read_mask(self, index: int, shape: tuple[int, ...], /) -> np.ndarray | None:
         if self.mask_loader is None:
             return None
-        mask = np.asarray(self.mask_loader(self.paths[index]), dtype=bool)
+        mask = np.asarray(self.mask_loader(self.paths[index]), dtype=np.bool_)
         if mask.shape != shape:
             raise AdapterError(
                 AdapterStatus.INCONSISTENT_SOURCE,
@@ -234,7 +234,7 @@ def _read_native_image(path: Path, /, *, array_name: str | None) -> np.ndarray:
             AdapterStatus.OPTIONAL_DEPENDENCY_UNAVAILABLE,
             "Reading non-NumPy image files requires optional dependency 'imageio'.",
         )
-    imageio = importlib.import_module("imageio.v3")
+    imageio = importlib.import_module("imageio.canonical")
     return np.asarray(imageio.imread(path))
 
 

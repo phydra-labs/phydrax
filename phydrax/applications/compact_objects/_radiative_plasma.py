@@ -17,8 +17,8 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume import FiniteVolumeDiscretization
 from ...equations._relativistic_radiation_interaction import (
-    AbstractGRGreyOpacityPlan,
-    GRGreyOpacityEvaluation,
+    AbstractGRGrayOpacityPlan,
+    GRGrayOpacityEvaluation,
 )
 from ...solver._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
 
@@ -38,7 +38,7 @@ def _fields(
         jnp.asarray(magnetic_squared),
     )
     composition_finite = (
-        jnp.ones_like(density, dtype=bool)
+        jnp.ones_like(density, dtype=jnp.bool_)
         if composition is None
         else jnp.isfinite(jnp.broadcast_to(jnp.asarray(composition), density.shape))
     )
@@ -86,8 +86,8 @@ def _opacity_evidence(
     return finite, physical, supported, derivative
 
 
-class ThermalBremsstrahlungGreyOpacityPlan(AbstractGRGreyOpacityPlan):
-    """Parameterized thermal free-free grey emission and absorption."""
+class ThermalBremsstrahlungGrayOpacityPlan(AbstractGRGrayOpacityPlan):
+    """Parameterized thermal free-free gray emission and absorption."""
 
     scale: RelativityScaleContract
     emission_prefactor: float = eqx.field(static=True)
@@ -123,7 +123,7 @@ class ThermalBremsstrahlungGreyOpacityPlan(AbstractGRGreyOpacityPlan):
             any(not np.isfinite(value) or value <= 0.0 for value in values)
             or values[3] <= values[2]
         ):
-            raise ValueError("Bremsstrahlung grey-opacity controls are invalid.")
+            raise ValueError("Bremsstrahlung gray-opacity controls are invalid.")
         self.scale = scale
         self.emission_prefactor = values[0]
         self.rosseland_ratio = values[1]
@@ -132,7 +132,7 @@ class ThermalBremsstrahlungGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         self.radiation_constant = values[4]
         self.opacity_id = canonical_fingerprint(
             {
-                "kind": "thermal-bremsstrahlung-grey-opacity",
+                "kind": "thermal-bremsstrahlung-gray-opacity",
                 "scale": scale.scale_id,
                 "emission_prefactor": values[0],
                 "rosseland_ratio": values[1],
@@ -149,7 +149,7 @@ class ThermalBremsstrahlungGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         magnetic_squared: ArrayLike,
         composition: ArrayLike | None = None,
         /,
-    ) -> GRGreyOpacityEvaluation:
+    ) -> GRGrayOpacityEvaluation:
         density, matter, radiation, magnetic, composition_finite = _fields(
             rest_mass_density,
             matter_temperature,
@@ -188,7 +188,7 @@ class ThermalBremsstrahlungGreyOpacityPlan(AbstractGRGreyOpacityPlan):
             minimum_temperature=self.minimum_temperature,
             maximum_temperature=self.maximum_temperature,
         )
-        return GRGreyOpacityEvaluation(
+        return GRGrayOpacityEvaluation(
             *coefficients,
             finite,
             physical,
@@ -198,8 +198,8 @@ class ThermalBremsstrahlungGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         )
 
 
-class ThermalSynchrotronGreyOpacityPlan(AbstractGRGreyOpacityPlan):
-    """Thermal synchrotron grey source tied to local magnetic energy."""
+class ThermalSynchrotronGrayOpacityPlan(AbstractGRGrayOpacityPlan):
+    """Thermal synchrotron gray source tied to local magnetic energy."""
 
     scale: RelativityScaleContract
     electron_mass_per_particle: float = eqx.field(static=True)
@@ -238,7 +238,7 @@ class ThermalSynchrotronGreyOpacityPlan(AbstractGRGreyOpacityPlan):
             any(not np.isfinite(value) or value <= 0.0 for value in values)
             or values[4] <= values[3]
         ):
-            raise ValueError("Synchrotron grey-opacity controls are invalid.")
+            raise ValueError("Synchrotron gray-opacity controls are invalid.")
         self.scale = scale
         self.electron_mass_per_particle = values[0]
         self.emission_prefactor = values[1]
@@ -248,7 +248,7 @@ class ThermalSynchrotronGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         self.radiation_constant = values[5]
         self.opacity_id = canonical_fingerprint(
             {
-                "kind": "thermal-synchrotron-grey-opacity",
+                "kind": "thermal-synchrotron-gray-opacity",
                 "scale": scale.scale_id,
                 "electron_mass_per_particle": values[0],
                 "emission_prefactor": values[1],
@@ -266,7 +266,7 @@ class ThermalSynchrotronGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         magnetic_squared: ArrayLike,
         composition: ArrayLike | None = None,
         /,
-    ) -> GRGreyOpacityEvaluation:
+    ) -> GRGrayOpacityEvaluation:
         density, matter, radiation, magnetic, composition_finite = _fields(
             rest_mass_density,
             matter_temperature,
@@ -307,7 +307,7 @@ class ThermalSynchrotronGreyOpacityPlan(AbstractGRGreyOpacityPlan):
             minimum_temperature=self.minimum_temperature,
             maximum_temperature=self.maximum_temperature,
         )
-        return GRGreyOpacityEvaluation(
+        return GRGrayOpacityEvaluation(
             *coefficients,
             finite,
             physical,
@@ -317,7 +317,7 @@ class ThermalSynchrotronGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         )
 
 
-class KleinNishinaScatteringPlan(AbstractGRGreyOpacityPlan):
+class KleinNishinaScatteringPlan(AbstractGRGrayOpacityPlan):
     """Electron scattering with a bounded Klein-Nishina temperature reduction."""
 
     electron_mass_per_particle: float = eqx.field(static=True)
@@ -350,7 +350,7 @@ class KleinNishinaScatteringPlan(AbstractGRGreyOpacityPlan):
         self.compton_fraction = values[3]
         self.opacity_id = canonical_fingerprint(
             {
-                "kind": "klein-nishina-grey-scattering",
+                "kind": "klein-nishina-gray-scattering",
                 "electron_mass_per_particle": values[0],
                 "thomson_cross_section": values[1],
                 "klein_nishina_temperature": values[2],
@@ -366,7 +366,7 @@ class KleinNishinaScatteringPlan(AbstractGRGreyOpacityPlan):
         magnetic_squared: ArrayLike,
         composition: ArrayLike | None = None,
         /,
-    ) -> GRGreyOpacityEvaluation:
+    ) -> GRGrayOpacityEvaluation:
         density, matter, radiation, magnetic, composition_finite = _fields(
             rest_mass_density,
             matter_temperature,
@@ -390,7 +390,7 @@ class KleinNishinaScatteringPlan(AbstractGRGreyOpacityPlan):
             minimum_temperature=0.0,
             maximum_temperature=float("inf"),
         )
-        return GRGreyOpacityEvaluation(
+        return GRGrayOpacityEvaluation(
             *coefficients,
             finite,
             physical,
@@ -501,7 +501,7 @@ class GRPhotonNumberPlan(StrictModule, NonTrainableState):
         self,
         state: GRPhotonNumberState,
         radiation_state: ArrayLike,
-        opacity: GRGreyOpacityEvaluation,
+        opacity: GRGrayOpacityEvaluation,
         geometry: ValenciaFiniteVolumeStageGeometry,
         step_size: ArrayLike,
         /,
@@ -654,6 +654,6 @@ __all__ = [
     "GRPhotonNumberResult",
     "GRPhotonNumberState",
     "KleinNishinaScatteringPlan",
-    "ThermalBremsstrahlungGreyOpacityPlan",
-    "ThermalSynchrotronGreyOpacityPlan",
+    "ThermalBremsstrahlungGrayOpacityPlan",
+    "ThermalSynchrotronGrayOpacityPlan",
 ]

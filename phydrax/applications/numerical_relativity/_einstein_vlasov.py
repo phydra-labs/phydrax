@@ -111,8 +111,8 @@ class EinsteinVlasovConstraintSolveEvidence(StrictModule):
         self.hamiltonian_before, self.hamiltonian_after = scalar
         self.momentum_before, self.momentum_after = vectors
         self.iterations = iteration
-        self.converged = jnp.asarray(converged, dtype=bool).reshape(())
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.solver_id = identifier
 
 
@@ -186,7 +186,7 @@ class EinsteinVlasovMatterState(StrictModule):
         self.particles = particles
         self.time = time_
         self.accepted_steps, self.rejected_steps, self.consecutive_failures = counters
-        self.terminal = jnp.asarray(terminal, dtype=bool).reshape(())
+        self.terminal = jnp.asarray(terminal, dtype=jnp.bool_).reshape(())
         self.runtime_id = identifier
 
 
@@ -331,7 +331,7 @@ def adm_geodesic_rates(
     momentum = jnp.asarray(covariant_momenta)
     energy = jnp.asarray(particle_energy, dtype=momentum.dtype)
     payload = jnp.asarray(gathered_metric_payload, dtype=momentum.dtype)
-    active = jnp.asarray(active_mask, dtype=bool)
+    active = jnp.asarray(active_mask, dtype=jnp.bool_)
     capacity = momentum.shape[0]
     if momentum.shape != (capacity, 3) or energy.shape != (capacity,):
         raise ValueError(

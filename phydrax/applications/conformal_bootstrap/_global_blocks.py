@@ -369,8 +369,8 @@ class GlobalScalarBlockPlan(StrictModule):
     ):
         if not isinstance(data, ConformalDataPlan):
             raise TypeError("data must be ConformalDataPlan.")
-        points = np.asarray(evaluation_points, dtype=float)
-        spin_values = tuple(int(value) for value in spins)
+        points = np.asarray(evaluation_points, dtype=np.float64)
+        spin_values = tuple(spins)
         derivatives = tuple(
             (int(first), int(second)) for first, second in derivative_orders
         )

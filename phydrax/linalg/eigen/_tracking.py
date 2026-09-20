@@ -160,7 +160,7 @@ def plan_hermitian_eigenspace_tracking(
     selected = HermitianEigenspaceTrackingPolicy() if policy is None else policy
     if not isinstance(selected, HermitianEigenspaceTrackingPolicy):
         raise TypeError("policy must be a HermitianEigenspaceTrackingPolicy or None.")
-    if int(values.size) > selected.maximum_dimension:
+    if values.size > selected.maximum_dimension:
         raise ValueError("Reference dimension exceeds maximum_dimension.")
     host_values = np.asarray(values)
     if not np.all(np.isfinite(host_values)):
@@ -185,7 +185,7 @@ def plan_hermitian_eigenspace_tracking(
         values,
         selected,
         clusters,
-        int(values.size),
+        values.size,
         plan_id,
     )
 
@@ -250,7 +250,7 @@ def track_hermitian_eigenspaces(
     overlap_weights = jnp.real(overlap * jnp.conj(overlap))
     assignment, _, _, assignment_solved, _ = hungarian_assignment_one(
         -jax.lax.stop_gradient(overlap_weights),
-        jnp.ones_like(overlap_weights, dtype=bool),
+        jnp.ones_like(overlap_weights, dtype=jnp.bool_),
     )
     safe_assignment = jnp.clip(assignment, 0, candidate.shape[1] - 1)
     selected_values = values[safe_assignment]

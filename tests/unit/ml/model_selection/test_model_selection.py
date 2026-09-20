@@ -72,7 +72,7 @@ class _MeanRecipe(AbstractRecipe):
         if batch.target_shape != ():
             raise ValueError("test recipe requires scalar targets")
         target_valid = (
-            jnp.ones_like(targets, dtype=bool)
+            jnp.ones_like(targets, dtype="bool")
             if batch.target_mask is None
             else batch.target_mask
         )
@@ -124,7 +124,7 @@ class _MetricResult(StrictModule):
 
     def __init__(self, value, *, valid, status, effective_weight):
         self.value = jnp.asarray(value)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype="bool")
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.effective_weight = jnp.asarray(effective_weight)
 
@@ -132,7 +132,7 @@ class _MetricResult(StrictModule):
 def _structured_scorer(predictions, targets, *, sample_weight, mask):
     predictions = jnp.asarray(predictions)
     targets = jnp.asarray(targets)
-    active = jnp.asarray(mask, dtype=bool)
+    active = jnp.asarray(mask, dtype="bool")
     weights = jnp.where(active, jnp.asarray(sample_weight), 0.0)
     mass = jnp.sum(weights, axis=-1)
     error = predictions - targets
@@ -151,8 +151,8 @@ def _structured_scorer(predictions, targets, *, sample_weight, mask):
 
 
 def _batch(targets):
-    targets = jnp.asarray(targets, dtype=float)
-    features = jnp.arange(targets.size, dtype=float).reshape(targets.shape + (1,))
+    targets = jnp.asarray(targets, dtype="float64")
+    features = jnp.arange(targets.size, dtype="float64").reshape(targets.shape + (1,))
     return MLBatch(features, targets)
 
 

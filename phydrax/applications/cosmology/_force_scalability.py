@@ -184,8 +184,8 @@ class DistributedPMFeasibilityEvidence(StrictModule, NonTrainableState):
         arrays_per_device: int = 8,
         byte_budget_per_device: int,
     ):
-        mesh = tuple(int(value) for value in mesh_shape)
-        devices = tuple(int(value) for value in device_mesh_shape)
+        mesh = tuple(mesh_shape)
+        devices = tuple(device_mesh_shape)
         capacity = int(particle_capacity_per_device)
         divisible = len(mesh) == len(devices) and all(
             count > 0 and parts > 0 and count % parts == 0

@@ -131,7 +131,7 @@ def _zeta_value_derivative(s: Array, /) -> tuple[Array, Array]:
     derivative = jnp.where(use_reflection, reflected_derivative, direct_derivative)
 
     real_axis = (
-        jnp.imag(s) == 0.0 if jnp.iscomplexobj(s) else jnp.ones_like(s, dtype=bool)
+        jnp.imag(s) == 0.0 if jnp.iscomplexobj(s) else jnp.ones_like(s, dtype=jnp.bool_)
     )
     nearest = jnp.round(jnp.real(s))
     trivial_zero = (
@@ -149,7 +149,7 @@ def _zeta_value_derivative(s: Array, /) -> tuple[Array, Array]:
     derivative = jnp.where(pole, -infinity, derivative)
 
     if jnp.iscomplexobj(s):
-        positive_infinity = jnp.zeros_like(s, dtype=bool)
+        positive_infinity = jnp.zeros_like(s, dtype=jnp.bool_)
     else:
         positive_infinity = jnp.isposinf(s)
     value = jnp.where(positive_infinity, jnp.ones_like(value), value)

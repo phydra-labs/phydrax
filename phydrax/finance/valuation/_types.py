@@ -68,10 +68,10 @@ class ValuationEvidence(StrictModule):
             raise TypeError("pricing_law must be PricingLaw or None.")
         if not isinstance(status, ValuationStatus):
             raise TypeError("status must be a ValuationStatus.")
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.inputs_admissible = jnp.asarray(inputs_admissible, dtype=bool)
-        self.converged = jnp.asarray(converged, dtype=bool)
-        self.exercise_consistent = jnp.asarray(exercise_consistent, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.inputs_admissible = jnp.asarray(inputs_admissible, dtype=jnp.bool_)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
+        self.exercise_consistent = jnp.asarray(exercise_consistent, dtype=jnp.bool_)
         self.error_estimate = (
             None if error_estimate is None else jnp.asarray(error_estimate)
         )

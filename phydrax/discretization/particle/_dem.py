@@ -568,7 +568,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             neighborhood, PreparedVerletParticleNeighborhood
         ):
             raise ValueError("verlet_fused requires a prepared Verlet neighborhood.")
-        active_mask = np.asarray(bodies.particles.active_mask, dtype=bool)
+        active_mask = np.asarray(bodies.particles.active_mask, dtype=np.bool_)
         interaction_extents = method.contact.interaction_extents_for_radii(
             np.asarray(bodies.radii)[active_mask],
             np.asarray(bodies.material_ids)[active_mask],
@@ -576,7 +576,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         )
         maximum_interaction_radius = 2.0 * float(np.max(interaction_extents))
         cohesion = method.contact.cohesion
-        bagheri_present = isinstance(cohesion, BagheriCapillaryBridgePlan) or (
+        isinstance(cohesion, BagheriCapillaryBridgePlan) or (
             isinstance(cohesion, CompositeDEMCohesionPlan)
             and any(
                 isinstance(component, BagheriCapillaryBridgePlan)
@@ -599,7 +599,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 )
             if not neighborhood.box.fully_periodic:
                 raise ValueError("Controlled DEM cells must be fully periodic.")
-            if np.any(np.asarray(bodies.fixed_mask, dtype=bool) & active_mask):
+            if np.any(np.asarray(bodies.fixed_mask, dtype=np.bool_) & active_mask):
                 raise ValueError(
                     "Controlled periodic DEM cells do not support fixed particles."
                 )
@@ -630,8 +630,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 for barrier, binding in zip(barriers_, bindings, strict=True):
                     if binding.law != "bagheri":
                         raise ValueError(
-                            "Conserved DEM barrier liquid currently requires "
-                            "the Bagheri sphere-surface law."
+                            "Conserved DEM barrier liquid currently requires the Bagheri sphere-surface law."
                         )
                     if (
                         binding.geometry_policy == "isotropic_curvature"
@@ -639,8 +638,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                         not in {value.value for value in barrier.geometry.capabilities}
                     ):
                         raise ValueError(
-                            "Isotropic barrier capillarity requires certified "
-                            "contact curvature."
+                            "Isotropic barrier capillarity requires certified contact curvature."
                         )
             _, liquid_component_index = conserved_bagheri_component(
                 method.contact.cohesion

@@ -32,8 +32,8 @@ class OperatorScalingProfile:
 
 
 def _scaling_exponent(x, y) -> float | None:
-    x_array = np.asarray(x, dtype=float)
-    y_array = np.asarray(y, dtype=float)
+    x_array = np.asarray(x, dtype="float64")
+    y_array = np.asarray(y, dtype="float64")
     valid = (x_array > 0.0) & (y_array > 0.0)
     if int(np.sum(valid)) < 2:
         return None

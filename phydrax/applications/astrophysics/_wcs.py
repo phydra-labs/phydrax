@@ -18,8 +18,8 @@ from ._observation_status import AstrophysicsObservationStatus
 
 def _polynomial_2d(coefficients: Array, x: Array, y: Array, /) -> Array:
     value = jnp.asarray(0.0, dtype=x.dtype)
-    for i in range(int(coefficients.shape[0])):
-        for j in range(int(coefficients.shape[1])):
+    for i in range(coefficients.shape[0]):
+        for j in range(coefficients.shape[1]):
             value = value + coefficients[i, j] * x**i * y**j
     return value
 
@@ -56,11 +56,11 @@ class TangentSipWcsPlan(StrictModule, NonTrainableState):
         tolerance=1.0e-11,
         wcs_id="tan-sip",
     ):
-        sky = np.asarray(reference_sky, dtype=float)
-        pixel = np.asarray(reference_pixel, dtype=float)
-        cd = np.asarray(cd_matrix, dtype=float)
-        a = np.asarray(sip_a, dtype=float)
-        b = np.asarray(sip_b, dtype=float)
+        sky = np.asarray(reference_sky, dtype=np.float64)
+        pixel = np.asarray(reference_pixel, dtype=np.float64)
+        cd = np.asarray(cd_matrix, dtype=np.float64)
+        a = np.asarray(sip_a, dtype=np.float64)
+        b = np.asarray(sip_b, dtype=np.float64)
         if (
             sky.shape != (2,)
             or pixel.shape != (2,)
@@ -81,7 +81,7 @@ class TangentSipWcsPlan(StrictModule, NonTrainableState):
         self.inverse_iterations = int(inverse_iterations)
         self.tolerance = float(tolerance)
         self.plan_id = canonical_fingerprint(
-            {"kind": "tan-sip-wcs", "wcs_id": str(wcs_id), "order": int(a.shape[0] - 1)}
+            {"kind": "tan-sip-wcs", "wcs_id": str(wcs_id), "order": a.shape[0] - 1}
         )
 
     def _sky_to_tangent(self, sky: Array, /) -> Array:

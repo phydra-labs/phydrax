@@ -58,8 +58,8 @@ class DSMCReactionChannelPlan(StrictModule, NonTrainableState):
         self.channel_id = canonical_fingerprint(
             {
                 "kind": "dsmc-reaction-channel",
-                "reactants": tuple(int(value) for value in reactants),
-                "products": tuple(int(value) for value in products),
+                "reactants": tuple(reactants),
+                "products": tuple(products),
                 "threshold_energy": threshold,
                 "probability": chance,
             }
@@ -106,7 +106,7 @@ class DSMCInternalReactionPlan(StrictModule, NonTrainableState):
         *,
         rotational_relaxation_probability: ArrayLike,
     ) -> None:
-        rotational = np.asarray(rotational_relaxation_probability, dtype=float)
+        rotational = np.asarray(rotational_relaxation_probability, dtype=np.float64)
         channels_ = tuple(channels)
         invalid_channels = any(
             not isinstance(value, DSMCReactionChannelPlan) for value in channels_
@@ -139,8 +139,8 @@ class DSMCInternalReactionPlan(StrictModule, NonTrainableState):
             if not np.isclose(
                 np.sum(masses[reactants]),
                 np.sum(masses[products]),
-                rtol=256.0 * np.finfo(float).eps,
-                atol=256.0 * np.finfo(float).eps * mass_scale,
+                rtol=256.0 * np.finfo(np.float64).eps,
+                atol=256.0 * np.finfo(np.float64).eps * mass_scale,
             ):
                 raise ValueError("A DSMC reaction channel does not conserve mass.")
             if not np.isclose(np.sum(charges[reactants]), np.sum(charges[products])):
@@ -174,7 +174,7 @@ class DSMCInternalReactionPlan(StrictModule, NonTrainableState):
     ) -> DSMCInternalReactionEventResult:
         first = jnp.asarray(first_index, dtype=jnp.int32)
         second = jnp.asarray(second_index, dtype=jnp.int32)
-        enabled = jnp.asarray(accepted_collision, dtype=bool)
+        enabled = jnp.asarray(accepted_collision, dtype=jnp.bool_)
         if (
             first.shape != ()
             or second.shape != ()
@@ -404,7 +404,7 @@ class DSMCInternalReactionPlan(StrictModule, NonTrainableState):
     ) -> DSMCInternalReactionResult:
         first = jnp.asarray(first_indices, dtype=jnp.int32)
         second = jnp.asarray(second_indices, dtype=jnp.int32)
-        accepted = jnp.asarray(accepted_collisions, dtype=bool)
+        accepted = jnp.asarray(accepted_collisions, dtype=jnp.bool_)
         key_values = keys
         if (
             first.ndim != 1

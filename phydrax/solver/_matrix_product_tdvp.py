@@ -286,7 +286,7 @@ def plan_finite_tdvp(
         )
     )
     if policy.algorithm == "one-site":
-        maximum_local = max(int(value.size) for value in state.tensors)
+        maximum_local = max(value.size for value in state.tensors)
         local_count = 4 * state.site_count - 2
     else:
         maximum_local = max(
@@ -684,10 +684,10 @@ def solve_finite_tdvp(
     normalization = jnp.ones((count,), dtype=real_dtype)
     errors = jnp.full((count, local_count), jnp.nan, dtype=real_dtype)
     residuals = jnp.full((count, local_count), jnp.nan, dtype=real_dtype)
-    local_converged = jnp.zeros((count, local_count), dtype=bool)
+    local_converged = jnp.zeros((count, local_count), dtype=jnp.bool_)
     truncation = jnp.full((count, local_count), jnp.nan, dtype=real_dtype)
     canonical_residuals = jnp.full((count,), jnp.nan, dtype=real_dtype)
-    active = jnp.zeros((count,), dtype=bool)
+    active = jnp.zeros((count,), dtype=jnp.bool_)
     norms = norms.at[0].set(state.norm())
     energies = energies.at[0].set(
         _normalized_energy(state, prepared.problem.hamiltonian_at(0))

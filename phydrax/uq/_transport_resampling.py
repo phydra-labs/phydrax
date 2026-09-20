@@ -55,7 +55,7 @@ def optimal_transport_ensemble_transform(
     after it form one particle event. The returned particles preserve the input axis
     order and expose the raw native coupling for sensitivity or genealogy analysis.
     """
-    values = jnp.asarray(particles, dtype=float)
+    values = jnp.asarray(particles, dtype=jnp.float64)
     if values.ndim < 1:
         raise ValueError("particles must have at least one dimension.")
     position = particle_axis + values.ndim if particle_axis < 0 else particle_axis

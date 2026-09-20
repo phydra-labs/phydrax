@@ -64,7 +64,7 @@ def test_spatial_measure_exposes_physical_coordinates_to_callables():
 
 def test_normalized_spatial_measure_and_mask_use_physical_quadrature_mass():
     discretization = _tensor_grid()
-    mask = jnp.ones(discretization.state_shape, dtype=bool).at[0].set(False)
+    mask = jnp.ones(discretization.state_shape, dtype="bool").at[0].set(False)
     target = phx.integration.spatial_measure(
         discretization,
         spatial_dims=("x", "y"),

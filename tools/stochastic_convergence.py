@@ -205,7 +205,7 @@ def run_stochastic_heat_convergence_benchmark(
         reference_id="continuous-periodic-heat-mode",
     )
 
-    frequencies = jnp.arange(64, dtype=float)
+    frequencies = jnp.arange(64, dtype="float64")
     laplacian_spectrum = (2.0 * jnp.pi * frequencies) ** 2
     covariance_spectrum = 0.02 / (1.0 + laplacian_spectrum) ** 1.25
     linear_spectrum = -0.03 * laplacian_spectrum
@@ -479,7 +479,7 @@ def run_multiplicative_reaction_diffusion_benchmark(
         t1=duration,
         kappa=diffusivity,
         reaction=lambda t, state, args: (reaction_shape / mode) * state,
-        reaction_id="lognormal-mode-linear-reaction-v1",
+        reaction_id="lognormal-mode-linear-reaction",
         noise_basis=basis,
         noise_amplitude=lambda t, state, args: noise_scale * state,
         noise_structure="commutative",

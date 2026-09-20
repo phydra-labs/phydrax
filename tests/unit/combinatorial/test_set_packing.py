@@ -12,7 +12,7 @@ import phydrax as phx
 def _solve(space, costs, method):
     return phx.combinatorial.solve_combinatorial(
         phx.combinatorial.LinearCombinatorialProblem(
-            space, jnp.asarray(costs, dtype=float)
+            space, jnp.asarray(costs, dtype="float64")
         ),
         method,
     )
@@ -70,7 +70,7 @@ def test_branch_and_bound_ties_infeasibility_and_budget_evidence_are_explicit():
     assert infeasible.status == int(phx.combinatorial.CombinatorialStatus.INFEASIBLE)
     assert not infeasible.valid
 
-    budget_space = phx.combinatorial.SetPackingSpace(jnp.zeros((3, 0), dtype=bool))
+    budget_space = phx.combinatorial.SetPackingSpace(jnp.zeros((3, 0), dtype="bool"))
     budgeted = _solve(
         budget_space,
         [-1.0, -1.0, -1.0],
@@ -107,7 +107,7 @@ def test_greedy_set_packing_distinguishes_feasible_and_certified_results():
     assert heuristic.certificate.absolute_gap > 0.0
     assert not heuristic.provenance.exact
 
-    independent = phx.combinatorial.SetPackingSpace(jnp.eye(3, dtype=bool))
+    independent = phx.combinatorial.SetPackingSpace(jnp.eye(3, dtype="bool"))
     certified = _solve(
         independent,
         [-3.0, 1.0, -2.0],
@@ -120,7 +120,7 @@ def test_greedy_set_packing_distinguishes_feasible_and_certified_results():
 
 
 def test_set_packing_outputs_have_stopped_ordinary_gradients():
-    space = phx.combinatorial.SetPackingSpace(jnp.eye(2, dtype=bool))
+    space = phx.combinatorial.SetPackingSpace(jnp.eye(2, dtype="bool"))
     method = phx.combinatorial.BranchAndBoundSetPacking()
 
     gradient = jax.grad(

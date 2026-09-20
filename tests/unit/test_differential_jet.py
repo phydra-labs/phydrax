@@ -73,7 +73,7 @@ def test_div_diag_k_grad_backend_jet_constant_k_matches_laplacian():
 
     @geom.Function("x")
     def k_vec(x):
-        return jnp.array([1.0], dtype=float)
+        return jnp.array([1.0], dtype="float64")
 
     op = div_diag_k_grad(u, k_vec, var="x", backend="jet")
     lap = laplacian(u, var="x", backend="jet")

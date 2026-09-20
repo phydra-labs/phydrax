@@ -348,10 +348,10 @@ def assess_supersymmetric_observables(
 ) -> SupersymmetricObservableEvidence:
     """Summarize gauge-invariant chain observables without inferring a continuum claim."""
 
-    bosonic = np.asarray(bosonic_actions, dtype=float)
+    bosonic = np.asarray(bosonic_actions, dtype=np.float64)
     wards = np.asarray(ward_observables)
     polyakov = np.asarray(polyakov_loops)
-    scalars = np.asarray(scalar_eigenvalues, dtype=float)
+    scalars = np.asarray(scalar_eigenvalues, dtype=np.float64)
     count = bosonic.size
     if bosonic.ndim != 1 or count < 2:
         raise ValueError("Bosonic actions must provide at least two chain samples.")

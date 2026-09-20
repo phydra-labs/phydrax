@@ -17,7 +17,7 @@ def _refined_pair():
         cell_capacity=32,
     )
     coarse = plan.prepare()
-    refine = jnp.zeros((plan.cell_capacity,), dtype=bool).at[0].set(True)
+    refine = jnp.zeros((plan.cell_capacity,), dtype="bool").at[0].set(True)
     fine = plan.adapt(coarse, refine_mask=refine).accepted
     return plan, coarse, fine
 

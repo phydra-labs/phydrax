@@ -275,7 +275,7 @@ class NILSSPlan(AbstractShadowingSolvePlan):
             basis_dimension=self.basis_dimension,
             horizon_steps=horizon,
             segment_count=self.segment_count,
-            input_trajectory_bytes=int(trajectory.states.size) * itemsize,
+            input_trajectory_bytes=trajectory.states.size * itemsize,
             retained_bytes=retained,
             workspace_bytes=workspace,
             maximum_retained_bytes=self.maximum_retained_bytes,

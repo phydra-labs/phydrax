@@ -117,8 +117,8 @@ class FixedGRFieldSamplingPlan(StrictModule, NonTrainableState):
         source_id: str,
         query_fingerprint: str,
     ):
-        shape = tuple(int(value) for value in query_shape)
-        smooth = jax.lax.stop_gradient(jnp.asarray(interpolation_smooth, dtype=bool))
+        shape = tuple(query_shape)
+        smooth = jax.lax.stop_gradient(jnp.asarray(interpolation_smooth, dtype=jnp.bool_))
         if not isinstance(stencil, GatherStencil):
             raise TypeError("stencil must be a GatherStencil.")
         if smooth.shape != shape or stencil.support.shape != shape:
@@ -137,7 +137,7 @@ class FixedGRFieldSamplingPlan(StrictModule, NonTrainableState):
                 "source": identifier,
                 "query": query_id,
                 "query_shape": shape,
-                "stencil_capacity": int(stencil.indices.shape[-1]),
+                "stencil_capacity": stencil.indices.shape[-1],
             }
         )
 
@@ -164,7 +164,7 @@ def _runtime_sampling_stencil(
     for axis, nodes in enumerate(axis_values):
         coordinate = coordinates[..., axis]
         smooth = smooth & (coordinate > nodes[0]) & (coordinate < nodes[-1])
-        if int(nodes.size) > 2:
+        if nodes.size > 2:
             smooth = smooth & ~jnp.any(coordinate[..., None] == nodes[1:-1], axis=-1)
     return stencil, smooth
 
@@ -292,7 +292,7 @@ class FastLightSnapshot(StrictModule, NonTrainableState):
         chart_id: str,
         source_id: str,
     ):
-        axes_host = tuple(np.asarray(axis, dtype=float) for axis in coordinate_axes)
+        axes_host = tuple(np.asarray(axis, dtype=np.float64) for axis in coordinate_axes)
         if (
             len(axes_host) != 3
             or any(axis.ndim != 1 or axis.size < 2 for axis in axes_host)
@@ -304,18 +304,18 @@ class FastLightSnapshot(StrictModule, NonTrainableState):
             raise ValueError(
                 "Fast-light coordinate axes must be three finite increasing vectors."
             )
-        spatial_shape = tuple(int(axis.size) for axis in axes_host)
-        rest_host = np.asarray(rest_mass_density, dtype=float)
-        number_host = np.asarray(electron_number_density, dtype=float)
-        temperature_host = np.asarray(electron_temperature, dtype=float)
-        velocity_host = np.asarray(fluid_four_velocity, dtype=float)
-        magnetic_host = np.asarray(magnetic_four_vector, dtype=float)
+        spatial_shape = tuple(axis.size for axis in axes_host)
+        rest_host = np.asarray(rest_mass_density, dtype=np.float64)
+        number_host = np.asarray(electron_number_density, dtype=np.float64)
+        temperature_host = np.asarray(electron_temperature, dtype=np.float64)
+        velocity_host = np.asarray(fluid_four_velocity, dtype=np.float64)
+        magnetic_host = np.asarray(magnetic_four_vector, dtype=np.float64)
         mask_host = (
-            np.ones(spatial_shape, dtype=bool)
+            np.ones(spatial_shape, dtype=np.bool_)
             if source_mask is None
-            else np.asarray(source_mask, dtype=bool)
+            else np.asarray(source_mask, dtype=np.bool_)
         )
-        time_host = np.asarray(coordinate_time, dtype=float)
+        time_host = np.asarray(coordinate_time, dtype=np.float64)
         if (
             rest_host.shape != spatial_shape
             or number_host.shape != spatial_shape
@@ -394,7 +394,7 @@ class FastLightSnapshot(StrictModule, NonTrainableState):
         )
 
     def prepare_sampling(self, coordinates: ArrayLike, /) -> FixedGRFieldSamplingPlan:
-        query_host = np.asarray(coordinates, dtype=float)
+        query_host = np.asarray(coordinates, dtype=np.float64)
         if query_host.ndim < 1 or query_host.shape[-1] != 3:
             raise ValueError("Fast-light query coordinates must end in three components.")
         stencil, smooth = _runtime_sampling_stencil(

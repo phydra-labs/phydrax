@@ -11,9 +11,9 @@ from phydrax.discretization.lattice_boltzmann._boundary import (
     LatticeBoltzmannBoundaryPlan,
 )
 from phydrax.discretization.lattice_boltzmann._collision import BGKCollisionPlan
-from phydrax.discretization.lattice_boltzmann._colour_gradient import (
-    ColourGradientLBMMethod,
-    ColourGradientLBMRuntimeParameters,
+from phydrax.discretization.lattice_boltzmann._color_gradient import (
+    ColorGradientLBMMethod,
+    ColorGradientLBMRuntimeParameters,
 )
 from phydrax.discretization.lattice_boltzmann._discretization import (
     LatticeBoltzmannPlan,
@@ -25,9 +25,9 @@ from phydrax.discretization.lattice_boltzmann._free_energy import (
 )
 from phydrax.discretization.lattice_boltzmann._lattice import D2Q9
 from phydrax.discretization.lattice_boltzmann._method import LatticeBoltzmannMethodPlan
-from phydrax.equations._lattice_boltzmann_colour_gradient import (
-    ColourGradientLatticeBoltzmannProblem,
-    compile_colour_gradient_lattice_boltzmann_problem,
+from phydrax.equations._lattice_boltzmann_color_gradient import (
+    ColorGradientLatticeBoltzmannProblem,
+    compile_color_gradient_lattice_boltzmann_problem,
 )
 from phydrax.equations._lattice_boltzmann_free_energy import (
     compile_free_energy_lattice_boltzmann_problem,
@@ -50,21 +50,21 @@ def _forced_method():
     return LatticeBoltzmannMethodPlan(BGKCollisionPlan(), forcing=GuoForcingPlan())
 
 
-def test_colour_gradient_compiler_routes_both_populations_and_fails_atomically():
+def test_color_gradient_compiler_routes_both_populations_and_fails_atomically():
     discretization = _discretization()
-    method = ColourGradientLBMMethod(_forced_method(), maximum_capillary_number=10.0)
-    compiled = compile_colour_gradient_lattice_boltzmann_problem(
-        ColourGradientLatticeBoltzmannProblem("binary", 2),
+    method = ColorGradientLBMMethod(_forced_method(), maximum_capillary_number=10.0)
+    compiled = compile_color_gradient_lattice_boltzmann_problem(
+        ColorGradientLatticeBoltzmannProblem("binary", 2),
         discretization,
         method,
         LatticeBoltzmannBoundaryPlan(),
         time_step=0.01,
     )
     x = discretization.grid.points[:, 0].reshape(discretization.grid.shape)
-    colour = jnp.tanh((x - 0.5) / 0.08)
-    red = 0.5 * (1.0 + colour)
+    color = jnp.tanh((x - 0.5) / 0.08)
+    red = 0.5 * (1.0 + color)
     blue = 1.0 - red
-    parameters = ColourGradientLBMRuntimeParameters(0.01, 1.0e-4)
+    parameters = ColorGradientLBMRuntimeParameters(0.01, 1.0e-4)
     state = compiled.initialize_state(red, blue, jnp.zeros((2,)), parameters)
 
     result = compiled.dynamics.step_detailed(0, 0.0, state, 0.01, parameters)
@@ -77,8 +77,8 @@ def test_colour_gradient_compiler_routes_both_populations_and_fails_atomically()
         result.diagnostics.total_mass,
         atol=1e-11,
     )
-    assert result.diagnostics.recolouring.population_closure_defect <= 1e-11
-    assert result.diagnostics.recolouring.momentum_closure_defect <= 1e-11
+    assert result.diagnostics.recoloring.population_closure_defect <= 1e-11
+    assert result.diagnostics.recoloring.momentum_closure_defect <= 1e-11
 
     rejected = compiled.dynamics.step_detailed(0, 0.0, state, 0.02, parameters)
     assert not bool(rejected.successful)

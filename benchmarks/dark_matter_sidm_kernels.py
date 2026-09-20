@@ -85,7 +85,7 @@ def _setup(node_count: int):
         cosines,
         differential,
         **_source_kwargs(speeds, cosines, differential),
-        identical_particle_convention="labelled-full-sphere",
+        identical_particle_convention="labeled-full-sphere",
     )
     split = SmallAngleSplitPlan(kernel, 0.8)
     return kernel, split

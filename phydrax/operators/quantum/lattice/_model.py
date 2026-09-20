@@ -181,7 +181,7 @@ class LocalOperatorPlan(StrictModule):
             raise TypeError("space must be LocalSpacePlan.")
         name = str(label)
         value = np.asarray(matrix)
-        delta = tuple(int(item) for item in charge_delta)
+        delta = tuple(charge_delta)
         if not name:
             raise ValueError("A local operator label must be non-empty.")
         if value.shape != (space.dimension, space.dimension) or np.any(

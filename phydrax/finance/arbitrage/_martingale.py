@@ -68,12 +68,12 @@ class NumeraireOptionMarginal(StrictModule):
             raise TypeError(
                 "pricing_law must be a PricingLaw, not a physical/stress law."
             )
-        values = jnp.asarray(asset_values, dtype=float)
+        values = jnp.asarray(asset_values, dtype=jnp.float64)
         if values.ndim == 1:
             values = values[:, None]
-        probabilities_ = jnp.asarray(probabilities, dtype=float)
-        numeraires = jnp.asarray(numeraire_values, dtype=float)
-        discount = jnp.asarray(discount_factor, dtype=float)
+        probabilities_ = jnp.asarray(probabilities, dtype=jnp.float64)
+        numeraires = jnp.asarray(numeraire_values, dtype=jnp.float64)
+        discount = jnp.asarray(discount_factor, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[0] < 1 or values.shape[1] < 1:
             raise ValueError("asset_values must have shape (atom, asset_coordinate).")
         if (
@@ -133,7 +133,7 @@ class NumeraireOptionMarginal(StrictModule):
 
     @property
     def num_atoms(self) -> int:
-        return int(self.probabilities.shape[0])
+        return self.probabilities.shape[0]
 
 
 class FinanceMartingaleTransportProblem(StrictModule):
@@ -360,7 +360,7 @@ def bind_option_marginals_to_martingale_bridge(
         raise TypeError("marginals must contain exactly two endpoint option marginals.")
     for left, right in zip(values, values[1:], strict=True):
         _same_pricing_semantics(left, right)
-    grid = jnp.asarray(times, dtype=float)
+    grid = jnp.asarray(times, dtype=jnp.float64)
     if grid.shape != (len(values),):
         raise ValueError("times must contain one node per option marginal.")
     first_support = values[0].asset_values
@@ -463,7 +463,7 @@ def validate_martingale_bridge_paths(
         conditional,
         endpoint_residual,
         defect,
-        int(paths.shape[0]),
+        paths.shape[0],
         identifiers[0],
         identifiers[1],
         identifiers[2],

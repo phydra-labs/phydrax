@@ -45,7 +45,7 @@ def test_gaussian_raster_exposes_border_and_support_overflow():
         jnp.asarray([[0.2, 0.2], [6.0, 6.0]]),
         jnp.ones((2,)),
         jnp.asarray([0.8, 2.0]),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
     )
 
     assert result.evidence.truncated.tolist() == [True, True]
@@ -57,7 +57,7 @@ def test_gaussian_raster_exposes_border_and_support_overflow():
 def test_fixed_topology_gaussian_raster_has_finite_coordinate_derivative():
     geometry = ImagePlaneSupport((17, 17))
     rasterizer = GaussianRasterizer(5, cutoff=3.0)
-    columns = jnp.arange(17, dtype=float)[None, :]
+    columns = jnp.arange(17, dtype="float64")[None, :]
 
     def image_column_moment(column):
         result = rasterizer.render(

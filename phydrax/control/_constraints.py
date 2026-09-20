@@ -73,7 +73,7 @@ class SampledControlFeasibility(StrictModule):
         path = jnp.asarray(path_residuals)
         terminal = jnp.asarray(terminal_residuals)
         maximum = jnp.asarray(maximum_violation)
-        feasible_ = jnp.asarray(feasible, dtype=bool)
+        feasible_ = jnp.asarray(feasible, dtype=jnp.bool_)
         expected_path = case_shape + (num_steps, num_path_constraints)
         expected_terminal = case_shape + (num_terminal_constraints,)
         if path.shape != expected_path:
@@ -82,8 +82,7 @@ class SampledControlFeasibility(StrictModule):
             )
         if terminal.shape != expected_terminal:
             raise ValueError(
-                "terminal_residuals must have shape "
-                f"{expected_terminal}; got {terminal.shape}."
+                f"terminal_residuals must have shape {expected_terminal}; got {terminal.shape}."
             )
         if maximum.shape != case_shape or feasible_.shape != case_shape:
             raise ValueError("maximum_violation and feasible must both have case_shape.")

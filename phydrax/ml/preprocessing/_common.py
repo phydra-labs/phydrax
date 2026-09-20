@@ -55,15 +55,15 @@ class PreprocessingDiagnostics(StrictModule):
         method: str,
         details: tuple[tuple[str, Any], ...] = (),
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.observed_weight = jnp.asarray(observed_weight)
         self.effective_samples = jnp.asarray(effective_samples)
-        self.constant_features = jnp.asarray(constant_features, dtype=bool)
+        self.constant_features = jnp.asarray(constant_features, dtype=jnp.bool_)
         self.input_schema = input_schema
         self.output_schema = output_schema
-        self.input_shape = tuple(int(size) for size in input_shape)
-        self.output_shape = tuple(int(size) for size in output_shape)
+        self.input_shape = tuple(input_shape)
+        self.output_shape = tuple(output_shape)
         self.method = str(method)
         self.details = tuple(details)
 
@@ -92,7 +92,7 @@ def _feature_observations(
     included = included & finite
     if extra_mask is not None:
         included = included & jnp.broadcast_to(
-            jnp.asarray(extra_mask, dtype=bool), values.shape
+            jnp.asarray(extra_mask, dtype=jnp.bool_), values.shape
         )
     weights = jnp.where(included, sample_weight[..., None], 0.0)
     safe_values = jnp.where(included, values, 0)
@@ -167,7 +167,7 @@ def _align_parameter(
 
 def _check_features(x: Any, in_size: int, /) -> Array:
     values = jnp.asarray(x)
-    if values.ndim < 1 or int(values.shape[-1]) != int(in_size):
+    if values.ndim < 1 or values.shape[-1] != int(in_size):
         raise ValueError(
             f"Expected a final feature axis of length {in_size}; got {values.shape}."
         )
@@ -188,7 +188,7 @@ def _diagnostics(
     details: tuple[tuple[str, Any], ...] = (),
 ) -> PreprocessingDiagnostics:
     if constant is None:
-        constant = jnp.zeros_like(mass, dtype=bool)
+        constant = jnp.zeros_like(mass, dtype=jnp.bool_)
     return PreprocessingDiagnostics(
         valid=valid,
         status=status,

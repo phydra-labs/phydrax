@@ -262,14 +262,14 @@ cell = phx.nn.layers.ArtificialLIFCell(
 model = phx.nn.models.RecurrentSequenceModel(cell)
 batch = phx.nn.layers.RecurrentBatch(
     jnp.ones((6, 2)),
-    jnp.ones((6,), dtype=bool),
+    jnp.ones((6,), dtype="bool"),
     time=jnp.arange(6, dtype=jnp.float32),  # milliseconds
 )
 spikes = model(batch)  # (6, 8), binary; first physical node emits zero
 carry = model.evaluate_with_state(batch)
 continuation = phx.nn.layers.RecurrentBatch(
     jnp.ones((3, 2)),
-    jnp.ones((3,), dtype=bool),
+    jnp.ones((3,), dtype="bool"),
     time=jnp.arange(6, 9, dtype=jnp.float32),
 )
 later = model(
@@ -829,7 +829,7 @@ subspace remains an explicit approximation.
 
 ## Neural operators
 
-PhydraX neural operators consume a canonical `OperatorBatch`, not an unlabelled
+PhydraX neural operators consume a canonical `OperatorBatch`, not an unlabeled
 tensor convention. A batch separates:
 
 - one or more source functions (`FunctionSamples`);
@@ -1155,10 +1155,10 @@ Legendre policies for nonperiodic or nonuniform tensor axes.
 Periodic grid reconstruction is shared across spectral architectures and public
 array-level evaluation. `phydrax.signal.fourier_resample` transfers explicit
 spatial axes to aligned or period-shifted uniform grids.
-`sample_fourier_grid` evaluates paired arbitrary coordinates with an exact
-direct backend or an explicitly tolerance-controlled NUFFT backend. Both
-preserve channel-last fields and leading case axes; the point sampler also
-accepts physical uniform axis nodes and periods.
+`sample_fourier_grid` evaluates paired arbitrary coordinates with exact direct
+or bounded chunked nonuniform Fourier execution. Both preserve channel-last
+fields and leading case axes; the point sampler also accepts physical uniform
+axis nodes and periods.
 
 ::: phydrax.signal.fourier_resample
 
@@ -1791,7 +1791,7 @@ normalizes features presented to learned kernels.
   dimension must be divisible by its corresponding patch size.
 
 All four classes require an `OperatorBatch`; they deliberately reject an
-unlabelled array whose geometry, source identity, mask, and measure would be
+unlabeled array whose geometry, source identity, mask, and measure would be
 ambiguous. Uniform measure is never inferred unless
 `assume_uniform_measure=True` is requested explicitly.
 
@@ -2470,8 +2470,8 @@ mathematical operator.
 
 #### Reliability benchmark
 
-Operator Benchmark v2 writes canonical validation artifacts. It is a validation
-and promotion protocol, not a single leaderboard. Its twenty easy/hard physical
+The Operator Benchmark protocol writes canonical validation artifacts. It is a
+validation and promotion protocol, not a single leaderboard. Its twenty
 ladders cover smooth periodic dynamics, controlled degree-one/degree-two
 polynomial Poisson maps, shocks, elliptic coefficient contrast, irregular
 geometry, independent source/query sets, multiple functional inputs, long
@@ -2622,13 +2622,10 @@ parameter-count regime.
 
 #### Evidence status
 
-Artifacts under `reference/v2-converged/` and `reference/v2-compute/` predate
-the multimode population, baseline-hardness, exact-resume, and Pareto changes.
-Decision artifacts under `tools/operator_benchmarks/reference/v3-decision/`
-add those controls but predate the deformed-domain integrity audit, resolved
-architecture configuration, and GINO/RIGNO/GAOT registrations. All checked-in
-artifacts are historical diagnostics for the current geometry families, not
-promotion evidence.
+Checked-in artifacts under `tools/operator_benchmarks/reference/converged/`
+are bounded diagnostics for the current geometry families, not promotion
+evidence. Superseded historical reference generations are not part of the
+runtime or repository contract.
 
 Current reports retain named per-field metrics and target schemas, post-split symmetry augmentation, per-seed paired
 group-action defects, base-realization sample-efficiency curves, selected

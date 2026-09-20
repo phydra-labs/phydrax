@@ -350,9 +350,9 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
                 cell_volumes = discretization.cell_volumes.astype(base_state.dtype)
                 integrated = fluxes[0] * face_measures[:, None]
                 output = output.at[discretization.owner_cells].add(-integrated)
-                neighbour = discretization.neighbour_cells
-                output = output.at[jnp.maximum(neighbour, 0)].add(
-                    jnp.where((neighbour >= 0)[:, None], integrated, 0.0)
+                neighbor = discretization.neighbor_cells
+                output = output.at[jnp.maximum(neighbor, 0)].add(
+                    jnp.where((neighbor >= 0)[:, None], integrated, 0.0)
                 )
                 return output / cell_volumes[:, None]
             for axis, flux in enumerate(fluxes):
@@ -404,11 +404,11 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             ),
         ):
             owner_factor = cell_factor[discretization.owner_cells]
-            neighbour = discretization.neighbour_cells
-            neighbour_factor = cell_factor[jnp.maximum(neighbour, 0)]
+            neighbor = discretization.neighbor_cells
+            neighbor_factor = cell_factor[jnp.maximum(neighbor, 0)]
             factor = jnp.where(
-                neighbour >= 0,
-                jnp.minimum(owner_factor, neighbour_factor),
+                neighbor >= 0,
+                jnp.minimum(owner_factor, neighbor_factor),
                 owner_factor,
             )
             face_factors.append(factor)
@@ -757,8 +757,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "High-order and fallback stage blocks must have identical routes "
-                "and rate policies."
+                "High-order and fallback stage blocks must have identical routes and rate policies."
             )
 
         content = jnp.asarray(base_content)
@@ -844,7 +843,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             return jax.lax.cond(
                 any_active,
                 evaluate,
-                lambda _: jnp.ones((high.cell_count,), dtype=bool),
+                lambda _: jnp.ones((high.cell_count,), dtype=jnp.bool_),
                 operand=None,
             )
 
@@ -888,11 +887,11 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             strict=True,
         ):
             owner_factor = cell_factor[high_block.owner_cells]
-            neighbour = high_block.neighbour_cells
-            neighbour_factor = cell_factor[jnp.maximum(neighbour, 0)]
+            neighbor = high_block.neighbor_cells
+            neighbor_factor = cell_factor[jnp.maximum(neighbor, 0)]
             factor = jnp.where(
-                neighbour >= 0,
-                jnp.minimum(owner_factor, neighbour_factor),
+                neighbor >= 0,
+                jnp.minimum(owner_factor, neighbor_factor),
                 owner_factor,
             )
             factor = jnp.where(high_block.active_mask, factor, 0.0)

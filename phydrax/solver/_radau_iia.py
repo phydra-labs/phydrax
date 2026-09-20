@@ -38,11 +38,11 @@ class RadauIIAMethod(StrictModule, NonTrainableState):
             nodes = np.asarray([1.0])
         else:
             radau = Legendre.basis(stage_count) - Legendre.basis(stage_count - 1)
-            roots = np.sort(np.real_if_close(radau.roots()).astype(float))
+            roots = np.sort(np.real_if_close(radau.roots()).astype("float64"))
             nodes = 0.5 * (roots + 1.0)
             nodes[-1] = 1.0
-        matrix = np.zeros((stage_count, stage_count), dtype=float)
-        weights = np.zeros((stage_count,), dtype=float)
+        matrix = np.zeros((stage_count, stage_count), dtype=np.float64)
+        weights = np.zeros((stage_count,), dtype=np.float64)
         for column in range(stage_count):
             basis = Polynomial([1.0])
             denominator = 1.0
@@ -56,7 +56,7 @@ class RadauIIAMethod(StrictModule, NonTrainableState):
             for row in range(stage_count):
                 matrix[row, column] = integral(nodes[row]) - integral(0.0)
             weights[column] = integral(1.0) - integral(0.0)
-        tolerance = 128.0 * np.finfo(float).eps
+        tolerance = 128.0 * np.finfo(np.float64).eps
         stiff = bool(np.allclose(matrix[-1], weights, rtol=0.0, atol=tolerance))
         if not stiff:
             raise ValueError(
@@ -66,7 +66,7 @@ class RadauIIAMethod(StrictModule, NonTrainableState):
             exact = 1.0 / (degree + 1)
             represented = float(np.sum(weights * nodes**degree))
             if not np.isclose(
-                represented, exact, rtol=0.0, atol=2048 * np.finfo(float).eps
+                represented, exact, rtol=0.0, atol=2048 * np.finfo(np.float64).eps
             ):
                 raise ValueError(
                     "Constructed Radau tableau failed polynomial-order verification."

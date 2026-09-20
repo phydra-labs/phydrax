@@ -46,7 +46,7 @@ class PanelInteractionReport2D(StrictModule):
         ratio = float(near_ratio)
         if not jnp.isfinite(ratio) or ratio <= 0.0:
             raise ValueError("near_ratio must be finite and positive.")
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("Interaction targets must have shape (target_count, 2).")
         order = panelization.quadrature_order
@@ -72,9 +72,9 @@ class PanelInteractionReport2D(StrictModule):
         self.source_node_collision = collision
         self.classification_id = canonical_fingerprint(
             {
-                "kind": "layer-panel-interaction-2d-v1",
+                "kind": "layer-panel-interaction-2d",
                 "panelization_id": panelization.panelization_id,
-                "target_count": int(values.shape[0]),
+                "target_count": values.shape[0],
                 "near_ratio": ratio,
             }
         )
@@ -196,7 +196,7 @@ def evaluate_laplace_single_layer_self_panel_2d(
     """Evaluate one logarithmically singular Laplace single-layer panel."""
     if potential.kind != "single":
         raise ValueError("Self-panel regularization currently supports single layers.")
-    target_reference_ = jnp.asarray(target_reference, dtype=float).reshape(())
+    target_reference_ = jnp.asarray(target_reference, dtype=jnp.float64).reshape(())
     panelization = potential.panelization
     bounds = panelization.panel_reference_bounds[panel_id]
     chart = panelization.panel_chart_indices[panel_id]
@@ -297,7 +297,7 @@ def evaluate_helmholtz_single_layer_self_panel_weights_2d(
 
     if not isinstance(kernel, HelmholtzLayerKernel2D):
         raise TypeError("Helmholtz self weights require a HelmholtzLayerKernel2D.")
-    target_reference_ = jnp.asarray(target_reference, dtype=float).reshape(())
+    target_reference_ = jnp.asarray(target_reference, dtype=jnp.float64).reshape(())
     bounds = panelization.panel_reference_bounds[panel_id]
     chart = panelization.panel_chart_indices[panel_id]
     target_frame = panelization.atlas.frame(
@@ -413,7 +413,7 @@ def evaluate_helmholtz_single_layer_self_panel_block_2d(
 
     if not isinstance(kernel, HelmholtzLayerKernel2D):
         raise TypeError("Helmholtz self weights require a HelmholtzLayerKernel2D.")
-    targets_reference = jnp.asarray(target_references, dtype=float).reshape((-1,))
+    targets_reference = jnp.asarray(target_references, dtype=jnp.float64).reshape((-1,))
     panel_order = panelization.quadrature_order
     if targets_reference.shape != (panel_order,):
         raise ValueError("Self-panel target references must match panel order.")
@@ -532,7 +532,7 @@ def evaluate_double_layer_self_panel_weights_2d(
     /,
 ) -> IntegrationEstimate:
     """Evaluate principal-value double-layer self weights by symmetric cancellation."""
-    target_reference_ = jnp.asarray(target_reference, dtype=float).reshape(())
+    target_reference_ = jnp.asarray(target_reference, dtype=jnp.float64).reshape(())
     bounds = panelization.panel_reference_bounds[panel_id]
     chart = panelization.panel_chart_indices[panel_id]
     target_frame = panelization.atlas.frame(
@@ -694,7 +694,7 @@ def evaluate_laplace_adaptive_2d(
     """Evaluate Laplace layers with shared adaptive estimates for every panel."""
     if not isinstance(plan, AdaptiveQuadraturePlan):
         raise TypeError("plan must be an AdaptiveQuadraturePlan.")
-    values = jnp.asarray(targets, dtype=float)
+    values = jnp.asarray(targets, dtype=jnp.float64)
     if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
         raise ValueError("Adaptive layer targets must have shape (target_count, 2).")
     if interactions.near_mask.shape[0] != values.shape[0]:

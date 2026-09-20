@@ -40,8 +40,7 @@ class CorrectedP3MPlan(StrictModule):
     mesh: PreparedPeriodicVortexInCell
     splitting_parameter: float = eqx.field(static=True)
     cutoff_radius: float = eqx.field(static=True)
-    interpolation_method: str = eqx.field(static=True)
-    interpolation_tolerance: float | None = eqx.field(static=True)
+    query_chunk_size: int | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -51,18 +50,14 @@ class CorrectedP3MPlan(StrictModule):
         cutoff_radius: float,
         /,
         *,
-        interpolation_method: str = "direct",
-        interpolation_tolerance: float | None = None,
+        query_chunk_size: int | None = None,
     ):
         if (
             not isinstance(mesh, PreparedPeriodicVortexInCell)
             or float(splitting_parameter) <= 0.0
             or float(cutoff_radius) <= 0.0
-            or interpolation_method not in ("direct", "nufft")
         ):
-            raise ValueError(
-                "P3M mesh/splitting/cutoff/interpolation controls are invalid."
-            )
+            raise ValueError("P3M mesh/splitting/cutoff controls are invalid.")
         periods = jnp.asarray(
             tuple(
                 axis.bounds[1] - axis.bounds[0] for axis in mesh.plan.grid.structured_axes
@@ -70,25 +65,22 @@ class CorrectedP3MPlan(StrictModule):
         )
         if float(cutoff_radius) >= 0.5 * float(jnp.min(periods)):
             raise ValueError("P3M cutoff must be less than half every period.")
-        if interpolation_method == "nufft" and interpolation_tolerance is None:
-            raise ValueError("P3M NUFFT interpolation requires tolerance.")
+        chunk_size = None if query_chunk_size is None else int(query_chunk_size)
+        if chunk_size is not None and chunk_size < 1:
+            raise ValueError("query_chunk_size must be positive or None.")
         self.mesh, self.splitting_parameter, self.cutoff_radius = (
             mesh,
             float(splitting_parameter),
             float(cutoff_radius),
         )
-        self.interpolation_method, self.interpolation_tolerance = (
-            interpolation_method,
-            interpolation_tolerance,
-        )
+        self.query_chunk_size = chunk_size
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "corrected-p3m-plan",
                 "mesh": mesh.prepared_id,
                 "splitting_parameter": self.splitting_parameter,
                 "cutoff_radius": self.cutoff_radius,
-                "interpolation_method": interpolation_method,
-                "interpolation_tolerance": interpolation_tolerance,
+                "query_chunk_size": chunk_size,
             }
         )
 
@@ -132,8 +124,7 @@ class CorrectedP3MPlan(StrictModule):
                 axis.bounds[1] - axis.bounds[0]
                 for axis in self.mesh.plan.grid.structured_axes
             ),
-            method=self.interpolation_method,
-            tolerance=self.interpolation_tolerance,
+            query_chunk_size=self.query_chunk_size,
         )
         return result.values
 

@@ -22,7 +22,7 @@ MultiIndex = tuple[int, ...]
 
 
 def _canonical_multi_index(value: Sequence[int], dimension: int, /) -> MultiIndex:
-    index = tuple(int(item) for item in value)
+    index = tuple(value)
     if len(index) != dimension or any(item < 0 for item in index):
         raise ValueError(
             f"Holomorphic multi-indices must contain {dimension} nonnegative entries."
@@ -66,8 +66,7 @@ class HolomorphicMultiIndexSet(StrictModule, NonTrainableState):
             raise ValueError("Holomorphic multi-index sets must contain the zero index.")
         if len(resolved) > maximum_count_:
             raise ValueError(
-                f"Holomorphic multi-index count {len(resolved)} exceeds "
-                f"the configured maximum {maximum_count_}."
+                f"Holomorphic multi-index count {len(resolved)} exceeds the configured maximum {maximum_count_}."
             )
         available = set(resolved)
         downward = all(

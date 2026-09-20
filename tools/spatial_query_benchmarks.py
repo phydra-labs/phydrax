@@ -25,7 +25,7 @@ def _case(node_count: int, query_count: int, repeats: int) -> dict[str, object]:
     item_count = max(1, (node_count + 1) // 2)
     lower = jnp.stack(
         (
-            jnp.arange(item_count, dtype=float),
+            jnp.arange(item_count, dtype="float64"),
             jnp.zeros(item_count),
             jnp.zeros(item_count),
         ),
@@ -62,7 +62,7 @@ def _case(node_count: int, query_count: int, repeats: int) -> dict[str, object]:
     )
     return {
         "item_count": item_count,
-        "node_count": int(bvh.left.shape[0]),
+        "node_count": bvh.left.shape[0],
         "query_count": query_count,
         "lowering_seconds": compilation.lowering_seconds,
         "compilation_seconds": compilation.compilation_seconds,

@@ -38,20 +38,19 @@ def _local_rule(plan: AdaptiveQuadraturePlan, /):
     if isinstance(plan.rule, GaussKronrodRule):
         if high.embedded_weights is None:
             raise RuntimeError("Gauss--Kronrod rule is missing embedded weights.")
-        return high, None, int(high.nodes.shape[0])
+        return high, None, high.nodes.shape[0]
     if isinstance(plan.rule, ClenshawCurtisRule):
         low_order = 2 if plan.rule.level == 1 else 2 ** (plan.rule.level - 1) + 1
         low = clenshaw_curtis_data(low_order)
-        return high, low, int(high.nodes.shape[0] + low.nodes.shape[0])
+        return high, low, high.nodes.shape[0] + low.nodes.shape[0]
     if isinstance(plan.rule, TanhSinhRule):
         low_order = max(3, plan.rule.order - 20)
         if low_order % 2 == 0:
             low_order -= 1
         low = tanh_sinh_data(low_order)
-        return high, low, int(high.nodes.shape[0] + low.nodes.shape[0])
+        return high, low, high.nodes.shape[0] + low.nodes.shape[0]
     raise TypeError(
-        "AdaptiveQuadraturePlan requires GaussKronrodRule, "
-        "ClenshawCurtisRule, or TanhSinhRule."
+        "AdaptiveQuadraturePlan requires GaussKronrodRule, ClenshawCurtisRule, or TanhSinhRule."
     )
 
 
@@ -568,12 +567,12 @@ def adaptive_triangle_callable(
     initial_triangles = precision_.accumulation(jnp.asarray(triangles))
     if initial_triangles.ndim != 3 or initial_triangles.shape[1] != 3:
         raise ValueError("Adaptive triangles must have shape (count, 3, dimension).")
-    initial_count = int(initial_triangles.shape[0])
+    initial_count = initial_triangles.shape[0]
     if initial_count == 0:
         raise ValueError("Adaptive triangles must be nonempty.")
     if initial_count > plan.max_cells:
         raise ValueError("max_cells cannot hold every initial triangle.")
-    ambient_dimension = int(initial_triangles.shape[-1])
+    ambient_dimension = initial_triangles.shape[-1]
     if ambient_dimension not in (2, 3):
         raise ValueError("Adaptive triangles require ambient dimension two or three.")
     low_data = plan.low_rule.materialize()
@@ -607,7 +606,7 @@ def adaptive_triangle_callable(
         return precision_.accumulation(jnp.tensordot(weights, values, axes=(0, 0)))
 
     initial_cost = initial_count * (
-        int(low_data.weights.shape[0]) + int(high_data.weights.shape[0])
+        low_data.weights.shape[0] + high_data.weights.shape[0]
     )
     if plan.max_evaluations is not None and plan.max_evaluations < initial_cost:
         prototype = evaluate_points(jnp.mean(initial_triangles[0], axis=0, keepdims=True))
@@ -715,7 +714,7 @@ def adaptive_triangle_callable(
         status,
         done,
     )
-    child_cost = 4 * (int(low_data.weights.shape[0]) + int(high_data.weights.shape[0]))
+    child_cost = 4 * (low_data.weights.shape[0] + high_data.weights.shape[0])
     maximum_evaluations = (
         2**31 - 1 if plan.max_evaluations is None else plan.max_evaluations
     )

@@ -122,8 +122,9 @@ def compile_global_blocks_to_pmp(plan: GlobalBlockPMPPlan, /) -> CompiledGlobalB
     blocks: list[PolynomialMatrixBlock] = []
     errors: list[float] = []
     dimensions_by_spin: list[np.ndarray] = []
-    functional_count = len(plan.blocks.plan.derivative_orders) * int(
-        plan.blocks.plan.evaluation_points.shape[0]
+    functional_count = (
+        len(plan.blocks.plan.derivative_orders)
+        * plan.blocks.plan.evaluation_points.shape[0]
     )
     for spin, minimum, maximum in zip(
         plan.blocks.plan.spins,

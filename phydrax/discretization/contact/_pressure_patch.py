@@ -50,11 +50,11 @@ class HydroelasticPressureFieldPlan(StrictModule, NonTrainableState):
 
     @property
     def vertex_count(self) -> int:
-        return int(self.mesh.coordinates.shape[0])
+        return self.mesh.coordinates.shape[0]
 
     @property
     def cell_count(self) -> int:
-        return int(self.tetrahedra.shape[0])
+        return self.tetrahedra.shape[0]
 
 
 class HydroelasticPressureFieldState(StrictModule):
@@ -81,7 +81,7 @@ class HydroelasticPressurePatch(StrictModule, NonTrainableState):
 
     @property
     def capacity(self) -> int:
-        return int(self.valid.size)
+        return self.valid.size
 
     @property
     def source_tetrahedron(self) -> Array:
@@ -204,7 +204,7 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
                         (intersection.vertices[first], intersection.vertices[second])
                         for first, second in edges
                     ],
-                    dtype=float,
+                    dtype=np.float64,
                 )
                 plus_weights = _barycentric_weights(edge_points, plus_cell, plus_basis)
                 minus_weights = _barycentric_weights(edge_points, minus_cell, minus_basis)
@@ -235,17 +235,17 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
         records = records[: self.maximum_overlap_pairs]
         pair_capacity = self.maximum_overlap_pairs
         edge_capacity = self.maximum_polytope_edges
-        edge_points = np.zeros((pair_capacity, edge_capacity, 2, 3), dtype=float)
-        plus_weights = np.zeros((pair_capacity, edge_capacity, 2, 4), dtype=float)
-        minus_weights = np.zeros((pair_capacity, edge_capacity, 2, 4), dtype=float)
-        edge_valid = np.zeros((pair_capacity, edge_capacity), dtype=bool)
+        edge_points = np.zeros((pair_capacity, edge_capacity, 2, 3), dtype=np.float64)
+        plus_weights = np.zeros((pair_capacity, edge_capacity, 2, 4), dtype=np.float64)
+        minus_weights = np.zeros((pair_capacity, edge_capacity, 2, 4), dtype=np.float64)
+        edge_valid = np.zeros((pair_capacity, edge_capacity), dtype=np.bool_)
         plus_cells = np.zeros((pair_capacity, 4), dtype=np.int32)
         minus_cells = np.zeros((pair_capacity, 4), dtype=np.int32)
         plus_cell_ids = np.zeros((pair_capacity,), dtype=np.int64)
         minus_cell_ids = np.zeros((pair_capacity,), dtype=np.int64)
-        plus_gradients = np.zeros((pair_capacity, 4, 3), dtype=float)
-        minus_gradients = np.zeros((pair_capacity, 4, 3), dtype=float)
-        pair_valid = np.zeros((pair_capacity,), dtype=bool)
+        plus_gradients = np.zeros((pair_capacity, 4, 3), dtype=np.float64)
+        minus_gradients = np.zeros((pair_capacity, 4, 3), dtype=np.float64)
+        pair_valid = np.zeros((pair_capacity,), dtype=np.bool_)
         for pair_index, record in enumerate(records):
             (
                 _,

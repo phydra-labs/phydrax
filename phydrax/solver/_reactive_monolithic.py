@@ -195,7 +195,7 @@ def make_reactive_monolithic_stage(
 ) -> ReactiveMonolithicStage:
     position = jnp.asarray(particle_position, dtype=state.fluid.velocity.dtype)
     mass = jnp.asarray(particle_mass, dtype=state.fluid.velocity.dtype)
-    active = jnp.asarray(particle_active, dtype=bool)
+    active = jnp.asarray(particle_active, dtype=jnp.bool_)
     capacity = coupling.continuum_exchange.transfer.particle_capacity
     dimension = state.fluid.velocity.shape[1]
     if position.shape != (capacity, dimension):
@@ -292,7 +292,7 @@ def _local_preconditioner(coupling, mode, stage, state, residual, args):
     )
     if mode is not ReactiveMonolithicPreconditionerMode.LOCAL_BLOCK:
         transfer = coupling.continuum_exchange.transfer
-        relation = transfer.routes(stage.particle_position, stage.particle_active)
+        transfer.routes(stage.particle_position, stage.particle_active)
         feedback_result = transfer.deposit(
             stage.particle_position,
             stage.particle_active,

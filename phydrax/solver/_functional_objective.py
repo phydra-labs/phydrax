@@ -66,8 +66,7 @@ def _terms_tuple(
     invalid = tuple(term for term in terms if not isinstance(term, AbstractScalarTerm))
     if invalid:
         raise TypeError(
-            f"All {name} must be scalar terms; got "
-            f"{tuple(type(term).__name__ for term in invalid)!r}."
+            f"All {name} must be scalar terms; got {tuple(type(term).__name__ for term in invalid)!r}."
         )
     return terms
 
@@ -77,8 +76,7 @@ def _adaptive_policy(term: AbstractScalarTerm, /):
         term.source, AdaptiveIntegration
     ):
         raise TypeError(
-            "Adaptive objective populations require ResidualPenalty or "
-            "IntegralFunctional with AdaptiveIntegration."
+            "Adaptive objective populations require ResidualPenalty or IntegralFunctional with AdaptiveIntegration."
         )
     if isinstance(term, IntegralFunctional) and not isinstance(
         term.source.policy, AdaptiveSignedEstimator
@@ -117,8 +115,7 @@ class _ObjectiveTerm(StrictModule):
         mode = _term_mode(term)
         if (mode == "adaptive_population") != (population is not None):
             raise ValueError(
-                "Adaptive objective terms must own one population and "
-                "non-adaptive terms must not own one."
+                "Adaptive objective terms must own one population and non-adaptive terms must not own one."
             )
         self.term = term
         self.population = population
@@ -142,8 +139,8 @@ class _TermSelection(StrictModule):
     indices: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(self, indices: Sequence[int], scale: Any = 1.0, /):
-        self.indices = tuple(int(index) for index in indices)
-        self.scale = jnp.asarray(scale, dtype=float).reshape(())
+        self.indices = tuple(indices)
+        self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
 
 class _PreparedTerm(StrictModule):
@@ -330,13 +327,13 @@ def evaluate_prepared_objective(
     enforced = _apply_prepared_enforcement(prepared, functions)
     term_values: list[Any] = []
     component_values: list[Any] = []
-    total = jnp.asarray(0.0, dtype=float)
-    scale = jnp.asarray(prepared.selection.scale, dtype=float).reshape(())
+    total = jnp.asarray(0.0, dtype=jnp.float64)
+    scale = jnp.asarray(prepared.selection.scale, dtype=jnp.float64).reshape(())
     with derivative_runtime_context():
         for prepared_term in prepared.terms:
             if isinstance(prepared_term.term, _SupportsObjectiveComponents):
                 components = tuple(
-                    jnp.asarray(value, dtype=float).reshape(())
+                    jnp.asarray(value, dtype=jnp.float64).reshape(())
                     for value in prepared_term.term.objective_components(
                         enforced,
                         key=prepared_term.key,
@@ -348,7 +345,7 @@ def evaluate_prepared_objective(
                     raise ValueError(
                         "Componentized scalar terms must expose at least one objective."
                     )
-                value = sum(components, start=jnp.asarray(0.0, dtype=float))
+                value = sum(components, start=jnp.asarray(0.0, dtype=jnp.float64))
                 component_values.extend(scale * component for component in components)
             else:
                 value = evaluate(
@@ -359,9 +356,9 @@ def evaluate_prepared_objective(
                     **prepared_term.kwargs,
                 ).value
                 component_values.append(
-                    scale * jnp.asarray(value, dtype=float).reshape(())
+                    scale * jnp.asarray(value, dtype=jnp.float64).reshape(())
                 )
-            value = scale * jnp.asarray(value, dtype=float).reshape(())
+            value = scale * jnp.asarray(value, dtype=jnp.float64).reshape(())
             term_values.append(value)
             total = total + value
         model_loss_values: list[Any] = []
@@ -371,21 +368,23 @@ def evaluate_prepared_objective(
                 key=prepared.model_loss_key,
                 iter_=prepared.iteration,
             ):
-                value = jnp.asarray(value, dtype=float).reshape(())
+                value = jnp.asarray(value, dtype=jnp.float64).reshape(())
                 model_loss_values.append(value)
                 total = total + value
     terms_array = (
-        jnp.stack(term_values, axis=0) if term_values else jnp.zeros((0,), dtype=float)
+        jnp.stack(term_values, axis=0)
+        if term_values
+        else jnp.zeros((0,), dtype=jnp.float64)
     )
     component_array = (
         jnp.stack(component_values, axis=0)
         if component_values
-        else jnp.zeros((0,), dtype=float)
+        else jnp.zeros((0,), dtype=jnp.float64)
     )
     model_array = (
         jnp.stack(model_loss_values, axis=0)
         if model_loss_values
-        else jnp.zeros((0,), dtype=float)
+        else jnp.zeros((0,), dtype=jnp.float64)
     )
     return _ObjectiveValues(total, terms_array, model_array, component_array)
 
@@ -398,8 +397,8 @@ def evaluate_prepared_scalar_remainder(
     """Evaluate non-residual terms and model losses on one frozen realization."""
 
     enforced = _apply_prepared_enforcement(prepared, functions)
-    total = jnp.asarray(0.0, dtype=float)
-    scale = jnp.asarray(prepared.selection.scale, dtype=float).reshape(())
+    total = jnp.asarray(0.0, dtype=jnp.float64)
+    scale = jnp.asarray(prepared.selection.scale, dtype=jnp.float64).reshape(())
     with derivative_runtime_context():
         for prepared_term in prepared.terms:
             if isinstance(prepared_term.term, ResidualPenalty):
@@ -411,13 +410,13 @@ def evaluate_prepared_scalar_remainder(
                 step=prepared.iteration,
                 **prepared_term.kwargs,
             ).value
-            total = total + scale * jnp.asarray(value, dtype=float).reshape(())
+            total = total + scale * jnp.asarray(value, dtype=jnp.float64).reshape(())
         for value in function_model_loss_values(
             functions,
             key=prepared.model_loss_key,
             iter_=prepared.iteration,
         ):
-            total = total + jnp.asarray(value, dtype=float).reshape(())
+            total = total + jnp.asarray(value, dtype=jnp.float64).reshape(())
     return total
 
 

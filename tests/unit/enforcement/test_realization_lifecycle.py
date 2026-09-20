@@ -22,7 +22,7 @@ from phydrax.enforcement import (
 
 
 def _condition():
-    codomain = ArrayCodomain.from_shape((1,), dtype=float)
+    codomain = ArrayCodomain.from_shape((1,), dtype="float64")
     fields = ProductFieldSpec((FieldSpec("u", codomain),))
     return Condition(
         "lifecycle-test",

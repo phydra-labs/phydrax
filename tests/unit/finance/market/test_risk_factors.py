@@ -48,14 +48,14 @@ def test_market_state_reorders_by_factor_identity_not_array_position() -> None:
         jnp.asarray([10, 20]),
         jnp.asarray([11, 21]),
         decision_time_ns=30,
-        observation_ids=("equity-v1", "rate-v1"),
+        observation_ids=("equity", "rate"),
     )
     reversed_layout = RiskFactorLayout(tuple(reversed(layout.keys)))
 
     reordered = state.reorder(reversed_layout)
 
     assert jnp.array_equal(reordered.values, jnp.asarray([0.03, 101.0]))
-    assert reordered.observation_ids == ("rate-v1", "equity-v1")
+    assert reordered.observation_ids == ("rate", "equity")
     assert jnp.isclose(reordered.value("equity"), 101.0)
 
 
@@ -87,7 +87,7 @@ def test_snapshot_missing_factor_is_neutral_and_fail_closed() -> None:
     equity = QuoteObservation(
         layout.keys[0].quote_key,
         101.0,
-        _time(10, 11, "eq-v1"),
+        _time(10, 11, "eq"),
         _LINEAGE,
     )
     snapshot = MarketDataSnapshot((equity,), snapshot_time=_time(100, 100, "archive"))

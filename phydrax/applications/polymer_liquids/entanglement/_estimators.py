@@ -214,7 +214,7 @@ def multi_length_kink_entanglement(
     *,
     minimum_r_squared: float = 0.95,
 ) -> MultiLengthKinkEstimatorResult:
-    length = jnp.asarray(chain_lengths, dtype=float)
+    length = jnp.asarray(chain_lengths, dtype=jnp.float64)
     kinks = jnp.asarray(mean_kink_counts, dtype=length.dtype)
     threshold = float(minimum_r_squared)
     if (

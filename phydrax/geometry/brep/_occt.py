@@ -61,11 +61,11 @@ from ._patches import (
 
 
 def _xyz(value: Any) -> np.ndarray:
-    return np.asarray((value.X(), value.Y(), value.Z()), dtype=float)
+    return np.asarray((value.X(), value.Y(), value.Z()), dtype=np.float64)
 
 
 def _xy(value: Any) -> np.ndarray:
-    return np.asarray((value.X(), value.Y()), dtype=float)
+    return np.asarray((value.X(), value.Y()), dtype=np.float64)
 
 
 def _frame(position: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -110,14 +110,14 @@ def _expanded_knots(surface: Any, axis: str) -> np.ndarray:
             surface.UMultiplicity(index) if axis == "u" else surface.VMultiplicity(index)
         )
         values.extend([float(knot)] * int(multiplicity))
-    return np.asarray(values, dtype=float)
+    return np.asarray(values, dtype=np.float64)
 
 
 def _bspline_patch(surface: Any) -> BSplineSurfacePatch:
     num_u = int(surface.NbUPoles())
     num_v = int(surface.NbVPoles())
-    control_points = np.empty((num_u, num_v, 3), dtype=float)
-    weights = np.empty((num_u, num_v), dtype=float)
+    control_points = np.empty((num_u, num_v, 3), dtype=np.float64)
+    weights = np.empty((num_u, num_v), dtype=np.float64)
     for u_index in range(1, num_u + 1):
         for v_index in range(1, num_v + 1):
             control_points[u_index - 1, v_index - 1] = _xyz(
@@ -240,7 +240,7 @@ def _sample_wire(wire: Any, face: Any, samples_per_edge: int) -> np.ndarray | No
     points = np.concatenate(segments, axis=0)
     if points.shape[0] < 3 or not np.all(np.isfinite(points)):
         return None
-    keep = np.ones((points.shape[0],), dtype=bool)
+    keep = np.ones((points.shape[0],), dtype=np.bool_)
     keep[1:] = np.linalg.norm(points[1:] - points[:-1], axis=1) > 1e-13
     points = points[keep]
     return points if points.shape[0] >= 3 else None
@@ -327,7 +327,7 @@ def _extract_tessellation(
         angular_deflection,
         False,
     )
-    scale = max(linear_deflection * 1e-7, np.finfo(float).eps * 128.0)
+    scale = max(linear_deflection * 1e-7, np.finfo(np.float64).eps * 128.0)
     vertex_lookup: dict[tuple[int, int, int], int] = {}
     vertices: list[np.ndarray] = []
     triangles: list[tuple[int, int, int]] = []
@@ -497,7 +497,7 @@ def model_from_occt_shape(
     converted_count = 0
     for face in faces:
         u_min, u_max, v_min, v_max = BRepTools.UVBounds_s(face)
-        bounds = np.asarray(((u_min, v_min), (u_max, v_max)), dtype=float)
+        bounds = np.asarray(((u_min, v_min), (u_max, v_max)), dtype=np.float64)
         if not np.all(np.isfinite(bounds)) or np.any(bounds[1] <= bounds[0]):
             raise ValueError("Every imported face must have finite nonempty UV bounds.")
         patch, tag, converted = _surface_patch(face, bounds)

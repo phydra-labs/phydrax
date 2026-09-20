@@ -248,7 +248,7 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
         self.energy_moment_lift = quadrature.weights / jnp.sum(quadrature.weights)
         self.method_id = canonical_fingerprint(
             {
-                "kind": "smooth-compressible-d2v-kinetic-method-v2",
+                "kind": "smooth-compressible-d2v-kinetic-method",
                 "quadrature": quadrature.quadrature_id,
                 "material": material.material_id,
                 "transport": transport.closure_id,

@@ -393,7 +393,7 @@ def variational_compress_mps(
         policy, VariationalCompressionPolicy
     ):
         raise TypeError("Variational compression requires an MPS and policy.")
-    target_elements = sum(int(tensor.size) for tensor in target.tensors)
+    target_elements = sum(tensor.size for tensor in target.tensors)
     if target_elements > policy.maximum_tensor_elements:
         raise MemoryError("Variational compression exceeds maximum_tensor_elements.")
     candidate, initial_evidence = compress_mps(
@@ -405,7 +405,7 @@ def variational_compress_mps(
     objectives = jnp.full((policy.maximum_sweeps + 1,), jnp.nan, dtype=real_dtype)
     residuals = jnp.full((policy.maximum_sweeps,), jnp.nan, dtype=real_dtype)
     discarded = jnp.full((policy.maximum_sweeps,), jnp.nan, dtype=real_dtype)
-    active = jnp.zeros((policy.maximum_sweeps,), dtype=bool)
+    active = jnp.zeros((policy.maximum_sweeps,), dtype=jnp.bool_)
     target_values = target.precision.accumulation(target.tensors)
     target_norm = jnp.real(_tuple_inner(target_values, target_values))
     objective = _compression_objective(

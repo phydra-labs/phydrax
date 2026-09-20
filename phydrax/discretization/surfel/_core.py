@@ -87,22 +87,22 @@ class SurfelSetPlan(AbstractDiscretizationPlan):
             raise ValueError(
                 "reference_position must have shape (surfel_capacity,dimension)."
             )
-        dimension = int(reference.shape[1])
+        dimension = reference.shape[1]
         if dimension not in (2, 3):
             raise ValueError("Surfels require ambient dimension two or three.")
         if not np.issubdtype(reference.dtype, np.inexact):
-            reference = reference.astype(float)
+            reference = reference.astype("float64")
         weights = np.asarray(reference_surface_weight)
         if weights.shape != ids.shape:
             raise ValueError(
                 "reference_surface_weight must have the surfel-capacity shape."
             )
         if not np.issubdtype(weights.dtype, np.inexact):
-            weights = weights.astype(float)
+            weights = weights.astype("float64")
         active = (
-            np.ones(ids.shape, dtype=bool)
+            np.ones(ids.shape, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != ids.shape:
             raise ValueError("active_mask must have the surfel-capacity shape.")
@@ -122,8 +122,7 @@ class SurfelSetPlan(AbstractDiscretizationPlan):
             or np.any(weights[active] <= 0.0)
         ):
             raise ValueError(
-                "Active surfel reference positions and surface weights must be "
-                "finite, with strictly positive weights."
+                "Active surfel reference positions and surface weights must be finite, with strictly positive weights."
             )
         dtype = real_precision_dtype_name(coordinate_dtype)
         name_value = str(name).strip()
@@ -145,7 +144,7 @@ class SurfelSetPlan(AbstractDiscretizationPlan):
         self.surfel_ids = jnp.asarray(ids, dtype=jnp.int64)
         self.reference_position = jnp.asarray(reference, dtype=dtype)
         self.reference_surface_weight = jnp.asarray(weights, dtype=dtype)
-        self.active_mask = jnp.asarray(active, dtype=bool)
+        self.active_mask = jnp.asarray(active, dtype=jnp.bool_)
         self.source_entity_ids = jnp.asarray(source_ids, dtype=jnp.int64)
         self.subsets = subsets_value
         self.ambient_dimension = dimension
@@ -214,7 +213,7 @@ class PreparedSurfelDiscretization(AbstractPreparedDiscretization):
         if not version:
             raise ValueError("numeric_version must be nonempty.")
         ids = np.asarray(plan.surfel_ids, dtype=np.int64)
-        active = np.asarray(plan.active_mask, dtype=bool)
+        active = np.asarray(plan.active_mask, dtype=np.bool_)
         weights = np.asarray(plan.reference_surface_weight)
         active_indices = np.flatnonzero(active).astype(np.int32)
         stable_order = np.argsort(ids[active_indices], kind="stable").astype(np.int32)
@@ -230,8 +229,8 @@ class PreparedSurfelDiscretization(AbstractPreparedDiscretization):
             {
                 "kind": "surfel-geometry-layout",
                 "topology": topology.topology_id,
-                "capacity": int(ids.size),
-                "active": int(active_indices.size),
+                "capacity": ids.size,
+                "active": active_indices.size,
                 "ambient_dimension": plan.ambient_dimension,
                 "coordinate_dtype": plan.coordinate_dtype,
             }
@@ -240,16 +239,16 @@ class PreparedSurfelDiscretization(AbstractPreparedDiscretization):
         safe_weights = np.where(active, weights, 1.0)
         vector_weights = jnp.broadcast_to(
             jnp.asarray(safe_weights, dtype=plan.coordinate_dtype)[:, None],
-            (int(ids.size), plan.ambient_dimension),
+            (ids.size, plan.ambient_dimension),
         )
         vector_layout = EntityDofLayout(
             entities.entity_set_id,
-            int(ids.size),
-            int(ids.size),
+            ids.size,
+            ids.size,
             component_shape=(plan.ambient_dimension,),
         )
         vector_space = ArraySpace(
-            (int(ids.size), plan.ambient_dimension),
+            (ids.size, plan.ambient_dimension),
             dtype=plan.coordinate_dtype,
             pairing=DiagonalPairing(vector_weights),
         )
@@ -268,7 +267,7 @@ class PreparedSurfelDiscretization(AbstractPreparedDiscretization):
             representation="point_value",
         )
         tangent_shape = (
-            int(ids.size),
+            ids.size,
             plan.ambient_dimension,
             plan.ambient_dimension - 1,
         )
@@ -278,8 +277,8 @@ class PreparedSurfelDiscretization(AbstractPreparedDiscretization):
         )
         tangent_layout = EntityDofLayout(
             entities.entity_set_id,
-            int(ids.size),
-            int(ids.size),
+            ids.size,
+            ids.size,
             component_shape=(plan.ambient_dimension, plan.ambient_dimension - 1),
         )
         tangent_axes_space = DiscreteFieldSpace(
@@ -310,8 +309,8 @@ class PreparedSurfelDiscretization(AbstractPreparedDiscretization):
                 "active-mask changes are topology events",
             ),
             resource_counts={
-                "surfel_capacity": int(ids.size),
-                "active_surfels": int(active_indices.size),
+                "surfel_capacity": ids.size,
+                "active_surfels": active_indices.size,
                 "ambient_dimension": plan.ambient_dimension,
             },
         )

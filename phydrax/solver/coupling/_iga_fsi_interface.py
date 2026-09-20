@@ -299,7 +299,10 @@ def certify_interface_transfer(
         raise TypeError("probe must be InterfaceTransferProbe.")
     if not isinstance(tolerance, InterfaceTransferTolerance):
         raise TypeError("tolerance must be InterfaceTransferTolerance.")
-    if transfer.hilbert_adjoint_operator is None or not transfer.properties.adjoint_paired:
+    if (
+        transfer.hilbert_adjoint_operator is None
+        or not transfer.properties.adjoint_paired
+    ):
         raise ValueError("IGA FSI transfer certification requires a paired adjoint.")
     source = transfer.source.vector_space
     target = transfer.target.vector_space

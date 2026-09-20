@@ -186,7 +186,7 @@ class FixedFrequencyGuidedModePlan(StrictModule, NonTrainableState):
         coefficient_values = tuple(
             np.asarray(value) for value in (coefficient_0, coefficient_1, coefficient_2)
         )
-        dimension = int(coefficient_values[0].shape[0])
+        dimension = coefficient_values[0].shape[0]
         if (
             any(
                 value.ndim != 2 or value.shape != (dimension, dimension)
@@ -579,7 +579,7 @@ def _guided_trace_coefficients(
     coefficients = tuple(np.asarray(value) for value in values)
     if not coefficients:
         raise ValueError(f"{name} trace coefficients must be non-empty.")
-    rows = int(coefficients[0].shape[0])
+    rows = coefficients[0].shape[0]
     if rows < 1 or any(
         value.ndim != 2 or value.shape != (rows, dimension) for value in coefficients
     ):
@@ -642,12 +642,12 @@ def _guided_mode_derivative_evidence(
         * jnp.maximum(jnp.abs(beta[:, None]), jnp.abs(beta[None, :]))
     )
     selected_close = (selected_distances <= selected_threshold) & ~jnp.eye(
-        count, dtype=bool
+        count, dtype=jnp.bool_
     )
     indices = jnp.arange(count, dtype=jnp.int32)
     labels = jnp.min(
         jnp.where(
-            selected_close | jnp.eye(count, dtype=bool),
+            selected_close | jnp.eye(count, dtype=jnp.bool_),
             indices[None, :],
             count,
         ),
@@ -663,7 +663,7 @@ def _guided_mode_derivative_evidence(
     gap_certified = jnp.full(
         (count,),
         plan.polynomial_policy.general.selection.kind == "all",
-        dtype=bool,
+        dtype=jnp.bool_,
     )
     valid = finite_mask & isolated & gap_certified
     return GuidedModeDerivativeEvidence(
@@ -874,11 +874,11 @@ class MaxwellNearToFarPlan(StrictModule, NonTrainableState):
         wavenumbers: ArrayLike,
         /,
     ):
-        positions_ = jnp.asarray(positions, dtype=float)
-        normals_ = jnp.asarray(normals, dtype=float)
-        weights_ = jnp.asarray(weights, dtype=float)
-        directions_ = jnp.asarray(directions, dtype=float)
-        wavenumbers_ = jnp.asarray(wavenumbers, dtype=float)
+        positions_ = jnp.asarray(positions, dtype=jnp.float64)
+        normals_ = jnp.asarray(normals, dtype=jnp.float64)
+        weights_ = jnp.asarray(weights, dtype=jnp.float64)
+        directions_ = jnp.asarray(directions, dtype=jnp.float64)
+        wavenumbers_ = jnp.asarray(wavenumbers, dtype=jnp.float64)
         if positions_.ndim != 2 or positions_.shape[1] != 3:
             raise ValueError("Near-to-far positions must have shape (surface, 3).")
         if normals_.shape != positions_.shape or weights_.shape != positions_.shape[:1]:

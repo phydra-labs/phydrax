@@ -584,8 +584,7 @@ def main() -> None:
                     **_identity(case),
                     "status": "resource-limit",
                     "reason": (
-                        f"size^2={case.size * case.size} exceeds explicit "
-                        f"max_pairs={arguments.max_pairs}"
+                        f"size^2={case.size * case.size} exceeds explicit max_pairs={arguments.max_pairs}"
                     ),
                 }
             )
@@ -610,7 +609,7 @@ def main() -> None:
             )
 
     payload = {
-        "schema": "phydrax.soft-order-benchmark.v1",
+        "schema": "phydrax.soft-order-benchmark",
         "metadata": _metadata(),
         "configuration": {
             "smoke": bool(arguments.smoke),

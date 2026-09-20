@@ -24,7 +24,7 @@ class TaskHandle(Protocol[T]):
 
     def done(self) -> bool: ...
 
-    def cancel(self, reason: str = "task cancelled") -> bool: ...
+    def cancel(self, reason: str = "task canceled") -> bool: ...
 
     def result(self, timeout: float | None = None) -> T: ...
 
@@ -52,7 +52,7 @@ class ImmediateTaskHandle(Generic[T]):
     def done(self) -> bool:
         return True
 
-    def cancel(self, reason: str = "task cancelled") -> bool:
+    def cancel(self, reason: str = "task canceled") -> bool:
         del reason
         return False
 
@@ -79,7 +79,7 @@ class FutureTaskHandle(Generic[T]):
     def done(self) -> bool:
         return self._future.done()
 
-    def cancel(self, reason: str = "task cancelled") -> bool:
+    def cancel(self, reason: str = "task canceled") -> bool:
         if self._token is not None:
             self._token.cancel(reason)
         return self._future.cancel()
@@ -144,7 +144,7 @@ def _call_with_token(
     args: tuple[Any, ...],
     kwargs: Mapping[str, Any],
 ) -> T:
-    token.raise_if_cancelled()
+    token.raise_if_canceled()
     return operation(token, *args, **kwargs)
 
 

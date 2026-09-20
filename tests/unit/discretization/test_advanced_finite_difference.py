@@ -38,19 +38,12 @@ def test_diagonal_norm_sbp_identity_and_boundary_order():
     assert sbp.operator.stencil_set.interior_accuracy_order == 2
 
 
-
-
 def test_mapped_derivative_preserves_free_stream_and_physical_polynomial():
     grid = _bounded_grid(65)
     mapped = phx.discretization.MappedTensorGridPlan(
         grid,
         lambda reference: jnp.asarray(
-            (
-                reference[0]
-                + 0.05
-                * jnp.sin(2.0 * jnp.pi * reference[0])
-                / (2.0 * jnp.pi),
-            )
+            (reference[0] + 0.05 * jnp.sin(2.0 * jnp.pi * reference[0]) / (2.0 * jnp.pi),)
         ),
         sbp_order=4,
     ).prepare()
@@ -70,10 +63,7 @@ def test_mapped_metric_evaluation_is_differentiable_at_fixed_topology():
         _, _, _, jacobian = phx.discretization.evaluate_mapped_metrics(
             grid,
             lambda reference: jnp.asarray(
-                (
-                    reference[0]
-                    + amplitude * jnp.sin(jnp.pi * reference[0]),
-                )
+                (reference[0] + amplitude * jnp.sin(jnp.pi * reference[0]),)
             ),
             sbp_order=2,
         )

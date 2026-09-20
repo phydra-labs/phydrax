@@ -419,8 +419,7 @@ def _triangle_blocks(mesh: Any, /) -> tuple[tuple[int, ...], np.ndarray]:
     if unsupported:
         names = ", ".join(unsupported)
         raise SurfaceDataCorruptionError(
-            "Surface import refuses implicit linearization or triangulation of "
-            f"two-dimensional cell types: {names}."
+            f"Surface import refuses implicit linearization or triangulation of two-dimensional cell types: {names}."
         )
     indices = tuple(
         index for index, block in enumerate(mesh.cells) if block.type == "triangle"
@@ -501,7 +500,7 @@ def _decode_tags(
 ) -> tuple[tuple[str, ...], bool]:
     markers = tuple(name for name in mesh.cell_data if name.startswith(_TAG_PREFIX))
     if markers:
-        active = np.zeros((len(markers), cell_count), dtype=bool)
+        active = np.zeros((len(markers), cell_count), dtype=np.bool_)
         decoded = []
         for row, name in enumerate(markers):
             values = _cell_data(mesh, name, block_indices)
@@ -509,7 +508,7 @@ def _decode_tags(
                 raise SurfaceDataCorruptionError("Cell tag marker is not cell-aligned.")
             if not np.all((values == 0) | (values == 1)):
                 raise SurfaceDataCorruptionError("Cell tag markers must be zero or one.")
-            active[row] = values.astype(bool)
+            active[row] = values.astype("bool")
             decoded.append(_decode_text(name[len(_TAG_PREFIX) :]))
         if not np.all(np.sum(active, axis=0) == 1):
             raise SurfaceDataCorruptionError(
@@ -538,7 +537,7 @@ def _field_records(
         SurfaceFieldRecord(
             field.name,
             field.association,
-            tuple(int(value) for value in field.values.shape[1:]),
+            tuple(field.values.shape[1:]),
             field.values.dtype.str,
         )
         for field in fields
@@ -609,8 +608,8 @@ def _import_meshio_surface(
     if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
         raise SurfaceDataCorruptionError("Surface points must have shape (vertices, 3).")
     block_indices, faces = _triangle_blocks(mesh)
-    point_count = int(points.shape[0])
-    cell_count = int(faces.shape[0])
+    point_count = points.shape[0]
+    cell_count = faces.shape[0]
     if point_count > policy.maximum_vertices or cell_count > policy.maximum_cells:
         raise SurfaceResourceLimitError(
             "Surface entity counts exceed the import policy capacities."
@@ -618,8 +617,7 @@ def _import_meshio_surface(
     payload_bytes = _array_payload_bytes(mesh)
     if payload_bytes > policy.maximum_data_bytes:
         raise SurfaceResourceLimitError(
-            f"Decoded surface payload has {payload_bytes} bytes, exceeding limit "
-            f"{policy.maximum_data_bytes}."
+            f"Decoded surface payload has {payload_bytes} bytes, exceeding limit {policy.maximum_data_bytes}."
         )
 
     embedded_unit = _decode_single_marker(mesh.point_data, _UNIT_PREFIX, point_count)
@@ -696,7 +694,7 @@ def _import_meshio_surface(
         cell_tags=tags,
     )
     model = SurfaceModel.from_triangles(
-        np.asarray(points, dtype=float) * scale,
+        np.asarray(points, dtype=np.float64) * scale,
         faces,
         metadata,
         vertex_global_ids=vertex_ids,
@@ -802,8 +800,8 @@ def _import_cad_surface(
         source_id=cad_model.source_id,
         source_revision=cad_model.source_revision,
         artifact_digest=artifact_digest,
-        vertex_count=int(points.shape[0]),
-        cell_count=int(faces.shape[0]),
+        vertex_count=points.shape[0],
+        cell_count=faces.shape[0],
         source_ids_preserved=False,
         tags_preserved=True,
         source_metadata_preserved=True,
@@ -895,7 +893,7 @@ def _meshio_export_mesh(
 ):
     source_unit = model.metadata.coordinate_contract.length_unit
     scale = float(conversion_factor(source_unit, target_unit))
-    points = np.asarray(model.mesh.coordinates, dtype=float) * scale
+    points = np.asarray(model.mesh.coordinates, dtype=np.float64) * scale
     faces = np.asarray(model.mesh.connectivity.cell_vertices, dtype=np.int32)[:, :3]
     point_data = {}
     cell_data = {}
@@ -968,7 +966,7 @@ def export_surface(
         raise SurfaceInteropError(
             "Surface export requires source and target units in one reference system."
         )
-    point_count = int(model.mesh.coordinates.shape[0])
+    point_count = model.mesh.coordinates.shape[0]
     cell_count = int(model.mesh.connectivity.cell_count)
     if point_count > policy.maximum_vertices or cell_count > policy.maximum_cells:
         raise SurfaceResourceLimitError("Surface entity counts exceed export capacities.")
@@ -1001,8 +999,7 @@ def export_surface(
     payload_bytes = _array_payload_bytes(mesh)
     if payload_bytes > policy.maximum_data_bytes:
         raise SurfaceResourceLimitError(
-            f"Export payload has {payload_bytes} bytes, exceeding limit "
-            f"{policy.maximum_data_bytes}."
+            f"Export payload has {payload_bytes} bytes, exceeding limit {policy.maximum_data_bytes}."
         )
     write_format = _meshio_file_format(format_, destination)
     try:

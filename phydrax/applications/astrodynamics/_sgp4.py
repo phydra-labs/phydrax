@@ -10,10 +10,14 @@ JAX primitives.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from math import atan2, cos, fabs, pi, sin, sqrt
+from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+
+from ..._strict import Strict
 
 
 deg2rad = pi / 180.0
@@ -1269,19 +1273,25 @@ def gstime(jdut1):
 _gstime = gstime
 
 
-class SGP4Coefficients:
-    """Prepared scalar coefficients for one TLE and one gravity constant set."""
+class _SGP4CoefficientBuilder:
+    """Private mutable receiver for the imperative Vallado initialization."""
 
-    def __init__(self):
-        object.__setattr__(self, "_frozen", False)
 
-    def __setattr__(self, name, value):
-        if self.__dict__["_frozen"]:
-            raise AttributeError("Prepared SGP4 coefficients are immutable.")
-        object.__setattr__(self, name, value)
+class SGP4Coefficients(Strict):
+    """Immutable prepared scalar coefficients for one TLE."""
 
-    def freeze(self):
-        object.__setattr__(self, "_frozen", True)
+    _values: Mapping[str, object]
+
+    def __init__(self, builder: _SGP4CoefficientBuilder, /):
+        if not isinstance(builder, _SGP4CoefficientBuilder):
+            raise TypeError("builder must be an SGP4 coefficient builder.")
+        self._values = MappingProxyType(vars(builder).copy())
+
+    def __getattr__(self, name: str):
+        values = self._values
+        if name in values:
+            return values[name]
+        raise AttributeError(name)
 
 
 def initialize_sgp4(
@@ -1316,7 +1326,7 @@ def initialize_sgp4(
         j3 / j2,
     )
     xpdotp = 1440.0 / (2.0 * pi)
-    satellite = SGP4Coefficients()
+    builder = _SGP4CoefficientBuilder()
     sgp4init(
         constants,
         "i",
@@ -1331,10 +1341,9 @@ def initialize_sgp4(
         mean_anomaly,
         mean_motion_revolutions_per_day / xpdotp,
         raan,
-        satellite,
+        builder,
     )
-    satellite.freeze()
-    return satellite
+    return SGP4Coefficients(builder)
 
 
 def _dpper_jax(

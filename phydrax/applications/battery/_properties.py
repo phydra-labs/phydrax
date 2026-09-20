@@ -25,19 +25,19 @@ def _support_bounds(values: ArrayLike, /) -> Array:
     bounds = jnp.asarray(values)
     if bounds.shape != (2,) or jnp.issubdtype(bounds.dtype, jnp.complexfloating):
         raise ValueError("Property support bounds must be two real scalars.")
-    host = np.asarray(bounds, dtype=float)
+    host = np.asarray(bounds, dtype=np.float64)
     if not np.all(np.isfinite(host)) or not host[1] > host[0]:
         raise ValueError(
             "Property support bounds must be finite and strictly increasing."
         )
-    return bounds.astype(jnp.result_type(bounds, float))
+    return bounds.astype(jnp.result_type(bounds, jnp.float64))
 
 
 def _value_bounds(values: ArrayLike, dtype, /) -> Array:
     bounds = jnp.asarray(values, dtype=dtype)
     if bounds.shape != (2,) or jnp.issubdtype(bounds.dtype, jnp.complexfloating):
         raise ValueError("Property value bounds must be two real scalars.")
-    host = np.asarray(bounds, dtype=float)
+    host = np.asarray(bounds, dtype=np.float64)
     if np.any(np.isnan(host)) or not host[1] >= host[0]:
         raise ValueError(
             "Property value bounds must be ordered and may only use infinite endpoints."
@@ -75,7 +75,7 @@ class ConstantPropertyLaw(StrictModule):
         if value_.shape != () or jnp.issubdtype(value_.dtype, jnp.complexfloating):
             raise ValueError("Constant property value must be one real scalar.")
         if not jnp.issubdtype(value_.dtype, jnp.inexact):
-            value_ = value_.astype(float)
+            value_ = value_.astype("float64")
         support = _support_bounds(support_bounds)
         bounds = _value_bounds(value_bounds, value_.dtype)
         value_ = eqx.error_if(
@@ -161,7 +161,7 @@ class TabulatedPropertyLaw(StrictModule):
     ):
         nodes_ = jnp.asarray(nodes)
         values_ = jnp.asarray(values)
-        if nodes_.ndim != 1 or int(nodes_.size) < 2:
+        if nodes_.ndim != 1 or nodes_.size < 2:
             raise ValueError(
                 "Tabulated property nodes must contain at least two coordinates."
             )
@@ -173,22 +173,22 @@ class TabulatedPropertyLaw(StrictModule):
             values_.dtype, jnp.complexfloating
         ):
             raise TypeError("Tabulated property nodes and values must be real-valued.")
-        dtype = jnp.result_type(nodes_, values_, float)
+        dtype = jnp.result_type(nodes_, values_, jnp.float64)
         nodes_ = nodes_.astype(dtype)
         values_ = values_.astype(dtype)
-        node_host = np.asarray(nodes_, dtype=float)
+        node_host = np.asarray(nodes_, dtype=np.float64)
         if not np.all(np.isfinite(node_host)) or np.any(np.diff(node_host) <= 0.0):
             raise ValueError(
                 "Tabulated property nodes must be finite and strictly increasing."
             )
         mask = (
-            jnp.ones(nodes_.shape, dtype=bool)
+            jnp.ones(nodes_.shape, dtype=jnp.bool_)
             if source_mask is None
-            else jnp.asarray(source_mask, dtype=bool)
+            else jnp.asarray(source_mask, dtype=jnp.bool_)
         )
         if mask.shape != nodes_.shape:
             raise ValueError("Tabulated property source_mask must match the node shape.")
-        mask_host = np.asarray(mask, dtype=bool)
+        mask_host = np.asarray(mask, dtype=np.bool_)
         if np.count_nonzero(mask_host) < 2:
             raise ValueError(
                 "Tabulated property support requires at least two active nodes."
@@ -224,8 +224,8 @@ class TabulatedPropertyLaw(StrictModule):
                 "value_unit": value_unit_,
                 "coordinate_unit": coordinate_unit_,
                 "source_id": source_,
-                "node_count": int(nodes_.size),
-                "mask": mask_host.astype(int).tolist(),
+                "node_count": nodes_.size,
+                "mask": mask_host.astype("int64").tolist(),
             }
         )
 
@@ -290,17 +290,17 @@ class ConcentrationTemperaturePropertyLaw(StrictModule):
         concentration_nodes = jnp.asarray(concentration_nodes_mol_m3)
         temperature_nodes = jnp.asarray(temperature_nodes_k)
         table = jnp.asarray(values)
-        if concentration_nodes.ndim != 1 or int(concentration_nodes.size) < 2:
+        if concentration_nodes.ndim != 1 or concentration_nodes.size < 2:
             raise ValueError(
                 "Concentration-temperature laws require at least two concentration nodes."
             )
-        if temperature_nodes.ndim != 1 or int(temperature_nodes.size) < 2:
+        if temperature_nodes.ndim != 1 or temperature_nodes.size < 2:
             raise ValueError(
                 "Concentration-temperature laws require at least two temperature nodes."
             )
         expected_shape = (
-            int(concentration_nodes.size),
-            int(temperature_nodes.size),
+            concentration_nodes.size,
+            temperature_nodes.size,
         )
         if table.shape != expected_shape:
             raise ValueError(
@@ -318,21 +318,20 @@ class ConcentrationTemperaturePropertyLaw(StrictModule):
             concentration_nodes,
             temperature_nodes,
             table,
-            float,
+            jnp.float64,
         )
         concentration_nodes = concentration_nodes.astype(dtype)
         temperature_nodes = temperature_nodes.astype(dtype)
         table = table.astype(dtype)
-        concentration_host = np.asarray(concentration_nodes, dtype=float)
-        temperature_host = np.asarray(temperature_nodes, dtype=float)
+        concentration_host = np.asarray(concentration_nodes, dtype=np.float64)
+        temperature_host = np.asarray(temperature_nodes, dtype=np.float64)
         if (
             np.any(~np.isfinite(concentration_host))
             or np.any(np.diff(concentration_host) <= 0.0)
             or concentration_host[0] <= 0.0
         ):
             raise ValueError(
-                "Electrolyte concentration nodes must be finite, positive, and "
-                "strictly increasing."
+                "Electrolyte concentration nodes must be finite, positive, and strictly increasing."
             )
         if (
             np.any(~np.isfinite(temperature_host))
@@ -343,15 +342,15 @@ class ConcentrationTemperaturePropertyLaw(StrictModule):
                 "Temperature nodes must be finite, positive, and strictly increasing."
             )
         mask = (
-            jnp.ones(expected_shape, dtype=bool)
+            jnp.ones(expected_shape, dtype=jnp.bool_)
             if source_mask is None
-            else jnp.asarray(source_mask, dtype=bool)
+            else jnp.asarray(source_mask, dtype=jnp.bool_)
         )
         if mask.shape != expected_shape:
             raise ValueError(
                 "Concentration-temperature source_mask must match the value table."
             )
-        mask_host = np.asarray(mask, dtype=bool)
+        mask_host = np.asarray(mask, dtype=np.bool_)
         active_cells = (
             mask_host[:-1, :-1]
             & mask_host[1:, :-1]
@@ -368,8 +367,7 @@ class ConcentrationTemperaturePropertyLaw(StrictModule):
             jnp.any(
                 mask & (~jnp.isfinite(table) | (table < bounds[0]) | (table > bounds[1]))
             ),
-            "Active bivariate property values are nonfinite or outside declared "
-            "value bounds.",
+            "Active bivariate property values are nonfinite or outside declared value bounds.",
         )
         quantity_ = _identifier(quantity, "Property quantity")
         value_unit_ = _identifier(value_unit, "Property value unit")
@@ -390,7 +388,7 @@ class ConcentrationTemperaturePropertyLaw(StrictModule):
                 "source_id": source_,
                 "concentration_node_count": expected_shape[0],
                 "temperature_node_count": expected_shape[1],
-                "mask": mask_host.astype(int).tolist(),
+                "mask": mask_host.astype("int64").tolist(),
             }
         )
 

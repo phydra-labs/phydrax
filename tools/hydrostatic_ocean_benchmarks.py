@@ -103,7 +103,7 @@ def main():
     parser.add_argument("--shape", default="8,8,4")
     parser.add_argument("--repeats", type=int, default=3)
     arguments = parser.parse_args()
-    shape = tuple(int(value) for value in arguments.shape.split(","))
+    shape = tuple(arguments.shape.split(","))
     if len(shape) != 3 or any(value < 3 for value in shape):
         raise ValueError("Hydrostatic benchmark shape needs three counts >= 3.")
     if arguments.repeats <= 0:

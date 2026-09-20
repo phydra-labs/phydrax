@@ -73,7 +73,7 @@ def _scatter_rate_block(block, cell_count):
         (cell_count,) + block.component_shape, dtype=block.flux_rate.dtype
     )
     scattered = scattered.at[block.owner_cells].add(-block.flux_rate)
-    return scattered.at[block.neighbour_cells].add(block.flux_rate)
+    return scattered.at[block.neighbor_cells].add(block.flux_rate)
 
 
 def _ledger_scatter(plan, block, source_rate):
@@ -168,7 +168,7 @@ def test_redistribution_flux_block_scatter_matches_delta_and_keeps_source_separa
     assert block.block_kind == "small-cell-redistribution"
     assert block.block_id == plan.redistribution_block_id
     np.testing.assert_array_equal(block.owner_cells, (0,))
-    np.testing.assert_array_equal(block.neighbour_cells, (1,))
+    np.testing.assert_array_equal(block.neighbor_cells, (1,))
     np.testing.assert_array_equal(block.active_mask, (True,))
     np.testing.assert_allclose(block.flux_rate, ((1.2, -2.4),), atol=2.0e-15)
 
@@ -221,7 +221,7 @@ def test_adjacent_slivers_route_only_to_stable_non_small_recipients():
     block = plan.redistribution_flux_rate_block(rate)
     assert block is not None
     np.testing.assert_array_equal(block.owner_cells, (0, 3))
-    np.testing.assert_array_equal(block.neighbour_cells, (1, 4))
+    np.testing.assert_array_equal(block.neighbor_cells, (1, 4))
     np.testing.assert_array_equal(block.active_mask, (True, True))
     np.testing.assert_allclose(
         _scatter_rate_block(block, discretization.cell_count),
@@ -496,7 +496,7 @@ def test_inactive_rates_are_zero_and_nonzero_inactive_content_fails():
         jax.block_until_ready(result.redistributed_rate)
 
 
-def test_sliver_with_only_inactive_or_closed_neighbours_fails_preparation():
+def test_sliver_with_only_inactive_or_closed_neighbors_fails_preparation():
     discretization = _quadrilateral_grid(2, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=2)
     metrics = _metrics(
@@ -558,7 +558,7 @@ def test_policy_identity_binds_every_stabilization_choice():
         plan.redistribution_flux_rate_block(
             jnp.where(
                 plan.active_cells,
-                jnp.ones_like(plan.active_cells, dtype=float),
+                jnp.ones_like(plan.active_cells, dtype="float64"),
                 0.0,
             )
         )

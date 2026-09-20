@@ -83,7 +83,7 @@ class GaussConstraintNetwork(StrictModule):
             for value in left + right
         ):
             raise ValueError("Link generators require shape (generator, d, d).")
-        generator_count = int(left[0].shape[0])
+        generator_count = left[0].shape[0]
         if any(
             first.shape != second.shape or first.shape[0] != generator_count
             for first, second in zip(left, right, strict=True)
@@ -137,8 +137,8 @@ class GaussConstraintNetwork(StrictModule):
             raise ValueError(
                 "Wire identifiers must align with links and matter vertices."
             )
-        dimensions = tuple(int(value.shape[1]) for value in left) + tuple(
-            int(value.shape[1]) for value in matter
+        dimensions = tuple(value.shape[1] for value in left) + tuple(
+            value.shape[1] for value in matter
         )
         layout = HilbertRegisterLayout(link_ids + matter_ids, dimensions)
         local_arrays = left + right + matter
@@ -173,9 +173,7 @@ class GaussConstraintNetwork(StrictModule):
         )
         self.layout = layout
         self.vertex_link_incidence = jnp.asarray(incidence_host, dtype=jnp.int8)
-        self.incidence_pattern = tuple(
-            tuple(int(value) for value in row) for row in incidence_host
-        )
+        self.incidence_pattern = tuple(tuple(row) for row in incidence_host)
         self.link_left_generators = left
         self.link_right_generators = right
         self.matter_charge_generators = matter
@@ -205,8 +203,7 @@ class GaussConstraintNetwork(StrictModule):
         maximum = int(maximum_elements)
         if maximum <= 0 or required > maximum:
             raise ValueError(
-                f"Dense Gauss generators require {required} elements; "
-                f"capacity is {maximum}."
+                f"Dense Gauss generators require {required} elements; capacity is {maximum}."
             )
         dtype = jnp.result_type(
             *(value.dtype for value in self.link_left_generators),
@@ -517,7 +514,7 @@ def _prepare_exact_nullspace(
             {
                 "kind": "exact-gauss-nullspace",
                 "plan": plan.plan_id,
-                "logical_dimension": int(isometry.shape[1]),
+                "logical_dimension": isometry.shape[1],
             }
         ),
     )

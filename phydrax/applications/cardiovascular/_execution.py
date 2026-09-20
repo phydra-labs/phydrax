@@ -797,7 +797,7 @@ class CardiovascularLifecycleCheckpointCodec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Checkpoint payload names must be unique after normalization."
             )
-        total_values = sum(int(value.size) for value in payloads.values())
+        total_values = sum(value.size for value in payloads.values())
         total_bytes = sum(payload_byte_count(value) for value in payloads.values())
         admission = admit_cardiovascular_capacity(
             self.execution.capacity,
@@ -874,7 +874,7 @@ class CardiovascularLifecycleCheckpointCodec(StrictModule, NonTrainableState):
             raise ArrayArchiveCorruptionError(
                 "Cardiovascular checkpoint payloads must be finite numeric arrays."
             )
-        total_values = sum(int(value.size) for value in archive.arrays.values())
+        total_values = sum(value.size for value in archive.arrays.values())
         total_bytes = sum(payload_byte_count(value) for value in archive.arrays.values())
         admission = admit_cardiovascular_capacity(
             self.execution.capacity,
@@ -985,7 +985,7 @@ class CardiovascularCohortEvidence(StrictModule, NonTrainableState):
         /,
     ):
         keys = jnp.asarray(semantic_keys, dtype=jnp.uint32)
-        accepted_ = jnp.asarray(accepted, dtype=bool)
+        accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
         waves = jnp.asarray(completion_wave, dtype=jnp.int32)
         if keys.ndim != 2 or keys.shape[1:] != (2,):
             raise ValueError("Cohort semantic keys must have shape (case, 2).")
@@ -1085,7 +1085,7 @@ def execute_cardiovascular_cohort(
     next_task = prepared.lane_count
     completed = 0
     values: list[Any] = [None] * count
-    accepted = np.zeros((count,), dtype=bool)
+    accepted = np.zeros((count,), dtype=np.bool_)
     waves = np.zeros((count,), dtype=np.int32)
     wave = 0
     while completed < count:
@@ -1177,8 +1177,8 @@ class CardiovascularDistributedCapability(StrictModule, NonTrainableState):
         available_processes = _positive_integer(
             available_process_count, "available_process_count"
         )
-        identifiers = tuple(int(value) for value in device_ids)
-        process_indices = tuple(int(value) for value in device_process_indices)
+        identifiers = tuple(device_ids)
+        process_indices = tuple(device_process_indices)
         mesh = (
             None
             if device_mesh_id is None
@@ -1210,8 +1210,7 @@ class CardiovascularDistributedCapability(StrictModule, NonTrainableState):
                 or transport_identity is None
             ):
                 raise ValueError(
-                    "Eligible collective transport requires an exact observed "
-                    "process/device mesh."
+                    "Eligible collective transport requires an exact observed process/device mesh."
                 )
         elif (
             identifiers
@@ -2150,7 +2149,7 @@ def write_cardiovascular_distributed_solver_checkpoint(
         "solver/owned_valid": state.owned_valid,
         "solver/solve_count": np.asarray(state.solve_count, dtype=np.int64),
         "solver/iteration_count": np.asarray(state.iteration_count, dtype=np.int64),
-        "solver/successful": np.asarray(state.successful, dtype=bool),
+        "solver/successful": np.asarray(state.successful, dtype=np.bool_),
     }
     layouts = {name: state.binding_ids for name in arrays}
     return codec.write(
@@ -2330,9 +2329,9 @@ def _distributed_dof_layout(
     owned_width = max(map(len, owned_routes))
     halo_width = max(map(len, halo_routes), default=0)
     owned_ids = np.zeros((part_count, owned_width), dtype=np.int32)
-    owned_valid = np.zeros_like(owned_ids, dtype=bool)
+    owned_valid = np.zeros_like(owned_ids, dtype=np.bool_)
     halo_ids = np.zeros((part_count, halo_width), dtype=np.int32)
-    halo_valid = np.zeros_like(halo_ids, dtype=bool)
+    halo_valid = np.zeros_like(halo_ids, dtype=np.bool_)
     for part, route in enumerate(owned_routes):
         owned_ids[part, : route.size] = route
         owned_valid[part, : route.size] = True
@@ -2667,8 +2666,8 @@ class PreparedCardiovascularScheduler(StrictModule, NonTrainableState):
         if not isinstance(plan, CardiovascularMultiratePlan):
             raise TypeError("plan must be CardiovascularMultiratePlan.")
         owners = jnp.asarray(owner_indices, dtype=jnp.int32)
-        starts = jnp.asarray(start_times_ms, dtype=float)
-        ends = jnp.asarray(end_times_ms, dtype=float)
+        starts = jnp.asarray(start_times_ms, dtype=jnp.float64)
+        ends = jnp.asarray(end_times_ms, dtype=jnp.float64)
         per_macro = _positive_integer(steps_per_macro, "steps_per_macro")
         events = _nonnegative_integer(event_capacity, "event_capacity")
         state_values = _positive_integer(state_value_capacity, "state_value_capacity")
@@ -2907,8 +2906,8 @@ def prepare_cardiovascular_scheduler(
                 records.append((end, subsystem, owner, start))
     records.sort(key=lambda item: (item[0], item[1]))
     owners = np.asarray([item[2] for item in records], dtype=np.int32)
-    starts = np.asarray([item[3] for item in records], dtype=float)
-    ends = np.asarray([item[0] for item in records], dtype=float)
+    starts = np.asarray([item[3] for item in records], dtype=np.float64)
+    ends = np.asarray([item[0] for item in records], dtype=np.float64)
     return PreparedCardiovascularScheduler(
         execution.manifest_id,
         plan,
@@ -2957,17 +2956,17 @@ def run_cardiovascular_schedule(
     if not callable(advance) or not callable(event_values) or not callable(reset_event):
         raise TypeError("Scheduler callbacks must be callable.")
     plan = prepared.plan
-    maximum_steps = int(prepared.owner_indices.shape[0])
+    maximum_steps = prepared.owner_indices.shape[0]
     maximum_events = _prepared_event_capacity(prepared)
     active_steps = count * prepared.steps_per_macro
-    scheduled_active = np.zeros((maximum_steps,), dtype=bool)
+    scheduled_active = np.zeros((maximum_steps,), dtype=np.bool_)
     event_source = np.full((maximum_events,), -1, dtype=np.int32)
-    event_times = np.zeros((maximum_events,), dtype=float)
-    event_active = np.zeros((maximum_events,), dtype=bool)
-    guard_before_record = np.zeros((maximum_events,), dtype=float)
-    guard_after_record = np.zeros((maximum_events,), dtype=float)
-    guard_slope_record = np.zeros((maximum_events,), dtype=float)
-    saltation = np.zeros((maximum_events,), dtype=bool)
+    event_times = np.zeros((maximum_events,), dtype=np.float64)
+    event_active = np.zeros((maximum_events,), dtype=np.bool_)
+    guard_before_record = np.zeros((maximum_events,), dtype=np.float64)
+    guard_after_record = np.zeros((maximum_events,), dtype=np.float64)
+    guard_slope_record = np.zeros((maximum_events,), dtype=np.float64)
+    saltation = np.zeros((maximum_events,), dtype=np.bool_)
     state = initial_state
     initial_signature = _state_leaf_signature(initial_state)
     event_count = 0
@@ -3267,7 +3266,7 @@ def _event_crossed(event: CardiovascularEventSpec, left: float, right: float, /)
 def _evaluate_event_values(
     evaluator: EventEvaluator[Any], state: Any, time_ms: float, count: int, /
 ) -> tuple[np.ndarray, bool]:
-    values = np.asarray(evaluator(state, time_ms), dtype=float)
+    values = np.asarray(evaluator(state, time_ms), dtype=np.float64)
     if values.shape != (count,):
         raise ValueError("event_values must return one scalar per prepared event.")
     return values, bool(np.all(np.isfinite(values)))
@@ -3346,15 +3345,15 @@ def _failed_schedule_candidate(
     event_records: Sequence[tuple[int, float, float, float, bool]],
     /,
 ) -> CardiovascularScheduleCandidate[State]:
-    maximum_steps = int(prepared.owner_indices.shape[0])
+    maximum_steps = prepared.owner_indices.shape[0]
     maximum_events = _prepared_event_capacity(prepared)
     event_source = np.full((maximum_events,), -1, dtype=np.int32)
-    event_times = np.zeros((maximum_events,), dtype=float)
-    event_active = np.zeros((maximum_events,), dtype=bool)
-    guard_before = np.zeros((maximum_events,), dtype=float)
-    guard_after = np.zeros((maximum_events,), dtype=float)
-    guard_slope = np.zeros((maximum_events,), dtype=float)
-    saltation = np.zeros((maximum_events,), dtype=bool)
+    event_times = np.zeros((maximum_events,), dtype=np.float64)
+    event_active = np.zeros((maximum_events,), dtype=np.bool_)
+    guard_before = np.zeros((maximum_events,), dtype=np.float64)
+    guard_after = np.zeros((maximum_events,), dtype=np.float64)
+    guard_slope = np.zeros((maximum_events,), dtype=np.float64)
+    saltation = np.zeros((maximum_events,), dtype=np.bool_)
     for index, record in enumerate(event_records):
         source, time, before, after, eligible = record
         event_source[index] = source
@@ -3498,7 +3497,7 @@ def _checkpoint_archive_limits(
 
 def _tree_value_count(value: Any, /) -> int:
     leaves = jax.tree_util.tree_leaves(value)
-    return sum(int(np.asarray(leaf).size) for leaf in leaves)
+    return sum(np.asarray(leaf).size for leaf in leaves)
 
 
 def _identifier(value: object, name: str, /) -> str:

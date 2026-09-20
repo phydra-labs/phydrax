@@ -124,7 +124,7 @@ def sphere_implicit_contact(
     *,
     certificate_tolerance: float = 1.0e-10,
 ) -> ImplicitContactResult:
-    dimension = int(sphere_position.shape[0])
+    dimension = sphere_position.shape[0]
     if dimension not in (2, 3) or implicit_shape.lower_bound.shape != (dimension,):
         raise ValueError("Sphere/implicit contact dimension is invalid.")
     if dimension == 2:

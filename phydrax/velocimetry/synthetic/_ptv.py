@@ -94,7 +94,7 @@ class PTVScenarioPlan(StrictModule, NonTrainableState):
     ):
         kind_ = PTVScenarioKind(kind)
         family = kind_.value if family_id is None else str(family_id)
-        shape = tuple(int(item) for item in image_shape)
+        shape = tuple(image_shape)
         frames = int(frame_count)
         cameras = int(camera_count)
         capacity = int(particle_capacity)
@@ -332,11 +332,11 @@ class PTVSyntheticCase(StrictModule, NonTrainableState):
         self.ideal_images = jnp.asarray(ideal_images)
         self.projection_pixels_rc = jnp.asarray(projection_pixels_rc)
         self.projection_depth = jnp.asarray(projection_depth)
-        self.projection_valid = jnp.asarray(projection_valid, dtype=bool)
+        self.projection_valid = jnp.asarray(projection_valid, dtype=jnp.bool_)
         self.projection_status = jnp.asarray(projection_status, dtype=jnp.int32)
-        self.visible = jnp.asarray(visible, dtype=bool)
+        self.visible = jnp.asarray(visible, dtype=jnp.bool_)
         self.world_positions_xyz = jnp.asarray(world_positions_xyz)
-        self.particle_active = jnp.asarray(particle_active, dtype=bool)
+        self.particle_active = jnp.asarray(particle_active, dtype=jnp.bool_)
         self.trajectory_ids = jnp.asarray(trajectory_ids, dtype=jnp.int32)
         self.renderings = renderings
         self.evidence = evidence

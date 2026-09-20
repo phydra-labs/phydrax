@@ -33,7 +33,7 @@ RandomizedResidualSamplingMode: TypeAlias = Literal["fixed", "resample"]
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape
@@ -78,19 +78,19 @@ class RandomizedResidualSamples(StrictModule):
             )
         if samples.shape[1:] != sample_axes + event_axes:
             raise ValueError("values trailing dimensions do not match declared shapes.")
-        count = int(samples.shape[0])
+        count = samples.shape[0]
         if count < 2:
             raise ValueError("At least two residual realizations are required.")
         if mask is None:
-            valid = jnp.ones(sample_axes, dtype=bool)
+            valid = jnp.ones(sample_axes, dtype=jnp.bool_)
         else:
-            valid = jnp.asarray(mask, dtype=bool)
+            valid = jnp.asarray(mask, dtype=jnp.bool_)
             if valid.shape != sample_axes:
                 raise ValueError("mask must have sample_shape.")
         if weights is None:
-            sample_weights = jnp.ones(sample_axes, dtype=float)
+            sample_weights = jnp.ones(sample_axes, dtype=jnp.float64)
         else:
-            sample_weights = jnp.asarray(weights, dtype=float)
+            sample_weights = jnp.asarray(weights, dtype=jnp.float64)
             if sample_weights.shape != sample_axes:
                 raise ValueError("weights must have sample_shape.")
         sample_weights = eqx.error_if(
@@ -117,7 +117,7 @@ class RandomizedResidualSamples(StrictModule):
 
     @property
     def num_realizations(self) -> int:
-        return int(self.values.shape[0])
+        return self.values.shape[0]
 
     @property
     def mean(self) -> Array:
@@ -297,7 +297,7 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
                 )
             fixed = collocation
             sampler = None
-        weight = jnp.asarray(scalar_weight, dtype=float).reshape(())
+        weight = jnp.asarray(scalar_weight, dtype=jnp.float64).reshape(())
         if bool(~jnp.isfinite(weight)) or float(weight) < 0.0:
             raise ValueError("scalar_weight must be finite and nonnegative.")
         precision_ = IntegrationPrecisionPolicy() if precision is None else precision

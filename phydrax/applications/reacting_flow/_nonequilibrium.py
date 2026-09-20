@@ -245,7 +245,7 @@ class PreparedThermochemicalNonequilibriumProcess(AbstractPreparedBalanceLawProc
                 jnp.zeros(
                     state.shape[:-1] + (self.system.species_count,), dtype=state.dtype
                 ),
-                jnp.ones(state.shape[:-1], dtype=bool),
+                jnp.ones(state.shape[:-1], dtype=jnp.bool_),
             )
         recovered = self.system.recover_thermodynamics(state)
         heavy = recovered.state.heavy_temperature

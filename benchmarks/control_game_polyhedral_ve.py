@@ -101,8 +101,8 @@ def _problem(
         )
     constraints = phx.control.games.OpenLoopGameConstraints(partition, tuple(blocks))
 
-    state_index = jnp.arange(state_size, dtype=float)
-    control_index = jnp.arange(control_size, dtype=float)
+    state_index = jnp.arange(state_size, dtype="float64")
+    control_index = jnp.arange(control_size, dtype="float64")
     a = jnp.broadcast_to(0.84 * jnp.eye(state_size), (horizon, state_size, state_size))
     b_base = 0.025 * jnp.cos(
         (state_index[:, None] + 1.0) * (control_index[None, :] + 1.0)
@@ -212,7 +212,7 @@ def _case(
         ),
         "original_kkt_residual_max": float(jnp.max(result.original_kkt_residual)),
         "natural_residual_max": float(jnp.max(result.natural_residual)),
-        "common_shared_multiplier_count": int(result.shared_multipliers.shape[-1]),
+        "common_shared_multiplier_count": result.shared_multipliers.shape[-1],
     }
     return {
         "name": name,

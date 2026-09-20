@@ -108,11 +108,11 @@ class ControlledTransitionKernel(AbstractTransitionKernel):
 
     @property
     def num_states(self) -> int:
-        return int(self.support.shape[len(self.case_shape)])
+        return self.support.shape[len(self.case_shape)]
 
     @property
     def num_steps(self) -> int:
-        return int(self.times.shape[0] - 1)
+        return self.times.shape[0] - 1
 
     def _case_step(self, context: StateSpaceStepContext, /) -> tuple[Array, Array]:
         case_index = _flat_case_index(context, self.case_shape)
@@ -259,7 +259,7 @@ def sample_bridge_state_indices(
     if not isinstance(result, SchrodingerBridgeResult):
         raise TypeError("result must be a SchrodingerBridgeResult.")
     result = require_converged_bridge(result)
-    shape = tuple(int(size) for size in sample_shape)
+    shape = tuple(sample_shape)
     if any(size <= 0 for size in shape):
         raise ValueError("sample_shape dimensions must be positive.")
     sample_count = prod(shape) if shape else 1
@@ -312,7 +312,7 @@ def _path_indices(
         raise ValueError("paths must contain one state at every bridge grid time.")
     if event_rank and tuple(values.shape[-event_rank:]) != problem.state_shape:
         raise ValueError("paths must end with the bridge state shape.")
-    sample_shape = tuple(int(size) for size in prefix[len(problem.case_shape) : -1])
+    sample_shape = tuple(prefix[len(problem.case_shape) : -1])
     sample_count = prod(sample_shape) if sample_shape else 1
     case_count = problem.num_cases
     flat_values = values.reshape(

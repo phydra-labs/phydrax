@@ -109,13 +109,13 @@ def _active_components(
     geometry: QualifiedSharpGeometry,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     shape = operators.discretization.cell_shape
-    active = np.asarray(geometry.cell_active, dtype=bool)
+    active = np.asarray(geometry.cell_active, dtype=np.bool_)
     apertures = tuple(np.asarray(value) for value in geometry.face_open_measure_lower)
     flat_active = np.flatnonzero(active.reshape(-1))
     if flat_active.size == 0:
         raise ValueError("Sharp projection requires at least one certainly fluid cell.")
     active_position = {int(flat): index for index, flat in enumerate(flat_active)}
-    union = _UnionFind(int(flat_active.size))
+    union = _UnionFind(flat_active.size)
 
     def connect(first: tuple[int, ...], second: tuple[int, ...], opened: bool) -> None:
         first_flat = int(np.ravel_multi_index(first, shape))
@@ -154,7 +154,7 @@ def _active_components(
         if root not in ordered_roots:
             ordered_roots[root] = len(ordered_roots)
         labels[index] = ordered_roots[root]
-    anchored = np.zeros(len(ordered_roots), dtype=bool)
+    anchored = np.zeros(len(ordered_roots), dtype=np.bool_)
     for boundary, axis, side_index in zip(
         boundaries.sides,
         boundaries.side_axes,
@@ -248,7 +248,7 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
         indices, labels, unanchored = _active_components(operators, boundaries, geometry)
         active_volumes = np.asarray(geometry.cell_fluid_measure).reshape(-1)[indices]
         pressure_space = ArraySpace(
-            (int(indices.size),),
+            (indices.size,),
             dtype=operators.pressure_space.dtype,
             pairing=DiagonalPairing(
                 jnp.asarray(active_volumes),
@@ -288,8 +288,8 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
                 "operators": operators.prepared_id,
                 "boundaries": boundaries.prepared_id,
                 "geometry": geometry.realization_id,
-                "active_cells": int(indices.size),
-                "components": int(unanchored.size),
+                "active_cells": indices.size,
+                "components": unanchored.size,
                 "unanchored_components": unanchored.tolist(),
                 "tolerance": tolerance_,
             }
@@ -303,7 +303,7 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
 
     @property
     def component_count(self) -> int:
-        return int(self.unanchored_components.size)
+        return self.unanchored_components.size
 
     def _pack(self, value: ArrayLike, /) -> Array:
         full = self.operators.validate_pressure(value)

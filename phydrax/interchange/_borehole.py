@@ -11,6 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
+
 from .._external_resource import ResourceManifest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -147,8 +149,8 @@ class BoreholeTrajectory(StrictModule, NonTrainableState):
         if spatial.length_unit != length_unit:
             raise ValueError("Borehole array unit and geospatial length unit disagree.")
         factor = float(conversion_factor(length_unit, METER))
-        depth = np.asarray(measured_depth, dtype=float) * factor
-        xyz = np.asarray(positions, dtype=float) * factor
+        depth = np.asarray(measured_depth, dtype=np.float64) * factor
+        xyz = np.asarray(positions, dtype=np.float64) * factor
         tolerance = float(geometry_tolerance)
         if depth.ndim != 1 or depth.size < 2 or xyz.shape != (depth.size, 3):
             raise ValueError(
@@ -172,14 +174,14 @@ class BoreholeTrajectory(StrictModule, NonTrainableState):
             )
         orientation = None
         if tool_orientations is not None:
-            orientation = np.asarray(tool_orientations, dtype=float)
+            orientation = np.asarray(tool_orientations, dtype=np.float64)
             if orientation.shape != (depth.size, 3, 3) or np.any(
                 ~np.isfinite(orientation)
             ):
                 raise ValueError(
                     "Tool orientations must be one finite 3x3 matrix per station."
                 )
-            gram = np.einsum("...ji,...jk->...ik", orientation, orientation)
+            gram = ein.contract("...ji,...jk->...ik", orientation, orientation)
             determinant = np.linalg.det(orientation)
             if not np.allclose(
                 gram, np.eye(3), rtol=tolerance, atol=tolerance
@@ -225,7 +227,7 @@ class BoreholeTrajectory(StrictModule, NonTrainableState):
     def prepare_sampling(
         self, measured_depth: ArrayLike, /, *, length_unit: UnitDefinition = METER
     ) -> PreparedBoreholeSampling:
-        queries = np.asarray(measured_depth, dtype=float) * float(
+        queries = np.asarray(measured_depth, dtype=np.float64) * float(
             conversion_factor(length_unit, METER)
         )
         stations = np.asarray(self.measured_depth_m)

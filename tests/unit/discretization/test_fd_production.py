@@ -153,7 +153,7 @@ def test_checkpointed_time_discrete_adjoint_matches_closed_form_gradient():
 @pytest.mark.parametrize("dimension", [1, 2, 3])
 def test_structured_cochain_bridge_satisfies_boundary_of_boundary_identity(dimension):
     bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3,) * dimension))
-    values = jnp.arange(bridge.cochain.cell_counts[0], dtype=float)
+    values = jnp.arange(bridge.cochain.cell_counts[0], dtype="float64")
 
     first = bridge.exterior_derivative(0, values)
 
@@ -169,14 +169,18 @@ def test_prepared_maxwell_preserves_constraints_and_material_gradients():
     degree_zero = bridge.cochain.cell_counts[0]
     degree_one = bridge.cochain.cell_counts[1]
     degree_two = bridge.cochain.cell_counts[2]
-    permittivity = 1.0 + 0.2 * (jnp.arange(degree_one, dtype=float) + 1.0) / degree_one
-    permeability = 1.0 + 0.1 * (jnp.arange(degree_two, dtype=float) + 1.0) / degree_two
-    electric = jnp.sin(jnp.arange(degree_one, dtype=float) / 7.0)
+    permittivity = (
+        1.0 + 0.2 * (jnp.arange(degree_one, dtype="float64") + 1.0) / degree_one
+    )
+    permeability = (
+        1.0 + 0.1 * (jnp.arange(degree_two, dtype="float64") + 1.0) / degree_two
+    )
+    electric = jnp.sin(jnp.arange(degree_one, dtype="float64") / 7.0)
     magnetic = bridge.exterior_derivative(1, electric)
     charge = -bridge.codifferential(1, permittivity * electric)
     current = bridge.exterior_derivative(
         0,
-        jnp.cos(jnp.arange(degree_zero, dtype=float) / 5.0),
+        jnp.cos(jnp.arange(degree_zero, dtype="float64") / 5.0),
     )
 
     source = phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
@@ -268,8 +272,10 @@ def test_elastic_energy_and_incompressible_projection_are_compatible():
         bridge,
         wave_speed=1.3,
     )
-    displacement = jnp.sin(jnp.arange(bridge.cochain.cell_counts[0], dtype=float) / 7.0)
-    velocity = jnp.cos(jnp.arange(bridge.cochain.cell_counts[0], dtype=float) / 5.0)
+    displacement = jnp.sin(
+        jnp.arange(bridge.cochain.cell_counts[0], dtype="float64") / 7.0
+    )
+    velocity = jnp.cos(jnp.arange(bridge.cochain.cell_counts[0], dtype="float64") / 5.0)
     elastic_state = elasticity.pack(displacement, velocity)
     elastic_drift = elasticity.drift(elastic_state)
     energy_gradient = jax.grad(
@@ -284,7 +290,9 @@ def test_elastic_energy_and_incompressible_projection_are_compatible():
     np.testing.assert_allclose(energy_rate, 0.0, rtol=0.0, atol=2e-9)
 
     projection = phx.solver.CompatibleIncompressibleProjection(bridge)
-    raw_velocity = jnp.sin(jnp.arange(bridge.cochain.cell_counts[1], dtype=float) / 3.0)
+    raw_velocity = jnp.sin(
+        jnp.arange(bridge.cochain.cell_counts[1], dtype="float64") / 3.0
+    )
     projected = eqx.filter_jit(projection.project)(raw_velocity)
 
     assert jnp.linalg.norm(projected.divergence_before) > 1e-3

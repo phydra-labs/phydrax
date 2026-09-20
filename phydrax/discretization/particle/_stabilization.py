@@ -15,7 +15,7 @@ from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from ._core import ParticleDiscretization
@@ -85,7 +85,7 @@ def sph_kernel_normalization(
 ) -> SPHKernelNormalizationState:
     density_ = jnp.asarray(density)
     volume = particles.safe_masses / density_
-    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=bool)
+    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=jnp.bool_)
     weights = kernel.value(geometry.distance, smoothing_length)
     left = pairs.left_indices
     right = pairs.right_indices
@@ -118,7 +118,7 @@ def sph_first_order_correction(
 ) -> SPHFirstOrderCorrectionState:
     density_ = jnp.asarray(density)
     volume = particles.safe_masses / density_
-    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=bool)
+    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=jnp.bool_)
     gradient = kernel.gradient(geometry.displacement, geometry.distance, smoothing_length)
     outer = contract("ei,ej->eij", geometry.displacement, gradient)
     left = pairs.left_indices
@@ -156,9 +156,9 @@ def sph_first_order_correction(
 
 
 class AbstractSPHDensityDiffusionPlan(StrictModule, NonTrainableState):
-    delta: AbstractAttribute[float]
-    regularization: AbstractAttribute[float]
-    plan_id: AbstractAttribute[str]
+    delta: eqx.AbstractVar[float]
+    regularization: eqx.AbstractVar[float]
+    plan_id: eqx.AbstractVar[str]
 
 
 class MolteniColagrossiDensityDiffusionPlan(AbstractSPHDensityDiffusionPlan):
@@ -246,7 +246,7 @@ def sph_density_diffusion_rate(
     density_ = jnp.asarray(density)
     sound = jnp.asarray(sound_speed)
     volume = particles.safe_masses / density_
-    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=bool)
+    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=jnp.bool_)
     left = pairs.left_indices
     right = pairs.right_indices
     gradient = kernel.gradient(geometry.displacement, geometry.distance, smoothing_length)
@@ -257,7 +257,7 @@ def sph_density_diffusion_rate(
         * (-geometry.displacement)
         / denominator[:, None]
     )
-    correction_successful = jnp.ones((particles.capacity,), dtype=bool)
+    correction_successful = jnp.ones((particles.capacity,), dtype=jnp.bool_)
     if isinstance(plan, AntuonoDeltaSPHDiffusionPlan):
         correction = sph_first_order_correction(
             plan.correction,
@@ -395,12 +395,12 @@ def sph_artificial_viscosity_force(
         activation = radial_velocity < 0.0
         weight = activation.astype(pi.dtype)
     elif plan.activation == "always":
-        activation = jnp.ones_like(radial_velocity, dtype=bool)
+        activation = jnp.ones_like(radial_velocity, dtype=jnp.bool_)
         weight = jnp.ones_like(pi)
     else:
         weight = jax.nn.sigmoid(-plan.smooth_sharpness * radial_velocity)
         activation = weight > 0.5
-    physical = pairs.valid & jnp.asarray(physical_pairs, dtype=bool)
+    physical = pairs.valid & jnp.asarray(physical_pairs, dtype=jnp.bool_)
     valid = physical & activation
     gradient = kernel.gradient(geometry.displacement, geometry.distance, smoothing_length)
     pair_force = (
@@ -439,7 +439,7 @@ def shepard_renormalized_density(
     /,
 ) -> tuple[Array, Array]:
     density_ = jnp.asarray(density)
-    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=bool)
+    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=jnp.bool_)
     weights = kernel.value(geometry.distance, smoothing_length)
     left = pairs.left_indices
     right = pairs.right_indices

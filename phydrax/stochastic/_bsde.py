@@ -31,7 +31,7 @@ BSDEControlMode: TypeAlias = Literal["explicit", "autodiff"]
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape
@@ -86,7 +86,7 @@ class BSDEPathBatch(StrictModule):
         samples = _shape(sample_shape, owner="sample_shape") if sample_shape else ()
         state_event = _shape(state_shape, owner="state_shape")
         noise_event = _shape(noise_shape, owner="noise_shape")
-        time_values = jnp.asarray(times, dtype=float)
+        time_values = jnp.asarray(times, dtype=jnp.float64)
         if time_values.ndim != 1 or time_values.shape[0] < 2:
             raise ValueError(
                 "times must be a one-dimensional grid with at least two nodes."
@@ -111,7 +111,7 @@ class BSDEPathBatch(StrictModule):
         if valid is None:
             validity = _event_finite(state_values, state_event)
         else:
-            validity = jnp.asarray(valid, dtype=bool)
+            validity = jnp.asarray(valid, dtype=jnp.bool_)
             if validity.shape != samples + (time_values.shape[0],):
                 raise ValueError("valid must have sample_shape + (num_nodes,) shape.")
         if realization is not None and not is_stochastic_realization(realization):
@@ -142,7 +142,7 @@ class BSDEPathBatch(StrictModule):
 
     @property
     def num_steps(self) -> int:
-        return int(self.times.shape[0]) - 1
+        return self.times.shape[0] - 1
 
     @property
     def num_paths(self) -> int:
@@ -258,14 +258,13 @@ def bsde_paths_from_differential_solution(
             raise ValueError("All differential-solution paths must share one time grid.")
     else:
         raise ValueError(
-            "Differential-solution times must have shape (num_nodes,) or "
-            "sample_shape + (num_nodes,)."
+            "Differential-solution times must have shape (num_nodes,) or sample_shape + (num_nodes,)."
         )
     increments = realization.increments(times[:-1], times[1:])
     resolved_state_shape = (
         tuple(solution.states.shape[len(solution.sample_shape) + 1 :])
         if state_shape is None
-        else tuple(int(size) for size in state_shape)
+        else tuple(state_shape)
     )
     return BSDEPathBatch(
         times,
@@ -487,7 +486,7 @@ def evaluate_bsde(
         )
     generator_y = values[..., :-1, *([slice(None)] * len(problem.output_shape))]
     sample_count = prod(paths.sample_shape) if paths.sample_shape else 1
-    state_size = prod(problem.state_shape)
+    prod(problem.state_shape)
     output_size = prod(problem.output_shape)
     noise_size = prod(problem.noise_shape)
 
@@ -640,7 +639,7 @@ def bsde_objective_loss(
     if mode not in ("terminal", "local", "global", "joint"):
         raise ValueError("Unknown BSDE objective mode.")
     weights = tuple(
-        jnp.asarray(value, dtype=float).reshape(())
+        jnp.asarray(value, dtype=jnp.float64).reshape(())
         for value in (terminal_weight, local_weight, global_weight)
     )
     if any(bool(~jnp.isfinite(value)) or float(value) < 0.0 for value in weights):

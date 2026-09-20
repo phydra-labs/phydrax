@@ -20,7 +20,7 @@ def test_finite_top_k_pareto_and_landscape_are_index_stable():
     )
     assert top.exact
     assert jnp.array_equal(top.flat_indices, jnp.asarray([1, 2, 3]))
-    assert jnp.array_equal(top.landscape_evaluated, jnp.ones((4,), dtype=bool))
+    assert jnp.array_equal(top.landscape_evaluated, jnp.ones((4,), dtype="bool"))
 
     pareto = phx.optim.search_finite(
         lambda value: (jnp.stack((value, 4.0 - value)), jnp.asarray(True)),

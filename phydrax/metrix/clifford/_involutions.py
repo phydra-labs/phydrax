@@ -134,7 +134,7 @@ def basis_blade(
     bitmap: int,
     /,
     *,
-    dtype=float,
+    dtype=jnp.float64,
 ) -> Array:
     position = layout.position(bitmap)
     return jnp.zeros((layout.blade_count,), dtype=dtype).at[position].set(1)

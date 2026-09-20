@@ -43,7 +43,7 @@ def _reconstruction_weights_one(
     neighbors = x[indices]
     centered = neighbors - x[:, None, :]
     gram = ein.contract("nki,nli->nkl", centered, jnp.conj(centered))
-    k = int(indices.shape[-1])
+    k = indices.shape[-1]
     trace = jnp.real(jnp.trace(gram, axis1=-2, axis2=-1))
     ridge = float(regularization) * jnp.maximum(trace / k, jnp.finfo(x.real.dtype).eps)
     gram = gram + ridge[:, None, None] * jnp.eye(k, dtype=gram.dtype)
@@ -61,7 +61,7 @@ def _reconstruction_weights_one(
 
 
 def _scatter_local(indices: Array, local_matrices: Array, active: Array) -> Array:
-    n = int(indices.shape[0])
+    n = indices.shape[0]
     selectors = jax.nn.one_hot(indices, n, dtype=local_matrices.dtype)
     contributions = jax.vmap(lambda e, local: jnp.conj(e).T @ local @ e)(
         selectors, local_matrices
@@ -78,8 +78,8 @@ def _lle_alignment_one(
     regularization: float,
     variant: LLEVariant,
 ) -> tuple[Array, Array, Array]:
-    n = int(x.shape[0])
-    k = int(indices.shape[-1])
+    n = x.shape[0]
+    k = indices.shape[-1]
     local_weights = _reconstruction_weights_one(x, indices, active, regularization)
     rows = jnp.arange(n, dtype=jnp.int32)[:, None]
     reconstruction = (
@@ -185,14 +185,14 @@ class LocallyLinearEmbeddingModel(AbstractArrayModel):
         embedding = jnp.asarray(training_embedding)
         self.training_features = x
         self.training_embedding = embedding
-        self.active = jnp.asarray(active, dtype=bool)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
         self.regularization = float(regularization)
         self.n_neighbors = int(n_neighbors)
         self.variant = str(variant)
         self.case_shape = tuple(case_shape)
         self.transform_supported = variant in ("standard", "modified")
-        self.in_size = int(x.shape[-1])
-        self.out_size = int(embedding.shape[-1])
+        self.in_size = x.shape[-1]
+        self.out_size = embedding.shape[-1]
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key

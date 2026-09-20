@@ -58,12 +58,11 @@ class DarkBoundStateLevel(StrictModule, NonTrainableState):
         spin_twice: int,
         level_label: str,
     ):
-        constituents = tuple(int(value) for value in constituent_pdg_ids)
+        constituents = tuple(constituent_pdg_ids)
         energy = float(rest_energy)
         charge_ = float(charge)
         quantum = tuple(
-            int(value)
-            for value in (
+            (
                 degeneracy,
                 radial_quantum_number,
                 orbital_angular_momentum,
@@ -266,9 +265,7 @@ class RadiativeCapturePlan(StrictModule, NonTrainableState):
         level = spectrum.level(bound_pdg_id)
         coefficient = float(capture_coefficient)
         radiation_degeneracy = int(emitted_radiation_degeneracy)
-        constituent_degeneracies_ = tuple(
-            int(value) for value in constituent_degeneracies
-        )
+        constituent_degeneracies_ = tuple(constituent_degeneracies)
         multipole = int(multipole_order)
         if (
             not math.isfinite(coefficient)

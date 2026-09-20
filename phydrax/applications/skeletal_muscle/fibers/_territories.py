@@ -55,18 +55,15 @@ class MotorUnitEndplateStimulus(StrictModule, NonTrainableState):
         active = (
             self.event_mask
             & (time >= self.event_times_ms)
-            & (
-                time
-                < self.event_times_ms + self.duration_ms[:, None]
-            )
+            & (time < self.event_times_ms + self.duration_ms[:, None])
         )
-        unit_current = jnp.sum(
-            active * self.amplitude_uA_per_cm2[:, None], axis=1
-        )
+        unit_current = jnp.sum(active * self.amplitude_uA_per_cm2[:, None], axis=1)
         fiber_current = unit_current[self.fiber_motor_unit_index]
-        return jnp.zeros(
-            (self.fiber_count, self.node_count), dtype=unit_current.dtype
-        ).at[jnp.arange(self.fiber_count), self.fiber_endplate_node].set(fiber_current)
+        return (
+            jnp.zeros((self.fiber_count, self.node_count), dtype=unit_current.dtype)
+            .at[jnp.arange(self.fiber_count), self.fiber_endplate_node]
+            .set(fiber_current)
+        )
 
     def event_boundaries_ms(self, /) -> Array:
         masked_start = jnp.where(self.event_mask, self.event_times_ms, jnp.inf)
@@ -145,7 +142,9 @@ class MotorUnitTerritoryPlan(StrictModule, NonTrainableState):
             or not np.all(np.isfinite(np.asarray(duration)))
             or np.any(np.asarray(duration) <= 0.0)
         ):
-            raise ValueError("Endplate amplitudes and durations must be positive and finite.")
+            raise ValueError(
+                "Endplate amplitudes and durations must be positive and finite."
+            )
         counts = jnp.bincount(unit_index, length=len(units))
         every_fiber = jnp.asarray(unit_index.shape[0] == len(fibers))
         every_unit = jnp.all(counts > 0)
@@ -190,7 +189,7 @@ class MotorUnitTerritoryPlan(StrictModule, NonTrainableState):
         event_source_id: str,
     ) -> MotorUnitEndplateStimulus:
         times = jnp.asarray(event_times_ms)
-        mask = jnp.asarray(event_mask, dtype=bool)
+        mask = jnp.asarray(event_mask, dtype=jnp.bool_)
         if times.ndim != 2 or times.shape[0] != len(self.unit_ids):
             raise ValueError("event_times_ms must have shape (motor_unit, event_slot).")
         if mask.shape != times.shape:

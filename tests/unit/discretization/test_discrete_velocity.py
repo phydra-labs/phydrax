@@ -129,7 +129,7 @@ def test_quadrature_rejects_false_lattice_and_failed_moment_claims():
     off_grid_velocities[1, 0] += 0.1
     with pytest.raises(ValueError, match="integer velocities"):
         CertifiedDiscreteVelocityQuadrature(
-            "mislabelled",
+            "mislabeled",
             off_grid_velocities,
             rule.weights,
             reference_temperature=0.5,

@@ -121,7 +121,7 @@ class SparseLevelOctreePlan(StrictModule):
             level_slots.append(jnp.where(at_level[order], node_slots[order], -1))
         prefix_table = jnp.stack(level_prefixes)
         slot_table = jnp.stack(level_slots)
-        periodic = jnp.asarray(self.address_plan.periodic_axes, dtype=bool)
+        periodic = jnp.asarray(self.address_plan.periodic_axes, dtype=jnp.bool_)
         parent_offsets = jnp.asarray(
             tuple(product((-1, 0, 1), repeat=self.address_plan.dimension)),
             dtype=jnp.int64,

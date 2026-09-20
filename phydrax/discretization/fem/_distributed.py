@@ -44,7 +44,7 @@ class PartitionedFiniteElementDofMap(StrictModule, NonTrainableState):
         if not isinstance(dof_map, FiniteElementDofMap):
             raise TypeError("dof_map must be FiniteElementDofMap.")
         identifiers = np.asarray(global_ids, dtype=np.int64)
-        owned = np.asarray(owned_mask, dtype=bool)
+        owned = np.asarray(owned_mask, dtype=np.bool_)
         if (
             identifiers.shape != (dof_map.global_dof_count,)
             or owned.shape != identifiers.shape
@@ -55,9 +55,9 @@ class PartitionedFiniteElementDofMap(StrictModule, NonTrainableState):
                 "Distributed DOF global IDs must be unique and non-negative."
             )
         weights = (
-            np.ones(identifiers.shape, dtype=float)
+            np.ones(identifiers.shape, dtype=np.float64)
             if multiplicity is None
-            else np.asarray(multiplicity, dtype=float)
+            else np.asarray(multiplicity, dtype=np.float64)
         )
         if (
             weights.shape != identifiers.shape
@@ -151,9 +151,9 @@ class FiniteElementHaloPlan(StrictModule, NonTrainableState):
         if groups.ndim != 2 or groups.shape[0] == 0 or groups.shape[1] < 2:
             raise ValueError("replica_groups must have shape (groups, width >= 2).")
         valid_ = (
-            np.ones(groups.shape, dtype=bool)
+            np.ones(groups.shape, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if (
             valid_.shape != groups.shape
@@ -383,30 +383,30 @@ def partition_cells_cost_aware(
         }.get(block.cell_kind, 1.0)
         cost = weight * shape_factor * local_width * max(degree + 1, 1)
         costs.extend((cost,) * block.cell_count)
-    costs_array = np.asarray(costs, dtype=float)
+    costs_array = np.asarray(costs, dtype=np.float64)
     adjacency = [set() for _ in range(cell_count)]
     domain = discretization.interior_facet_domain
     for left, right in zip(
         np.asarray(domain.owner_cells, dtype=np.int32),
-        np.asarray(domain.neighbour_cells, dtype=np.int32),
+        np.asarray(domain.neighbor_cells, dtype=np.int32),
         strict=True,
     ):
         adjacency[int(left)].add(int(right))
         adjacency[int(right)].add(int(left))
     owner = np.full((cell_count,), -1, dtype=np.int32)
-    part_costs = np.zeros((parts,), dtype=float)
+    part_costs = np.zeros((parts,), dtype=np.float64)
     order = np.argsort(-costs_array, kind="stable")
     for part, cell in enumerate(order[:parts]):
         owner[cell] = part
         part_costs[part] += costs_array[cell]
     for cell in order[parts:]:
-        scores = np.empty((parts,), dtype=float)
+        scores = np.empty((parts,), dtype=np.float64)
         for part in range(parts):
             cut = sum(
-                owner[neighbour] >= 0 and owner[neighbour] != part
-                for neighbour in adjacency[cell]
+                owner[neighbor] >= 0 and owner[neighbor] != part
+                for neighbor in adjacency[cell]
             )
-            locality = sum(owner[neighbour] == part for neighbour in adjacency[cell])
+            locality = sum(owner[neighbor] == part for neighbor in adjacency[cell])
             scores[part] = (
                 part_costs[part]
                 + costs_array[cell]
@@ -420,7 +420,7 @@ def partition_cells_cost_aware(
         owner[int(left)] != owner[int(right)]
         for left, right in zip(
             np.asarray(domain.owner_cells, dtype=np.int32),
-            np.asarray(domain.neighbour_cells, dtype=np.int32),
+            np.asarray(domain.neighbor_cells, dtype=np.int32),
             strict=True,
         )
     )
@@ -475,11 +475,11 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
         if not isinstance(partition, CellPartition):
             raise TypeError("partition must be CellPartition.")
         owned = np.asarray(owned_cells, dtype=np.int32)
-        owned_valid_ = np.asarray(owned_valid, dtype=bool)
+        owned_valid_ = np.asarray(owned_valid, dtype=np.bool_)
         halo = np.asarray(halo_cells, dtype=np.int32)
-        halo_valid_ = np.asarray(halo_valid, dtype=bool)
-        dependency = np.asarray(dependencies, dtype=bool)
-        completion = np.asarray(completions, dtype=bool)
+        halo_valid_ = np.asarray(halo_valid, dtype=np.bool_)
+        dependency = np.asarray(dependencies, dtype=np.bool_)
+        completion = np.asarray(completions, dtype=np.bool_)
         cell_count = np.asarray(partition.cell_owner).size
         shape = (partition.part_count, cell_count)
         if (
@@ -515,7 +515,7 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
                 or np.any(owners[local_halo] == part)
             ):
                 raise ValueError("Owned/halo workset membership is inconsistent.")
-            required = np.zeros((partition.part_count,), dtype=bool)
+            required = np.zeros((partition.part_count,), dtype=np.bool_)
             required[np.unique(owners[local_halo])] = True
             if not np.array_equal(required, dependency[part]):
                 raise ValueError("Halo worksets and dependency data disagree.")
@@ -616,10 +616,10 @@ def finite_element_partition_workset_plan(
         raise ValueError("Facet adjacency or cell global IDs are invalid.")
     shape = (partition.part_count, cell_count)
     owned = np.full(shape, -1, dtype=np.int32)
-    owned_valid = np.zeros(shape, dtype=bool)
+    owned_valid = np.zeros(shape, dtype=np.bool_)
     halo = np.full(shape, -1, dtype=np.int32)
-    halo_valid = np.zeros(shape, dtype=bool)
-    dependency = np.zeros((partition.part_count, partition.part_count), dtype=bool)
+    halo_valid = np.zeros(shape, dtype=np.bool_)
+    dependency = np.zeros((partition.part_count, partition.part_count), dtype=np.bool_)
     for part in range(partition.part_count):
         local_owned = np.flatnonzero(owner == part)
         local_owned = local_owned[np.argsort(identifiers[local_owned], kind="stable")]
@@ -788,7 +788,7 @@ class FiniteElementDistributedPhasePlan(StrictModule, NonTrainableState):
         facets = np.stack(
             (
                 np.asarray(domain.owner_cells, dtype=np.int32),
-                np.asarray(domain.neighbour_cells, dtype=np.int32),
+                np.asarray(domain.neighbor_cells, dtype=np.int32),
             ),
             axis=-1,
         )
@@ -941,7 +941,7 @@ class DistributedFiniteElementMortarPlan(StrictModule, NonTrainableState):
         if len(fluxes) != len(self.mortars):
             raise ValueError("Distributed mortar fluxes do not match serial patches.")
         active = (
-            jnp.ones((len(self.mortars),), dtype=bool)
+            jnp.ones((len(self.mortars),), dtype=jnp.bool_)
             if part is None
             else self.evaluated_by(part)
         )
@@ -1066,12 +1066,12 @@ class FiniteElementHPPartitionPlan(StrictModule, NonTrainableState):
         slot_to_cell[active_slots] = np.arange(active_slots.size, dtype=np.int32)
         valid = np.asarray(epoch.interfaces.valid)
         interface_owners = np.asarray(epoch.interfaces.owner_slots)[valid]
-        interface_neighbours = np.asarray(epoch.interfaces.neighbour_slots)[valid]
-        interior = interface_neighbours >= 0
+        interface_neighbors = np.asarray(epoch.interfaces.neighbor_slots)[valid]
+        interior = interface_neighbors >= 0
         facets = np.stack(
             (
                 slot_to_cell[interface_owners[interior]],
-                slot_to_cell[interface_neighbours[interior]],
+                slot_to_cell[interface_neighbors[interior]],
             ),
             axis=1,
         )
@@ -1083,14 +1083,14 @@ class FiniteElementHPPartitionPlan(StrictModule, NonTrainableState):
         interface_owner_part = owners[interface_owners]
         paired_parts = np.where(
             interior,
-            owners[np.maximum(interface_neighbours, 0)],
+            owners[np.maximum(interface_neighbors, 0)],
             interface_owner_part,
         )
         interface_owner_part = np.minimum(interface_owner_part, paired_parts)
-        dependencies = np.zeros((parts, parts), dtype=bool)
+        dependencies = np.zeros((parts, parts), dtype=np.bool_)
         for left, right in zip(
             owners[interface_owners[interior]],
-            owners[interface_neighbours[interior]],
+            owners[interface_neighbors[interior]],
             strict=True,
         ):
             if left != right:

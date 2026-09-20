@@ -63,7 +63,7 @@ class AbstractDistribution(AbstractProbabilityLaw):
 
     def equivalent(self, other: object, /) -> bool:
         return type(self) is type(other) and bool(
-            jnp.all(jnp.asarray(jax_tree_equal(self, other), dtype=bool))
+            jnp.all(jnp.asarray(jax_tree_equal(self, other), dtype=jnp.bool_))
         )
 
 
@@ -72,8 +72,8 @@ class Uniform(AbstractDistribution):
     high: Array
 
     def __init__(self, low: ArrayLike, high: ArrayLike):
-        low_array = jnp.asarray(low, dtype=float).reshape(())
-        high_array = jnp.asarray(high, dtype=float).reshape(())
+        low_array = jnp.asarray(low, dtype=jnp.float64).reshape(())
+        high_array = jnp.asarray(high, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(low_array)) or not bool(jnp.isfinite(high_array)):
             raise ValueError("Uniform bounds must be finite.")
         if not bool(low_array < high_array):
@@ -95,11 +95,11 @@ class Uniform(AbstractDistribution):
         )
 
     def icdf(self, value: ArrayLike, /) -> Array:
-        value_array = jnp.asarray(value, dtype=float)
+        value_array = jnp.asarray(value, dtype=jnp.float64)
         return self.low + value_array * (self.high - self.low)
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        value_array = jnp.asarray(value, dtype=float)
+        value_array = jnp.asarray(value, dtype=jnp.float64)
         density = -jnp.log(self.high - self.low)
         return jnp.where(self.contains(value_array), density, -jnp.inf)
 
@@ -120,7 +120,7 @@ class Uniform(AbstractDistribution):
         return (value_array >= self.low) & (value_array <= self.high)
 
     def cdf(self, value: ArrayLike, /) -> Array:
-        value_array = jnp.asarray(value, dtype=float)
+        value_array = jnp.asarray(value, dtype=jnp.float64)
         return jnp.clip((value_array - self.low) / (self.high - self.low), 0.0, 1.0)
 
     def reference_transport(self):
@@ -148,8 +148,8 @@ class Normal(AbstractDistribution):
 
     def __init__(self, location: ArrayLike, scale: ArrayLike):
         location_array, scale_array = jnp.broadcast_arrays(
-            jnp.asarray(location, dtype=float),
-            jnp.asarray(scale, dtype=float),
+            jnp.asarray(location, dtype=jnp.float64),
+            jnp.asarray(scale, dtype=jnp.float64),
         )
         if not bool(jnp.all(jnp.isfinite(location_array))):
             raise ValueError("Normal location must be finite.")
@@ -164,7 +164,7 @@ class Normal(AbstractDistribution):
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return tuple(int(size) for size in self.location.shape)
+        return tuple(self.location.shape)
 
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
         shape = tuple(sample_shape) + self.batch_shape
@@ -179,7 +179,9 @@ class Normal(AbstractDistribution):
         )
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        standardized = (jnp.asarray(value, dtype=float) - self.location) / self.scale
+        standardized = (
+            jnp.asarray(value, dtype=jnp.float64) - self.location
+        ) / self.scale
         return -0.5 * standardized**2 - jnp.log(self.scale) - 0.5 * jnp.log(2.0 * jnp.pi)
 
     @property
@@ -198,7 +200,9 @@ class Normal(AbstractDistribution):
         return jnp.isfinite(jnp.asarray(value))
 
     def cdf(self, value: ArrayLike, /) -> Array:
-        standardized = (jnp.asarray(value, dtype=float) - self.location) / self.scale
+        standardized = (
+            jnp.asarray(value, dtype=jnp.float64) - self.location
+        ) / self.scale
         return jsp.special.ndtr(standardized)
 
     def reference_transport(self):
@@ -207,10 +211,10 @@ class Normal(AbstractDistribution):
         return ReferenceTransport(
             reference_measure="standard-normal",
             forward=lambda reference: (
-                self.location + self.scale * jnp.asarray(reference, dtype=float)
+                self.location + self.scale * jnp.asarray(reference, dtype=jnp.float64)
             ),
             inverse=lambda value: (
-                (jnp.asarray(value, dtype=float) - self.location) / self.scale
+                (jnp.asarray(value, dtype=jnp.float64) - self.location) / self.scale
             ),
             evidence=ReferenceTransportEvidence(
                 provider="phydrax.uq.Normal",
@@ -225,8 +229,8 @@ class LogNormal(AbstractDistribution):
     scale: Array
 
     def __init__(self, location: ArrayLike, scale: ArrayLike):
-        location_array = jnp.asarray(location, dtype=float).reshape(())
-        scale_array = jnp.asarray(scale, dtype=float).reshape(())
+        location_array = jnp.asarray(location, dtype=jnp.float64).reshape(())
+        scale_array = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(location_array)):
             raise ValueError("LogNormal location must be finite.")
         if not bool(jnp.isfinite(scale_array)) or not bool(scale_array > 0.0):
@@ -252,7 +256,7 @@ class LogNormal(AbstractDistribution):
         return jnp.exp(normal)
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        value_array = jnp.asarray(value, dtype=float)
+        value_array = jnp.asarray(value, dtype=jnp.float64)
         positive = value_array > 0.0
         log_value = jnp.log(jnp.where(positive, value_array, 1.0))
         standardized = (log_value - self.location) / self.scale
@@ -284,7 +288,7 @@ class LogNormal(AbstractDistribution):
         return jnp.isfinite(value_array) & (value_array > 0.0)
 
     def cdf(self, value: ArrayLike, /) -> Array:
-        value_array = jnp.asarray(value, dtype=float)
+        value_array = jnp.asarray(value, dtype=jnp.float64)
         standardized = (jnp.log(value_array) - self.location) / self.scale
         return jnp.where(value_array > 0.0, jsp.special.ndtr(standardized), 0.0)
 
@@ -294,10 +298,11 @@ class LogNormal(AbstractDistribution):
         return ReferenceTransport(
             reference_measure="standard-normal",
             forward=lambda reference: jnp.exp(
-                self.location + self.scale * jnp.asarray(reference, dtype=float)
+                self.location + self.scale * jnp.asarray(reference, dtype=jnp.float64)
             ),
             inverse=lambda value: (
-                (jnp.log(jnp.asarray(value, dtype=float)) - self.location) / self.scale
+                (jnp.log(jnp.asarray(value, dtype=jnp.float64)) - self.location)
+                / self.scale
             ),
             evidence=ReferenceTransportEvidence(
                 provider="phydrax.uq.LogNormal",
@@ -316,17 +321,17 @@ class EmpiricalDistribution(AbstractDistribution):
         values: ArrayLike,
         probabilities: ArrayLike | None = None,
     ):
-        values_array = jnp.asarray(values, dtype=float)
-        if values_array.ndim != 1 or int(values_array.shape[0]) <= 0:
+        values_array = jnp.asarray(values, dtype=jnp.float64)
+        if values_array.ndim != 1 or values_array.shape[0] <= 0:
             raise ValueError("Empirical values must be a non-empty 1D array.")
         if bool(jnp.any(~jnp.isfinite(values_array))):
             raise ValueError("Empirical values must be finite.")
         if probabilities is None:
             probability_array = jnp.full(
-                values_array.shape, 1.0 / float(values_array.shape[0]), dtype=float
+                values_array.shape, 1.0 / float(values_array.shape[0]), dtype=jnp.float64
             )
         else:
-            probability_array = jnp.asarray(probabilities, dtype=float)
+            probability_array = jnp.asarray(probabilities, dtype=jnp.float64)
             if probability_array.shape != values_array.shape:
                 raise ValueError("Empirical probabilities must match values shape.")
             if bool(jnp.any(~jnp.isfinite(probability_array))) or bool(
@@ -350,20 +355,20 @@ class EmpiricalDistribution(AbstractDistribution):
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
         indices = jr.choice(
             key,
-            int(self.values.shape[0]),
+            self.values.shape[0],
             shape=tuple(sample_shape),
             p=self.probabilities,
         )
         return self.values[indices]
 
     def icdf(self, value: ArrayLike, /) -> Array:
-        probability = jnp.clip(jnp.asarray(value, dtype=float), 0.0, 1.0)
+        probability = jnp.clip(jnp.asarray(value, dtype=jnp.float64), 0.0, 1.0)
         cumulative = jnp.cumsum(self.probabilities)
         indices = jnp.searchsorted(cumulative, probability, side="left")
-        return self.values[jnp.minimum(indices, int(self.values.shape[0]) - 1)]
+        return self.values[jnp.minimum(indices, self.values.shape[0] - 1)]
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        value_array = jnp.asarray(value, dtype=float)
+        value_array = jnp.asarray(value, dtype=jnp.float64)
         matches = value_array[..., None] == self.values
         mass = jnp.sum(jnp.where(matches, self.probabilities, 0.0), axis=-1)
         return jnp.where(mass > 0.0, jnp.log(mass), -jnp.inf)
@@ -385,7 +390,7 @@ class EmpiricalDistribution(AbstractDistribution):
 
 
 def _open_unit_interval(value: ArrayLike) -> Array:
-    probability = jnp.asarray(value, dtype=float)
+    probability = jnp.asarray(value, dtype=jnp.float64)
     epsilon = jnp.finfo(probability.dtype).eps
     return jnp.clip(probability, epsilon, 1.0 - epsilon)
 

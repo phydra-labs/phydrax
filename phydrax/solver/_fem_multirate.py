@@ -116,7 +116,7 @@ class DGTraceHistory(StrictModule):
     ) -> DGTraceHistory:
         value_ = jnp.asarray(value)
         time_ = jnp.asarray(time)
-        accepted_ = jnp.asarray(accepted, dtype=bool)
+        accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
         if (
             value_.shape != self.values.shape[1:]
             or time_.shape != ()
@@ -225,7 +225,7 @@ class TimeSlabFluxLedger(StrictModule):
         /,
         *,
         ledger_id: str,
-        dtype=float,
+        dtype=jnp.float64,
     ) -> "TimeSlabFluxLedger":
         return cls(
             jnp.zeros((int(route_count),) + tuple(component_shape), dtype=dtype),
@@ -294,7 +294,7 @@ class ConservativeLocalTimeStepPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "conservative-local-time-step-plan",
-                "levels": tuple(int(value) for value in levels),
+                "levels": tuple(levels),
                 "macro_step_size": step,
                 "trace_plan": trace_plan.plan_id,
             }

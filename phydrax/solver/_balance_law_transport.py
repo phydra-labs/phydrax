@@ -59,7 +59,7 @@ class BalanceLawSourceView(StrictModule):
     ):
         average = jnp.asarray(cell_average)
         volumes = jnp.asarray(cell_volumes)
-        active = jnp.asarray(active_cell_mask, dtype=bool)
+        active = jnp.asarray(active_cell_mask, dtype=jnp.bool_)
         time_ = jnp.asarray(time).reshape(())
         names = tuple(str(name) for name in component_names)
         identifier = str(transport_id)
@@ -349,7 +349,7 @@ class PreparedFiniteVolumeBalanceLawTransport(AbstractPreparedBalanceLawTranspor
                 "Balance-law finite-volume checkpoints require stationary structured dynamics."
             )
         status = int(np.asarray(arrays["transport/last_status"]))
-        if status not in tuple(int(value) for value in FiniteVolumeRunStatus):
+        if status not in tuple(FiniteVolumeRunStatus):
             raise ValueError("Checkpoint finite-volume status is invalid.")
         cell_average = jnp.asarray(arrays["transport/cell_average"]).reshape(
             self.dynamics.discretization.state_shape
@@ -404,7 +404,7 @@ class PreparedConstrainedMHDBalanceLawTransport(AbstractPreparedBalanceLawTransp
         return BalanceLawSourceView(
             full,
             volumes,
-            jnp.ones(volumes.shape, dtype=bool),
+            jnp.ones(volumes.shape, dtype=jnp.bool_),
             state.time,
             component_names=self.component_names,
             transport_id=self.transport_id,
@@ -497,7 +497,7 @@ class PreparedConstrainedMHDBalanceLawTransport(AbstractPreparedBalanceLawTransp
         self, arrays: Mapping[str, np.ndarray], /
     ) -> ConstrainedMHDState:
         status = int(np.asarray(arrays["transport/status"]))
-        if status not in tuple(int(value) for value in ConstrainedMHDRunStatus):
+        if status not in tuple(ConstrainedMHDRunStatus):
             raise ValueError("Checkpoint constrained-MHD status is invalid.")
         state = ConstrainedMHDState(
             jnp.asarray(arrays["transport/cell_state"]),

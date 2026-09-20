@@ -105,7 +105,7 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
         original = (
             None
             if original_young_modulus is None
-            else np.asarray(original_young_modulus, dtype=float)
+            else np.asarray(original_young_modulus, dtype=np.float64)
         )
         if original is not None and (
             original.shape != (values.shape[0],)

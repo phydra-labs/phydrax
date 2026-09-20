@@ -41,7 +41,7 @@ class HybridDiffusionBoundary(StrictModule):
     ):
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("Boundary geometry must be native prepared unstructured FV.")
-        exterior = np.asarray(discretization.neighbour_cells) < 0
+        exterior = np.asarray(discretization.neighbor_cells) < 0
         count = exterior.size
         kind = np.where(exterior, 2, 0).astype(np.int32)
         value = np.zeros(count)

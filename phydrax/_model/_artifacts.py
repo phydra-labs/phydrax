@@ -36,13 +36,10 @@ def _register_artifact_identity(
     value_id: str,
     value: Any,
     /,
-    *,
-    require_version: bool,
 ) -> Any:
     identity = str(value_id).strip()
-    if not identity or (require_version and "@" not in identity):
-        qualifier = " and explicitly versioned" if require_version else ""
-        raise ValueError(f"Artifact value IDs must be non-empty{qualifier}.")
+    if not identity:
+        raise ValueError("Artifact value IDs must be non-empty.")
     if not callable(value):
         raise TypeError("Registered artifact values must be types or callables.")
     existing_value = _ARTIFACT_VALUES_BY_ID.get(identity)
@@ -55,8 +52,7 @@ def _register_artifact_identity(
         and existing_identity[1] != identity
     ):
         raise ValueError(
-            f"Artifact value {value.__qualname__} already has identity "
-            f"{existing_identity[1]!r}."
+            f"Artifact value {value.__qualname__} already has identity {existing_identity[1]!r}."
         )
     _ARTIFACT_VALUES_BY_ID[identity] = value
     _ARTIFACT_IDS_BY_VALUE[id(value)] = (value, identity)
@@ -64,12 +60,8 @@ def _register_artifact_identity(
 
 
 def register_artifact_value(value_id: str, value: Any, /) -> Any:
-    """Register one path-independent, versioned artifact value identity."""
-    return _register_artifact_identity(
-        value_id,
-        value,
-        require_version=True,
-    )
+    """Register one path-independent canonical artifact value identity."""
+    return _register_artifact_identity(value_id, value)
 
 
 def artifact_value_id(value: Any, /) -> str:
@@ -84,7 +76,7 @@ def artifact_value_id(value: Any, /) -> str:
     root = module.split(".", 1)[0]
     if root not in _TRUSTED_ARTIFACT_ROOTS:
         raise TypeError(f"Portable artifacts do not trust package root {root!r}.")
-    identity = f"{root}.artifact:{qualname}@1"
+    identity = f"{root}.artifact:{qualname}"
     register_artifact_value(identity, value)
     return identity
 
@@ -95,14 +87,8 @@ def artifact_value(value_id: str, /) -> Any:
     registered = _ARTIFACT_VALUES_BY_ID.get(identity)
     if registered is not None:
         return registered
-    root, separator, versioned_qualname = identity.partition(".artifact:")
-    qualname, version_separator, version = versioned_qualname.rpartition("@")
-    if (
-        not separator
-        or not version_separator
-        or version != "1"
-        or root not in _TRUSTED_ARTIFACT_ROOTS
-    ):
+    root, separator, qualname = identity.partition(".artifact:")
+    if not separator or not qualname or root not in _TRUSTED_ARTIFACT_ROOTS:
         raise ValueError(f"Unknown artifact value ID {identity!r}.")
     importlib.import_module(root)
     matches: dict[int, Any] = {}
@@ -132,7 +118,7 @@ def artifact_value(value_id: str, /) -> Any:
     return resolved
 
 
-register_artifact_value("jax.artifact:tanh@1", jax.nn.tanh)
+register_artifact_value("jax.artifact:tanh", jax.nn.tanh)
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,11 +164,7 @@ def register_operator_architecture_codec(
             f"Operator model type {codec.model_type.__name__} already has architecture ID "
             f"{existing_type.architecture_id!r}."
         )
-    _register_artifact_identity(
-        codec.architecture_id,
-        codec.model_type,
-        require_version=False,
-    )
+    _register_artifact_identity(codec.architecture_id, codec.model_type)
     _CODECS_BY_ID[codec.architecture_id] = codec
     _CODECS_BY_TYPE[codec.model_type] = codec
     return codec
@@ -193,8 +175,7 @@ def operator_architecture_codec(architecture_id: str, /) -> OperatorArchitecture
     codec = _CODECS_BY_ID.get(str(architecture_id))
     if codec is None:
         raise ValueError(
-            f"Unknown operator architecture ID {architecture_id!r}; "
-            "register its codec before loading the artifact."
+            f"Unknown operator architecture ID {architecture_id!r}; register its codec before loading the artifact."
         )
     return codec
 
@@ -204,8 +185,7 @@ def operator_architecture_codec_for(model: Any, /) -> OperatorArchitectureCodec:
     codec = _CODECS_BY_TYPE.get(type(model))
     if codec is None:
         raise TypeError(
-            f"Portable artifacts do not have a registered architecture codec for "
-            f"{type(model).__name__}."
+            f"Portable artifacts do not have a registered architecture codec for {type(model).__name__}."
         )
     return codec
 

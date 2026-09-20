@@ -52,7 +52,7 @@ class DsstPlan(StrictModule, NonTrainableState):
             raise ValueError("DSST force and short-period terms must be callable.")
         if len(model_ids) != len(rates) + len(short):
             raise ValueError("DSST model IDs must cover every contribution.")
-        times_host = np.asarray(times, dtype=float)
+        times_host = np.asarray(times, dtype=np.float64)
         if (
             times_host.ndim != 1
             or times_host.size < 2
@@ -67,7 +67,7 @@ class DsstPlan(StrictModule, NonTrainableState):
             {
                 "kind": "dsst-plan",
                 "models": list(model_ids),
-                "num_times": int(times_host.size),
+                "num_times": times_host.size,
             }
         )
 

@@ -48,7 +48,7 @@ class AbstractSketchConstraint(StrictModule):
     def __init__(self, weight: float = 1.0):
         if not np.isfinite(weight) or weight <= 0.0:
             raise ValueError("constraint weight must be finite and positive.")
-        self.weight = jnp.asarray(weight, dtype=float).reshape(())
+        self.weight = jnp.asarray(weight, dtype=jnp.float64).reshape(())
 
     @abstractmethod
     def residual(
@@ -85,7 +85,7 @@ class FixedPoint(AbstractSketchConstraint):
 
     def __init__(self, point: int, target: Array, *, weight: float = 1.0):
         super().__init__(weight)
-        target_ = jnp.asarray(target, dtype=float)
+        target_ = jnp.asarray(target, dtype=jnp.float64)
         if target_.shape != (2,):
             raise ValueError("FixedPoint target must have shape (2,).")
         self.point = int(point)
@@ -114,7 +114,7 @@ class PointDistance(AbstractSketchConstraint):
             raise ValueError("distance must be finite and non-negative.")
         self.first_point = int(first_point)
         self.second_point = int(second_point)
-        self.distance = jnp.asarray(distance, dtype=float).reshape(())
+        self.distance = jnp.asarray(distance, dtype=jnp.float64).reshape(())
 
     def residual(self, points, lines, circle_centers, circle_radii, /):
         del lines, circle_centers, circle_radii
@@ -214,7 +214,7 @@ class LineAngle(AbstractSketchConstraint):
             raise ValueError("angle must be finite.")
         self.first_line = int(first_line)
         self.second_line = int(second_line)
-        self.angle = jnp.asarray(angle, dtype=float).reshape(())
+        self.angle = jnp.asarray(angle, dtype=jnp.float64).reshape(())
 
     def residual(self, points, lines, circle_centers, circle_radii, /):
         del circle_centers, circle_radii
@@ -266,7 +266,7 @@ class Radius(AbstractSketchConstraint):
         if not np.isfinite(radius) or radius <= 0.0:
             raise ValueError("radius must be finite and positive.")
         self.circle = int(circle)
-        self.radius = jnp.asarray(radius, dtype=float).reshape(())
+        self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
 
     def residual(self, points, lines, circle_centers, circle_radii, /):
         del points, lines, circle_centers
@@ -371,11 +371,11 @@ class SketchSolution(StrictModule):
         converged,
         iterations,
     ):
-        self.points = jnp.asarray(points, dtype=float)
-        self.circle_radii = jnp.asarray(circle_radii, dtype=float)
-        self.residual = jnp.asarray(residual, dtype=float)
-        self.residual_norm = jnp.asarray(residual_norm, dtype=float).reshape(())
-        self.converged = jnp.asarray(converged, dtype=bool).reshape(())
+        self.points = jnp.asarray(points, dtype=jnp.float64)
+        self.circle_radii = jnp.asarray(circle_radii, dtype=jnp.float64)
+        self.residual = jnp.asarray(residual, dtype=jnp.float64)
+        self.residual_norm = jnp.asarray(residual_norm, dtype=jnp.float64).reshape(())
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
 
 
@@ -399,7 +399,7 @@ class Sketch(StrictModule):
         constraints: Sequence[AbstractSketchConstraint] = (),
         feature_id: str | None = None,
     ):
-        points_host = np.asarray(points, dtype=float)
+        points_host = np.asarray(points, dtype=np.float64)
         lines_host = (
             np.empty((0, 2), dtype=np.int32)
             if lines is None
@@ -411,9 +411,9 @@ class Sketch(StrictModule):
             else np.asarray(circle_centers, dtype=np.int32).reshape((-1,))
         )
         radii_host = (
-            np.empty((0,), dtype=float)
+            np.empty((0,), dtype=np.float64)
             if circle_radii is None
-            else np.asarray(circle_radii, dtype=float).reshape((-1,))
+            else np.asarray(circle_radii, dtype=np.float64).reshape((-1,))
         )
         if points_host.ndim != 2 or points_host.shape[1] != 2:
             raise ValueError("points must have shape (num_points, 2).")
@@ -435,10 +435,10 @@ class Sketch(StrictModule):
         self._validate_constraint_indices(
             constraints_, points_host.shape[0], lines_host.shape[0], radii_host.shape[0]
         )
-        self.points = jnp.asarray(points_host, dtype=float)
+        self.points = jnp.asarray(points_host, dtype=jnp.float64)
         self.lines = jnp.asarray(lines_host, dtype=jnp.int32)
         self.circle_centers = jnp.asarray(centers_host, dtype=jnp.int32)
-        self.circle_radii = jnp.asarray(radii_host, dtype=float)
+        self.circle_radii = jnp.asarray(radii_host, dtype=jnp.float64)
         self.constraints = constraints_
         self.feature_id = feature_id or f"sketch-{uuid4().hex}"
 

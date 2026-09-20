@@ -212,7 +212,7 @@ def _make_image_result(
             "reference-graph",
             "voxel-values",
             "quantity-semantics",
-            "LPS-voxel-centre-geometry",
+            "LPS-voxel-center-geometry",
         ),
         coordinate_mapping=(
             "DICOM array row -> affine index axis 0",

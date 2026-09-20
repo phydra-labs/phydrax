@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax._strict import StrictModule
 from phydrax.domain import DomainFunction
 
 from .._term import AbstractSamplingTerm
@@ -24,7 +25,7 @@ LabelProvider = Callable[[Key[Array, ""]], FeynmanKacLabelBatch]
 
 
 def _weight(value: ArrayLike, /, *, owner: str) -> Array:
-    weight = jnp.asarray(value, dtype=float).reshape(())
+    weight = jnp.asarray(value, dtype=jnp.float64).reshape(())
     if bool(~jnp.isfinite(weight)) or float(weight) < 0.0:
         raise ValueError(f"{owner} must be finite and nonnegative.")
     return weight
@@ -72,7 +73,7 @@ def _weighted_square(
     return jnp.sum(jnp.where(valid, effective * squared, 0.0)) / mass
 
 
-class FeynmanKacRegressionDiagnostics(eqx.Module):
+class FeynmanKacRegressionDiagnostics(StrictModule):
     value_rmse: Array
     control_rmse: Array
     mean_value_standard_error: Array
@@ -255,7 +256,7 @@ class FeynmanKacRegressionTerm(AbstractSamplingTerm):
                 self.problem.output_shape + self.problem.noise_shape,
             )
             total = total + self.control_weight * control_loss
-        return jnp.asarray(total, dtype=float).reshape(())
+        return jnp.asarray(total, dtype=jnp.float64).reshape(())
 
     def diagnostics(
         self,

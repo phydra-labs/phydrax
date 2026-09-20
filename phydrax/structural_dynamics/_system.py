@@ -71,7 +71,7 @@ class LinearStructuralSystem:
         symmetry_tolerance: float = 1e-10,
     ) -> LinearStructuralSystem:
         matrices = tuple(
-            np.asarray(value, dtype=float) for value in (mass, damping, stiffness)
+            np.asarray(value, dtype=np.float64) for value in (mass, damping, stiffness)
         )
         if matrices[0].ndim != 2 or matrices[0].shape[0] != matrices[0].shape[1]:
             raise ValueError("Structural matrices must be square.")
@@ -88,7 +88,7 @@ class LinearStructuralSystem:
 
     @property
     def size(self) -> int:
-        return int(self.mass.shape[0])
+        return self.mass.shape[0]
 
     def modal_analysis(self, count: int | None = None, /) -> ModalAnalysisResult:
         requested = self.size if count is None else min(int(count), self.size)

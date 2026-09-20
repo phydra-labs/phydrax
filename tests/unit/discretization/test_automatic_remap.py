@@ -18,7 +18,7 @@ from phydrax.discretization.finite_volume._unstructured import (
 
 def _quad(vertices, cells, *, ids=None):
     return UnstructuredFiniteVolumePlan(
-        np.asarray(vertices, dtype=float),
+        np.asarray(vertices, dtype="float64"),
         quadrilaterals=np.asarray(cells, dtype=np.int32),
         cell_global_ids=None if ids is None else np.asarray(ids, dtype=np.int64),
     ).prepare()

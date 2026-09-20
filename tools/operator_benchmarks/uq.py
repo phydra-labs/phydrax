@@ -243,7 +243,7 @@ def run_operator_uq_benchmark(
         scenario=scenario.name,
         architecture=selected.name,
         family=selected.family,
-        seeds=tuple(int(seed) for seed in seeds),
+        seeds=tuple(seeds),
         ensemble_size=len(members),
         parameter_count_mean=float(
             np.mean([parameter_count(model) for model in members])
@@ -496,7 +496,7 @@ def _evaluate_operator_uq(
     compatible = None
     if evaluation.split == "test" and evaluation.shift == "in_distribution":
         covered = int(jnp.sum(simultaneous_per_case))
-        total = int(jnp.size(simultaneous_per_case))
+        total = jnp.size(simultaneous_per_case)
         confidence_lower, confidence_upper = _wilson_interval(covered, total)
         nominal = interval.nominal_coverage
         compatible = confidence_lower <= nominal <= confidence_upper
@@ -555,14 +555,14 @@ def _predict_ensemble_evaluation(
         strict=True,
     ):
         current_batch = evaluation.batch
-        member_prediction = member.predict(current_batch, key=member_key)
+        member_prediction = member.evaluate(current_batch, key=member_key)
         for step in range(1, evaluation.rollout_steps):
             current_batch = _with_source_values(
                 current_batch,
                 evaluation.rollout_source_key,
                 member_prediction.field("output").values,
             )
-            member_prediction = member.predict(
+            member_prediction = member.evaluate(
                 current_batch,
                 key=jr.fold_in(member_key, step),
             )
@@ -604,7 +604,7 @@ def _fit_final_projection_laplace(
 
     def predict(selected):
         reconstructed = subspace.reconstruct(selected)
-        return reconstructed.predict(calibration.batch)
+        return reconstructed.evaluate(calibration.batch)
 
     term = phx.uq.FixedOperatorObservationLikelihood(
         predict,

@@ -297,21 +297,21 @@ def test_path_ensemble_requires_identity_for_opaque_execution_objects():
         path_count=2,
         dt0=0.01,
         event=event,
-        event_id="path-ensemble-event:v1",
+        event_id="path-ensemble-event",
     )
     replay = StochasticPathEnsemblePlan(
         grid,
         path_count=2,
         dt0=jnp.asarray(0.01),
         event=dfx.Event(_path_ensemble_stop_condition),
-        event_id="path-ensemble-event:v1",
+        event_id="path-ensemble-event",
     )
     changed = StochasticPathEnsemblePlan(
         grid,
         path_count=2,
         dt0=0.01,
         event=event,
-        event_id="path-ensemble-event:v2",
+        event_id="path-ensemble-event",
     )
     assert first.plan_id == replay.plan_id
     assert first.plan_id != changed.plan_id

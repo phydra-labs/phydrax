@@ -50,7 +50,7 @@ def _scatter_samples(
             raise ValueError(
                 f"Sample value must start with shape {leading_shape}; got {array.shape}."
             )
-        trailing = tuple(int(size) for size in array.shape[leading_ndim:])
+        trailing = tuple(array.shape[leading_ndim:])
         flattened = array.reshape((-1,) + trailing)
         mask = flat_valid.reshape((-1,) + (1,) * len(trailing))
         output = jnp.zeros((entity_count,) + trailing, dtype=array.dtype)
@@ -73,9 +73,7 @@ def scatter_operator_graph_entities(
     if samples.topology is None:
         raise ValueError("FunctionSamples has no native topology.")
     target_cases = (
-        samples.topology.case_shape
-        if case_shape is None
-        else tuple(int(size) for size in case_shape)
+        samples.topology.case_shape if case_shape is None else tuple(case_shape)
     )
     topology = broadcast_operator_topology(samples.topology, target_cases)
     mapping = topology.absolute_sample_entities()
@@ -160,7 +158,7 @@ def materialize_operator_fields(
             samples,
             samples.mask_array(case_shape=batch.case_shape),
             case_shape=batch.case_shape,
-        ).astype(bool)
+        ).astype("bool")
     return topology.graph.replace(nodes=nodes, validate=True)
 
 
@@ -174,9 +172,7 @@ def operator_graph_from_samples(
     if samples.topology is None:
         raise ValueError("FunctionSamples has no native topology.")
     target_cases = (
-        samples.topology.case_shape
-        if case_shape is None
-        else tuple(int(size) for size in case_shape)
+        samples.topology.case_shape if case_shape is None else tuple(case_shape)
     )
     topology = broadcast_operator_topology(samples.topology, target_cases)
     mapping = topology.absolute_sample_entities()
@@ -221,7 +217,7 @@ def operator_graph_from_samples(
                 valid,
                 entity_count,
                 leading_shape,
-            ).astype(bool),
+            ).astype("bool"),
         }
     )
     if samples.values is not None:
@@ -250,9 +246,7 @@ def gather_operator_graph_entities(
     if samples.topology is None:
         raise ValueError("FunctionSamples has no native topology.")
     target_cases = (
-        samples.topology.case_shape
-        if case_shape is None
-        else tuple(int(size) for size in case_shape)
+        samples.topology.case_shape if case_shape is None else tuple(case_shape)
     )
     topology = broadcast_operator_topology(samples.topology, target_cases)
     mapping = topology.absolute_sample_entities()
@@ -264,12 +258,11 @@ def gather_operator_graph_entities(
 
     def gather(leaf: Any) -> Array:
         array = jnp.asarray(leaf)
-        if int(array.shape[0]) != topology.entity_count:
+        if array.shape[0] != topology.entity_count:
             raise ValueError(
-                f"Graph-entity values require leading size {topology.entity_count}; "
-                f"got {array.shape[0]}."
+                f"Graph-entity values require leading size {topology.entity_count}; got {array.shape[0]}."
             )
-        trailing = tuple(int(size) for size in array.shape[1:])
+        trailing = tuple(array.shape[1:])
         gathered = array[safe_mapping].reshape(output_shape + trailing)
         mask = valid.reshape(output_shape + (1,) * len(trailing))
         return jnp.where(mask, gathered, 0)

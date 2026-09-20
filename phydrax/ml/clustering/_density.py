@@ -62,8 +62,8 @@ class DensityClusterModel(AbstractArrayModel):
     ):
         self.core_points = jnp.asarray(core_points)
         self.core_labels = jnp.asarray(core_labels, dtype=jnp.int32)
-        self.core_active = jnp.asarray(core_active, dtype=bool)
-        self.cluster_active = jnp.asarray(cluster_active, dtype=bool)
+        self.core_active = jnp.asarray(core_active, dtype=jnp.bool_)
+        self.cluster_active = jnp.asarray(cluster_active, dtype=jnp.bool_)
         self.radius = jnp.asarray(radius, dtype=real_dtype(self.core_points.dtype))
         self.in_size = self.core_points.shape[-1]
         self.out_size = "scalar"

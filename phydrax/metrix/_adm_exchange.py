@@ -108,8 +108,8 @@ class ADMGridGeometry(StrictModule, NonTrainableState):
             extrinsic_curvature,
             "extrinsic_curvature",
         )
-        active_array = jnp.asarray(active, dtype=bool)
-        valid_array = jnp.asarray(valid, dtype=bool)
+        active_array = jnp.asarray(active, dtype=jnp.bool_)
+        valid_array = jnp.asarray(valid, dtype=jnp.bool_)
         snapshot_token_array = _snapshot_token(snapshot_token)
         leading_shape = alpha_array.shape
         _require_shape(beta_array, leading_shape + (3,), "beta_contravariant")
@@ -326,8 +326,8 @@ class StressEnergyProjection(StrictModule, NonTrainableState):
             conservation_defect,
             "conservation_defect",
         )
-        active_array = jnp.asarray(active, dtype=bool)
-        valid_array = jnp.asarray(valid, dtype=bool)
+        active_array = jnp.asarray(active, dtype=jnp.bool_)
+        valid_array = jnp.asarray(valid, dtype=jnp.bool_)
         snapshot_token_array = _snapshot_token(snapshot_token)
         leading_shape = energy_array.shape
         _require_shape(momentum_array, leading_shape + (3,), "momentum_covector")

@@ -104,7 +104,7 @@ class CausalVariable(StrictModule, NonTrainableState):
             raise ValueError("CausalVariable name must be non-empty.")
         canonical_observability = VariableObservability(observability)
         canonical_scale = VariableScale(scale)
-        canonical_shape = tuple(int(size) for size in event_shape)
+        canonical_shape = tuple(event_shape)
         if any(size < 1 for size in canonical_shape):
             raise ValueError("CausalVariable event_shape entries must be positive.")
         canonical_cardinality = None if cardinality is None else int(cardinality)
@@ -203,7 +203,7 @@ class CausalDataset(StrictModule, NonTrainableState):
             raise ValueError("values must contain one array per schema variable.")
         if not canonical_values or canonical_values[0].ndim < 1:
             raise ValueError("CausalDataset values need a leading sample axis.")
-        n_samples = int(canonical_values[0].shape[0])
+        n_samples = canonical_values[0].shape[0]
         if n_samples < 1:
             raise ValueError("CausalDataset requires at least one sample.")
         for variable, value in zip(schema.variables, canonical_values, strict=True):
@@ -235,18 +235,20 @@ class CausalDataset(StrictModule, NonTrainableState):
                 )
         if observed is None:
             canonical_observed = tuple(
-                jnp.ones((n_samples,), dtype=bool) for _ in canonical_values
+                jnp.ones((n_samples,), dtype=jnp.bool_) for _ in canonical_values
             )
         else:
-            canonical_observed = tuple(jnp.asarray(mask, dtype=bool) for mask in observed)
+            canonical_observed = tuple(
+                jnp.asarray(mask, dtype=jnp.bool_) for mask in observed
+            )
             if len(canonical_observed) != len(canonical_values):
                 raise ValueError("observed must contain one mask per schema variable.")
             if any(mask.shape != (n_samples,) for mask in canonical_observed):
                 raise ValueError("Every observed mask must have shape (n_samples,).")
         canonical_sample_mask = (
-            jnp.ones((n_samples,), dtype=bool)
+            jnp.ones((n_samples,), dtype=jnp.bool_)
             if sample_mask is None
-            else jnp.asarray(sample_mask, dtype=bool)
+            else jnp.asarray(sample_mask, dtype=jnp.bool_)
         )
         canonical_sampling_weight = (
             jnp.ones((n_samples,), dtype=jnp.float64)
@@ -339,7 +341,7 @@ class CausalDataSplit(StrictModule, NonTrainableState):
             if np.unique(value).size != value.size:
                 raise ValueError("Each split role must contain unique sample indices.")
         combined = (
-            np.concatenate(host_arrays) if host_arrays else np.empty((0,), dtype=int)
+            np.concatenate(host_arrays) if host_arrays else np.empty((0,), dtype=np.int64)
         )
         if np.unique(combined).size != combined.size:
             raise ValueError("Causal data split roles must be disjoint.")
@@ -511,7 +513,7 @@ class TargetPopulation(StrictModule, NonTrainableState):
         if not population:
             raise ValueError("source_population_id must be non-empty.")
         canonical_eligibility = (
-            None if eligibility is None else jnp.asarray(eligibility, dtype=bool)
+            None if eligibility is None else jnp.asarray(eligibility, dtype=jnp.bool_)
         )
         basis = (
             None if eligibility_basis_id is None else str(eligibility_basis_id).strip()

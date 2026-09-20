@@ -27,7 +27,7 @@ Each function implements one profile. There is no SOP autodetection entry point.
 
 ## Geometry and values
 
-CT and RT Dose use DICOM patient LPS coordinates and voxel-centre semantics. Slice order comes from physical positions, not filenames or `InstanceNumber`. Stored-pixel rescale and `DoseGridScaling` are applied exactly once. A frame stack is admitted only when its orientation, spacing, displacement, scaling, and dimensions form one representable regular affine lattice. Irregular stacks are refused; readers never resample silently.
+CT and RT Dose use DICOM patient LPS coordinates and voxel-center semantics. Slice order comes from physical positions, not filenames or `InstanceNumber`. Stored-pixel rescale and `DoseGridScaling` are applied exactly once. A frame stack is admitted only when its orientation, spacing, displacement, scaling, and dimensions form one representable regular affine lattice. Irregular stacks are refused; readers never resample silently.
 
 CT output is CT number only. It is not density, elemental composition, attenuation, or diagnosis. Use `HUToMaterialCalibration` separately with a source-pinned calibration.
 

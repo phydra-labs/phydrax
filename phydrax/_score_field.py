@@ -16,6 +16,7 @@ from .domain import DomainFunction
 
 class StateTimeScoreField(StrictModule):
     """Validated state-shaped score field with optional time dependence."""
+
     function: DomainFunction
     state_label: str = eqx.field(static=True)
     time_label: str = eqx.field(static=True)
@@ -38,7 +39,9 @@ class StateTimeScoreField(StrictModule):
         if any(not label for label in contexts) or len(set(contexts)) != len(contexts):
             raise ValueError("context_labels must contain unique non-empty labels.")
         if state_label in contexts or time_label in contexts:
-            raise ValueError("Context labels must be distinct from state and time labels.")
+            raise ValueError(
+                "Context labels must be distinct from state and time labels."
+            )
         allowed = {state_label, time_label, *contexts}
         unknown = tuple(label for label in function.deps if label not in allowed)
         if unknown or state_label not in function.deps:
@@ -86,8 +89,7 @@ class StateTimeScoreField(StrictModule):
         value = jnp.asarray(self.function.func(*arguments, key=key))
         if value.shape != state_array.shape:
             raise ValueError(
-                "score field output must have the same shape as the state; "
-                f"got {value.shape} and {state_array.shape}."
+                f"score field output must have the same shape as the state; got {value.shape} and {state_array.shape}."
             )
         return value
 

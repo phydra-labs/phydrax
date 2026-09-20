@@ -102,7 +102,7 @@ def _path_weights(
         weights.dtype, jnp.complexfloating
     ):
         raise TypeError(f"{owner} must be a real numeric array.")
-    weights = weights.astype(jnp.result_type(weights, paths.states, float))
+    weights = weights.astype(jnp.result_type(weights, paths.states, jnp.float64))
     if bool(jnp.any(~jnp.isfinite(weights))) or bool(jnp.any(weights < 0.0)):
         raise ValueError(f"{owner} must be finite and nonnegative.")
     return weights
@@ -460,7 +460,7 @@ def _regression_step(
     Array,
     Array,
 ]:
-    dtype = jnp.result_type(design, target, weights, float)
+    dtype = jnp.result_type(design, target, weights, jnp.float64)
     safe_weight = jnp.where(mask, weights, 0.0).astype(dtype)
     total_weight = jnp.sum(safe_weight)
     normalized_weight = safe_weight / jnp.where(total_weight > 0.0, total_weight, 1.0)
@@ -613,7 +613,7 @@ def evaluate_fitted_bellman(prepared: FittedBellmanPrepared, /) -> FittedBellman
         prepared.holdout_features,
         training.stage_costs,
         holdout.stage_costs,
-        float,
+        jnp.float64,
     )
 
     coefficients = jnp.full((nodes, feature_count), jnp.nan, dtype=dtype)
@@ -637,7 +637,7 @@ def evaluate_fitted_bellman(prepared: FittedBellmanPrepared, /) -> FittedBellman
     stage_status = jnp.full(
         (nodes,), int(FittedBellmanStatus.DEPENDENCY_FAILED), dtype=jnp.int32
     )
-    valid_stages = jnp.zeros((nodes,), dtype=bool)
+    valid_stages = jnp.zeros((nodes,), dtype=jnp.bool_)
     continuation_valid = jnp.asarray(True)
 
     for node in range(nodes - 1, -1, -1):

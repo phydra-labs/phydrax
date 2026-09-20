@@ -65,8 +65,7 @@ def fourier_modal_physical_stack_digest(
             continue
         if isinstance(element, ContinuousFourierModalLayer):
             raise ValueError(
-                "A content-bound physical-stack digest is unavailable for "
-                "continuous-z profile callables."
+                "A content-bound physical-stack digest is unavailable for continuous-z profile callables."
             )
         thicknesses.append(element.thickness)
         arrays[f"element_{index}_translation"] = element.translation
@@ -198,8 +197,7 @@ def fourier_modal_physical_state_digest(
             if not isinstance(prepared_element, PreparedContinuousFourierModalLayer):
                 raise TypeError("Prepared continuous-layer topology does not match.")
             raise ValueError(
-                "A harmonic-independent physical-state digest is unavailable for "
-                "continuous-z profile callables."
+                "A harmonic-independent physical-state digest is unavailable for continuous-z profile callables."
             )
     if _contains_tracer(arrays):
         raise ValueError(

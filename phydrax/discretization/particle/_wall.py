@@ -86,7 +86,7 @@ class WallParticleGenerationPlan(StrictModule, NonTrainableState):
         )
 
     def prepare(self) -> PreparedWallParticles:
-        bounds = np.asarray(self.geometry.bounds, dtype=float)
+        bounds = np.asarray(self.geometry.bounds, dtype=np.float64)
         if bounds.shape != (2, self.kernel.dimension):
             raise ValueError("Geometry bounds must have shape (2, dimension).")
         axes = tuple(
@@ -102,7 +102,8 @@ class WallParticleGenerationPlan(StrictModule, NonTrainableState):
         surface_candidates = candidates[selected]
         distance = field[selected]
         normal = np.asarray(
-            self.geometry.boundary_normal(jnp.asarray(surface_candidates)), dtype=float
+            self.geometry.boundary_normal(jnp.asarray(surface_candidates)),
+            dtype=jnp.float64,
         )
         surface = surface_candidates - distance[:, None] * normal
         positions = np.concatenate(
@@ -128,7 +129,7 @@ class WallParticleGenerationPlan(StrictModule, NonTrainableState):
             raise ValueError("Wall volume kernel sum is invalid.")
         volumes = 1.0 / kernel_sum
         pair_distance = np.where(
-            np.eye(positions.shape[0], dtype=bool), np.inf, distance_matrix
+            np.eye(positions.shape[0], dtype=np.bool_), np.inf, distance_matrix
         )
         minimum_spacing = np.min(pair_distance)
         normal_norm = np.sqrt(np.sum(normals * normals, axis=-1))
@@ -143,7 +144,7 @@ class WallParticleGenerationPlan(StrictModule, NonTrainableState):
             {
                 "kind": "wall-particle-quality",
                 "plan": self.plan_id,
-                "particle_count": int(positions.shape[0]),
+                "particle_count": positions.shape[0],
                 "minimum_volume": float(np.min(volumes)),
                 "maximum_volume": float(np.max(volumes)),
                 "minimum_spacing": float(minimum_spacing),
@@ -151,7 +152,7 @@ class WallParticleGenerationPlan(StrictModule, NonTrainableState):
             }
         )
         quality = WallParticleQualityReport(
-            int(positions.shape[0]),
+            positions.shape[0],
             jnp.asarray(np.min(volumes)),
             jnp.asarray(np.max(volumes)),
             jnp.asarray(minimum_spacing),

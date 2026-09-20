@@ -139,7 +139,7 @@ class VariablePatchFillPatchPlan(StrictModule, NonTrainableState):
         level_ = int(level)
         if level_ < 0 or level_ >= len(topology.levels):
             raise ValueError("Variable patch FillPatch level is out of range.")
-        components = tuple(int(value) for value in component_shape)
+        components = tuple(component_shape)
         if any(value <= 0 for value in components):
             raise ValueError("Variable patch FillPatch component shape is invalid.")
         metadata = topology.levels[level_]
@@ -181,11 +181,11 @@ class VariablePatchFillPatchPlan(StrictModule, NonTrainableState):
             )
             same = np.full(route_shape, -1, dtype=np.int32)
             coarse = np.full(route_shape, -1, dtype=np.int32)
-            active = np.zeros(route_shape, dtype=bool)
-            physical = np.zeros(route_shape, dtype=bool)
+            active = np.zeros(route_shape, dtype=np.bool_)
+            physical = np.zeros(route_shape, dtype=np.bool_)
             lower = np.asarray(metadata.lower[bucket_index], dtype=np.int32)
             extent = np.asarray(metadata.extent[bucket_index], dtype=np.int32)
-            lane_active = np.asarray(metadata.active[bucket_index], dtype=bool)
+            lane_active = np.asarray(metadata.active[bucket_index], dtype=np.bool_)
             for lane in range(bucket.lane_capacity):
                 if not lane_active[lane]:
                     continue

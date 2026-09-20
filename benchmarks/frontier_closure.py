@@ -145,7 +145,7 @@ def benchmark_cases() -> list[dict[str, object]]:
         "adaptive-native-rge",
         lambda: integrate_native_rge(sm_plan, sm_initial, 91.1876, 10_000.0),
     )
-    case["accepted_steps"] = int(history.accepted_step_sizes.size)
+    case["accepted_steps"] = history.accepted_step_sizes.size
     cases.append(case)
 
     potential = phase_field.PolynomialDefectPotential(
@@ -211,7 +211,7 @@ def benchmark_cases() -> list[dict[str, object]]:
         propagation_distance=0.1,
         step_size=0.01,
     )
-    envelope_initial = np.zeros((1, 1, 2, 32), dtype=complex)
+    envelope_initial = np.zeros((1, 1, 2, 32), dtype="complex128")
     envelope_initial[0, 0, 0] = np.exp(-(time**2))
     envelope_initial[0, 0, 1] = 0.5 * np.exp(-0.5 * time**2)
     case, envelope = _timed_case(

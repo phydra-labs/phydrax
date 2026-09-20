@@ -356,7 +356,7 @@ algebra, periodic position parameters, and optimization/sensitivity machinery wi
 introducing a second assignment, PM, inference, or FFT substrate.
 Cross-domain reconciliation keeps those domain states distinct while moving shared
 mechanics to core owners: dimensional scales, artifacts and derivative capabilities,
-labelled observation/covariance/likelihood algebra, direct and hierarchical particle
+labeled observation/covariance/likelihood algebra, direct and hierarchical particle
 gravity, coefficient-driven KDK, and ratio-two AMR transfer/reflux. Cosmology supplies
 comoving/canonical/scale-factor adapters; astrodynamics supplies physical velocity,
 epoch, frame, encounter, and mission adapters; astrophysics supplies concrete
@@ -395,7 +395,7 @@ closures. Remnant, QNM, scattering, and Hawking products retain distinct fit dom
 boundary data, normalizations, sources, statuses, and qualification.
 
 `phydrax.equations` owns relativistic EOS, SRHD/Valencia GRHD, ideal GRMHD,
-resistive Ohm, force-free GLM, and grey/multigroup/neutrino radiation with M1,
+resistive Ohm, force-free GLM, and gray/multigroup/neutrino radiation with M1,
 VET, discrete-ordinates, and Monte-Carlo closure surfaces. `phydrax.solver` owns
 bounded primitive recovery, boundary-aware finite-volume GRHD/GRMHD and constrained
 transport, conservative GRRMHD IMEX, resistive and force-free transition plans, and
@@ -514,7 +514,7 @@ No communication, mesh, or fallback-solver stack is introduced. See
 ### Native rigid and soft robotics as a composition
 
 `phydrax.applications.robotics` adapts explicitly rooted, descriptor-bounded
-URDF trees into COM-centred rigid plans and supplies continuum tasks,
+URDF trees into COM-centered rigid plans and supplies continuum tasks,
 observations, calibration, fixed-mode co-design, control, hybrid ports, and
 FEM/MPM/MJX plant profiles. Shared `phydrax.dynamics` plants keep complete
 payload, clock, PRNG, candidate/accepted state, checkpoint, codec, and replay

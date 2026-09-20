@@ -63,7 +63,7 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _positive_shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{name} must contain positive dimensions.")
     return shape
@@ -208,8 +208,7 @@ class HypercubicGaugeObservablePlan(StrictModule, NonTrainableState):
         values = jnp.asarray(links)
         if values.shape != self.configuration_shape:
             raise ValueError(
-                f"links must have structured shape {self.configuration_shape}; "
-                f"got {values.shape}."
+                f"links must have structured shape {self.configuration_shape}; got {values.shape}."
             )
         return values
 
@@ -794,12 +793,13 @@ def realize_stochastic_sources(
     def one(source_key):
         if plan.noise_kind == "z2":
             values = (
-                2 * jr.bernoulli(source_key, shape=plan.source_shape).astype(float) - 1
+                2 * jr.bernoulli(source_key, shape=plan.source_shape).astype("float64")
+                - 1
             )
             return values.astype(jnp.complex64)
         real_key, imag_key = jr.split(source_key)
-        real = 2 * jr.bernoulli(real_key, shape=plan.source_shape).astype(float) - 1
-        imag = 2 * jr.bernoulli(imag_key, shape=plan.source_shape).astype(float) - 1
+        real = 2 * jr.bernoulli(real_key, shape=plan.source_shape).astype("float64") - 1
+        imag = 2 * jr.bernoulli(imag_key, shape=plan.source_shape).astype("float64") - 1
         return (real + 1j * imag) / jnp.sqrt(2.0)
 
     sources = jax.vmap(one)(keys)

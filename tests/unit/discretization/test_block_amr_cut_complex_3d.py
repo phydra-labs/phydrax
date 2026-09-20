@@ -276,7 +276,7 @@ def test_metric_common_refinement_preserves_content_and_transpose_pairing():
     np.testing.assert_allclose(lhs, rhs, rtol=2.0e-6, atol=2.0e-7)
 
 
-def test_multivalued_small_cell_redistribution_uses_aperture_neighbour():
+def test_multivalued_small_cell_redistribution_uses_aperture_neighbor():
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.49,
         "small-sliver",

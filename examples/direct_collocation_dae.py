@@ -64,9 +64,7 @@ result = phx.control.solve_direct_collocation(
 )
 if not bool(result.successful):
     raise RuntimeError(
-        "direct collocation failed: "
-        f"status={result.status}, "
-        f"optimizer_status={result.optimization_result.status}"
+        f"direct collocation failed: status={result.status}, optimizer_status={result.optimization_result.status}"
     )
 if result.diagnostics.maximum_defect > plan.audit.defect_tolerance:
     raise RuntimeError("direct collocation returned an uncertified dynamics defect")

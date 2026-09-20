@@ -74,8 +74,7 @@ def compile_asdex_coloring(
             "rev_over_rev",
         ):
             raise ValueError(
-                "Hessian mode must be 'fwd_over_rev', 'rev_over_fwd', "
-                "'rev_over_rev', or None."
+                "Hessian mode must be 'fwd_over_rev', 'rev_over_fwd', 'rev_over_rev', or None."
             )
         if pattern is None:
             colored = asdex.hessian_coloring(
@@ -115,7 +114,7 @@ def _normalize_pattern(
     expected_shape: tuple[int, int],
     symmetric: bool,
 ) -> SparsePattern:
-    shape = (int(sparsity.shape[0]), int(sparsity.shape[1]))
+    shape = (sparsity.shape[0], sparsity.shape[1])
     if shape != expected_shape:
         raise ValueError(
             f"ASDEX produced sparse shape {shape}; expected {expected_shape}."

@@ -68,7 +68,7 @@ def benchmark_case(
     inputs = jr.normal(input_key, (sequence_length, hidden_size))
     batch = phx.nn.layers.RecurrentBatch(
         inputs,
-        jnp.ones((sequence_length,), dtype=bool),
+        jnp.ones((sequence_length,), dtype="bool"),
     )
     termination = phx.nonlinear.NonlinearTermination(
         absolute_residual=2e-6,
@@ -167,7 +167,7 @@ def run_recurrent_benchmarks(*, quick: bool = False) -> dict[str, Any]:
                     )
                 )
     return {
-        "schema": "phydrax-recurrent-causal-benchmark-v1",
+        "schema": "phydrax-recurrent-causal-benchmark",
         "backend": jax.default_backend(),
         "quick": bool(quick),
         "cases": cases,

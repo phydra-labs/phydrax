@@ -15,7 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -50,7 +50,7 @@ class RamanOpticalActivityResult(StrictModule, NonTrainableState):
         quadrupole = jnp.asarray(electric_quadrupole_derivatives, dtype=waves.dtype)
         right = jnp.asarray(right_circular_intensities, dtype=waves.dtype)
         left = jnp.asarray(left_circular_intensities, dtype=waves.dtype)
-        modes = int(waves.size)
+        modes = waves.size
         provider = str(provider_id).strip()
         if (
             electric.shape != (modes, 3, 3)
@@ -67,7 +67,7 @@ class RamanOpticalActivityResult(StrictModule, NonTrainableState):
         total = right + left
         dissymmetry = jnp.where(total > 0.0, 2.0 * difference / total, 0.0)
         valid = (
-            jnp.asarray(successful, dtype=bool)
+            jnp.asarray(successful, dtype=jnp.bool_)
             & jnp.all(right >= 0.0)
             & jnp.all(left >= 0.0)
             & jnp.all(jnp.isfinite(dissymmetry))
@@ -102,7 +102,7 @@ class RamanOpticalActivityResult(StrictModule, NonTrainableState):
 
 
 class AbstractRamanOpticalActivityProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(self, positions: ArrayLike, /) -> RamanOpticalActivityResult:
@@ -190,7 +190,7 @@ class PeriodicSpectroscopyResult(StrictModule, NonTrainableState):
             ()
         )
         valid = (
-            jnp.asarray(successful, dtype=bool)
+            jnp.asarray(successful, dtype=jnp.bool_)
             & jnp.all(jnp.isfinite(frequencies_))
             & jnp.all(jnp.isfinite(infrared))
             & jnp.all(jnp.isfinite(raman))
@@ -228,7 +228,7 @@ class PeriodicSpectroscopyResult(StrictModule, NonTrainableState):
 
 
 class AbstractPeriodicSpectroscopyProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(

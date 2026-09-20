@@ -86,8 +86,7 @@ class ExactSDFEnclosureCertificate:
             or self.field.validity_region != "all_space"
         ):
             raise ValueError(
-                "Exact-SDF measure enclosure requires a globally reliable exact "
-                "signed-distance certificate."
+                "Exact-SDF measure enclosure requires a globally reliable exact signed-distance certificate."
             )
         if (
             not math.isfinite(error)

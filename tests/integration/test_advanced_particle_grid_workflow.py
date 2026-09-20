@@ -41,11 +41,9 @@ def test_reduced_pic_and_ghost_fluid_workflows_share_fixed_shape_contracts():
     ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
     finite_volume = phx.discretization.FiniteVolumePlan(grid_2d).prepare()
     mac = phx.discretization.MACOperatorPlan(finite_volume).prepare()
-    geometry = phx.discretization.flip.ParticleLevelSetPlan(
-        grid_2d, 0.2
-    ).evaluate(
+    geometry = phx.discretization.flip.ParticleLevelSetPlan(grid_2d, 0.2).evaluate(
         jnp.asarray([[0.4, 0.4], [0.55, 0.4], [0.4, 0.55], [0.55, 0.55]]),
-        jnp.ones((4,), dtype=bool),
+        jnp.ones((4,), dtype="bool"),
     )
     projection = phx.solver.MACGhostFluidProjectionPlan(
         phx.solver.MACFreeSurfaceProjectionPlan(

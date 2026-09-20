@@ -30,8 +30,8 @@ class RingPolymerNormalModePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Normal-mode bead count and spring frequency must be positive."
             )
-        beads = jnp.arange(count, dtype=float)
-        transform = jnp.zeros((count, count), dtype=float)
+        beads = jnp.arange(count, dtype=jnp.float64)
+        transform = jnp.zeros((count, count), dtype=jnp.float64)
         transform = transform.at[0].set(jnp.ones((count,)) / jnp.sqrt(count))
         for mode in range(1, (count + 1) // 2):
             angle = 2.0 * jnp.pi * mode * beads / count
@@ -41,7 +41,7 @@ class RingPolymerNormalModePlan(StrictModule, NonTrainableState):
             )
         if count % 2 == 0:
             transform = transform.at[count // 2].set((-1.0) ** beads / jnp.sqrt(count))
-        modes = jnp.arange(count, dtype=float)
+        modes = jnp.arange(count, dtype=jnp.float64)
         self.bead_count = count
         self.frequencies = 2.0 * spring_frequency * jnp.sin(jnp.pi * modes / count)
         self.transform = transform
@@ -199,7 +199,7 @@ class ThermostattedRPMDPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, normal_modes: RingPolymerNormalModePlan, friction: ArrayLike, /):
-        values = jnp.asarray(friction, dtype=float).reshape((-1,))
+        values = jnp.asarray(friction, dtype=jnp.float64).reshape((-1,))
         if values.shape != (normal_modes.bead_count,) or bool(jnp.any(values < 0.0)):
             raise ValueError("TRPMD friction must align with ring-polymer modes.")
         self.normal_modes, self.friction = normal_modes, values

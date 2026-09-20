@@ -128,8 +128,7 @@ class ConstraintOperatorEvidence(StrictModule, NonTrainableState):
         if factorization_kind not in ("svd", "qr"):
             raise ValueError("Unknown constraint factorization kind.")
         resources = tuple(
-            int(value)
-            for value in (
+            (
                 operator_matrix_bytes,
                 factorization_bytes,
                 right_inverse_bytes,
@@ -173,7 +172,7 @@ class ConstraintOperatorEvidence(StrictModule, NonTrainableState):
         self.factorization_id = factorization_id_
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "constraint-operator-evidence-v1",
+                "kind": "constraint-operator-evidence",
                 "plan": plan_id_,
                 "factorization": factorization_id_,
                 "numeric_version": int(np.asarray(scalars[6])),
@@ -266,7 +265,7 @@ class ConstraintOperatorPlan(StrictModule, NonTrainableState):
         self.factorization_kind = factorization_kind
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "constraint-operator-plan-v1",
+                "kind": "constraint-operator-plan",
                 "operator": operator.operator_id,
                 "source": operator.source.space_id,
                 "target": operator.target.space_id,
@@ -357,7 +356,7 @@ class PreparedConstraintOperator(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-constraint-operator-v1",
+                "kind": "prepared-constraint-operator",
                 "plan": plan.plan_id,
                 "operator": operator.operator_id,
                 "factorization": factorization.factorization_id,
@@ -769,14 +768,14 @@ def _bind_prepared_constraint(
         full_column_rank=rank == columns,
         operator_kind=operator_kind,
         factorization_kind=factorization.policy.kind,
-        operator_matrix_bytes=int(matrix.nbytes),
+        operator_matrix_bytes=matrix.nbytes,
         factorization_bytes=_array_tree_storage_bytes(factorization.prepared_solve.state),
-        right_inverse_bytes=int(right_matrix.nbytes),
-        nullspace_bytes=int(nullspace_basis.nbytes),
+        right_inverse_bytes=right_matrix.nbytes,
+        nullspace_bytes=nullspace_basis.nbytes,
         preparation_workspace_bytes=max(
-            int(matrix.nbytes),
-            int(right_matrix.nbytes),
-            int(nullspace.basis.nbytes),
+            matrix.nbytes,
+            right_matrix.nbytes,
+            nullspace.basis.nbytes,
         ),
         setup_matvec_count=setup_matvec_count,
         factorization_id=factorization.factorization_id,

@@ -26,7 +26,7 @@ from ._types import ExactFactorGraphResult, ExactFactorGraphStatus, FactorGraphP
 
 def enumerate_assignments(cardinalities: Array, /) -> Array:
     """Enumerate mixed-radix assignments in deterministic lexicographic order."""
-    cards = tuple(int(value) for value in np.asarray(cardinalities).tolist())
+    cards = tuple(np.asarray(cardinalities).tolist())
     total = prod(cards)
     if not cards:
         return jnp.zeros((1, 0), dtype=jnp.int32)
@@ -59,12 +59,11 @@ def prepare_exact_factor_graph(
     limit = int(max_configurations)
     if limit < 1:
         raise ValueError("max_configurations must be positive.")
-    cards = tuple(int(value) for value in np.asarray(graph.cardinalities).tolist())
+    cards = tuple(np.asarray(graph.cardinalities).tolist())
     total = prod(cards)
     if total > limit:
         raise ValueError(
-            f"Exact factor-graph enumeration requires {total} configurations, "
-            f"exceeding max_configurations={limit}."
+            f"Exact factor-graph enumeration requires {total} configurations, exceeding max_configurations={limit}."
         )
     assignments = enumerate_assignments(graph.cardinalities)
     routes = []
@@ -120,8 +119,8 @@ def run_exact_factor_graph(
     tables = prepared.factor_tables if factor_tables is None else factor_tables
     if len(tables) != len(prepared.factor_tables):
         raise ValueError("Numeric factor count differs from prepared support.")
-    total = int(prepared.assignments.shape[0])
-    dtype = jnp.result_type(*tables) if tables else jnp.dtype(float)
+    total = prepared.assignments.shape[0]
+    dtype = jnp.result_type(*tables) if tables else jnp.dtype(jnp.float64)
     scores = jnp.zeros((total,), dtype=dtype)
     numeric_valid = jnp.asarray(True)
     arrays = []

@@ -87,8 +87,8 @@ class MonomialConfigurationGenerator(StrictModule):
     ):
         name = str(label)
         sites = tuple(str(value) for value in site_ids)
-        dimensions = tuple(int(value) for value in site_dimensions)
-        permutation = tuple(int(value) for value in site_permutation)
+        dimensions = tuple(site_dimensions)
+        permutation = tuple(site_permutation)
         declared_order = int(order)
         if not name:
             raise ValueError("A symmetry-generator label must be non-empty.")
@@ -110,7 +110,7 @@ class MonomialConfigurationGenerator(StrictModule):
         maps = (
             tuple(tuple(range(dimension)) for dimension in dimensions)
             if local_state_maps is None
-            else tuple(tuple(int(item) for item in values) for values in local_state_maps)
+            else tuple(tuple(values) for values in local_state_maps)
         )
         if len(maps) != len(sites):
             raise ValueError("One local-state map is required per source site.")
@@ -140,7 +140,7 @@ class MonomialConfigurationGenerator(StrictModule):
         ):
             raise ValueError("Local symmetry phases must be finite and unit magnitude.")
 
-        fermions = tuple(int(value) for value in fermionic_sites)
+        fermions = tuple(fermionic_sites)
         if len(set(fermions)) != len(fermions) or any(
             value < 0 or value >= len(sites) for value in fermions
         ):
@@ -404,7 +404,7 @@ class PreparedOrbitSectorBasis(AbstractSectorBasis):
             or representative_table.shape[0] < 1
         ):
             raise ValueError("representatives must be a nonempty coordinate table.")
-        dimension = int(representative_table.shape[0])
+        dimension = representative_table.shape[0]
         if raw_map.shape != (base.dimension,) or embedding.shape != (base.dimension,):
             raise ValueError("Raw orbit maps must cover the complete direct basis.")
         if sizes.shape != (dimension,):
@@ -717,7 +717,7 @@ def prepare_orbit_sector_basis(
     permutations = np.asarray(action.permutations, dtype=np.int32)
     phases = np.asarray(action.phases, dtype=np.complex128)
     characters = np.asarray(action.characters, dtype=np.complex128)
-    visited = np.zeros((basis.dimension,), dtype=bool)
+    visited = np.zeros((basis.dimension,), dtype=np.bool_)
     raw_to_orbit = np.full((basis.dimension,), -1, dtype=np.int32)
     embedding = np.zeros((basis.dimension,), dtype=np.complex128)
     representatives: list[np.ndarray] = []
@@ -748,7 +748,7 @@ def prepare_orbit_sector_basis(
         raw_to_orbit[support] = rank
         embedding[support] = projected[support]
         representatives.append(coordinates[representative])
-        orbit_sizes.append(int(support.size))
+        orbit_sizes.append(support.size)
 
     if not representatives:
         raise ValueError("The requested character sector is empty.")

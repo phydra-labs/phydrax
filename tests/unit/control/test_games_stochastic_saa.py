@@ -23,12 +23,12 @@ from phydrax.nonlinear import NonlinearStatus, NonlinearTermination
 
 
 def _noise(values, prefix, *, labels=None, coupling_id=None, valid=None):
-    values = jnp.asarray(values, dtype=float)
-    count = int(values.shape[0])
+    values = jnp.asarray(values, dtype="float64")
+    count = values.shape[0]
     if labels is None:
         labels = jnp.arange(count, dtype=jnp.int32)
     if valid is None:
-        valid = jnp.ones((count,), dtype=bool)
+        valid = jnp.ones((count,), dtype="bool")
     return PreparedControlledNoise(
         values[:, None, None],
         valid=valid,
@@ -195,7 +195,7 @@ def test_training_and_holdout_realization_identity_must_be_disjoint():
     training = _noise([0.0, 1.0], "shared")
     holdout = PreparedControlledNoise(
         jnp.asarray([[[2.0]], [[3.0]]]),
-        valid=jnp.ones((2,), dtype=bool),
+        valid=jnp.ones((2,), dtype="bool"),
         realization_ids=(training.realization_ids[1], "other"),
         coupling_id="different-coupling",
         independence_labels=jnp.asarray([0, 1]),

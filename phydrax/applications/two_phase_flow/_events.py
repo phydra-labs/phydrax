@@ -84,7 +84,7 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
     @staticmethod
     def _boundary_mask(two_phase: PreparedIncompressibleTwoPhaseVOF, /) -> Array:
         shape = two_phase.plan.discretization.cell_shape
-        mask = jnp.zeros(shape, dtype=bool)
+        mask = jnp.zeros(shape, dtype=jnp.bool_)
         for axis, grid_axis in enumerate(
             two_phase.plan.discretization.grid.structured_axes
         ):
@@ -142,8 +142,8 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
         plic = two_phase.plic(alpha)
         vertical_component = jnp.abs(plic.normal[..., -1])
         overturning = mixed & (vertical_component < self.minimum_overturning_normal)
-        surface_piercing = jnp.zeros_like(alpha, dtype=bool)
-        body_contact = jnp.zeros_like(alpha, dtype=bool)
+        surface_piercing = jnp.zeros_like(alpha, dtype=jnp.bool_)
+        body_contact = jnp.zeros_like(alpha, dtype=jnp.bool_)
         if body is not None:
             coordinates = self._cell_coordinates(two_phase)
             if body.center.size != coordinates.shape[-1]:
@@ -284,12 +284,12 @@ class ConservativeTwoPhaseRemeshPlan(StrictModule, NonTrainableState):
             target, PreparedIncompressibleTwoPhaseVOF
         ):
             raise TypeError("source and target must be prepared two-phase products.")
-        overlap = np.asarray(cell_overlap_volume, dtype=float)
+        overlap = np.asarray(cell_overlap_volume, dtype=np.float64)
         source_volume = np.asarray(source.plan.discretization.cell_volumes).reshape((-1,))
         target_volume = np.asarray(target.plan.discretization.cell_volumes).reshape((-1,))
         expected = (target_volume.size, source_volume.size)
         tolerance_ = float(tolerance)
-        matrices = tuple(np.asarray(value, dtype=float) for value in face_transfer)
+        matrices = tuple(np.asarray(value, dtype=np.float64) for value in face_transfer)
         if (
             overlap.shape != expected
             or np.any(~np.isfinite(overlap))

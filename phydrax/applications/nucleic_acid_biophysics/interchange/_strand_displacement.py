@@ -214,9 +214,9 @@ class FluorescenceTimeTrace:
         if not isinstance(identity, PlateWellIdentity):
             raise TypeError("identity must be a PlateWellIdentity.")
         case = _identifier(case_id, "case_id")
-        times = np.asarray(time_seconds, dtype=float)
-        values = np.asarray(intensity, dtype=float)
-        saturated = np.asarray(saturation_mask, dtype=bool)
+        times = np.asarray(time_seconds, dtype=np.float64)
+        values = np.asarray(intensity, dtype=np.float64)
+        saturated = np.asarray(saturation_mask, dtype=np.bool_)
         if times.ndim != 1 or times.size == 0:
             raise ValueError(
                 "A fluorescence trace requires a non-empty one-dimensional clock."
@@ -234,7 +234,7 @@ class FluorescenceTimeTrace:
                 "Saturated intensity must remain NaN rather than be clipped."
             )
         constructs = _identifiers(tuple(construct_ids), "construct_ids")
-        concentrations = np.asarray(initial_concentrations_molar, dtype=float)
+        concentrations = np.asarray(initial_concentrations_molar, dtype=np.float64)
         if concentrations.shape != (len(constructs),):
             raise ValueError("Each construct requires one initial molar concentration.")
         if np.any(~np.isfinite(concentrations)) or np.any(concentrations < 0.0):
@@ -430,7 +430,7 @@ class StrandDisplacementWellManifest:
         saturation_threshold_intensity: float | None = None,
     ):
         constructs = _identifiers(tuple(construct_ids), "construct_ids")
-        raw = np.asarray(tuple(initial_concentrations), dtype=float)
+        raw = np.asarray(tuple(initial_concentrations), dtype=np.float64)
         if (
             raw.shape != (len(constructs),)
             or np.any(~np.isfinite(raw))
@@ -797,7 +797,7 @@ def _parse_admitted_workbooks(
         column for column in data_columns if column not in marker_columns
     )
     source_times = np.asarray(
-        [float(header[column]) for column in kept_columns], dtype=float
+        [float(header[column]) for column in kept_columns], dtype=np.float64
     )
     marker_column = next(iter(marker_columns))
     marker_position = data_columns.index(marker_column)
@@ -1016,8 +1016,7 @@ def admit_prepared_strand_displacement_csv(
     required_lineage = {source.manifest_id, *raw_source_ids}
     if not required_lineage <= set(prepared_trace_manifest.lineage_ids):
         raise ValueError(
-            "Prepared trace manifest lineage must include the source manifest "
-            "and every retained raw source artifact."
+            "Prepared trace manifest lineage must include the source manifest and every retained raw source artifact."
         )
     content = Path(csv_path).read_bytes()
     _require_manifest_bytes(
@@ -1109,7 +1108,7 @@ def admit_prepared_strand_displacement_csv(
         ):
             raise ValueError("Prepared trace constructs disagree with their source well.")
         concentrations = np.asarray(
-            json.loads(first["initial_concentrations_molar_json"]), dtype=float
+            json.loads(first["initial_concentrations_molar_json"]), dtype=np.float64
         )
         if concentrations.shape != (len(well.construct_ids),) or not np.array_equal(
             concentrations, np.asarray(well.initial_concentrations_molar)

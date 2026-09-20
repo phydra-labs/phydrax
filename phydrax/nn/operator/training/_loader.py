@@ -42,7 +42,7 @@ from ._dtype import OperatorDTypePolicy
 from ._normalization import OperatorNormalizationPolicy
 
 
-_LOADER_FINGERPRINT_FORMAT = "phydrax-operator-loader-v2"
+_LOADER_FINGERPRINT_FORMAT = "phydrax-operator-loader"
 
 
 def _pad_case_payload(
@@ -67,8 +67,8 @@ def _pad_case_payload(
     )
     padded_mask = jnp.concatenate(
         (
-            jnp.asarray(case_mask, dtype=bool),
-            jnp.zeros((capacity - size,), dtype=bool),
+            jnp.asarray(case_mask, dtype=jnp.bool_),
+            jnp.zeros((capacity - size,), dtype=jnp.bool_),
         )
     )
     return (
@@ -318,7 +318,7 @@ class OperatorBatchLoader:
         batch_index: int,
     ) -> OperatorTrainingBatch:
         """Prepare explicit case indices through the configured loader pipeline."""
-        selected = tuple(int(index) for index in indices)
+        selected = tuple(indices)
         if not selected:
             raise ValueError("indices must contain at least one case.")
         if any(index < 0 or index >= self.source.size for index in selected):
@@ -407,10 +407,10 @@ class OperatorBatchLoader:
         case_log_weights = selected.case_log_weights
         case_mask = selected.case_mask
         if valid is not None:
-            valid_mask = jnp.asarray(valid, dtype=bool)
+            valid_mask = jnp.asarray(valid, dtype=jnp.bool_)
             if valid_mask.shape != jnp.asarray(case_mask).shape:
                 raise ValueError("process-local validity must match the case mask")
-            case_mask = jnp.asarray(case_mask, dtype=bool) & valid_mask
+            case_mask = jnp.asarray(case_mask, dtype=jnp.bool_) & valid_mask
         sharding = self.sharding_policy
         if sharding is not None and not process_local:
             divisor = sharding.data_axis_size

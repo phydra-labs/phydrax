@@ -154,7 +154,7 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
         return jnp.real(jnp.vdot(probe, solution)), result.successful
 
     def _lanczos(self, operator, probe):
-        dtype = jnp.result_type(probe.dtype, float)
+        dtype = jnp.result_type(probe.dtype, jnp.float64)
         q = probe.astype(dtype) / jnp.sqrt(jnp.asarray(self.dimension, dtype=dtype))
         previous = jnp.zeros_like(q)
         beta = jnp.asarray(0.0, dtype=dtype)

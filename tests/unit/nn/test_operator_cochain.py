@@ -91,7 +91,7 @@ def _task(fields=None):
 def _batch(complex_ir=None, *, cases=3, edge_values=None):
     complex_ir = _square_complex() if complex_ir is None else complex_ir
     vertex_count, edge_count = complex_ir.cell_counts[:2]
-    vertex_values = jnp.arange(cases * vertex_count, dtype=float).reshape(
+    vertex_values = jnp.arange(cases * vertex_count, dtype="float64").reshape(
         cases, vertex_count
     )
     if edge_values is None:
@@ -267,7 +267,7 @@ def test_cochain_operator_is_multi_output_batched_jittable_and_differentiable():
     batch = _batch(cases=2)
     model = _model()
 
-    prediction = model.predict(batch)
+    prediction = model.evaluate(batch)
     compiled = eqx.filter_jit(lambda current, value: current.predict_prevalidated(value))(
         model, batch
     )
@@ -318,8 +318,8 @@ def test_cochain_operator_is_equivariant_to_independent_cell_reorientation():
     )
     model = _model(key=jr.key(4))
 
-    original = model.predict(batch)
-    transformed = model.predict(transformed_batch)
+    original = model.evaluate(batch)
+    transformed = model.evaluate(transformed_batch)
 
     assert jnp.allclose(
         transformed.field("vertex").values,
@@ -512,8 +512,8 @@ def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
         **common,
     )
 
-    uninterrupted_prediction = uninterrupted.execution_model.predict(dataset.batch)
-    resumed_prediction = resumed.execution_model.predict(dataset.batch)
+    uninterrupted_prediction = uninterrupted.execution_model.evaluate(dataset.batch)
+    resumed_prediction = resumed.execution_model.evaluate(dataset.batch)
     assert first.progress.update_step == 1
     assert resumed.resumed_from_step == 1
     assert resumed.progress.update_step == 2
@@ -589,7 +589,7 @@ def _small_cochain_model(*, key):
 
 
 def _physics_loss_value(term, model, dataset):
-    prediction = model.predict(dataset.batch)
+    prediction = model.evaluate(dataset.batch)
     context = phx.nn.operator.training.OperatorLossContext(
         prediction,
         dataset.batch,
@@ -681,8 +681,8 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path
     assert trained_loss < initial_loss
     assert first.progress.update_step == 1
     assert resumed.resumed_from_step == 1
-    uninterrupted_prediction = uninterrupted.execution_model.predict(dataset.batch)
-    resumed_prediction = resumed.execution_model.predict(dataset.batch)
+    uninterrupted_prediction = uninterrupted.execution_model.evaluate(dataset.batch)
+    resumed_prediction = resumed.execution_model.evaluate(dataset.batch)
     for name in ("vertex", "edge"):
         assert jnp.array_equal(
             resumed_prediction.field(name).values,

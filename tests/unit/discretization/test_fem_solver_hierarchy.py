@@ -222,7 +222,7 @@ def test_tensor_fast_diagonalization_matches_dense_separable_solve():
 def test_one_ring_schwarz_weights_form_partition_of_unity():
     plan = FiniteElementPatchPlan(
         jnp.asarray([[0, 1], [1, 2]], dtype=jnp.int32),
-        jnp.ones((2, 2), dtype=bool),
+        jnp.ones((2, 2), dtype="bool"),
         jnp.asarray([[1.0, 0.5], [0.5, 1.0]]),
         3,
     )

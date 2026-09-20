@@ -88,7 +88,7 @@ def read_electrical_survey_csv(
         )
     if len(lines) - 1 > limits.max_nodes or len(columns) > limits.max_attributes:
         raise ValueError("Electrical CSV exceeds decoded resource limits.")
-    values = np.genfromtxt(lines[1:], delimiter=delimiter, dtype=float)
+    values = np.genfromtxt(lines[1:], delimiter=delimiter, dtype=np.float64)
     values = np.atleast_2d(values)
     if values.shape[1] != len(columns):
         raise ValueError("Electrical CSV rows do not match the declared columns.")
@@ -143,7 +143,7 @@ def read_electrical_survey_csv(
                 "voltage_unit": voltage_unit.unit_id,
             },
         ),
-        coordinate_mapping=("A/B/M/N coordinates normalized to Cartesian metres",),
+        coordinate_mapping=("A/B/M/N coordinates normalized to Cartesian meters",),
         assumptions=(
             "The caller explicitly binds the profile's bare coordinate/current/voltage columns to the supplied units.",
         ),

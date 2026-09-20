@@ -544,7 +544,7 @@ def test_resampling_indices_have_zero_forward_sensitivity():
         _, tangent = jax.jvp(
             lambda values: phx.uq.resample_indices(
                 jr.key(13), values, method=method
-            ).astype(float),
+            ).astype("float64"),
             (weights,),
             (jnp.ones_like(weights),),
         )

@@ -63,9 +63,9 @@ class SpatialDEDWorkflow:
         reference_temperature_k: float,
         tolerance: float = 1e-10,
     ) -> SpatialDEDWorkflow:
-        capacity = np.asarray(heat_capacity_j_k, dtype=float)
-        conductance = np.asarray(conductance_laplacian_w_k, dtype=float)
-        convection = np.asarray(convection_conductance_w_k, dtype=float)
+        capacity = np.asarray(heat_capacity_j_k, dtype=np.float64)
+        conductance = np.asarray(conductance_laplacian_w_k, dtype=np.float64)
+        convection = np.asarray(convection_conductance_w_k, dtype=np.float64)
         cells = runtime.control_volumes_m3.size
         if capacity.shape != (cells,) or np.any(capacity <= 0):
             raise ValueError("DED heat capacities must be positive and cell aligned.")

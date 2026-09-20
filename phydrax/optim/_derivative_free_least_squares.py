@@ -13,7 +13,18 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
+from phydrax._strict import StrictModule
+
 from .._nonlinear_precision import NonlinearPrecisionPolicy
+from .._tree_math import (
+    tree_add_scaled as _tree_add_scaled,
+    tree_allfinite as _tree_allfinite,
+    tree_inner as _tree_inner,
+    tree_negative as _tree_negative,
+    tree_norm as _tree_norm,
+    tree_where as _tree_where,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ..linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -24,13 +35,6 @@ from ..linalg import (
 from ._iterative._base import AbstractLeastSquaresMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
-    _tree_add_scaled,
-    _tree_allfinite,
-    _tree_inner,
-    _tree_negative,
-    _tree_norm,
-    _tree_where,
-    _validate_real_inexact_tree,
     IterativeStepMetrics,
     LeastSquaresResult,
     NonlinearLeastSquaresProblem,
@@ -43,7 +47,7 @@ from ._iterative._types import (
 from ._least_squares import _run_least_squares_iterations, LeastSquaresState
 
 
-class _FiniteDifferenceResidualModel(eqx.Module):
+class _FiniteDifferenceResidualModel(StrictModule):
     residual: PyTree[Array]
     objective: Array
     gradient: PyTree[Array]
@@ -160,7 +164,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
 
     def _model(self, residual_function, parameters, /):
         flat, _ = ravel_pytree(parameters)
-        if int(flat.size) > self.max_dense_dimension:
+        if flat.size > self.max_dense_dimension:
             raise ValueError(
                 f"FiniteDifferenceGaussNewton has {flat.size} variables, exceeding "
                 f"max_dense_dimension={self.max_dense_dimension}."
@@ -175,7 +179,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
     def init(self, parameters: PyTree[Any], /) -> LeastSquaresState:
         parameters = _validate_real_inexact_tree(parameters, name="parameters")
         flat, _ = ravel_pytree(parameters)
-        if int(flat.size) > self.max_dense_dimension:
+        if flat.size > self.max_dense_dimension:
             raise ValueError(
                 f"FiniteDifferenceGaussNewton has {flat.size} variables, exceeding "
                 f"max_dense_dimension={self.max_dense_dimension}."
@@ -466,8 +470,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
             raise TypeError("problem must be a NonlinearLeastSquaresProblem.")
         if problem.bounds is not None:
             raise ValueError(
-                "FiniteDifferenceGaussNewton does not silently ignore bounds; "
-                "use a bounded least-squares method."
+                "FiniteDifferenceGaussNewton does not silently ignore bounds; use a bounded least-squares method."
             )
         if not isinstance(termination, OptimizationTermination):
             raise TypeError("termination must be an OptimizationTermination.")

@@ -20,10 +20,10 @@ def _hamming_points(
     alphabet_size: int,
     /,
 ) -> Array:
-    array = jnp.asarray(points, dtype=float)
+    array = jnp.asarray(points, dtype=jnp.float64)
     if array.ndim == 1:
         array = array[None, :]
-    if array.ndim != 2 or int(array.shape[1]) != dimension:
+    if array.ndim != 2 or array.shape[1] != dimension:
         raise ValueError(
             f"Hamming points must have shape ({dimension},) or (point, {dimension})."
         )
@@ -77,10 +77,10 @@ def _krawtchouk_series(
     max_level: int,
     /,
 ) -> Array:
-    value = coefficients[0] * jnp.ones_like(distance, dtype=float)
+    value = coefficients[0] * jnp.ones_like(distance, dtype=jnp.float64)
     if max_level == 0:
         return value
-    previous = jnp.ones_like(distance, dtype=float)
+    previous = jnp.ones_like(distance, dtype=jnp.float64)
     current = 1.0 - (alphabet_size * distance / (dimension * (alphabet_size - 1)))
     value = value + coefficients[1] * current
     for level in range(1, max_level):
@@ -132,7 +132,7 @@ class HammingSpectralKernel(AbstractPositiveDefiniteKernel):
     def _coefficients(self) -> Array:
         levels = tuple(range(self.max_level + 1))
         eigenvalues = jnp.asarray(
-            [self.alphabet_size * level for level in levels], dtype=float
+            [self.alphabet_size * level for level in levels], dtype=jnp.float64
         )
         log_multiplicities = jnp.asarray(
             [
@@ -140,7 +140,7 @@ class HammingSpectralKernel(AbstractPositiveDefiniteKernel):
                 + level * math.log(self.alphabet_size - 1)
                 for level in levels
             ],
-            dtype=float,
+            dtype=jnp.float64,
         )
         return _stable_level_coefficients(
             self.multiplier,
@@ -181,7 +181,7 @@ class HammingSpectralKernel(AbstractPositiveDefiniteKernel):
         return jnp.full(
             (point_design.shape[0],),
             jnp.sum(self._coefficients()),
-            dtype=float,
+            dtype=jnp.float64,
         )
 
     @property

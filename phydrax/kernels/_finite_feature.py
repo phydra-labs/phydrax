@@ -54,7 +54,7 @@ class FiniteFeatureKernel(AbstractFiniteFeatureKernel):
             raise ValueError("feature_map_id must be a nonempty string.")
         if max_derivative_order is not None and int(max_derivative_order) < 0:
             raise ValueError("max_derivative_order must be nonnegative or None.")
-        factor = jnp.asarray(feature_factor, dtype=float)
+        factor = jnp.asarray(feature_factor, dtype=jnp.float64)
         if factor.ndim != 2 or factor.shape[0] == 0 or factor.shape[1] == 0:
             raise ValueError("feature_factor must have shape (feature, rank).")
         self.feature_map = feature_map
@@ -79,7 +79,7 @@ class FiniteFeatureKernel(AbstractFiniteFeatureKernel):
         feature_map_id: str,
         max_derivative_order: int | None = 0,
     ) -> FiniteFeatureKernel:
-        cholesky = jnp.asarray(precision_cholesky, dtype=float)
+        cholesky = jnp.asarray(precision_cholesky, dtype=jnp.float64)
         if (
             cholesky.ndim != 2
             or cholesky.shape[0] == 0
@@ -130,7 +130,7 @@ class FiniteFeatureKernel(AbstractFiniteFeatureKernel):
 
     @property
     def feature_rank(self) -> int:
-        return int(self.feature_factor.shape[1])
+        return self.feature_factor.shape[1]
 
     @property
     def max_derivative_order(self) -> int | None:
@@ -193,7 +193,7 @@ def kernel_features(
         features = kernel_features(kernel.kernel, transformed)
     else:
         raise TypeError(f"{kernel.kernel_id} has no exact finite-feature representation.")
-    if features.ndim != 2 or int(features.shape[1]) != rank:
+    if features.ndim != 2 or features.shape[1] != rank:
         raise ValueError("Composed kernel features do not match their declared rank.")
     return features
 

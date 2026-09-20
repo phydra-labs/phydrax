@@ -161,13 +161,13 @@ def benchmark(repeats: int):
         },
         "tda": {
             "seconds": tda_seconds,
-            "roots": int(manifold.excitation_energies.size),
+            "roots": manifold.excitation_energies.size,
             "result_id": manifold.result_id,
             "successful": bool(manifold.successful),
         },
         "uv_visible": {
             "seconds": spectrum_seconds,
-            "grid_size": int(spectrum.grid.size),
+            "grid_size": spectrum.grid.size,
             "area_residual": float(spectrum.area_residual),
             "result_id": spectrum.result_id,
             "successful": bool(spectrum.successful),
@@ -175,7 +175,7 @@ def benchmark(repeats: int):
         "periodic_scf": {
             "samples_seconds": periodic_samples,
             "median_seconds": statistics.median(periodic_samples),
-            "k_points": int(periodic.mesh.fractional_points.shape[0]),
+            "k_points": periodic.mesh.fractional_points.shape[0],
             "iterations": int(periodic_result.iterations),
             "result_id": periodic_result.result_id,
             "successful": bool(periodic_result.successful),
@@ -190,14 +190,14 @@ def benchmark(repeats: int):
         },
         "voigt_profile": {
             "seconds": profile_seconds,
-            "grid_size": int(profile.grid.size),
+            "grid_size": profile.grid.size,
             "area_residual": float(profile.area_residual),
             "result_id": profile.result_id,
             "successful": bool(profile.successful),
         },
         "reaction_network": {
             "seconds": network_seconds,
-            "time_points": int(network.times.size),
+            "time_points": network.times.size,
             "conservation_residual": float(network.conservation_residual),
             "plan_id": network.plan_id,
             "successful": bool(network.successful),

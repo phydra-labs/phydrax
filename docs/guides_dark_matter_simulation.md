@@ -8,7 +8,7 @@ have different measures, coordinates, and derivative contracts.
 ```text
 external or native cosmology products
   -> collisionless PM, wave DM, or rare-scattering SIDM
-  -> snapshots and halo catalogues
+  -> snapshots and halo catalogs
   -> longitudinal halo lineage and observables
 
 incoming phase-space measure
@@ -27,7 +27,7 @@ annihilation or decay model
 | Capability | Admitted native profile | Explicit boundary |
 | --- | --- | --- |
 | Periodic wave dark matter | Flat periodic tensor Fourier grid with transactional Schrödinger--Poisson splitting | No topology changes or isolated boundary |
-| Finite-difference wave dark matter | Periodic cell-centred self-adjoint Laplacian and global Cayley action; optional separately identified contact interaction | Contact, isolated and AMR profiles carry distinct identities |
+| Finite-difference wave dark matter | Periodic cell-centered self-adjoint Laplacian and global Cayley action; optional separately identified contact interaction | Contact, isolated and AMR profiles carry distinct identities |
 | Wave AMR | Pure complex ψ, synchronized levels, one global volume-paired Cayley action, composite Poisson, accepted-boundary regrid | Multi-part execution is preparation-only until distributed global solves exist; no HJM or patch-spectral claim |
 | Mixed cosmology | Correlated ICs and one shared periodic potential for wave + particles, with a separate adiabatic-gas profile | No opaque component callbacks or per-component Poisson solve |
 | Rare SIDM | Equal-weight constant/isotropic and velocity/angle-dependent differential-kernel profiles | Probability, Knudsen, capacity, support and conservation gates remain mandatory |
@@ -36,7 +36,7 @@ annihilation or decay model
 | Inelastic SIDM | Reversible nonrelativistic 2↔2 multistate reactions with dynamic mass and fixed-capacity radiation ledger | No relativistic or resolved 2→n transport claim |
 | Terrestrial transport | Concentric manifest-qualified layers, physical SI body frame, elastic marked jumps, weighted spherical crossings | No implicit Earth model, detector response, or numerical cutoff interpreted as capture |
 | Solar transport | Smooth manifest-qualified radial stellar profile, analytic exterior Kepler motion, interior radial gravity, thermal target rates | No implicit stellar table, plasma model, or unqualified capture criterion |
-| Particle yields | Per-annihilation or per-decay continuum plus exact lines, explicit uncertainty | No bundled particle-model catalogue or experiment limits |
+| Particle yields | Per-annihilation or per-decay continuum plus exact lines, explicit uncertainty | No bundled particle-model catalog or experiment limits |
 | Energy deposition | Species-resolved injection, state-conditioned table action, complete channel/CMB ledger, H/He thermal history | No hidden table clamping or native precision claim outside admitted assets |
 | Halo lineage | Stable tracks, separate sink/descendant edges, fixed-capacity events and tracer evidence | No claim that adjacent core overlap equals a production history-based subhalo finder |
 | External matter power | Exact-grid subprocess protocol returning `MatterPowerTable` | No automatic extrapolation, training, or upstream gradients |
@@ -185,7 +185,7 @@ track identity, ordered `HaloTrackSnapshot` records, a fixed-capacity
 matcher, not a production history-space finder.
 
 `phydrax.interchange.cosmology` supplies explicit readers for CONCEPT particle
-snapshots, HBT-HERONS catalogues, and PINOCCHIO catalogue/lineage products. Readers
+snapshots, HBT-HERONS catalogs, and PINOCCHIO catalog/lineage products. Readers
 verify rights and exact bytes before decoding, preserve producer-specific sidecars, and
 return `AdapterReport` values for every omission or semantic conversion. PINOCCHIO
 products remain permanently approximation-tagged. CONCEPT imports require the caller
@@ -204,7 +204,7 @@ Accepted values are stop-gradient `MatterPowerTable` data.
 
 ## Artifact admission
 
-Every external profile, response, table, weight file, or catalogue requires a
+Every external profile, response, table, weight file, or catalog requires a
 `ReferenceArtifactManifest` before use. The manifest fixes checksum, size, license,
 commercial/redistribution/training/export rights, nondimensionalization, uncertainty,
 and lineage. A code license does not confer rights to separately distributed data or
@@ -218,7 +218,7 @@ trained weights.
 | Fixed-topology accepted wave AMR | Frozen-topology JVP only |
 | AMR regrid, phase unwrap, nodes and winding | Nondifferentiable |
 | Smooth accepted mixed wave/particle/gas evolution | Native JVP only through admitted fixed-grid continuous state |
-| External power/yield/deposition/catalogue data | Constant |
+| External power/yield/deposition/catalog data | Constant |
 | Transport event times, target marks, terminal outcomes | Discrete stochastic; no pathwise claim |
 | SIDM pair/reaction acceptance, child allocation and resampling | Discrete stochastic/topological; no pathwise claim |
 | Fixed-pair frequent drag--diffusion | Reparameterized only when the pair tape and branch are fixed and qualified |

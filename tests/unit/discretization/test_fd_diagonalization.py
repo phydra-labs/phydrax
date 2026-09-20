@@ -77,7 +77,7 @@ def test_tensor_fd2_diagonalization_composes_mixed_entity_and_boundary_axes():
             "y": ("neumann", "dirichlet"),
         },
     )
-    values = jnp.arange(np.prod(diagonalization.unknown_shape), dtype=float).reshape(
+    values = jnp.arange(np.prod(diagonalization.unknown_shape), dtype="float64").reshape(
         diagonalization.unknown_shape
     )
 

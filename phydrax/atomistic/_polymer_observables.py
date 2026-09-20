@@ -38,7 +38,7 @@ class PolymerChainLayoutPlan(StrictModule, NonTrainableState):
         maximum_frames: int,
     ):
         indices = np.asarray(particle_indices, dtype=np.int32)
-        mask = np.asarray(chain_mask, dtype=bool)
+        mask = np.asarray(chain_mask, dtype=np.bool_)
         frames = int(maximum_frames)
         if (
             indices.ndim != 2
@@ -264,7 +264,7 @@ class DebyeScatteringPlan(StrictModule, NonTrainableState):
         maximum_particles: int,
         block_size: int = 64,
     ):
-        wave = np.asarray(wave_numbers, dtype=float)
+        wave = np.asarray(wave_numbers, dtype=np.float64)
         frames = int(maximum_frames)
         particles = int(maximum_particles)
         block = int(block_size)
@@ -325,14 +325,14 @@ def debye_scattering(
     if frame_count > plan.maximum_frames or particle_count > plan.maximum_particles:
         raise ValueError("Debye input exceeds its declared resource bounds.")
     particles = (
-        jnp.ones((particle_count,), dtype=bool)
+        jnp.ones((particle_count,), dtype=jnp.bool_)
         if particle_mask is None
-        else jnp.asarray(particle_mask, dtype=bool)
+        else jnp.asarray(particle_mask, dtype=jnp.bool_)
     )
     samples = (
-        jnp.ones((frame_count,), dtype=bool)
+        jnp.ones((frame_count,), dtype=jnp.bool_)
         if sample_mask is None
-        else jnp.asarray(sample_mask, dtype=bool)
+        else jnp.asarray(sample_mask, dtype=jnp.bool_)
     )
     scattering = (
         jnp.ones((particle_count,), dtype=values.dtype)
@@ -423,7 +423,7 @@ class PartialStructureFactorPlan(StrictModule, NonTrainableState):
         maximum_frames: int,
         maximum_particles: int,
     ):
-        vectors = np.asarray(wave_vectors, dtype=float)
+        vectors = np.asarray(wave_vectors, dtype=np.float64)
         types = int(site_type_count)
         frames = int(maximum_frames)
         particles = int(maximum_particles)
@@ -486,14 +486,14 @@ def partial_structure_factors(
         raise ValueError("Partial structure-factor input exceeds resource bounds.")
     site_types = jnp.asarray(site_type_ids, dtype=jnp.int32)
     particles = (
-        jnp.ones((particle_count,), dtype=bool)
+        jnp.ones((particle_count,), dtype=jnp.bool_)
         if particle_mask is None
-        else jnp.asarray(particle_mask, dtype=bool)
+        else jnp.asarray(particle_mask, dtype=jnp.bool_)
     )
     samples = (
-        jnp.ones((frame_count,), dtype=bool)
+        jnp.ones((frame_count,), dtype=jnp.bool_)
         if sample_mask is None
-        else jnp.asarray(sample_mask, dtype=bool)
+        else jnp.asarray(sample_mask, dtype=jnp.bool_)
     )
     scattering = (
         jnp.ones((particle_count,), dtype=values.dtype)

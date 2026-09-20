@@ -85,7 +85,7 @@ class DistributedAerothermodynamicPlan(StrictModule, NonTrainableState):
         self, particle_cell_ids: ArrayLike, active: ArrayLike, /
     ) -> DistributedOwnershipEvidence:
         cell_id = jnp.asarray(particle_cell_ids, dtype=jnp.int32)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if cell_id.shape != active_.shape:
             raise ValueError("Particle cell IDs and activity must match.")
         valid_id = (cell_id >= 0) & (cell_id < self.cell_owner.size)

@@ -65,6 +65,7 @@ class AbstractLinearCombinatorialMethod(StrictModule):
         raise NotImplementedError
 
     @property
+    @abc.abstractmethod
     def configuration(self) -> tuple[tuple[str, str], ...]:
         return ()
 
@@ -114,7 +115,7 @@ def _spec_signature(spec: PyTree[Any], /) -> tuple[tuple[str, tuple[int, ...], s
         records.append(
             (
                 jax.tree_util.keystr(path) or "<root>",
-                tuple(int(size) for size in value.shape),
+                tuple(value.shape),
                 str(value.dtype),
             )
         )

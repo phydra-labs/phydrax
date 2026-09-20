@@ -62,7 +62,7 @@ from ._worksets import WorksetProgram
 def execute_finite_element_mortar_flux(
     workset,
     owner_trace: ArrayLike,
-    neighbour_trace: ArrayLike,
+    neighbor_trace: ArrayLike,
     kernel,
     context: FiniteElementExecutionContext,
     /,
@@ -74,25 +74,25 @@ def execute_finite_element_mortar_flux(
     if mortar is None or metric is None:
         raise ValueError("Mortar execution requires reference and metric data.")
     owner = mortar.interpolate_left(owner_trace)
-    neighbour = mortar.interpolate_right(neighbour_trace)
+    neighbor = mortar.interpolate_right(neighbor_trace)
     normal_scale = jnp.linalg.norm(metric.owner_scaled_normals, axis=-1)
     normal = metric.owner_scaled_normals / normal_scale[:, None]
     result = kernel(
         owner,
-        neighbour,
+        neighbor,
         metric.physical_coordinates,
         metric.physical_weights,
         normal,
         context,
     )
     if isinstance(result, tuple):
-        owner_flux, neighbour_flux = result
+        owner_flux, neighbor_flux = result
         weights = metric.physical_weights.reshape(
             metric.physical_weights.shape + (1,) * (jnp.asarray(owner_flux).ndim - 1)
         )
         return (
             mortar.pullback_left_raw(weights * owner_flux),
-            mortar.pullback_right_raw(weights * neighbour_flux),
+            mortar.pullback_right_raw(weights * neighbor_flux),
         )
     return mortar.conservative_flux_contributions(result, metric)
 
@@ -153,8 +153,7 @@ def _coefficient_values(
         )
     if values.shape != expected:
         raise ValueError(
-            f"Finite-element coefficient must return shape {expected}; "
-            f"got {values.shape}."
+            f"Finite-element coefficient must return shape {expected}; got {values.shape}."
         )
     return values
 
@@ -183,7 +182,9 @@ def _cell_metric(
 
 def _tensor_forward(plan: SumFactorizationPlan, local: Array, /) -> Array:
     component_shape = local.shape[2:]
-    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
+    component_count = (
+        int(np.prod(component_shape, dtype=np.int64)) if component_shape else 1
+    )
     grid = local.reshape(
         (local.shape[0],) + plan.tabulation.nodal_shape + (component_count,)
     )
@@ -201,7 +202,9 @@ def _tensor_transpose(
     component_shape: tuple[int, ...],
     /,
 ) -> Array:
-    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
+    component_count = (
+        int(np.prod(component_shape, dtype=np.int64)) if component_shape else 1
+    )
     packed = values.reshape(
         (values.shape[0],) + plan.tabulation.evaluation_shape + (component_count,)
     )
@@ -209,14 +212,16 @@ def _tensor_transpose(
     local = plan.interpolate_transpose(packed)
     local = jnp.moveaxis(local, 1, -1)
     return local.reshape(
-        (values.shape[0], int(np.prod(plan.tabulation.nodal_shape, dtype=int)))
+        (values.shape[0], int(np.prod(plan.tabulation.nodal_shape, dtype=np.int64)))
         + component_shape
     )
 
 
 def _tensor_gradient(plan: SumFactorizationPlan, local: Array, /) -> Array:
     component_shape = local.shape[2:]
-    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
+    component_count = (
+        int(np.prod(component_shape, dtype=np.int64)) if component_shape else 1
+    )
     grid = local.reshape(
         (local.shape[0],) + plan.tabulation.nodal_shape + (component_count,)
     )
@@ -237,7 +242,9 @@ def _tensor_gradient_transpose(
     component_shape: tuple[int, ...],
     /,
 ) -> Array:
-    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
+    component_count = (
+        int(np.prod(component_shape, dtype=np.int64)) if component_shape else 1
+    )
     packed = values.reshape(
         (values.shape[0],)
         + plan.tabulation.evaluation_shape
@@ -247,7 +254,7 @@ def _tensor_gradient_transpose(
     local = plan.gradient_transpose(packed)
     local = jnp.moveaxis(local, 1, -1)
     return local.reshape(
-        (values.shape[0], int(np.prod(plan.tabulation.nodal_shape, dtype=int)))
+        (values.shape[0], int(np.prod(plan.tabulation.nodal_shape, dtype=np.int64)))
         + component_shape
     )
 
@@ -314,8 +321,7 @@ def _pairwise_volume_residual(
         )
         if physical_flux.shape != expected:
             raise ValueError(
-                "Pairwise volume flux must return paired values with a trailing "
-                "physical-coordinate axis."
+                "Pairwise volume flux must return paired values with a trailing physical-coordinate axis."
             )
         metric_pair = 0.5 * (
             jnp.expand_dims(line_cofactor, pair_axis + 1)
@@ -419,9 +425,9 @@ def _workset_domain(
         domain.support_id,
         domain.entity_set_id,
         owner_cells=np.asarray(domain.owner_cells)[rows],
-        neighbour_cells=np.asarray(domain.neighbour_cells)[rows],
+        neighbor_cells=np.asarray(domain.neighbor_cells)[rows],
         owner_local_entities=np.asarray(domain.owner_local_entities)[rows],
-        neighbour_local_entities=np.asarray(domain.neighbour_local_entities)[rows],
+        neighbor_local_entities=np.asarray(domain.neighbor_local_entities)[rows],
         selection_id=domain.selection_id,
     )
 
@@ -436,15 +442,13 @@ def _mortar_facet_residual(
     if workset.entity_indices.shape[0] != 1:
         raise ValueError("Each compiled mortar workset currently owns one patch.")
     owner_routes = dict(workset.gathers)[_action_output_fields(action)[0]][0]
-    neighbour_routes = dict(workset.neighbour_gathers)[_action_output_fields(action)[0]][
-        0
-    ]
+    neighbor_routes = dict(workset.neighbor_gathers)[_action_output_fields(action)[0]][0]
     owner_trace = state[owner_routes]
-    neighbour_trace = state[neighbour_routes]
-    owner_lift, neighbour_lift = execute_finite_element_mortar_flux(
+    neighbor_trace = state[neighbor_routes]
+    owner_lift, neighbor_lift = execute_finite_element_mortar_flux(
         workset,
         owner_trace,
-        neighbour_trace,
+        neighbor_trace,
         lambda plus, minus, points, weights, normal, execution_context: action.kernel(
             (plus,),
             (minus,),
@@ -457,7 +461,7 @@ def _mortar_facet_residual(
     )
     result = jnp.zeros_like(state)
     result = result.at[owner_routes].add(owner_lift)
-    return result.at[neighbour_routes].add(neighbour_lift)
+    return result.at[neighbor_routes].add(neighbor_lift)
 
 
 def _prepared_local_basis(
@@ -671,8 +675,7 @@ def _prepared_local_volume_residual(
         )
         if local.shape != local_state.shape:
             raise ValueError(
-                "Cell residual kernel must return one local test residual "
-                "per selected entity and output-field DOF."
+                "Cell residual kernel must return one local test residual per selected entity and output-field DOF."
             )
     elif isinstance(action, CellEnergyAction):
 
@@ -711,8 +714,7 @@ def _prepared_local_volume_residual(
         expected = (local_state.shape[0], local_state.shape[1], local_state.shape[1])
         if matrix.shape != expected:
             raise ValueError(
-                "Cell bilinear kernel must return shape "
-                "(entities, local_dofs, local_dofs)."
+                "Cell bilinear kernel must return shape (entities, local_dofs, local_dofs)."
             )
         local = ein.contract("cij,cj...->ci...", matrix, local_state)
     else:
@@ -1170,8 +1172,7 @@ def _exterior_functional_value(
         )
         if density.shape != weights.shape:
             raise ValueError(
-                "An exterior functional density must return one scalar "
-                "per quadrature point."
+                "An exterior functional density must return one scalar per quadrature point."
             )
         if jnp.iscomplexobj(density):
             raise TypeError("Finite-element functional densities must be real.")
@@ -1838,8 +1839,7 @@ def _full_residual(
                         )
                         if density.shape != physical_weights.shape:
                             raise ValueError(
-                                "Cell energy density must return one scalar per "
-                                "selected quadrature point."
+                                "Cell energy density must return one scalar per selected quadrature point."
                             )
                         return jnp.sum(density * physical_weights)
 
@@ -1878,8 +1878,7 @@ def _full_residual(
                         )
                         if density.shape != physical_weights.shape:
                             raise ValueError(
-                                "Cell energy density must return one scalar per "
-                                "selected quadrature point."
+                                "Cell energy density must return one scalar per selected quadrature point."
                             )
                         return jnp.sum(density * physical_weights)
 
@@ -1901,8 +1900,7 @@ def _full_residual(
                 )
                 if matrix.shape != expected_prefix:
                     raise ValueError(
-                        "Cell bilinear kernel must return shape "
-                        "(cells, local_dofs, local_dofs)."
+                        "Cell bilinear kernel must return shape (cells, local_dofs, local_dofs)."
                     )
                 local = ein.contract(
                     "cij,cj...->ci...",
@@ -1987,14 +1985,14 @@ def _facet_point_permutations(
     facet_reference,
     /,
     *,
-    neighbour: bool,
+    neighbor: bool,
 ) -> Array:
     count = cells.shape[0]
-    if neighbour and workset.neighbour_trace_permutations.shape[1] != 0:
-        supplied = workset.neighbour_trace_permutations
+    if neighbor and workset.neighbor_trace_permutations.shape[1] != 0:
+        supplied = workset.neighbor_trace_permutations
         if supplied.shape[1] != facet_reference.points.shape[0]:
             raise ValueError(
-                "Compiled neighbour trace permutation width does not match the rule."
+                "Compiled neighbor trace permutation width does not match the rule."
             )
         if isinstance(connectivity, HexahedralConnectivity):
             points = np.asarray(facet_reference.points)
@@ -2043,7 +2041,7 @@ def _facet_point_permutations(
         )
         routes = connectivity.cell_face_permutations(*widths)
         return jnp.asarray(routes)[cells, int(local_facet)]
-    raw = workset.neighbour_permutations if neighbour else workset.owner_permutations
+    raw = workset.neighbor_permutations if neighbor else workset.owner_permutations
     if raw.ndim == 1:
         identity = jnp.arange(facet_reference.points.shape[0], dtype=jnp.int32)
         reverse = identity[::-1]
@@ -2100,7 +2098,7 @@ def _prepared_facet_side(
     context: FiniteElementExecutionContext,
     /,
     *,
-    neighbour: bool,
+    neighbor: bool,
 ):
     block_names = tuple(block.name for block in discretization.mesh.blocks)
     block_index = block_names.index(workset.signature.block_name)
@@ -2109,8 +2107,8 @@ def _prepared_facet_side(
     )
     local_cells = cells - int(offsets[block_index])
     reference = (
-        workset.neighbour_reference
-        if neighbour and workset.neighbour_reference is not None
+        workset.neighbor_reference
+        if neighbor and workset.neighbor_reference is not None
         else workset.reference
     )
     if reference is None:
@@ -2161,7 +2159,7 @@ def _prepared_facet_side(
         cells,
         local_facet,
         facet,
-        neighbour=neighbour,
+        neighbor=neighbor,
     )
     return (
         facet,
@@ -2201,9 +2199,9 @@ def _prepared_tensor_facet_residual(
                 "Prepared cross-field facets require one shared reference element."
             )
     owners = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
-    neighbours = jnp.maximum(jnp.asarray(workset.neighbour_cells, dtype=jnp.int32), 0)
+    neighbors = jnp.maximum(jnp.asarray(workset.neighbor_cells, dtype=jnp.int32), 0)
     owner_local = jnp.asarray(workset.owner_local_entities, dtype=jnp.int32)
-    neighbour_local = jnp.asarray(workset.neighbour_local_entities, dtype=jnp.int32)
+    neighbor_local = jnp.asarray(workset.neighbor_local_entities, dtype=jnp.int32)
     valid = jnp.asarray(workset.valid)
     count = owners.shape[0]
     point_count = reference.facets[0].points.shape[0]
@@ -2228,7 +2226,7 @@ def _prepared_tensor_facet_residual(
             owners,
             local_facet,
             context,
-            neighbour=False,
+            neighbor=False,
         )
         active = valid & (owner_local == local_facet)
         point_mask = active[:, None, None]
@@ -2244,20 +2242,20 @@ def _prepared_tensor_facet_residual(
                     output_index,
                     None,
                     workset,
-                    neighbours,
+                    neighbors,
                     local_facet,
                     context,
-                    neighbour=True,
+                    neighbor=True,
                 )
             )
 
-    def traces(field_name: str, /, *, neighbour: bool = False) -> Array:
+    def traces(field_name: str, /, *, neighbor: bool = False) -> Array:
         field_index = discretization._field_index(field_name)
         state = state_by_field[field_name]
         component_shape = state.shape[1:]
         values = jnp.zeros((count, point_count) + component_shape, dtype=state.dtype)
-        cells = neighbours if neighbour else owners
-        local_entities = neighbour_local if neighbour else owner_local
+        cells = neighbors if neighbor else owners
+        local_entities = neighbor_local if neighbor else owner_local
         for local_facet in range(len(reference.facets)):
             side = _prepared_facet_side(
                 discretization,
@@ -2267,7 +2265,7 @@ def _prepared_tensor_facet_residual(
                 cells,
                 local_facet,
                 context,
-                neighbour=neighbour,
+                neighbor=neighbor,
             )
             active = valid & (local_entities == local_facet)
             mask = active.reshape((count, 1) + (1,) * len(component_shape))
@@ -2277,7 +2275,7 @@ def _prepared_tensor_facet_residual(
     plus_values = tuple(traces(field) for field in action.input_field_names)
     if isinstance(action, InteriorFacetAction):
         minus_values = tuple(
-            traces(field, neighbour=True) for field in action.input_field_names
+            traces(field, neighbor=True) for field in action.input_field_names
         )
         plus_flux, minus_flux = action.kernel(
             plus_values,
@@ -2339,7 +2337,7 @@ def _prepared_tensor_facet_residual(
             * minus_flux
         )
         for local_facet, minus in enumerate(minus_sides):
-            active = valid & (neighbour_local == local_facet)
+            active = valid & (neighbor_local == local_facet)
             local_flux = _localize_facet(weighted_minus, minus[3])
             local = ein.contract("qi,eq...->ei...", minus[0].basis_values, local_flux)
             local = jnp.where(
@@ -2384,13 +2382,13 @@ def _sipg_facet_residual(
         raise ValueError("SIPG polygon facets require an interval rule.")
     facets = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
     owners = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
-    neighbours = jnp.asarray(domain.neighbour_cells, dtype=jnp.int32)
+    neighbors = jnp.asarray(domain.neighbor_cells, dtype=jnp.int32)
     owner_local = jnp.asarray(domain.owner_local_entities, dtype=jnp.int32)
-    neighbour_local = jnp.asarray(domain.neighbour_local_entities, dtype=jnp.int32)
+    neighbor_local = jnp.asarray(domain.neighbor_local_entities, dtype=jnp.int32)
     edge_signs = jnp.asarray(connectivity.cell_edge_signs)
     owner_sign = edge_signs[owners, owner_local]
-    safe_neighbours = jnp.maximum(neighbours, 0)
-    neighbour_sign = edge_signs[safe_neighbours, jnp.maximum(neighbour_local, 0)]
+    safe_neighbors = jnp.maximum(neighbors, 0)
+    neighbor_sign = edge_signs[safe_neighbors, jnp.maximum(neighbor_local, 0)]
     edge_vertices = jnp.asarray(connectivity.edges, dtype=jnp.int32)[facets]
     edge_points = context.runtime.coordinates[edge_vertices]
     parameter = rule_data.points[:, 0]
@@ -2483,7 +2481,7 @@ def _sipg_facet_residual(
     result = jnp.zeros_like(state)
     orientations = (-1.0, 1.0)
     if domain.kind == "interior_facet":
-        minus_height = 2.0 * cell_measure[safe_neighbours] / facet_measure
+        minus_height = 2.0 * cell_measure[safe_neighbors] / facet_measure
         minus_diffusivity = _coefficient_values(
             action.diffusivity,
             physical_points,
@@ -2491,7 +2489,7 @@ def _sipg_facet_residual(
             entity_indices=(
                 facets
                 if action.diffusivity.entity_set_id == domain.entity_set_id
-                else safe_neighbours
+                else safe_neighbors
             ),
             support_id=domain.support_id,
             entity_set_id=diffusivity_entity_set,
@@ -2531,8 +2529,8 @@ def _sipg_facet_residual(
                     for minus_orientation in orientations:
                         active = (
                             plus_mask
-                            & (neighbour_local == minus_local_facet)
-                            & (neighbour_sign * minus_orientation > 0.0)
+                            & (neighbor_local == minus_local_facet)
+                            & (neighbor_sign * minus_orientation > 0.0)
                         )
                         (
                             minus_basis,
@@ -2544,7 +2542,7 @@ def _sipg_facet_residual(
                         ) = side_data(
                             minus_local_facet,
                             minus_orientation,
-                            safe_neighbours,
+                            safe_neighbors,
                         )
                         jet = FacetJet(
                             plus_value,
@@ -2711,12 +2709,12 @@ def _cell_local_interior_facet_residual(
         raise ValueError("Polygon numerical fluxes require an interval rule.")
     facets = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
     owners = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
-    neighbours = jnp.asarray(domain.neighbour_cells, dtype=jnp.int32)
+    neighbors = jnp.asarray(domain.neighbor_cells, dtype=jnp.int32)
     owner_local = jnp.asarray(domain.owner_local_entities, dtype=jnp.int32)
-    neighbour_local = jnp.asarray(domain.neighbour_local_entities, dtype=jnp.int32)
+    neighbor_local = jnp.asarray(domain.neighbor_local_entities, dtype=jnp.int32)
     signs = jnp.asarray(connectivity.cell_edge_signs)
     owner_sign = signs[owners, owner_local]
-    neighbour_sign = signs[neighbours, neighbour_local]
+    neighbor_sign = signs[neighbors, neighbor_local]
     edge_vertices = jnp.asarray(connectivity.edges)[facets]
     edge_points = context.runtime.coordinates[edge_vertices]
     parameter = data.points[:, 0]
@@ -2774,8 +2772,8 @@ def _cell_local_interior_facet_residual(
                 for minus_orientation in (-1.0, 1.0):
                     active = (
                         plus_mask
-                        & (neighbour_local == minus_local_facet)
-                        & (neighbour_sign * minus_orientation > 0.0)
+                        & (neighbor_local == minus_local_facet)
+                        & (neighbor_sign * minus_orientation > 0.0)
                     )
                     (
                         minus_basis,
@@ -2785,7 +2783,7 @@ def _cell_local_interior_facet_residual(
                     ) = side_data(
                         minus_local_facet,
                         minus_orientation,
-                        neighbours,
+                        neighbors,
                     )
                     plus_flux, minus_flux = action.kernel(
                         (plus_value,),
@@ -2973,7 +2971,7 @@ def _interior_facet_residual(
     connectivity = discretization.mesh.connectivity
     facets = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
     owners = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
-    neighbours = jnp.asarray(domain.neighbour_cells, dtype=jnp.int32)
+    neighbors = jnp.asarray(domain.neighbor_cells, dtype=jnp.int32)
     dof_map = discretization.dof_maps[field_index]
     if dof_map.association == "cell":
         return _cell_local_interior_facet_residual(
@@ -3020,16 +3018,14 @@ def _interior_facet_residual(
         weights = measure[:, None] * data.weights[None, :]
         if dof_map.association == "cell":
             plus_dofs = jnp.asarray(owners)[:, None]
-            minus_dofs = jnp.asarray(neighbours)[:, None]
+            minus_dofs = jnp.asarray(neighbors)[:, None]
             trace_basis = jnp.ones((data.points.shape[0], 1))
         elif dof_map.association == "edge":
             plus_dofs = jnp.asarray(facets)[:, None]
             minus_dofs = plus_dofs
             trace_basis = jnp.ones((data.points.shape[0], 1))
         elif dof_map.association == "vertex_edge":
-            edge_dofs = int(discretization.mesh.coordinates.shape[0]) + jnp.asarray(
-                facets
-            )
+            edge_dofs = discretization.mesh.coordinates.shape[0] + jnp.asarray(facets)
             plus_dofs = jnp.concatenate((edge_vertices, edge_dofs[:, None]), axis=1)
             minus_dofs = plus_dofs
             trace_basis = jnp.stack(
@@ -3134,7 +3130,7 @@ def _prepared_tensor_boundary_load(
             owners,
             local_facet,
             context,
-            neighbour=False,
+            neighbor=False,
         )
         active = valid & (owner_local == local_facet)
         physical_points = jnp.where(active[:, None, None], side[5], physical_points)
@@ -3225,7 +3221,7 @@ def _boundary_load(
                     ),
                     axis=-1,
                 )
-                edge_dofs = int(discretization.mesh.coordinates.shape[0]) + jnp.asarray(
+                edge_dofs = discretization.mesh.coordinates.shape[0] + jnp.asarray(
                     facet_indices
                 )
                 dofs = jnp.concatenate((edge_vertices, edge_dofs[:, None]), axis=1)

@@ -153,7 +153,7 @@ def test_matpower_analytic_power_flow_and_mw_cost():
     adapted = parse_matpower(MATPOWER)
     result = solve_power_flow(adapted.network, study=adapted.study)
     assert bool(result.converged)
-    # Lossless receiving-bus solution: Im(V2)=-PX; |V2|²=Re(V2).
+    # Lossless receiving-bus solution: Im(Canonical)=-PX; |Canonical|²=Re(Canonical).
     px = (10 / 50) * 0.1
     expected = (1 + sqrt(1 - 4 * px**2)) / 2 - 1j * px
     np.testing.assert_allclose(result.voltage, [1, expected], rtol=2e-5, atol=2e-6)

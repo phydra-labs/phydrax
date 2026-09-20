@@ -44,9 +44,7 @@ def test_periodic_compact_first_and_second_derivatives_converge(accuracy_order):
         first_error = jnp.max(
             jnp.abs(first.mv(value) - 2.0 * jnp.pi * jnp.cos(2.0 * jnp.pi * x))
         )
-        second_error = jnp.max(
-            jnp.abs(second.mv(value) + (2.0 * jnp.pi) ** 2 * value)
-        )
+        second_error = jnp.max(jnp.abs(second.mv(value) + (2.0 * jnp.pi) ** 2 * value))
         errors.append(jnp.maximum(first_error, second_error))
         assert first.report.passed
         assert second.report.passed

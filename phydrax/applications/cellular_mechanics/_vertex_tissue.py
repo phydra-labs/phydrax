@@ -251,7 +251,7 @@ def _face_edges(vertices: np.ndarray, /) -> tuple[tuple[int, int], ...]:
 
 
 def _canonical_cycle(vertices: np.ndarray, /) -> tuple[int, ...]:
-    values = tuple(int(value) for value in vertices)
+    values = tuple(vertices)
     rotations = tuple(values[index:] + values[:index] for index in range(len(values)))
     reversed_values = tuple(reversed(values))
     reverse_rotations = tuple(
@@ -489,7 +489,7 @@ class VertexTissuePlan(StrictModule, NonTrainableState):
             if cell_face_indices is not None or cell_face_orientations is not None:
                 raise ValueError("Polygonal tissue does not accept cell-face incidence.")
             faces = np.empty((0,), dtype=np.int32)
-            face_active = np.empty((0,), dtype=bool)
+            face_active = np.empty((0,), dtype=np.bool_)
             face_vertices = np.empty((0, 0), dtype=np.int32)
             cell_edges = _integer_array("cell_edge_indices", cell_edge_indices, 2)
             edge_orientations = _integer_array(
@@ -842,7 +842,7 @@ def polyhedral_vertex_tissue_plan(
 
 
 def _cell_vertex_maps(plan: VertexTissuePlan, /) -> tuple[np.ndarray, np.ndarray]:
-    incidence = np.zeros((plan.cell_capacity, plan.vertex_capacity), dtype=float)
+    incidence = np.zeros((plan.cell_capacity, plan.vertex_capacity), dtype=np.float64)
     if plan.dimension == 2:
         cell_rows = np.asarray(plan.cell_edge_indices)
         edges = np.asarray(plan.edge_vertex_indices)
@@ -1975,7 +1975,7 @@ def _lineage_transfer_valid(
     added = target_ids - source_ids
     removed = source_ids - target_ids
     matrix = np.asarray(transfer)
-    allowed = np.zeros_like(matrix, dtype=bool)
+    allowed = np.zeros_like(matrix, dtype=np.bool_)
     for stable_id in source_ids & target_ids:
         source_slot = _cell_slot_by_id(source, stable_id)
         target_slot = _cell_slot_by_id(target, stable_id)

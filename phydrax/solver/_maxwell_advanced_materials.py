@@ -110,8 +110,8 @@ class PreparedKerrPockelsMaxwellConstitutive(AbstractPreparedMaxwellConstitutive
         count = layout.electric_count
         epsilon = _positive_material("permittivity", plan.permittivity, count)
         mu = _positive_material("permeability", plan.permeability, layout.magnetic_count)
-        pockels = jnp.broadcast_to(jnp.asarray(plan.pockels, dtype=float), (count,))
-        kerr = jnp.broadcast_to(jnp.asarray(plan.kerr, dtype=float), (count,))
+        pockels = jnp.broadcast_to(jnp.asarray(plan.pockels, dtype=jnp.float64), (count,))
+        kerr = jnp.broadcast_to(jnp.asarray(plan.kerr, dtype=jnp.float64), (count,))
         minimum_tangent = epsilon - 2.0 * jnp.abs(pockels) * plan.field_bound
         minimum_tangent = eqx.error_if(
             minimum_tangent,
@@ -304,7 +304,7 @@ class ActiveGainMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         saturation = float(saturation_intensity)
         if saturation <= 0.0 or np.isnan(saturation):
             raise ValueError("saturation_intensity must be positive or infinite.")
-        gain_ = jnp.asarray(gain, dtype=float)
+        gain_ = jnp.asarray(gain, dtype=jnp.float64)
         gain_ = eqx.error_if(
             gain_,
             jnp.any(~jnp.isfinite(gain_)) | jnp.any(gain_ < 0.0),
@@ -502,10 +502,10 @@ def subpixel_maxwell_constitutive(
     *,
     permeability: ArrayLike = 1.0,
 ) -> DiagonalMaxwellConstitutivePlan:
-    fraction = jnp.asarray(filling_fraction, dtype=float)
-    projection = jnp.asarray(normal_projection, dtype=float)
-    first = jnp.asarray(material_one, dtype=float)
-    second = jnp.asarray(material_two, dtype=float)
+    fraction = jnp.asarray(filling_fraction, dtype=jnp.float64)
+    projection = jnp.asarray(normal_projection, dtype=jnp.float64)
+    first = jnp.asarray(material_one, dtype=jnp.float64)
+    second = jnp.asarray(material_two, dtype=jnp.float64)
     invalid = (
         jnp.any(~jnp.isfinite(fraction))
         | jnp.any(~jnp.isfinite(projection))
@@ -535,10 +535,10 @@ def fitted_interface_maxwell_constitutive(
     magnetic_primal_measure: ArrayLike,
     /,
 ) -> DiagonalMaxwellConstitutivePlan:
-    electric_integral = jnp.asarray(electric_material_integral, dtype=float)
-    electric_measure = jnp.asarray(electric_primal_measure, dtype=float)
-    magnetic_integral = jnp.asarray(magnetic_material_integral, dtype=float)
-    magnetic_measure = jnp.asarray(magnetic_primal_measure, dtype=float)
+    electric_integral = jnp.asarray(electric_material_integral, dtype=jnp.float64)
+    electric_measure = jnp.asarray(electric_primal_measure, dtype=jnp.float64)
+    magnetic_integral = jnp.asarray(magnetic_material_integral, dtype=jnp.float64)
+    magnetic_measure = jnp.asarray(magnetic_primal_measure, dtype=jnp.float64)
     if electric_integral.shape != electric_measure.shape:
         raise ValueError("Electric fitted material integral/measure shapes must match.")
     if magnetic_integral.shape != magnetic_measure.shape:
@@ -642,7 +642,9 @@ def _cochain_region_fractions(
         if sample_total > policy.maximum_samples:
             raise ValueError("Scalar material assembly exceeds maximum_samples.")
         point_array = np.concatenate(points, axis=0)
-        inside = np.asarray(geometry.contains(jnp.asarray(point_array)), dtype=float)
+        inside = np.asarray(
+            geometry.contains(jnp.asarray(point_array)), dtype=jnp.float64
+        )
         counts = tuple(value.shape[0] for value in points)
         starts = np.cumsum((0, *counts))
         values = np.asarray(

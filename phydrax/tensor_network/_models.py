@@ -53,9 +53,7 @@ class FiniteLocalTerm(StrictModule):
             {
                 "kind": "finite-local-term",
                 "start": start_,
-                "shapes": tuple(
-                    tuple(int(size) for size in value.shape) for value in values
-                ),
+                "shapes": tuple(tuple(value.shape) for value in values),
                 "dtypes": tuple(str(value.dtype) for value in values),
             }
         )
@@ -93,7 +91,7 @@ class PrefixQuadraticMPOResult(StrictModule):
 
 
 def _validated_dimensions(local_dimensions: Sequence[int], /) -> tuple[int, ...]:
-    dimensions = tuple(int(dimension) for dimension in local_dimensions)
+    dimensions = tuple(local_dimensions)
     if not dimensions or any(dimension < 1 for dimension in dimensions):
         raise ValueError("local_dimensions must contain positive entries.")
     return dimensions
@@ -229,7 +227,7 @@ def build_prefix_quadratic_mpo(
     constant = jnp.sum(weights * offsets**2)
     tensors = []
     for site, operator in enumerate(operators):
-        dimension = int(operator.shape[0])
+        dimension = operator.shape[0]
         identity = jnp.eye(dimension, dtype=dtype)
         local = (
             suffix_weight[site] * (operator @ operator) + suffix_offset[site] * operator
@@ -311,13 +309,13 @@ class FixedStructureMPOCoefficients(StrictModule):
             raise ValueError("coefficients require shape (steps + 1, basis_count).")
         self.basis_operators = basis
         self.coefficients = values
-        self.step_count = int(values.shape[0] - 1)
+        self.step_count = values.shape[0] - 1
         self.basis_count = len(basis)
         self.structure_id = canonical_fingerprint(
             {
                 "kind": "fixed-structure-mpo-coefficients",
                 "basis": tuple(operator.structure_id for operator in basis),
-                "steps": int(values.shape[0] - 1),
+                "steps": values.shape[0] - 1,
                 "dtype": str(values.dtype),
             }
         )

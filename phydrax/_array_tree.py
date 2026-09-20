@@ -35,12 +35,11 @@ def _nonnegative_integer(value: Any, name: str, /) -> int:
 def _array_metadata(value: Any, path: str, /) -> tuple[tuple[int, ...], np.dtype]:
     if not isinstance(value, _ARRAY_TYPES):
         raise TypeError(f"Array PyTree leaf {path} must be an array.")
-    shape = tuple(int(size) for size in value.shape)
+    shape = tuple(value.shape)
     dtype = np.dtype(value.dtype)
     if dtype.kind not in _NUMERIC_KINDS:
         raise TypeError(
-            f"Array PyTree leaf {path} has unsupported dtype {dtype}; "
-            "numeric and boolean dtypes are required."
+            f"Array PyTree leaf {path} has unsupported dtype {dtype}; numeric and boolean dtypes are required."
         )
     return shape, dtype
 
@@ -203,8 +202,7 @@ class ArrayPyTreeSchema(StrictModule):
                 )
             if dtype != leaf.dtype:
                 raise TypeError(
-                    f"Array PyTree leaf {leaf.path} dtype {dtype} does not match "
-                    f"schema dtype {leaf.dtype}."
+                    f"Array PyTree leaf {leaf.path} dtype {dtype} does not match schema dtype {leaf.dtype}."
                 )
             if case_shape is None:
                 case_shape = leading
@@ -229,7 +227,7 @@ class ArrayPyTreeSchema(StrictModule):
     def finite_mask(self, tree: PyTree[Any], /) -> Array:
         """Return one finite flag per case without coercing numeric leaf dtypes."""
         case_shape = self.validate(tree)
-        finite = jnp.ones(case_shape, dtype=bool)
+        finite = jnp.ones(case_shape, dtype=jnp.bool_)
         for value, leaf in zip(jax.tree_util.tree_leaves(tree), self.leaves, strict=True):
             axes = tuple(range(self.case_ndim, self.case_ndim + len(leaf.shape)))
             finite = finite & jnp.all(jnp.isfinite(value), axis=axes)
@@ -248,7 +246,7 @@ class ArrayPyTreeSchema(StrictModule):
         if true_case_shape != false_case_shape:
             raise ValueError("Selected Array PyTrees must have the same case shape.")
         selector_ = jnp.asarray(selector)
-        if np.dtype(selector_.dtype) != np.dtype(bool):
+        if np.dtype(selector_.dtype) != np.dtype(np.bool_):
             raise TypeError("Case selectors must have boolean dtype.")
         if selector_.shape != true_case_shape:
             raise ValueError("Case selector shape must exactly match the case shape.")

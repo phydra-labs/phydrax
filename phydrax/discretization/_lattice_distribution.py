@@ -28,7 +28,7 @@ LatticeParity: TypeAlias = Literal[0, 1]
 
 
 def _positive_shape(values: Sequence[int], name: str, /) -> tuple[int, ...]:
-    shape = tuple(int(value) for value in values)
+    shape = tuple(values)
     if not shape or any(value <= 0 for value in shape):
         raise ValueError(f"{name} must contain positive extents.")
     return shape
@@ -124,16 +124,16 @@ class LatticeOwnership(StrictModule, NonTrainableState):
             for value in (sites, links, faces, axes)
         ):
             raise TypeError("Lattice ownership arrays must use integer indices.")
-        if valid.dtype != np.dtype(bool):
+        if valid.dtype != np.dtype(np.bool_):
             raise TypeError("face_valid must be boolean.")
         self.site_owner = jnp.asarray(sites, dtype=jnp.int32)
         self.link_owner = jnp.asarray(links, dtype=jnp.int32)
         self.face_owner = jnp.asarray(faces, dtype=jnp.int32)
-        self.face_valid = jnp.asarray(valid, dtype=bool)
+        self.face_valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.face_axes = jnp.asarray(axes, dtype=jnp.int32)
-        self.site_count = int(sites.size)
-        self.dimension = int(links.shape[1])
-        self.face_orientation_count = int(faces.shape[1])
+        self.site_count = sites.size
+        self.dimension = links.shape[1]
+        self.face_orientation_count = faces.shape[1]
         self.ownership_id = canonical_fingerprint(
             {
                 "kind": "cartesian-lattice-ownership",
@@ -236,7 +236,7 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
         parts, capacity = ids.shape
         local_parity = parity[ids]
         local_parity = np.where(valid, local_parity, 0).astype(np.int32)
-        interior = np.zeros((parts, capacity), dtype=bool)
+        interior = np.zeros((parts, capacity), dtype=np.bool_)
         boundary = np.zeros_like(interior)
         local_maps = [
             {
@@ -294,8 +294,8 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
         receive_orientation = np.zeros(message_shape, dtype=np.int32)
         send_target_parity = np.zeros(message_shape, dtype=np.int32)
         receive_target_parity = np.zeros(message_shape, dtype=np.int32)
-        send_valid = np.zeros(message_shape, dtype=bool)
-        receive_valid = np.zeros(message_shape, dtype=bool)
+        send_valid = np.zeros(message_shape, dtype=np.bool_)
+        receive_valid = np.zeros(message_shape, dtype=np.bool_)
         for pair, messages in pair_edges.items():
             phase = pair_phase[pair]
             source, receiver = pair
@@ -329,7 +329,7 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
         self.projected_receive_target_parity = jnp.asarray(receive_target_parity)
         self.projected_send_valid = jnp.asarray(send_valid)
         self.projected_receive_valid = jnp.asarray(receive_valid)
-        self.dimension = int(neighbors.shape[1])
+        self.dimension = neighbors.shape[1]
         self.projected_message_capacity = message_capacity
         self.plan_id = canonical_fingerprint(
             {
@@ -477,7 +477,7 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
             )
             routed_valid = jax.lax.ppermute(
                 packed.valid[phase].astype(jnp.int32), axis_name, permutation
-            ).astype(bool)
+            ).astype("bool")
             valid.append(routed_valid & self.distributed.phase_receive_valid[phase, part])
         return StartedLatticeHalo(
             jnp.stack(received),
@@ -683,7 +683,7 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
                 packed.valid[phase].astype(jnp.int32),
                 axis_name,
                 permutation,
-            ).astype(bool)
+            ).astype("bool")
             received_valid.append(routed & self.projected_receive_valid[phase, part])
         return StartedLatticeHalo(
             jnp.stack(received),
@@ -733,7 +733,7 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
         )
         valid = jnp.zeros(
             (self.local_capacity, self.dimension, 2),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         for phase in range(self.phase_count):
             indices = self.projected_receive_indices[phase, part]
@@ -814,7 +814,7 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
         )
         valid = jnp.zeros(
             (self.partition_count, self.local_capacity, self.dimension, 2),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         for phase, permutation in enumerate(self.distributed.permutations):
             for _, target in permutation:
@@ -927,18 +927,16 @@ class LatticeDecompositionPlan(StrictModule, NonTrainableState):
         coordinates = np.asarray(tuple(np.ndindex(shape)), dtype=np.int32)
         owner = np.asarray(
             [
-                _coordinate_owner(
-                    tuple(int(v) for v in coordinate), axis_ranges, partitions
-                )
+                _coordinate_owner(tuple(coordinate), axis_ranges, partitions)
                 for coordinate in coordinates
             ],
             dtype=np.int32,
         )
         neighbors = np.zeros((site_count, len(shape), 2), dtype=np.int32)
-        neighbor_valid = np.zeros_like(neighbors, dtype=bool)
+        neighbor_valid = np.zeros_like(neighbors, dtype=np.bool_)
         adjacency: set[tuple[int, int]] = set()
         for global_id, coordinate_array in enumerate(coordinates):
-            coordinate = tuple(int(value) for value in coordinate_array)
+            coordinate = tuple(coordinate_array)
             for axis in range(len(shape)):
                 for orientation in range(2):
                     neighbor = _neighbor(coordinate, axis, orientation, shape, periodic_)
@@ -968,7 +966,7 @@ class LatticeDecompositionPlan(StrictModule, NonTrainableState):
             ],
             dtype=np.int32,
         ).reshape((-1, 2))
-        face_valid = np.zeros((site_count, face_axes.shape[0]), dtype=bool)
+        face_valid = np.zeros((site_count, face_axes.shape[0]), dtype=np.bool_)
         for site in range(site_count):
             for face, (left, right) in enumerate(face_axes):
                 face_valid[site, face] = bool(
@@ -989,7 +987,7 @@ class LatticeDecompositionPlan(StrictModule, NonTrainableState):
         owned_counts = np.bincount(owner, minlength=part_count)
         owned_capacity = int(np.max(owned_counts))
         owned_ids = np.zeros((part_count, owned_capacity), dtype=np.int32)
-        owned_valid = np.zeros_like(owned_ids, dtype=bool)
+        owned_valid = np.zeros_like(owned_ids, dtype=np.bool_)
         owned_slices = []
         starts = np.zeros((part_count, len(shape)), dtype=np.int32)
         stops = np.zeros_like(starts)
@@ -1096,7 +1094,7 @@ class LatticeStencilExecutionPlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(decomposition, LatticeDecompositionPlan):
             raise TypeError("decomposition must be LatticeDecompositionPlan.")
-        value_shape = tuple(int(value) for value in site_value_shape)
+        value_shape = tuple(site_value_shape)
         if any(value <= 0 for value in value_shape):
             raise ValueError("site_value_shape extents must be positive.")
         dtype_ = np.dtype(dtype)

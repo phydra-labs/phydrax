@@ -232,7 +232,7 @@ def _state_arrays(state: MovingCutCellState, dtype: np.dtype, /) -> dict[str, np
     connectivity = complex_.mesh.connectivity
     return {
         "content": np.asarray(state.content, dtype=dtype),
-        "component_active": np.asarray(complex_.component_active, dtype=bool),
+        "component_active": np.asarray(complex_.component_active, dtype=np.bool_),
         "component_levels": np.asarray(complex_.component_levels, dtype=np.int32),
         "component_cell_coordinates": np.asarray(
             complex_.component_cell_coordinates, dtype=np.int32
@@ -241,12 +241,12 @@ def _state_arrays(state: MovingCutCellState, dtype: np.dtype, /) -> dict[str, np
         "component_volumes": np.asarray(complex_.component_volumes),
         "component_centers": np.asarray(complex_.component_centers),
         "component_volume_fractions": np.asarray(complex_.component_volume_fractions),
-        "face_active": np.asarray(complex_.face_active, dtype=bool),
+        "face_active": np.asarray(complex_.face_active, dtype=np.bool_),
         "face_owner_components": np.asarray(
             complex_.face_owner_components, dtype=np.int32
         ),
-        "face_neighbour_components": np.asarray(
-            complex_.face_neighbour_components, dtype=np.int32
+        "face_neighbor_components": np.asarray(
+            complex_.face_neighbor_components, dtype=np.int32
         ),
         "face_kinds": np.asarray(complex_.face_kinds, dtype=np.int32),
         "face_body_tags": np.asarray(complex_.face_body_tags, dtype=np.int32),
@@ -314,7 +314,7 @@ def _restore_cut_plan(
     /,
 ) -> MultivaluedCutCellPlan:
     hierarchy_record = record["hierarchy"]
-    shape = tuple(int(value) for value in hierarchy_record["shape"])
+    shape = tuple(hierarchy_record["shape"])
     bounds_by_axis = tuple(
         tuple(float(value) for value in pair) for pair in hierarchy_record["bounds"]
     )
@@ -341,9 +341,9 @@ def _restore_cut_plan(
         groups = []
         for bucket_record in level_record["buckets"]:
             signature = PatchShapeSignature(
-                tuple(int(value) for value in bucket_record["envelope_shape"]),
-                halo_width=tuple(int(value) for value in bucket_record["halo_width"]),
-                alignment=tuple(int(value) for value in bucket_record["alignment"]),
+                tuple(bucket_record["envelope_shape"]),
+                halo_width=tuple(bucket_record["halo_width"]),
+                alignment=tuple(bucket_record["alignment"]),
             )
             buckets.append(
                 PatchBucketPlan(signature, int(bucket_record["lane_capacity"]))
@@ -352,8 +352,8 @@ def _restore_cut_plan(
                 tuple(
                     LogicalPatchBox(
                         int(level_record["level"]),
-                        tuple(int(value) for value in box["lower"]),
-                        tuple(int(value) for value in box["upper"]),
+                        tuple(box["lower"]),
+                        tuple(box["upper"]),
                     )
                     for box in bucket_record["boxes"]
                     if box is not None
@@ -396,7 +396,7 @@ def _restore_cut_plan(
             for body in record["bodies"]
         ),
         operation=str(record["body_operation"]),
-        body_signs=tuple(int(value) for value in record["body_signs"]),
+        body_signs=tuple(record["body_signs"]),
     )
     if bodies.body_set_id != record["body_set_id"]:
         raise ValueError("Restart body registry does not reproduce body identity.")
@@ -437,8 +437,7 @@ def read_multivalued_block_amr_checkpoint(
         MovingCutCellState(
             complex_,
             np.zeros(
-                (complex_.component_capacity,)
-                + tuple(int(value) for value in manifest["component_shape"]),
+                (complex_.component_capacity,) + tuple(manifest["component_shape"]),
                 dtype=np.dtype(manifest["plan"]["dtype"]),
             ),
             manifest["time"],

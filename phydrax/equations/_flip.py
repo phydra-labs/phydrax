@@ -172,7 +172,7 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
     def _extrapolate(self, velocity, support):
         axes = self.projection.operators.discretization.grid.structured_axes
         allowed = (
-            tuple(jnp.ones_like(value, dtype=bool) for value in velocity)
+            tuple(jnp.ones_like(value, dtype=jnp.bool_) for value in velocity)
             if self.geometry is None
             else self.geometry.face_active
         )
@@ -458,8 +458,7 @@ def compile_flip_problem(
         )
         if topology.component_count != 1:
             raise ValueError(
-                "Static FLIP sharp composition currently requires one connected "
-                "fluid component."
+                "Static FLIP sharp composition currently requires one connected fluid component."
             )
     particles = transfer.particles
     residual_key = DiscretizationKey(

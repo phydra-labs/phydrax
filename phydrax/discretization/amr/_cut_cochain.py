@@ -74,18 +74,18 @@ class CutCellCochainPlan(StrictModule, NonTrainableState):
             numeric_version="cut-cell-cochain"
         )
         connectivity = self.complex.mesh.connectivity
-        coordinates = np.asarray(self.complex.mesh.coordinates, dtype=float)
+        coordinates = np.asarray(self.complex.mesh.coordinates, dtype=np.float64)
         edges = np.asarray(connectivity.edges, dtype=np.int32)
         edge_centers = np.mean(coordinates[edges], axis=1)
         edge_measures = np.linalg.norm(
             coordinates[edges[:, 1]] - coordinates[edges[:, 0]], axis=-1
         )
-        face_centers = np.asarray(geometry.face_centers, dtype=float)
-        face_measures = np.asarray(geometry.face_measures, dtype=float)
-        cell_centers = np.asarray(geometry.cell_centers, dtype=float)
-        cell_volumes = np.asarray(geometry.cell_volumes, dtype=float)
+        face_centers = np.asarray(geometry.face_centers, dtype=np.float64)
+        face_measures = np.asarray(geometry.face_measures, dtype=np.float64)
+        cell_centers = np.asarray(geometry.cell_centers, dtype=np.float64)
+        cell_volumes = np.asarray(geometry.cell_volumes, dtype=np.float64)
         primal = (
-            np.ones((coordinates.shape[0],), dtype=float),
+            np.ones((coordinates.shape[0],), dtype=np.float64),
             edge_measures,
             face_measures,
             cell_volumes,

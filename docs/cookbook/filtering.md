@@ -19,7 +19,7 @@ observations = phx.stochastic.ObservationSequence(
     jnp.asarray([[0.2], [0.4], [0.7], [0.9]]),
     observation_mask=jnp.asarray([[True], [True], [False], [True]]),
     case_ids=("experiment-0",),
-    sequence_id="position-sensors-v1",
+    sequence_id="position-sensors",
 )
 prior = phx.stochastic.GaussianStatePrior(
     jnp.asarray([0.0]),
@@ -67,7 +67,7 @@ forcing = phx.stochastic.SampledStateSpaceInput(
     jnp.asarray([0.0, 0.25, 0.5, 0.75, 1.0]),
     jnp.asarray([[0.0], [0.5], [1.0], [1.5], [2.0]]),
     interpolation="linear",
-    input_id="position-forcing-v1",
+    input_id="position-forcing",
 )
 
 
@@ -120,7 +120,7 @@ driven_problem = phx.stochastic.StateSpaceProblem(
 )
 driven_kalman = phx.uq.kalman_filter(driven_problem, method="sequential")
 
-assert driven_kalman.input_id == "position-forcing-v1"
+assert driven_kalman.input_id == "position-forcing"
 assert driven_kalman.filtered_means.shape == (4, 1)
 ```
 
@@ -310,16 +310,16 @@ finite_prior = phx.stochastic.CategoricalStatePrior(
 
 def finite_log_prob(value, state, time, mask, context):
     del time, context
-    residual = (value - state.astype(float)) / 0.25
+    residual = (value - state.astype("float64")) / 0.25
     terms = -0.5 * residual**2 - jnp.log(0.25 * jnp.sqrt(2.0 * jnp.pi))
     return jnp.sum(jnp.where(mask, terms, 0.0))
 
 
 finite_observation = phx.stochastic.CallableObservationModel(
-    lambda state, time, context: state.astype(float),
+    lambda state, time, context: state.astype("float64"),
     finite_log_prob,
     lambda key, state, time, sample_shape, context: (
-        state.astype(float) + 0.25 * jr.normal(key, tuple(sample_shape) + (1,))
+        state.astype("float64") + 0.25 * jr.normal(key, tuple(sample_shape) + (1,))
     ),
     state_shape=(1,),
     observation_shape=(1,),
@@ -347,8 +347,8 @@ finite_counts = phx.uq.finite_state_expected_transition_counts(finite_smoother)
 def changed(previous_state, state, t0, t1, context):
     del t0, t1
     return {
-        "changed": (previous_state[0] != state[0]).astype(float),
-        "case_index": context.case_index.astype(float),
+        "changed": (previous_state[0] != state[0]).astype("float64"),
+        "case_index": context.case_index.astype("float64"),
     }
 
 
@@ -437,7 +437,7 @@ rb_nonlinear_transition = phx.stochastic.CallableTransitionKernel(
 
 def initial_linear_state(regime, args):
     del args
-    return (0.25 * regime.astype(float), jnp.asarray([[1.0]]))
+    return (0.25 * regime.astype("float64"), jnp.asarray([[1.0]]))
 
 
 def conditional_linear_transition(previous_regime, regime, t0, t1, context):

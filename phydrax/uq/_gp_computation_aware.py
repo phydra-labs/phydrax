@@ -160,7 +160,7 @@ class ComputationAwareGaussianProcessDiagnostics(StrictModule):
                 ),
             ),
         ).astype(jnp.int32)
-        itemsize = int(projected.kernel_action.dtype.itemsize)
+        itemsize = projected.kernel_action.dtype.itemsize
         self.valid = status == COMPUTATION_AWARE_GP_SUCCESS
         self.status = status
         self.projected_noise_condition = noise_condition
@@ -220,7 +220,7 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
             if residual is None
             else _as_vector(residual, name="GP residual"),
         )
-        if resolved.num_observations != int(points.shape[0]):
+        if resolved.num_observations != points.shape[0]:
             raise ValueError("Resolved GP actions must align with observation points.")
         projected = _build_projected_state(
             points,
@@ -233,18 +233,17 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
             max_factorization_bytes=policy.max_factor_storage_bytes,
             checkpoint=policy.checkpoint_kernel_blocks,
         )
-        observation_count = resolved.num_observations
         action_count = resolved.num_actions
         factor_storage_elements = (
             resolved.storage_elements
-            + int(projected.kernel_action.size)
-            + int(projected.prior_diagonal.size)
-            + int(projected.effective_observation_variance.size)
-            + int(projected.projected_noise.size)
-            + int(projected.projected_covariance.size)
+            + projected.kernel_action.size
+            + projected.prior_diagonal.size
+            + projected.effective_observation_variance.size
+            + projected.projected_noise.size
+            + projected.projected_covariance.size
             + 4 * action_count * action_count
         )
-        factor_storage_bytes = factor_storage_elements * int(points.dtype.itemsize)
+        factor_storage_bytes = factor_storage_elements * points.dtype.itemsize
         if factor_storage_bytes > policy.max_factor_storage_bytes:
             raise ValueError(
                 "Computation-aware GP retained factor storage exceeds its policy limit."
@@ -317,7 +316,7 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
         """Precompute low-rank residual geometry and full query covariance."""
         original_query = query_points
         query = _validated_factor_points(_field_data(query_points))
-        covariance_bytes = int(query.shape[0]) ** 2 * int(query.dtype.itemsize)
+        covariance_bytes = query.shape[0] ** 2 * query.dtype.itemsize
         if covariance_bytes > self.computation.max_condition_covariance_bytes:
             raise ValueError(
                 "Computation-aware GP query covariance exceeds its policy limit; "
@@ -340,7 +339,7 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
             solved_query_action=geometry.solved_query_action,
             covariance=geometry.covariance,
             variance=geometry.variance,
-            observation_count=int(self.observation_points.shape[0]),
+            observation_count=self.observation_points.shape[0],
             output_dims=_query_output_dims(original_query, output_dim=output_dim),
         )
 
@@ -388,7 +387,7 @@ class ComputationAwareGaussianProcessConditioner(StrictModule):
         solved = jnp.asarray(solved_query_action)
         covariance_array = jnp.asarray(covariance)
         variance_array = _as_vector(variance, name="conditioned GP variance")
-        query_count = int(query.shape[0])
+        query_count = query.shape[0]
         if solved.shape != (actions.source.size, query_count):
             raise ValueError("Solved query-action geometry has incompatible shape.")
         if covariance_array.shape != (query_count, query_count):
@@ -409,9 +408,7 @@ class ComputationAwareGaussianProcessConditioner(StrictModule):
 
     @property
     def storage_elements(self) -> int:
-        return int(
-            self.solved_query_action.size + self.covariance.size + self.variance.size
-        )
+        return self.solved_query_action.size + self.covariance.size + self.variance.size
 
     def condition(self, residual: ArrayLike, /) -> GaussianProcessCondition:
         values = _as_vector(residual, name="GP residual")

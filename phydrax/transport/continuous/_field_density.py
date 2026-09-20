@@ -40,7 +40,7 @@ class HybridFlowLaw(StrictModule):
         *,
         mode_id: str,
     ):
-        probabilities = jnp.asarray(mode_probabilities, dtype=float)
+        probabilities = jnp.asarray(mode_probabilities, dtype=jnp.float64)
         laws = tuple(conditional_laws)
         if probabilities.ndim != 1 or probabilities.size == 0:
             raise ValueError("mode_probabilities must be nonempty and rank one.")
@@ -70,7 +70,7 @@ class HybridFlowLaw(StrictModule):
     def sample(
         self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()
     ) -> HybridFlowSample:
-        shape = tuple(int(size) for size in sample_shape)
+        shape = tuple(sample_shape)
         mode_key, value_key = jr.split(key)
         modes = jr.categorical(mode_key, jnp.log(self.mode_probabilities), shape=shape)
         keys = jr.split(value_key, max(prod(shape), 1))
@@ -133,7 +133,7 @@ class TrajectoryFlowLaw(AbstractProbabilityLaw):
         self.support_tolerance = jnp.asarray(support_tolerance)
         self.law_id = law_id or canonical_fingerprint(
             {
-                "kind": "finite-trajectory-flow-law-v1",
+                "kind": "finite-trajectory-flow-law",
                 "layout": layout.layout_id,
                 "coefficient_shape": coefficient_law.event_shape,
             }
@@ -219,7 +219,7 @@ class FiniteFieldFlowLaw(StrictModule):
         self.field_space_id = field_space_id
         self.law_id = law_id or canonical_fingerprint(
             {
-                "kind": "finite-field-flow-law-v1",
+                "kind": "finite-field-flow-law",
                 "field_space": field_space_id,
                 "coefficient_shape": coefficient_law.event_shape,
             }
@@ -324,18 +324,18 @@ def prepare_field_query(
     if points.ndim != 2 or points.shape[0] != maximum or maximum <= 0:
         raise ValueError("query_points must have shape (capacity, coordinate_dimension).")
     active = (
-        jnp.ones((maximum,), dtype=bool)
+        jnp.ones((maximum,), dtype=jnp.bool_)
         if mask is None
-        else jnp.asarray(mask, dtype=bool)
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     if active.shape != (maximum,) or not bool(jnp.any(active)):
         raise ValueError("query mask must align capacity and contain an active point.")
     query_id = canonical_fingerprint(
         {
-            "kind": "prepared-field-query-v1",
+            "kind": "prepared-field-query",
             "law": law.law_id,
             "capacity": maximum,
-            "coordinate_dimension": int(points.shape[1]),
+            "coordinate_dimension": points.shape[1],
             "active": int(jnp.sum(active)),
         }
     )

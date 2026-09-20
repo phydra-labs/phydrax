@@ -149,7 +149,7 @@ def normalize_density_field(
     )
     normalization_id = canonical_fingerprint(
         {
-            "kind": "normalized-density-field-v1",
+            "kind": "normalized-density-field",
             "domain": tuple(log_density.domain.labels),
             "dependencies": log_density.deps,
             "reference": reference,

@@ -117,7 +117,7 @@ def qualify_learned_piv(
             )
         )
         reference_counts.append(count)
-        valid_fractions.append(jnp.mean(prediction.valid.astype(float)))
+        valid_fractions.append(jnp.mean(prediction.valid.astype("float64")))
 
     aggregate_loss = evaluate_learned_piv(model, held_out, loss_)
     endpoint_error = jnp.stack(endpoint_errors)

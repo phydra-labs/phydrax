@@ -51,8 +51,8 @@ def _state_signature(state: Any, /) -> tuple[tuple[tuple[int, ...], str], ...]:
 def _state_size_bytes(state: Any, /) -> tuple[int, int]:
     leaves = tuple(jnp.asarray(leaf) for leaf in jax.tree.leaves(state))
     return (
-        sum(int(leaf.size) for leaf in leaves),
-        sum(int(leaf.size) * int(leaf.dtype.itemsize) for leaf in leaves),
+        sum(leaf.size for leaf in leaves),
+        sum(leaf.size * leaf.dtype.itemsize for leaf in leaves),
     )
 
 
@@ -138,9 +138,9 @@ class WeightedEnsembleReducer(StrictModule):
         if raw.ndim != 1 or jnp.issubdtype(raw.dtype, jnp.complexfloating):
             raise ValueError("weights must be one real rank-one array.")
         if valid is None:
-            mask = jnp.ones(raw.shape, dtype=bool)
+            mask = jnp.ones(raw.shape, dtype=jnp.bool_)
         else:
-            mask = jnp.asarray(valid, dtype=bool)
+            mask = jnp.asarray(valid, dtype=jnp.bool_)
             if mask.shape != raw.shape:
                 raise ValueError("valid must have the same shape as weights.")
         finite_nonnegative = jnp.all(jnp.isfinite(raw) & (raw >= 0.0))
@@ -315,7 +315,7 @@ class PreparedDeterministicEnsemble(StrictModule, NonTrainableState):
     def __init__(self, plan: DeterministicEnsemblePlan, save_times: ArrayLike, /):
         if not isinstance(plan, DeterministicEnsemblePlan):
             raise TypeError("plan must be a DeterministicEnsemblePlan.")
-        times = np.asarray(save_times, dtype=float)
+        times = np.asarray(save_times, dtype=np.float64)
         if (
             times.ndim != 1
             or times.size < 1
@@ -330,7 +330,11 @@ class PreparedDeterministicEnsemble(StrictModule, NonTrainableState):
         estimate = (
             len(plan.initial_conditions)
             * times.size
-            * (plan.state_bytes + np.dtype(float).itemsize + np.dtype(bool).itemsize)
+            * (
+                plan.state_bytes
+                + np.dtype(np.float64).itemsize
+                + np.dtype(np.bool_).itemsize
+            )
         )
         if estimate > plan.maximum_output_bytes:
             raise MemoryError("Deterministic trajectories exceed maximum_output_bytes.")
@@ -519,9 +523,9 @@ class ClassicalStatisticalScalarRecipe(StrictModule, NonTrainableState):
         maximum_paths: int = 4096,
         maximum_modes: int = 2**18,
     ):
-        omega = np.asarray(frequencies, dtype=float)
-        nodes = np.asarray(coordinates, dtype=float)
-        path_weights = np.asarray(weights, dtype=float)
+        omega = np.asarray(frequencies, dtype=np.float64)
+        nodes = np.asarray(coordinates, dtype=np.float64)
+        path_weights = np.asarray(weights, dtype=np.float64)
         if (
             omega.ndim != 1
             or omega.size < 1
@@ -540,10 +544,14 @@ class ClassicalStatisticalScalarRecipe(StrictModule, NonTrainableState):
             raise ValueError("weights must provide non-negative finite path mass.")
         if nodes.shape[0] > int(maximum_paths) or omega.size > int(maximum_modes):
             raise MemoryError("Classical-statistical scalar recipe exceeds resources.")
-        occupation = np.broadcast_to(np.asarray(occupations, dtype=float), omega.shape)
-        field_mean = np.broadcast_to(np.asarray(mean_field, dtype=float), omega.shape)
+        occupation = np.broadcast_to(
+            np.asarray(occupations, dtype=np.float64), omega.shape
+        )
+        field_mean = np.broadcast_to(
+            np.asarray(mean_field, dtype=np.float64), omega.shape
+        )
         momentum_mean = np.broadcast_to(
-            np.asarray(mean_momentum, dtype=float), omega.shape
+            np.asarray(mean_momentum, dtype=np.float64), omega.shape
         )
         if (
             not np.all(np.isfinite(occupation) & (occupation >= 0.0))
@@ -618,9 +626,9 @@ class MMSTInitialConditionRecipe(StrictModule, NonTrainableState):
         zero_point_parameter: float = 1.0,
         maximum_states: int = 4096,
     ):
-        probability = np.asarray(populations, dtype=float)
-        positions = np.asarray(nuclear_positions, dtype=float)
-        momenta = np.asarray(nuclear_momenta, dtype=float)
+        probability = np.asarray(populations, dtype=np.float64)
+        positions = np.asarray(nuclear_positions, dtype=np.float64)
+        momenta = np.asarray(nuclear_momenta, dtype=np.float64)
         gamma = float(zero_point_parameter)
         if (
             probability.ndim != 1

@@ -32,7 +32,7 @@ def test_bounded_atlas_distinguishes_sampled_and_cell_certified_cover():
         (candidate,),
         phx.metrix.CompactAtlasDomain(
             points,
-            certified_cells=jnp.ones((3,), dtype=bool),
+            certified_cells=jnp.ones((3,), dtype="bool"),
             domain_id="certified-line",
         ),
         phx.metrix.AtlasConstructionPolicy(require_certified_cover=True),
@@ -96,7 +96,7 @@ def test_fixed_rank_strata_are_smooth_only_inside_one_rank_epoch():
         [[1.0 + 0.0j, 0.0j], [0.0j, 1.0 + 0.0j], [0.0j, 0.0j]]
     ) / jnp.sqrt(2.0)
     assert bool(manifold.contains(factor))
-    gauge = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
+    gauge = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
     assert jnp.allclose(manifold.density(factor), manifold.density(factor @ gauge))
 
     stratification = phx.metrix.DensityRankStratification(3)

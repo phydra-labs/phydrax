@@ -29,7 +29,7 @@ from ._contracts import (
 )
 
 
-_SCHEMA_REVISION = "xgboost-saved-model-v2-v3.1"
+_SCHEMA_REVISION = "xgboost-saved-model-v3.1"
 _MAX_CATEGORY = 16_777_216
 _INT32_MAX = 2_147_483_647
 _FLOAT32_MAX = float(np.finfo(np.float32).max)
@@ -262,7 +262,7 @@ def _detect_binary_format(raw: bytes) -> str:
     raise ConversionError("Artifact is neither XGBoost JSON nor XGBoost UBJSON.")
 
 
-def _normalise_json(value: Any, path: str = "$", active: set[int] | None = None) -> Any:
+def _normalize_json(value: Any, path: str = "$", active: set[int] | None = None) -> Any:
     active_ = set() if active is None else active
     if type(value) is dict or isinstance(value, Mapping):
         identity = id(value)
@@ -273,7 +273,7 @@ def _normalise_json(value: Any, path: str = "$", active: set[int] | None = None)
         for key, item in value.items():
             if type(key) is not str:
                 raise ConversionError(f"JSON object key at {path} is not a string.")
-            result[key] = _normalise_json(item, f"{path}.{key}", active_)
+            result[key] = _normalize_json(item, f"{path}.{key}", active_)
         active_.remove(identity)
         return result
     if type(value) is list or isinstance(value, _UBJArray):
@@ -282,7 +282,7 @@ def _normalise_json(value: Any, path: str = "$", active: set[int] | None = None)
             raise ConversionError(f"Cyclic array at {path} is not JSON.")
         active_.add(identity)
         values = [
-            _normalise_json(item, f"{path}[{index}]", active_)
+            _normalize_json(item, f"{path}[{index}]", active_)
             for index, item in enumerate(value)
         ]
         active_.remove(identity)
@@ -349,7 +349,7 @@ def _native_array_checksum(arrays: tuple[tuple[str, np.ndarray], ...]) -> str:
 
 def _load_source(source: Any) -> tuple[dict[str, Any], str, str]:
     if isinstance(source, Mapping):
-        document = _normalise_json(source)
+        document = _normalize_json(source)
         return document, "json-mapping", _logical_checksum(document)
 
     expected_format: str | None = None
@@ -404,7 +404,7 @@ def _load_source(source: Any) -> tuple[dict[str, Any], str, str]:
     document = (
         _decode_json(raw) if actual_format == "json" else _UBJSONDecoder(raw).decode()
     )
-    return _normalise_json(document), actual_format, hashlib.sha256(raw).hexdigest()
+    return _normalize_json(document), actual_format, hashlib.sha256(raw).hexdigest()
 
 
 def _object(value: Any, path: str) -> dict[str, Any]:
@@ -1059,7 +1059,7 @@ def _tree(
             raise UnsupportedConversionError(
                 f"Categorical segment {position} in {path} is not contiguous and valid."
             )
-        selected = tuple(int(item) for item in category_values[begin : begin + size])
+        selected = tuple(category_values[begin : begin + size])
         if tuple(sorted(set(selected))) != selected:
             raise UnsupportedConversionError(
                 f"Categorical values for node {int(node)} in {path} are not strictly ordered."
@@ -1074,7 +1074,7 @@ def _tree(
     threshold = np.zeros((node_count,), dtype=np.float32)
     native_left = left.astype(np.int32)
     native_right = right.astype(np.int32)
-    native_default = defaults.astype(bool)
+    native_default = defaults.astype("bool")
     native_feature = indices.astype(np.int32)
     native_split_kind = split_type.astype(np.int8)
     categorical_features: set[int] = set()
@@ -1367,7 +1367,7 @@ def from_xgboost_artifact(source: Any, /) -> ConversionResult:
             expected_groups = tuple(
                 group for group in range(output_width) for _ in range(num_parallel_tree)
             )
-            actual_groups = tuple(int(group) for group in tree_info[begin_:end_])
+            actual_groups = tuple(tree_info[begin_:end_])
             if actual_groups != expected_groups:
                 raise UnsupportedConversionError(
                     "Scalar-tree iteration has noncanonical parallel/output group ordering."
@@ -1408,14 +1408,14 @@ def from_xgboost_artifact(source: Any, /) -> ConversionResult:
     threshold = np.zeros(node_shape, dtype=np.float32)
     left_child = np.zeros(node_shape, dtype=np.int32)
     right_child = np.zeros(node_shape, dtype=np.int32)
-    default_left = np.zeros(node_shape, dtype=bool)
+    default_left = np.zeros(node_shape, dtype=np.bool_)
     split_kind = np.zeros(node_shape, dtype=np.int8)
     category_values = np.zeros(node_shape + (category_capacity,), dtype=np.float32)
-    category_mask = np.zeros(node_shape + (category_capacity,), dtype=bool)
+    category_mask = np.zeros(node_shape + (category_capacity,), dtype=np.bool_)
     leaf_value = np.zeros(node_shape + (output_width,), dtype=np.float32)
-    node_mask = np.zeros(node_shape, dtype=bool)
-    leaf_mask = np.zeros(node_shape, dtype=bool)
-    tree_mask = np.zeros((tree_capacity,), dtype=bool)
+    node_mask = np.zeros(node_shape, dtype=np.bool_)
+    leaf_mask = np.zeros(node_shape, dtype=np.bool_)
+    tree_mask = np.zeros((tree_capacity,), dtype=np.bool_)
     native_tree_weight = np.zeros((tree_capacity,), dtype=np.float32)
     node_gain = np.zeros(node_shape, dtype=np.float32)
     node_cover = np.zeros(node_shape, dtype=np.float32)
@@ -1443,7 +1443,7 @@ def from_xgboost_artifact(source: Any, /) -> ConversionResult:
     feature_schema = FeatureSchema(
         feature_names,
         kinds=feature_kinds,
-        layout_id="xgboost-positional-float32-v1",
+        layout_id="xgboost-positional-float32",
     )
     target_names = (
         ()
@@ -1504,7 +1504,7 @@ def from_xgboost_artifact(source: Any, /) -> ConversionResult:
             "dart_weighted": dart_weighted,
             "dense_input_domain": "finite float32 values with NaN missing sentinels",
             "feature_types": feature_types,
-            "iteration_indptr": tuple(int(value) for value in iteration_indptr),
+            "iteration_indptr": tuple(iteration_indptr),
             "missing_routing": "NaN follows persisted default_left child",
             "num_class": num_class,
             "num_feature": num_feature,
@@ -1522,7 +1522,7 @@ def from_xgboost_artifact(source: Any, /) -> ConversionResult:
                 "sparse absence must be normalized to NaN before native prediction",
                 "prediction is fully native and never imports or calls XGBoost",
             ),
-            "tree_info": tuple(int(value) for value in tree_info),
+            "tree_info": tuple(tree_info),
             "tree_weights": weights_configuration,
             "vector_leaf": vector_leaf,
         },

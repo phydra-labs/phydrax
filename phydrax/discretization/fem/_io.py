@@ -44,7 +44,7 @@ def write_finite_element_field(
         (_MESHIO_CELL_KINDS[block.cell_kind], np.asarray(block.vertices))
         for block in discretization.mesh.blocks
     ]
-    vertex_count = int(discretization.mesh.coordinates.shape[0])
+    vertex_count = discretization.mesh.coordinates.shape[0]
     point_values = np.asarray(values[:vertex_count])
     mesh = meshio.Mesh(
         np.asarray(realized.coordinates),

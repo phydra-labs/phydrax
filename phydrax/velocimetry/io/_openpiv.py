@@ -80,12 +80,12 @@ def read_openpiv_text(
     flags = (
         _integer_column(table, "flags")
         if "flags" in columns
-        else np.zeros(table.size, dtype=int)
+        else np.zeros(table.size, dtype=np.int64)
     )
     mask = (
         _integer_column(table, "mask")
         if "mask" in columns
-        else np.zeros(table.size, dtype=int)
+        else np.zeros(table.size, dtype=np.int64)
     )
     if np.any(flags < 0) or np.any(mask < 0):
         raise AdapterError(
@@ -256,7 +256,7 @@ def write_openpiv_text(
             )
         positions = np.asarray(field.positions_xy)
         velocity = np.asarray(field.velocity_xy)
-        valid = np.asarray(field.valid, dtype=bool)
+        valid = np.asarray(field.valid, dtype=np.bool_)
         if (
             positions.ndim != 3
             or positions.shape[-1] != 2
@@ -360,11 +360,11 @@ def _physical_grid(
     valid,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    x_ = np.asarray(x, dtype=float).reshape((-1,))
-    y_ = np.asarray(y, dtype=float).reshape((-1,))
-    u_ = np.asarray(u, dtype=float).reshape((-1,))
-    v_ = np.asarray(v, dtype=float).reshape((-1,))
-    valid_ = np.asarray(valid, dtype=bool).reshape((-1,))
+    x_ = np.asarray(x, dtype=np.float64).reshape((-1,))
+    y_ = np.asarray(y, dtype=np.float64).reshape((-1,))
+    u_ = np.asarray(u, dtype=np.float64).reshape((-1,))
+    v_ = np.asarray(v, dtype=np.float64).reshape((-1,))
+    valid_ = np.asarray(valid, dtype=np.bool_).reshape((-1,))
     if np.any(valid_ & (~np.isfinite(u_) | ~np.isfinite(v_))):
         raise AdapterError(
             AdapterStatus.INCONSISTENT_SOURCE,
@@ -386,11 +386,11 @@ def _physical_grid(
             "Physical OpenPIV positions contain duplicates.",
         )
     shape = (y_axis.size, x_axis.size)
-    positions = np.empty(shape + (2,), dtype=float)
+    positions = np.empty(shape + (2,), dtype=np.float64)
     positions[..., 0] = x_axis[None, :]
     positions[..., 1] = y_axis[:, None]
-    velocity = np.zeros(shape + (2,), dtype=np.result_type(u_, v_, float))
-    validity = np.zeros(shape, dtype=bool)
+    velocity = np.zeros(shape + (2,), dtype=np.result_type(u_, v_, np.float64))
+    validity = np.zeros(shape, dtype=np.bool_)
     velocity[y_index, x_index, 0] = np.where(valid_, u_, 0.0)
     velocity[y_index, x_index, 1] = np.where(valid_, v_, 0.0)
     validity[y_index, x_index] = valid_
@@ -414,7 +414,7 @@ def _numeric_column(table: np.ndarray, name: str, /) -> np.ndarray:
             AdapterStatus.MALFORMED_SOURCE,
             f"OpenPIV column {name!r} must be numeric.",
         )
-    return value.astype(float, copy=False)
+    return value.astype("float64", copy=False)
 
 
 def _integer_column(table: np.ndarray, name: str, /) -> np.ndarray:

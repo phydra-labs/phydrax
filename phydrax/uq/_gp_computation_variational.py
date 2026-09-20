@@ -80,9 +80,7 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
         policy = MaterializationPolicy(
             max_entries=resolved.num_observations * resolved.num_actions,
             max_bytes=(
-                resolved.num_observations
-                * resolved.num_actions
-                * int(points.dtype.itemsize)
+                resolved.num_observations * resolved.num_actions * points.dtype.itemsize
             ),
         )
         matrix = materialize(resolved.operator, policy)
@@ -112,7 +110,7 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
 
     @property
     def action_count(self) -> int:
-        return int(self.action_matrix.shape[1])
+        return self.action_matrix.shape[1]
 
     def standard_normal_state(self, /) -> SparseVariationalGaussianState:
         """Construct UQI's canonical prior state for this action capacity."""

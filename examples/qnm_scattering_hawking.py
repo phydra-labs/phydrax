@@ -144,7 +144,7 @@ def main() -> None:
         statuses = [int(item.status) for item in scattering]
         raise RuntimeError(f"Computed Schwarzschild scattering failed: {statuses}.")
 
-    greybody = jnp.stack(tuple(item.greybody_factor for item in scattering))[None, :]
+    graybody = jnp.stack(tuple(item.graybody_factor for item in scattering))[None, :]
     finite = jnp.asarray([jnp.all(jnp.stack(tuple(item.finite for item in scattering)))])
     converged = jnp.asarray(
         [jnp.all(jnp.stack(tuple(item.converged for item in scattering)))]
@@ -177,7 +177,7 @@ def main() -> None:
     )
     scattering_data = compact.HawkingScatteringData(
         spectrum_plan,
-        greybody,
+        graybody,
         jnp.asarray((scattering[0].corotation_slope,)),
         finite=finite,
         converged=converged,
@@ -204,7 +204,7 @@ def main() -> None:
 
     qnm_status = compact.QnmStatus(int(qnm.status)).name.lower()
     print("qnm_status", qnm_status, "M_omega", complex(qnm.angular_frequency))
-    print("greybody_factors", [float(value) for value in greybody[0]])
+    print("graybody_factors", [float(value) for value in graybody[0]])
     print(
         "computed_corotation_slopes",
         [float(item.corotation_slope) for item in scattering],

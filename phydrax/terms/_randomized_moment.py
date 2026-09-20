@@ -119,7 +119,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             raise ValueError("num_realizations must be at least two.")
         if loss_mode not in ("u_statistic", "independent_product", "plug_in"):
             raise ValueError("Unknown randomized moment loss_mode.")
-        coefficient = jnp.asarray(scale, dtype=float)
+        coefficient = jnp.asarray(scale, dtype=jnp.float64)
         if coefficient.shape != ():
             raise ValueError("Term scale must be a scalar.")
         if not bool(jnp.isfinite(coefficient)) or float(coefficient) < 0.0:
@@ -174,8 +174,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         target = jnp.asarray(self.condition.target)
         if jnp.broadcast_shapes(integrated.shape, target.shape) != integrated.shape:
             raise ValueError(
-                f"Moment target shape {target.shape} cannot broadcast to "
-                f"integrated shape {integrated.shape}."
+                f"Moment target shape {target.shape} cannot broadcast to integrated shape {integrated.shape}."
             )
         return integrated - target, estimate.diagnostics, estimate.precision_evidence
 
@@ -252,7 +251,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         )
         value = randomized_squared_mean(
             left,
-            tuple(int(size) for size in left.shape[1:]),
+            tuple(left.shape[1:]),
             self.loss_mode,
             right=right,
             precision=self.precision,
@@ -278,7 +277,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             iter_=iter_,
             kwargs=kwargs,
         )
-        event_shape = tuple(int(size) for size in left.shape[1:])
+        event_shape = tuple(left.shape[1:])
         objective = self.precision.decision(self.scale) * randomized_squared_mean(
             left,
             event_shape,

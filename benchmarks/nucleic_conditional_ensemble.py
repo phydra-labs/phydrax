@@ -205,12 +205,12 @@ def run(campaign_manifest: Path, *, max_steps: int, gradient_tolerance: float) -
     mapping = config["mapping"]
     ladder = prepare_conditional_mapping_ladder(
         batch,
-        np.asarray(mapping["binary_accessibility"], dtype=float),
-        nucleotide_features=np.asarray(mapping["nucleotide_features"], dtype=float),
+        np.asarray(mapping["binary_accessibility"], dtype="float64"),
+        nucleotide_features=np.asarray(mapping["nucleotide_features"], dtype="float64"),
         nucleotide_feature_names=tuple(mapping["nucleotide_feature_names"]),
-        local_context_features=np.asarray(mapping["local_context_features"], dtype=float),
+        local_context_features=np.asarray(mapping["local_context_features"], dtype="float64"),
         local_context_feature_names=tuple(mapping["local_context_feature_names"]),
-        condition_features=np.asarray(mapping["condition_features"], dtype=float),
+        condition_features=np.asarray(mapping["condition_features"], dtype="float64"),
         source_case_ids=tuple(
             batch.case_ids[int(index)] for index in mapping["source_case_ordinals"]
         ),
@@ -271,7 +271,7 @@ def run(campaign_manifest: Path, *, max_steps: int, gradient_tolerance: float) -
             design=(
                 None
                 if population_record["kind"] == "free-simplex"
-                else np.asarray(population_record["design"], dtype=float)
+                else np.asarray(population_record["design"], dtype="float64")
             ),
             feature_names=tuple(population_record.get("feature_names", ())),
         )
@@ -335,7 +335,7 @@ def run(campaign_manifest: Path, *, max_steps: int, gradient_tolerance: float) -
         tuple(support_ids),
         [float(score.independent_unit_macro) for score in support_selection_scores],
         equivalence_tolerance=float(config["support_equivalence_tolerance"]),
-        support_valid=np.asarray(support_valid, dtype=bool),
+        support_valid=np.asarray(support_valid, dtype="bool"),
         campaign_id=campaign.campaign_id,
         model_ids=tuple(model.model_id for model in support_models),
         hypothesis_ids=tuple(model.hypothesis.hypothesis_id for model in support_models),

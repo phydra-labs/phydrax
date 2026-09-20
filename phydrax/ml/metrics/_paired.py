@@ -86,16 +86,16 @@ class PairedLossComparisonResult(StrictModule):
         grouped: bool,
     ):
         self.loss_difference = jnp.asarray(loss_difference)
-        self.valid_mask = jnp.asarray(valid_mask, dtype=bool)
+        self.valid_mask = jnp.asarray(valid_mask, dtype=jnp.bool_)
         self.effect = jnp.asarray(effect)
         self.bootstrap_effects = jnp.asarray(bootstrap_effects)
         self.interval_lower = jnp.asarray(interval_lower)
         self.interval_upper = jnp.asarray(interval_upper)
         self.noninferiority_upper_bound = jnp.asarray(noninferiority_upper_bound)
-        self.noninferior = jnp.asarray(noninferior, dtype=bool)
+        self.noninferior = jnp.asarray(noninferior, dtype=jnp.bool_)
         self.effective_weight = jnp.asarray(effective_weight)
         self.independent_unit_count = jnp.asarray(independent_unit_count, dtype=jnp.int32)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.plan = plan
         self.grouped = bool(grouped)
@@ -130,7 +130,7 @@ def _group_units(
     sorted_difference = difference[order]
     group_start = jnp.concatenate(
         (
-            jnp.ones((1,), dtype=bool),
+            jnp.ones((1,), dtype=jnp.bool_),
             (support_key[order][1:] != support_key[order][:-1])
             | (sorted_group[1:] != sorted_group[:-1]),
         )

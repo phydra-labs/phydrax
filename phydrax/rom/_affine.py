@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..lifecycle import NumericRevision
 from ..linalg import (
@@ -72,7 +72,7 @@ class AffineCoefficientEvaluation(StrictModule, NonTrainableState):
         self.operator = jnp.asarray(operator)
         self.right_hand_side = jnp.asarray(right_hand_side)
         self.lift = jnp.asarray(lift)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.coefficient_map_id = str(coefficient_map_id)
         self.support_id = str(support_id)
@@ -81,13 +81,13 @@ class AffineCoefficientEvaluation(StrictModule, NonTrainableState):
 class AbstractAffineCoefficientMap(StrictModule, NonTrainableState):
     """Portable parameter-to-affine-coefficient contract."""
 
-    input_contract_id: AbstractAttribute[str]
-    unit_contract_id: AbstractAttribute[str]
-    support_id: AbstractAttribute[str]
-    operator_term_ids: AbstractAttribute[tuple[str, ...]]
-    right_hand_side_term_ids: AbstractAttribute[tuple[str, ...]]
-    lift_term_ids: AbstractAttribute[tuple[str, ...]]
-    coefficient_map_id: AbstractAttribute[str]
+    input_contract_id: eqx.AbstractVar[str]
+    unit_contract_id: eqx.AbstractVar[str]
+    support_id: eqx.AbstractVar[str]
+    operator_term_ids: eqx.AbstractVar[tuple[str, ...]]
+    right_hand_side_term_ids: eqx.AbstractVar[tuple[str, ...]]
+    lift_term_ids: eqx.AbstractVar[tuple[str, ...]]
+    coefficient_map_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def __call__(self, inputs: PyTree[Array], /) -> AffineCoefficientEvaluation:
@@ -141,7 +141,7 @@ class ArrayAffineCoefficientMap(AbstractAffineCoefficientMap):
         upper_ = jnp.asarray(upper)
         if operator.ndim != 2 or rhs.ndim != 2:
             raise ValueError("Coefficient matrices must be two-dimensional.")
-        input_size = int(operator.shape[1])
+        input_size = operator.shape[1]
         if rhs.shape[1] != input_size:
             raise ValueError("All coefficient matrices must share one input width.")
         lift_ids = tuple(str(item) for item in lift_term_ids)

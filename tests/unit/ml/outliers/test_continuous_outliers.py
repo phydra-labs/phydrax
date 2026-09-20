@@ -101,12 +101,12 @@ def test_outlier_case_sample_feature_target_axes_masks_and_statistical_weight_po
     targets = jnp.stack(
         (jnp.arange(16.0).reshape(2, 8), -jnp.arange(16.0).reshape(2, 8)), axis=-1
     )
-    feature_mask = jnp.ones_like(features, dtype=bool).at[:, 2, 1].set(False)
+    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 2, 1].set(False)
     sample_mask = jnp.array([True, True, True, True, True, True, True, False])
     sample_weight = jnp.array([1.0, 2.0, 9.0, 1.0, 3.0, 1.0, 2.0, 8.0])
     common = dict(
         feature_mask=feature_mask,
-        target_mask=jnp.ones_like(targets, dtype=bool).at[:, 0, 1].set(False),
+        target_mask=jnp.ones_like(targets, dtype="bool").at[:, 0, 1].set(False),
         sample_mask=sample_mask,
         sample_weight=sample_weight,
     )

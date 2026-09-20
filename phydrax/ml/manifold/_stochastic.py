@@ -37,7 +37,7 @@ def _tsne_squared_distances(values: Array) -> Array:
     cross = jnp.real(x @ jnp.conj(jnp.swapaxes(x, -1, -2)))
     squared = norms + jnp.swapaxes(norms, -1, -2) - 2.0 * cross
     squared = 0.5 * (squared + jnp.swapaxes(squared, -1, -2))
-    diagonal = jnp.eye(x.shape[-2], dtype=bool)
+    diagonal = jnp.eye(x.shape[-2], dtype=jnp.bool_)
     return jnp.where(diagonal, jnp.zeros_like(squared), squared)
 
 
@@ -47,8 +47,8 @@ def _perplexity_probabilities_one(
     active: Array,
     perplexity: float,
 ) -> Array:
-    n = int(active.shape[0])
-    eligible = active[:, None] & active[None, :] & ~jnp.eye(n, dtype=bool)
+    n = active.shape[0]
+    eligible = active[:, None] & active[None, :] & ~jnp.eye(n, dtype=jnp.bool_)
     tiny = jnp.finfo(weights.dtype).tiny
     log_weights = jnp.log(jnp.maximum(weights, tiny))
     target_entropy = jnp.log(float(perplexity))
@@ -94,7 +94,9 @@ def _perplexity_probabilities_one(
 
 def _tsne_loss(embedding: Array, probabilities: Array, active: Array) -> Array:
     squared = _tsne_squared_distances(embedding)
-    eligible = active[:, None] & active[None, :] & ~jnp.eye(active.shape[0], dtype=bool)
+    eligible = (
+        active[:, None] & active[None, :] & ~jnp.eye(active.shape[0], dtype=jnp.bool_)
+    )
     numerator = jnp.where(eligible, 1.0 / (1.0 + squared), 0.0)
     tiny = jnp.finfo(probabilities.dtype).tiny
     q = numerator / jnp.maximum(jnp.sum(numerator), tiny)
@@ -165,10 +167,10 @@ class TSNEModel(AbstractArrayModel):
         coordinates = jnp.asarray(embedding)
         self.embedding = coordinates
         self.training_features = train
-        self.active = jnp.asarray(active, dtype=bool)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(train.shape[-1])
-        self.out_size = int(coordinates.shape[-1])
+        self.in_size = train.shape[-1]
+        self.out_size = coordinates.shape[-1]
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del x, key
@@ -306,7 +308,7 @@ def _fuzzy_graph_one(
     weights: Array,
     n_neighbors: int,
 ) -> tuple[Array, Array, Array]:
-    n = int(active.shape[0])
+    n = active.shape[0]
     positive = route_valid & (distances > 0.0)
     rho = jnp.min(jnp.where(positive, distances, jnp.inf), axis=-1)
     rho = jnp.where(jnp.isfinite(rho), rho, 0.0)
@@ -358,7 +360,9 @@ def _umap_loss(
     squared = pairwise_distances(embedding, metric="squared-euclidean")
     scale = max(float(min_dist), 1e-3)
     q = 1.0 / (1.0 + squared / (scale * scale))
-    eligible = active[:, None] & active[None, :] & ~jnp.eye(active.shape[0], dtype=bool)
+    eligible = (
+        active[:, None] & active[None, :] & ~jnp.eye(active.shape[0], dtype=jnp.bool_)
+    )
     epsilon = jnp.finfo(q.dtype).eps
     q = jnp.clip(q, epsilon, 1.0 - epsilon)
     loss = -fuzzy * jnp.log(q) - float(repulsion) * (1.0 - fuzzy) * jnp.log1p(-q)
@@ -424,11 +428,11 @@ class FuzzyGraphEmbeddingModel(AbstractArrayModel):
         coordinates = jnp.asarray(embedding)
         self.training_features = train
         self.embedding = coordinates
-        self.active = jnp.asarray(active, dtype=bool)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
         self.n_neighbors = int(n_neighbors)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(train.shape[-1])
-        self.out_size = int(coordinates.shape[-1])
+        self.in_size = train.shape[-1]
+        self.out_size = coordinates.shape[-1]
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key

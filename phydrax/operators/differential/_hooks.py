@@ -57,41 +57,25 @@ class _BlendWithGateCallable(StrictModule):
         self.base = base
         self.overlay = overlay
         self.gate = gate
-        self.base_pos = tuple(int(i) for i in base_pos)
-        self.overlay_pos = tuple(int(i) for i in overlay_pos)
-        self.gate_pos = tuple(int(i) for i in gate_pos)
+        self.base_pos = tuple(base_pos)
+        self.overlay_pos = tuple(overlay_pos)
+        self.gate_pos = tuple(gate_pos)
 
     def __call__(self, *args, key=None, **kwargs):
         def _align_axiswise(a: Any, b: Any, /) -> tuple[Any, Any]:
             a_arr = jnp.asarray(a)
             b_arr = jnp.asarray(b)
-            if (
-                a_arr.ndim == 1
-                and b_arr.ndim >= 2
-                and int(a_arr.shape[0]) == int(b_arr.shape[0])
-            ):
-                shape = (int(a_arr.shape[0]),) + (1,) * (b_arr.ndim - 1)
+            if a_arr.ndim == 1 and b_arr.ndim >= 2 and a_arr.shape[0] == b_arr.shape[0]:
+                shape = (a_arr.shape[0],) + (1,) * (b_arr.ndim - 1)
                 return a_arr.reshape(shape), b_arr
-            if (
-                b_arr.ndim == 1
-                and a_arr.ndim >= 2
-                and int(b_arr.shape[0]) == int(a_arr.shape[0])
-            ):
-                shape = (int(b_arr.shape[0]),) + (1,) * (a_arr.ndim - 1)
+            if b_arr.ndim == 1 and a_arr.ndim >= 2 and b_arr.shape[0] == a_arr.shape[0]:
+                shape = (b_arr.shape[0],) + (1,) * (a_arr.ndim - 1)
                 return a_arr, b_arr.reshape(shape)
-            if (
-                a_arr.ndim == 1
-                and b_arr.ndim >= 2
-                and int(a_arr.shape[0]) == int(b_arr.shape[-1])
-            ):
-                shape = (1,) * (b_arr.ndim - 1) + (int(a_arr.shape[0]),)
+            if a_arr.ndim == 1 and b_arr.ndim >= 2 and a_arr.shape[0] == b_arr.shape[-1]:
+                shape = (1,) * (b_arr.ndim - 1) + (a_arr.shape[0],)
                 return a_arr.reshape(shape), b_arr
-            if (
-                b_arr.ndim == 1
-                and a_arr.ndim >= 2
-                and int(b_arr.shape[0]) == int(a_arr.shape[-1])
-            ):
-                shape = (1,) * (a_arr.ndim - 1) + (int(b_arr.shape[0]),)
+            if b_arr.ndim == 1 and a_arr.ndim >= 2 and b_arr.shape[0] == a_arr.shape[-1]:
+                shape = (1,) * (a_arr.ndim - 1) + (b_arr.shape[0],)
                 return a_arr, b_arr.reshape(shape)
             return a_arr, b_arr
 

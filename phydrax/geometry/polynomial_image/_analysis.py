@@ -70,8 +70,7 @@ class PolynomialImageAnalysisPolicy(StrictModule, NonTrainableState):
         if any(not math.isfinite(value) or value < 0.0 for value in (absolute, relative)):
             raise ValueError("Held-out tolerances must be finite and non-negative.")
         limits = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_samples,
                 maximum_monomials,
                 maximum_design_entries,
@@ -92,7 +91,7 @@ class PolynomialImageAnalysisPolicy(StrictModule, NonTrainableState):
         ) = limits
         self.policy_id = canonical_fingerprint(
             {
-                "kind": "polynomial-image-analysis-policy-v1",
+                "kind": "polynomial-image-analysis-policy",
                 "rank_relative_tolerance": rank_tolerance,
                 "rank_ambiguity_factor": ambiguity,
                 "heldout_absolute_tolerance": absolute,
@@ -173,10 +172,10 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
             if discovery_count < 0 or heldout_count < 0:
                 raise ValueError("Affine sample counts must be non-negative.")
             lower = np.broadcast_to(
-                np.asarray(lower_bounds, dtype=float), (dimension,)
+                np.asarray(lower_bounds, dtype=np.float64), (dimension,)
             ).copy()
             upper = np.broadcast_to(
-                np.asarray(upper_bounds, dtype=float), (dimension,)
+                np.asarray(upper_bounds, dtype=np.float64), (dimension,)
             ).copy()
             if (
                 not np.all(np.isfinite(lower))
@@ -184,8 +183,8 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
                 or np.any(lower >= upper)
             ):
                 raise ValueError("Affine sample bounds must be finite and increasing.")
-            explicit = np.zeros((0, dimension), dtype=float)
-            explicit_heldout = np.zeros((0, dimension), dtype=float)
+            explicit = np.zeros((0, dimension), dtype=np.float64)
+            explicit_heldout = np.zeros((0, dimension), dtype=np.float64)
             kind = SourceSampleKind.AFFINE_PRNG
         else:
             if key is not None:
@@ -206,16 +205,16 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
                     "Explicit source points must have shape (samples, source_dimension)."
                 )
             if not np.issubdtype(explicit.dtype, np.inexact):
-                explicit = explicit.astype(float)
+                explicit = explicit.astype("float64")
             if not np.issubdtype(explicit_heldout.dtype, np.inexact):
-                explicit_heldout = explicit_heldout.astype(float)
+                explicit_heldout = explicit_heldout.astype("float64")
             dtype = np.result_type(explicit.dtype, explicit_heldout.dtype)
             explicit = explicit.astype(dtype, copy=False)
             explicit_heldout = explicit_heldout.astype(dtype, copy=False)
             discovery_count = explicit.shape[0]
             heldout_count = explicit_heldout.shape[0]
-            lower = np.zeros((dimension,), dtype=float)
-            upper = np.ones((dimension,), dtype=float)
+            lower = np.zeros((dimension,), dtype=np.float64)
+            upper = np.ones((dimension,), dtype=np.float64)
             kind = SourceSampleKind.EXPLICIT
         self.polynomial_map = polynomial_map
         self.target_support = target_support
@@ -231,7 +230,7 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
         self.map_support_id = polynomial_map.system.support.support_id
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "polynomial-image-analysis-plan-v1",
+                "kind": "polynomial-image-analysis-plan",
                 "map_support": self.map_support_id,
                 "coefficient_dtype": np.dtype(
                     polynomial_map.system.coefficients.dtype
@@ -307,7 +306,7 @@ class PreparedPolynomialImageAnalysis(StrictModule, NonTrainableState):
         self.numeric_version = version
         self.prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-polynomial-image-analysis-v1",
+                "kind": "prepared-polynomial-image-analysis",
                 "plan": plan.plan_id,
                 "samples": array_tree_fingerprint((source, heldout)),
             }
@@ -474,11 +473,11 @@ def _empty_relation_evidence(
         rank_lower_cutoff=jnp.asarray(0.0, dtype=dtype),
         rank_upper_cutoff=jnp.asarray(0.0, dtype=dtype),
         candidate_coefficients=jnp.zeros((monomial_count, monomial_count), dtype=dtype),
-        candidate_active=jnp.zeros((monomial_count,), dtype=bool),
+        candidate_active=jnp.zeros((monomial_count,), dtype=jnp.bool_),
         discovery_residuals=jnp.zeros((monomial_count,), dtype=dtype),
         heldout_residuals=jnp.zeros((monomial_count,), dtype=dtype),
         heldout_tolerances=jnp.zeros((monomial_count,), dtype=dtype),
-        heldout_accepted=jnp.zeros((monomial_count,), dtype=bool),
+        heldout_accepted=jnp.zeros((monomial_count,), dtype=jnp.bool_),
         provider=_SVD_PROVIDER,
         svd_plan_id=None,
     )
@@ -639,7 +638,7 @@ def _relation_evidence(
     capacity = support.monomial_count
     padded = np.zeros((capacity, capacity), dtype=right.dtype)
     padded[: candidates.shape[0]] = candidates
-    active = np.zeros((capacity,), dtype=bool)
+    active = np.zeros((capacity,), dtype=np.bool_)
     active[: candidates.shape[0]] = True
     discovery_values = np.asarray(design) @ padded.T
     heldout_values = np.asarray(heldout_design) @ padded.T

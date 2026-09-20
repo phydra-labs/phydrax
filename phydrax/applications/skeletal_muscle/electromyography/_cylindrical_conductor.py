@@ -122,8 +122,8 @@ class Farina2004CylindricalConductorPlan(StrictModule):
 
     Required radii are the muscle/fat/skin outer radii. Conductivities are
     (muscle transverse, muscle longitudinal, fat isotropic, skin isotropic).
-    Electrode centers are (azimuth radians, axial metres); contact sizes are
-    (circumferential arc length metres, axial length metres). All are explicit.
+    Electrode centers are (azimuth radians, axial meters); contact sizes are
+    (circumferential arc length meters, axial length meters). All are explicit.
     """
 
     layer_radii_m: Array
@@ -161,7 +161,7 @@ class Farina2004CylindricalConductorPlan(StrictModule):
         electrode_source_id: str,
         residual_tolerance: float = 1.0e-7,
     ):
-        radii = jnp.asarray(layer_radii_m, dtype=float)
+        radii = jnp.asarray(layer_radii_m, dtype=jnp.float64)
         sigma = jnp.asarray(conductivity_S_per_m, dtype=radii.dtype)
         centers = jnp.asarray(electrode_centers, dtype=radii.dtype)
         sizes = jnp.asarray(contact_sizes_m, dtype=radii.dtype)

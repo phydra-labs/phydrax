@@ -26,7 +26,7 @@ def run() -> dict[str, object]:
             system_id="magnetic-resonance-smoke",
         )
     ).prepare()
-    plus_x = jnp.asarray([1.0, 1.0], dtype=complex) / jnp.sqrt(2.0)
+    plus_x = jnp.asarray([1.0, 1.0], dtype="complex128") / jnp.sqrt(2.0)
     density = jnp.outer(plus_x, jnp.conj(plus_x))
     fid = mr.acquire_fid(
         prepared,

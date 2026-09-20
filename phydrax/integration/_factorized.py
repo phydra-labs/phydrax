@@ -99,11 +99,8 @@ def _prepared_term_factors(
 def _factor_shape(factors: tuple[AxisFactor, ...], /) -> tuple[int, int]:
     if not factors:
         raise ValueError("A factorized product term requires factors.")
-    shape = tuple(int(size) for size in factors[0].tensor.shape[-2:])
-    if any(
-        tuple(int(size) for size in factor.tensor.shape[-2:]) != shape
-        for factor in factors
-    ):
+    shape = tuple(factors[0].tensor.shape[-2:])
+    if any(tuple(factor.tensor.shape[-2:]) != shape for factor in factors):
         raise ValueError(
             "Every factor in one product term must share latent and output sizes."
         )
@@ -154,7 +151,7 @@ def _aligned_factor(factor: AxisFactor, axes: tuple[str, ...], /) -> Array:
         value = jnp.transpose(value, permutation)
     sizes = dict(zip(present, value.shape[: len(present)], strict=True))
     shape = tuple(int(sizes[axis]) if axis in sizes else 1 for axis in axes) + tuple(
-        int(size) for size in value.shape[-2:]
+        value.shape[-2:]
     )
     return value.reshape(shape)
 
@@ -169,9 +166,7 @@ def _component_pairing(
     dtype: Any,
     /,
 ) -> Array:
-    axis_sizes = tuple(
-        int(batch.weights_by_axis[axis].data.shape[0]) for axis in component
-    )
+    axis_sizes = tuple(batch.weights_by_axis[axis].data.shape[0] for axis in component)
     left = jnp.ones(axis_sizes + left_shape, dtype=dtype)
     right = jnp.ones(axis_sizes + right_shape, dtype=dtype)
     for factor in left_factors:
@@ -233,9 +228,7 @@ def _term_pairing(
         )
         maximum_points = max(
             maximum_points,
-            math.prod(
-                int(batch.weights_by_axis[axis].data.shape[0]) for axis in component
-            ),
+            math.prod(batch.weights_by_axis[axis].data.shape[0] for axis in component),
         )
     constant_left = jnp.ones(left_shape, dtype=combined.dtype)
     constant_right = jnp.ones(right_shape, dtype=combined.dtype)
@@ -308,7 +301,7 @@ def factorized_bilinear_form(
     if realization is not None:
         value = realization.precision.output(value)
     full_points = math.prod(
-        int(batch.weights_by_axis[axis].data.shape[0]) for axis in batch.axes
+        batch.weights_by_axis[axis].data.shape[0] for axis in batch.axes
     )
     return FactorizedBilinearEvaluation(
         value=value,

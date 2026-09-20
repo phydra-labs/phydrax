@@ -99,17 +99,17 @@ def _take_sequence_indices(tree: Any, indices: Array, /, *, sequence_axis: int) 
 
 def _segment_reverse_indices(batch: RecurrentBatch, /) -> tuple[Array, Array]:
     valid = batch.valid
-    length = int(valid.shape[-1])
+    length = valid.shape[-1]
     positions = jnp.broadcast_to(jnp.arange(length), valid.shape)
     previous_invalid = jnp.concatenate(
-        (jnp.ones(valid.shape[:-1] + (1,), dtype=bool), ~valid[..., :-1]),
+        (jnp.ones(valid.shape[:-1] + (1,), dtype=jnp.bool_), ~valid[..., :-1]),
         axis=-1,
     )
     starts = valid & (batch.reset | previous_invalid)
     next_boundary = jnp.concatenate(
         (
             (~valid[..., 1:]) | batch.reset[..., 1:],
-            jnp.ones(valid.shape[:-1] + (1,), dtype=bool),
+            jnp.ones(valid.shape[:-1] + (1,), dtype=jnp.bool_),
         ),
         axis=-1,
     )

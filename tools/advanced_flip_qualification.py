@@ -47,7 +47,7 @@ def _case(count):
     position = jnp.stack((xx.reshape((-1,)), yy.reshape((-1,))), axis=-1)
     interface_plan = phx.discretization.flip.ParticleLevelSetPlan(grid, 1.5 / count)
     interface = interface_plan.evaluate(
-        position, jnp.ones((position.shape[0],), dtype=bool)
+        position, jnp.ones((position.shape[0],), dtype="bool")
     )
     capillary = phx.discretization.finite_volume.MACGhostFluidCapillaryPlan(
         0.05, interface_width=2.0 / count

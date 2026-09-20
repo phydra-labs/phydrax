@@ -36,7 +36,9 @@ def _payload(graph: GraphIR, kind: GraphPayloadKind, key: str, /) -> Array:
     return value
 
 
-def _replace(graph: GraphIR, kind: GraphPayloadKind, key: str, value: Array, /) -> GraphIR:
+def _replace(
+    graph: GraphIR, kind: GraphPayloadKind, key: str, value: Array, /
+) -> GraphIR:
     container = graph.nodes if kind == "nodes" else graph.edges
     assert isinstance(container, Mapping)
     updated = {**container, key: value}
@@ -76,8 +78,10 @@ class FixedTopologyGraphDiffusion(StrictModule):
         if payload_kind not in ("nodes", "edges") or not payload_key:
             raise ValueError("payload_kind/key are invalid.")
         value = _payload(template, payload_kind, payload_key)
-        if process.state_shape != (int(value.size),):
-            raise ValueError("Gaussian process dimension must equal flattened payload size.")
+        if process.state_shape != (value.size,):
+            raise ValueError(
+                "Gaussian process dimension must equal flattened payload size."
+            )
         self.template = template
         self.process = process
         self.payload_kind = payload_kind
@@ -117,7 +121,7 @@ class FixedTopologyGraphDiffusion(StrictModule):
         result = perturbed.reshape(self.payload_shape)
         mask = graph.node_mask if self.payload_kind == "nodes" else graph.edge_mask
         if mask is not None:
-            expanded = jnp.asarray(mask, dtype=bool).reshape(
+            expanded = jnp.asarray(mask, dtype=jnp.bool_).reshape(
                 mask.shape + (1,) * (result.ndim - mask.ndim)
             )
             result = jnp.where(expanded, result, value)
@@ -132,7 +136,7 @@ class FixedTopologyGraphDiffusion(StrictModule):
         mask = clean.node_mask if self.payload_kind == "nodes" else clean.edge_mask
         if mask is None:
             return score
-        expanded = jnp.asarray(mask, dtype=bool).reshape(
+        expanded = jnp.asarray(mask, dtype=jnp.bool_).reshape(
             mask.shape + (1,) * (score.ndim - mask.ndim)
         )
         return jnp.where(expanded, score, 0.0)
@@ -156,7 +160,7 @@ def graph_denoising_loss(
     mask = clean.node_mask if diffusion.payload_kind == "nodes" else clean.edge_mask
     if mask is None:
         return jnp.mean((prediction - target) ** 2)
-    expanded = jnp.asarray(mask, dtype=bool).reshape(
+    expanded = jnp.asarray(mask, dtype=jnp.bool_).reshape(
         mask.shape + (1,) * (prediction.ndim - mask.ndim)
     )
     expanded = jnp.broadcast_to(expanded, prediction.shape)

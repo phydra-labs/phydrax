@@ -70,11 +70,11 @@ def test_linear_endpoints_interior_and_bounds_policies_are_explicit():
     extrapolated = linear_interpolate(nodes, values, query, bounds="extrapolate")
 
     assert jnp.allclose(clipped.values, jnp.asarray([0.0, 0.0, 1.0, 8.0, 8.0]))
-    assert jnp.array_equal(clipped.support, jnp.ones(5, dtype=bool))
+    assert jnp.array_equal(clipped.support, jnp.ones(5, dtype="bool"))
     assert jnp.allclose(filled.values, jnp.asarray([-7.0, 0.0, 1.0, 8.0, -7.0]))
     assert jnp.array_equal(filled.support, jnp.asarray([False, True, True, True, False]))
     assert jnp.allclose(extrapolated.values, jnp.asarray([-2.0, 0.0, 1.0, 8.0, 11.0]))
-    assert jnp.array_equal(extrapolated.support, jnp.ones(5, dtype=bool))
+    assert jnp.array_equal(extrapolated.support, jnp.ones(5, dtype="bool"))
 
     with pytest.raises(eqx.EquinoxRuntimeError, match="outside"):
         unsupported = linear_interpolate(nodes, values, query, bounds="error")
@@ -112,7 +112,7 @@ def test_linear_interpolation_preserves_payload_axes_around_source_axis():
 
     assert result.values.shape == (2, 2)
     assert jnp.allclose(result.values, jnp.asarray([[1.0, 11.0], [5.0, 15.0]]))
-    assert jnp.array_equal(result.support, jnp.ones(2, dtype=bool))
+    assert jnp.array_equal(result.support, jnp.ones(2, dtype="bool"))
 
 
 def test_linear_source_mask_support_is_strict_or_renormalized():

@@ -37,7 +37,7 @@ def _plan(statistics, *, kernel=1.0, maximum_substeps=64):
 
 
 def _occupancy(values):
-    return jnp.asarray(values, dtype=float).reshape((4, 1, 1))
+    return jnp.asarray(values, dtype="float64").reshape((4, 1, 1))
 
 
 def test_shared_quantum_event_has_classical_limit_fermi_blocking_and_bose_enhancement():

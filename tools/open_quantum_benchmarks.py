@@ -26,14 +26,14 @@ def _benchmark(function, argument, repeats):
     return {
         "compile_and_first_seconds": first,
         "steady_seconds": (perf_counter() - start) / repeats,
-        "output_bytes": int(output.size * output.dtype.itemsize),
+        "output_bytes": output.size * output.dtype.itemsize,
     }
 
 
 def run_benchmarks(*, repeats=5):
     gaussian = phx.solver.damped_thermal_oscillator(0.4, 1.0)
     fock = phx.operators.quantum.BosonicFockSpace((16,))
-    state = jnp.zeros((16,), dtype=complex).at[3].set(1.0)
+    state = jnp.zeros((16,), dtype="complex128").at[3].set(1.0)
     heom = phx.solver.drude_lorentz_qubit_heom(
         0.05,
         1.0,

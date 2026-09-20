@@ -435,7 +435,7 @@ class ExtendedXYZTrajectoryReader(AtomisticTrajectoryReader):
                 )
             elif metadata.get("unit_system_id") != self.units.unit_system_id:
                 raise ValueError("Extended XYZ frame units changed within the stream.")
-            position = np.zeros((count, 3), dtype=float)
+            position = np.zeros((count, 3), dtype=np.float64)
             for index in range(count):
                 fields = self.handle.readline().split()
                 if len(fields) != 4:

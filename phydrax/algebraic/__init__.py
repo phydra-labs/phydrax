@@ -4,6 +4,8 @@
 
 """Sparse polynomial systems, exact grading evidence, and root lowering."""
 
+from importlib import import_module
+
 from ._certification import (
     ExactRealRootInterval,
     isolate_univariate_real_roots,
@@ -47,21 +49,35 @@ from ._grading import (
     total_degree_bezout_forecast,
     total_degrees,
 )
-from ._isolated import *  # noqa: F403
 from ._isolated import __all__ as _isolated_all
 from ._nonlinear import (
     ComplexPolynomialRootLowering,
     lower_complex_polynomial_root,
 )
-from ._positive_dimensional import *  # noqa: F403
 from ._positive_dimensional import __all__ as _positive_dimensional_all
-from ._quotient import *  # noqa: F403
 from ._quotient import __all__ as _quotient_all
 from ._symmetry import (
     analyze_exponent_lattice_scaling,
     ExponentLatticeScalingEvidence,
 )
 from ._system import PolynomialScaling, SparsePolynomialSupport, SparsePolynomialSystem
+
+
+_FACADE_EXPORT_MODULES = ("._isolated", "._positive_dimensional", "._quotient")
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

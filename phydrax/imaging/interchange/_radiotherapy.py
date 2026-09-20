@@ -216,7 +216,7 @@ def read_dicom_rt_plan_metadata(
 
 @dataclass(frozen=True, slots=True)
 class RTClosedPlanarContour:
-    """One DICOM CLOSED_PLANAR polygon in LPS millimetres."""
+    """One DICOM CLOSED_PLANAR polygon in LPS millimeters."""
 
     points_lps_mm: np.ndarray
     referenced_image_uids: tuple[str, ...]
@@ -443,8 +443,7 @@ def read_dicom_rt_structure_set_closed_planar(
                     and image_identity.frame_of_reference_uid != roi_frame
                 ):
                     raise DICOMProfileError(
-                        "RTSTRUCT contour and referenced image use different "
-                        "Frames of Reference."
+                        "RTSTRUCT contour and referenced image use different Frames of Reference."
                     )
             contours.append(RTClosedPlanarContour(coordinates, image_uids))
             contour_count += 1
@@ -491,7 +490,7 @@ def read_dicom_rt_structure_set_closed_planar(
             "ROI-identity",
             "CLOSED_PLANAR-LPS-contours",
         ),
-        coordinate_mapping=("ContourData -> LPS millimetres",),
+        coordinate_mapping=("ContourData -> LPS millimeters",),
     )
     return DICOMRTStructureSetImport(structure_set, report)
 
@@ -652,7 +651,7 @@ def _read_rt_dose(
             "reference-graph",
             "DoseGridScaling",
             "physical-dose-semantics",
-            "LPS-voxel-centre-geometry",
+            "LPS-voxel-center-geometry",
         ),
         coordinate_mapping=(
             "DICOM array row -> affine index axis 0",

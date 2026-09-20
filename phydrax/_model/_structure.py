@@ -19,6 +19,7 @@ import jax.random as jr
 import numpy as np
 
 from .._frozendict import frozendict
+from .._strict import Strict
 from ._artifacts import artifact_value, artifact_value_id
 
 
@@ -28,16 +29,16 @@ def _is_prng_key(value: Any, /) -> bool:
     )
 
 
-def serialise_model_leaf(file, value: Any, /) -> None:
-    """Serialise one model leaf, preserving typed JAX PRNG keys."""
+def serialize_model_leaf(file, value: Any, /) -> None:
+    """Serialize one model leaf, preserving typed JAX PRNG keys."""
     if _is_prng_key(value):
         np.save(file, np.asarray(jr.key_data(value)))
         return
     eqx.default_serialise_filter_spec(file, value)
 
 
-def deserialise_model_leaf(file, value: Any, /) -> Any:
-    """Deserialise one model leaf against its structural template."""
+def deserialize_model_leaf(file, value: Any, /) -> Any:
+    """Deserialize one model leaf against its structural template."""
     if _is_prng_key(value):
         data = jnp.asarray(np.load(file), dtype=jnp.uint32)
         return jr.wrap_key_data(data, impl=str(jr.key_impl(value)))
@@ -174,6 +175,28 @@ def model_structure_recipe(
     )
 
 
+def _restore_dataclass_template(
+    cls: type,
+    fields: Mapping[str, Any],
+    /,
+) -> Any:
+    if not dataclasses.is_dataclass(cls):
+        raise TypeError("Artifact dataclass identity does not resolve to a dataclass.")
+    expected = tuple(field.name for field in dataclasses.fields(cls))
+    if set(fields) != set(expected):
+        raise ValueError("Artifact dataclass fields do not match their registered type.")
+    instance = object.__new__(cls)
+    for name in expected:
+        object.__setattr__(
+            instance,
+            name,
+            model_from_structure_recipe(fields[name]),
+        )
+    if issubclass(cls, Strict):
+        object.__setattr__(instance, "_strict_initialized", True)
+    return instance
+
+
 def model_from_structure_recipe(recipe: Mapping[str, Any], /) -> Any:
     """Construct an array-zeroed model template from a structure recipe."""
     kind = recipe["kind"]
@@ -211,14 +234,7 @@ def model_from_structure_recipe(recipe: Mapping[str, Any], /) -> Any:
         return cls(*(model_from_structure_recipe(item) for item in recipe["items"]))
     if kind == "dataclass":
         cls = artifact_value(recipe["type"])
-        instance = object.__new__(cls)
-        for name, value in recipe["fields"].items():
-            object.__setattr__(
-                instance,
-                name,
-                model_from_structure_recipe(value),
-            )
-        return instance
+        return _restore_dataclass_template(cls, recipe["fields"])
     if kind in ("tuple", "list", "set", "frozenset"):
         items = [model_from_structure_recipe(item) for item in recipe["items"]]
         if kind == "tuple":
@@ -242,8 +258,8 @@ def model_from_structure_recipe(recipe: Mapping[str, Any], /) -> Any:
 
 
 __all__ = [
-    "deserialise_model_leaf",
+    "deserialize_model_leaf",
     "model_from_structure_recipe",
     "model_structure_recipe",
-    "serialise_model_leaf",
+    "serialize_model_leaf",
 ]

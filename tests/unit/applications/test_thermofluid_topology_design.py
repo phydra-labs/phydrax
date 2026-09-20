@@ -62,7 +62,7 @@ def channel():
         phx.optim.ConicDensityFilterPlan(
             finite_volume.cell_centers.reshape((-1, 2)),
             0.28,
-            jnp.ones((16,), dtype=bool),
+            jnp.ones((16,), dtype="bool"),
             jnp.zeros((16,)),
             finite_volume.cell_volumes.reshape((-1,)),
         ),

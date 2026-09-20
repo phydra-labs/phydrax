@@ -86,8 +86,7 @@ def _broadcast_vector(
         return jnp.broadcast_to(array.reshape((dimension,) + (1,) * len(shape)), target)
     if array.shape != target:
         raise ValueError(
-            f"Vector MAC boundary data must have shape {(dimension,)}, {target}, "
-            "or be scalar."
+            f"Vector MAC boundary data must have shape {(dimension,)}, {target}, or be scalar."
         )
     return array
 
@@ -112,7 +111,7 @@ class MACBoundaryProvider(StrictModule, NonTrainableState):
     ):
         value_ = jnp.asarray(value)
         if not jnp.issubdtype(value_.dtype, jnp.inexact):
-            value_ = value_.astype(float)
+            value_ = value_.astype("float64")
         rate_ = (
             jnp.zeros_like(value_)
             if rate is None
@@ -335,7 +334,7 @@ class PreparedMACBoundaryPlan(StrictModule, NonTrainableState):
                         coordinate_axis if coordinate_axis < axis else coordinate_axis - 1
                     )
                     reshape = [1] * len(shape)
-                    reshape[local_axis] = int(structured_axis.interval_centers.size)
+                    reshape[local_axis] = structured_axis.interval_centers.size
                     side_coordinates.append(
                         jnp.broadcast_to(
                             structured_axis.interval_centers.reshape(tuple(reshape)),

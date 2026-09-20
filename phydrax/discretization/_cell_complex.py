@@ -107,7 +107,7 @@ def interval_connectivity(
         jnp.asarray(counts, dtype=jnp.int32),
         jnp.asarray(counts == 1),
         int(vertex_count),
-        int(cells.shape[0]),
+        cells.shape[0],
     )
 
 
@@ -124,9 +124,7 @@ def interval_cell_complex(
     vertex_ids = _resolved_entity_ids(
         "vertex_global_ids", vertex_global_ids, int(vertex_count)
     )
-    cell_ids = _resolved_entity_ids(
-        "cell_global_ids", cell_global_ids, int(cells.shape[0])
-    )
+    cell_ids = _resolved_entity_ids("cell_global_ids", cell_global_ids, cells.shape[0])
     vertex_entities = EntitySet(
         "vertices",
         0,
@@ -137,13 +135,13 @@ def interval_cell_complex(
         "cells",
         1,
         cell_ids,
-        subsets=(EntitySubset("boundary", np.zeros((cells.shape[0],), dtype=bool)),),
+        subsets=(EntitySubset("boundary", np.zeros((cells.shape[0],), dtype=np.bool_)),),
     )
     relation = EdgeRelation(
         cells.reshape((-1,)),
         np.repeat(np.arange(cells.shape[0], dtype=np.int32), 2),
         source_size=int(vertex_count),
-        target_size=int(cells.shape[0]),
+        target_size=cells.shape[0],
     )
     incidence = OrientedIncidence(
         1,
@@ -210,9 +208,9 @@ class PolyhedralConnectivity(StrictModule, NonTrainableState):
     cell_vertex_offsets: Array
     cell_vertex_values: Array
     face_owner: Array
-    face_neighbour: Array
+    face_neighbor: Array
     face_owner_local: Array
-    face_neighbour_local: Array
+    face_neighbor_local: Array
     face_cell_counts: Array
     boundary_vertices: Array
     boundary_edges: Array
@@ -384,7 +382,7 @@ def polygonal_connectivity(
             _validated_cells(
                 f"polygon block {index}",
                 array,
-                int(array.shape[1]),
+                array.shape[1],
                 vertices,
             )
         )
@@ -400,7 +398,7 @@ def polygonal_connectivity(
     capacity = max(4, *(block.shape[1] for block in blocks))
     cell_count = sum(block.shape[0] for block in blocks)
     cell_vertices = np.zeros((cell_count, capacity), dtype=np.int32)
-    cell_valid = np.zeros((cell_count, capacity), dtype=bool)
+    cell_valid = np.zeros((cell_count, capacity), dtype=np.bool_)
     cell_kinds = np.empty((cell_count,), dtype=np.int32)
     offset = 0
     for block in blocks:
@@ -412,7 +410,7 @@ def polygonal_connectivity(
 
     edge_keys: dict[tuple[int, int], int] = {}
     cell_edges = np.zeros((cell_count, capacity), dtype=np.int32)
-    cell_signs = np.zeros((cell_count, capacity), dtype=float)
+    cell_signs = np.zeros((cell_count, capacity), dtype=np.float64)
     incidents: list[list[float]] = []
     for cell in range(cell_count):
         arity = int(cell_kinds[cell])
@@ -437,7 +435,7 @@ def polygonal_connectivity(
     edges = np.asarray(tuple(edge_keys), dtype=np.int32)
     counts = np.asarray([len(values) for values in incidents], dtype=np.int32)
     boundary_edges = counts == 1
-    boundary_vertices = np.zeros((vertices,), dtype=bool)
+    boundary_vertices = np.zeros((vertices,), dtype=np.bool_)
     boundary_vertices[np.unique(edges[boundary_edges].reshape((-1,)))] = True
     return PolygonalConnectivity(
         edges=jnp.asarray(edges),
@@ -477,7 +475,7 @@ def polygonal_cell_complex(
     )
     edges = np.asarray(connectivity.edges, dtype=np.int32)
     cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
-    cell_valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
+    cell_valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
     cell_signs = np.asarray(connectivity.cell_edge_signs)
     vertex_ids = _resolved_entity_ids(
         "vertex_global_ids", vertex_global_ids, vertex_count
@@ -508,7 +506,9 @@ def polygonal_cell_complex(
         2,
         cell_ids_global,
         subsets=(
-            EntitySubset("boundary", np.zeros((connectivity.cell_count,), dtype=bool)),
+            EntitySubset(
+                "boundary", np.zeros((connectivity.cell_count,), dtype=np.bool_)
+            ),
         ),
     )
     vertex_edge_relation = EdgeRelation(
@@ -548,7 +548,7 @@ def polygonal_cell_complex(
 
 
 def _canonical_face_loop(values: Sequence[int], /) -> tuple[tuple[int, ...], float]:
-    loop = tuple(int(value) for value in values)
+    loop = tuple(values)
     first = loop.index(min(loop))
     forward = loop[first:] + loop[:first]
     reverse = forward[:1] + forward[:0:-1]
@@ -678,7 +678,7 @@ def polyhedral_connectivity(
                 raise ValueError("Polyhedral faces index undeclared vertices.")
             if np.unique(face).size != face.size:
                 raise ValueError("Each polyhedral face loop must be simple.")
-            loop = tuple(int(value) for value in face)
+            loop = tuple(face)
             canonical, sign = _canonical_face_loop(loop)
             if canonical not in face_keys:
                 face_keys[canonical] = len(canonical_faces)
@@ -740,7 +740,7 @@ def polyhedral_connectivity(
     )
     cell_face_sign_values = np.fromiter(
         (sign for row in cell_sign_rows for sign in row),
-        dtype=float,
+        dtype=np.float64,
     )
     cell_vertex_offsets = np.empty((len(cell_vertex_rows) + 1,), dtype=np.int32)
     cell_vertex_offsets[0] = 0
@@ -763,7 +763,7 @@ def polyhedral_connectivity(
     edges = np.asarray(tuple(edge_keys), dtype=np.int32)
     face_edge_offsets = face_vertex_offsets.copy()
     face_edge_values = np.empty_like(face_vertex_values)
-    face_edge_sign_values = np.empty(face_vertex_values.shape, dtype=float)
+    face_edge_sign_values = np.empty(face_vertex_values.shape, dtype=np.float64)
     for face_index, face in enumerate(canonical_faces):
         offset = int(face_edge_offsets[face_index])
         for local, start in enumerate(face):
@@ -773,17 +773,17 @@ def polyhedral_connectivity(
             face_edge_sign_values[offset + local] = 1.0 if start < stop else -1.0
 
     owner = np.full((face_count,), -1, dtype=np.int32)
-    neighbour = np.full((face_count,), -1, dtype=np.int32)
+    neighbor = np.full((face_count,), -1, dtype=np.int32)
     owner_local = np.full((face_count,), -1, dtype=np.int32)
-    neighbour_local = np.full((face_count,), -1, dtype=np.int32)
+    neighbor_local = np.full((face_count,), -1, dtype=np.int32)
     counts = np.asarray([len(value) for value in face_incidents], dtype=np.int32)
     for face_index, incidents in enumerate(face_incidents):
         owner[face_index], owner_local[face_index], _ = incidents[0]
         if len(incidents) == 2:
-            neighbour[face_index], neighbour_local[face_index], _ = incidents[1]
+            neighbor[face_index], neighbor_local[face_index], _ = incidents[1]
     boundary_faces = counts == 1
-    boundary_edges = np.zeros((edges.shape[0],), dtype=bool)
-    boundary_vertices = np.zeros((vertices,), dtype=bool)
+    boundary_edges = np.zeros((edges.shape[0],), dtype=np.bool_)
+    boundary_vertices = np.zeros((vertices,), dtype=np.bool_)
     for face_index in np.flatnonzero(boundary_faces):
         start, stop = face_vertex_offsets[face_index : face_index + 2]
         boundary_edges[face_edge_values[start:stop]] = True
@@ -818,9 +818,9 @@ def polyhedral_connectivity(
         cell_vertex_offsets=jnp.asarray(cell_vertex_offsets),
         cell_vertex_values=jnp.asarray(cell_vertex_values),
         face_owner=jnp.asarray(owner),
-        face_neighbour=jnp.asarray(neighbour),
+        face_neighbor=jnp.asarray(neighbor),
         face_owner_local=jnp.asarray(owner_local),
-        face_neighbour_local=jnp.asarray(neighbour_local),
+        face_neighbor_local=jnp.asarray(neighbor_local),
         face_cell_counts=jnp.asarray(counts),
         boundary_vertices=jnp.asarray(boundary_vertices),
         boundary_edges=jnp.asarray(boundary_edges),
@@ -830,7 +830,7 @@ def polyhedral_connectivity(
         face_global_ids=jnp.asarray(face_ids),
         cell_global_ids=jnp.asarray(cell_ids),
         vertex_count=vertices,
-        edge_count=int(edges.shape[0]),
+        edge_count=edges.shape[0],
         face_count=face_count,
         cell_count=cell_count,
         maximum_face_arity=maximum_face_arity,
@@ -906,7 +906,9 @@ def polyhedral_cell_complex(
         3,
         connectivity.cell_global_ids,
         subsets=(
-            EntitySubset("boundary", np.zeros((connectivity.cell_count,), dtype=bool)),
+            EntitySubset(
+                "boundary", np.zeros((connectivity.cell_count,), dtype=np.bool_)
+            ),
         ),
     )
     vertex_edge_relation = EdgeRelation(
@@ -979,7 +981,7 @@ def tetrahedral_connectivity(
     face_keys: dict[tuple[int, int, int], int] = {}
     face_incidents: list[list[float]] = []
     cell_faces = np.empty((cells.shape[0], 4), dtype=np.int32)
-    cell_face_signs = np.empty((cells.shape[0], 4), dtype=float)
+    cell_face_signs = np.empty((cells.shape[0], 4), dtype=np.float64)
     local_face_routes = (
         (1, 2, 3),
         (0, 3, 2),
@@ -1017,7 +1019,7 @@ def tetrahedral_connectivity(
     edges = np.asarray(tuple(edge_keys), dtype=np.int32)
     faces = np.asarray(tuple(face_keys), dtype=np.int32)
     face_edges = np.empty((faces.shape[0], 3), dtype=np.int32)
-    face_edge_signs = np.empty((faces.shape[0], 3), dtype=float)
+    face_edge_signs = np.empty((faces.shape[0], 3), dtype=np.float64)
     for face, (first, second, third) in enumerate(faces):
         oriented_edges = ((second, third), (third, first), (first, second))
         for local, (start, stop) in enumerate(oriented_edges):
@@ -1028,9 +1030,9 @@ def tetrahedral_connectivity(
             )
     counts = np.asarray([len(values) for values in face_incidents], dtype=np.int32)
     boundary_faces = counts == 1
-    boundary_edges = np.zeros((edges.shape[0],), dtype=bool)
+    boundary_edges = np.zeros((edges.shape[0],), dtype=np.bool_)
     boundary_edges[np.unique(face_edges[boundary_faces].reshape((-1,)))] = True
-    boundary_vertices = np.zeros((vertices,), dtype=bool)
+    boundary_vertices = np.zeros((vertices,), dtype=np.bool_)
     boundary_vertices[np.unique(faces[boundary_faces].reshape((-1,)))] = True
     return TetrahedralConnectivity(
         edges=jnp.asarray(edges),
@@ -1104,7 +1106,7 @@ def tetrahedral_cell_complex(
         "cells",
         3,
         cell_ids_global,
-        subsets=(EntitySubset("boundary", np.zeros((cells.shape[0],), dtype=bool)),),
+        subsets=(EntitySubset("boundary", np.zeros((cells.shape[0],), dtype=np.bool_)),),
     )
     vertex_edge_relation = EdgeRelation(
         edges.reshape((-1,)),

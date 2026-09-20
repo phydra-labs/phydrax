@@ -46,7 +46,7 @@ def primitive_path_contacts_to_slip_spring_seed(
     if not bool(np.asarray(primitive_path.successful)):
         raise ValueError("Only a successful primitive path can seed slip springs.")
     contacts = primitive_path.contact_state
-    active = np.asarray(contacts.active, dtype=bool)
+    active = np.asarray(contacts.active, dtype=np.bool_)
     left_chain = np.asarray(contacts.left_chain, dtype=np.int32)
     left_contour = np.asarray(contacts.left_contour, dtype=np.int32)
     right_chain = np.asarray(contacts.right_chain, dtype=np.int32)
@@ -63,7 +63,7 @@ def primitive_path_contacts_to_slip_spring_seed(
         pairs[: unique.shape[0]] = unique
         mask = np.arange(capacity) < unique.shape[0]
     else:
-        mask = np.zeros((capacity,), dtype=bool)
+        mask = np.zeros((capacity,), dtype=np.bool_)
     count = int(np.sum(mask))
     seed_id = canonical_fingerprint(
         {

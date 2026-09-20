@@ -91,7 +91,7 @@ class SubspaceModel(AbstractArrayModel):
         offset_ = jnp.asarray(offset)
         weighted_ = jnp.asarray(weighted_components)
         metric = jnp.asarray(feature_metric, dtype=offset_.real.dtype)
-        support = jnp.asarray(feature_support, dtype=bool)
+        support = jnp.asarray(feature_support, dtype=jnp.bool_)
         if offset_.ndim < 1 or weighted_.shape[:-2] != offset_.shape[:-1]:
             raise ValueError("Subspace offset and components must share case axes.")
         if weighted_.shape[-1] != offset_.shape[-1]:
@@ -108,9 +108,9 @@ class SubspaceModel(AbstractArrayModel):
         self.feature_metric = metric
         self.feature_support = support
         self.singular_values = jnp.asarray(singular_values)
-        self.in_size = int(offset_.shape[-1])
-        self.out_size = int(weighted_.shape[-2])
-        self.case_shape = tuple(int(size) for size in offset_.shape[:-1])
+        self.in_size = offset_.shape[-1]
+        self.out_size = weighted_.shape[-2]
+        self.case_shape = tuple(offset_.shape[:-1])
         self.centered = bool(centered)
         self.weighting_provenance = str(weighting_provenance)
         self.centering_provenance = str(centering_provenance)
@@ -125,7 +125,7 @@ class SubspaceModel(AbstractArrayModel):
     ) -> tuple[Array, tuple[int, ...]]:
         if value.shape[-1:] != (width,):
             raise ValueError(f"Expected a final axis of size {width}; got {value.shape}.")
-        leading = tuple(int(size) for size in value.shape[:-1])
+        leading = tuple(value.shape[:-1])
         if self.case_shape:
             if leading[: len(self.case_shape)] != self.case_shape:
                 raise ValueError(
@@ -426,7 +426,7 @@ class POD(AbstractRecipe):
         self.physical_weights = (
             None
             if physical_weights is None
-            else jnp.asarray(physical_weights, dtype=float)
+            else jnp.asarray(physical_weights, dtype=jnp.float64)
         )
         self.centered = bool(centered)
         self.weight_policy = weight_policy

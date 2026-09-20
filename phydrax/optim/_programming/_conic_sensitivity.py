@@ -89,8 +89,7 @@ class ConicProgramData(StrictModule):
                 )
             if isinstance(value, AbstractSparseLinearOperator):
                 raise TypeError(
-                    "Sparse conic tangents require an operator with explicit "
-                    "coefficient coordinates."
+                    "Sparse conic tangents require an operator with explicit coefficient coordinates."
                 )
             return jnp.zeros_like(value)
 
@@ -170,8 +169,7 @@ def _linear_policy(linear: LinearSolvePolicy | None, /) -> tuple[LinearSolvePoli
         raise TypeError("linear must be a LinearSolvePolicy or None.")
     if not isinstance(selected.method, DenseSVD):
         raise TypeError(
-            "Conic sensitivity currently requires DenseSVD so full-rank and "
-            "condition evidence are available."
+            "Conic sensitivity currently requires DenseSVD so full-rank and condition evidence are available."
         )
     if selected.method.damping != 0.0:
         raise ValueError(
@@ -612,9 +610,9 @@ def prepare_conic_sensitivity(
         program.num_variables,
         program.linear.dtype,
     )
-    fixed_indices = tuple(int(value) for value in fixed_array)
-    lower_indices = tuple(int(value) for value in lower_array)
-    upper_indices = tuple(int(value) for value in upper_array)
+    fixed_indices = tuple(fixed_array)
+    lower_indices = tuple(lower_array)
+    upper_indices = tuple(upper_array)
     count = math.prod(program.batch_shape) if program.batch_shape else 1
     variables = program.num_variables
     original_constraints = program.num_constraints
@@ -627,7 +625,7 @@ def prepare_conic_sensitivity(
         + len(upper_indices)
     )
     jacobian_entries = count * state_dimension * state_dimension
-    jacobian_bytes = jacobian_entries * int(dtype.itemsize)
+    jacobian_bytes = jacobian_entries * dtype.itemsize
     materialization = prepared.plan.policy.materialization
     if (
         jacobian_entries > materialization.max_entries
@@ -740,8 +738,8 @@ def prepare_conic_sensitivity(
         & finite
         & (root_residual_norm <= root_tolerance)
     )
-    lower_tangent_mask = jnp.zeros((variables,), dtype=bool)
-    upper_tangent_mask = jnp.zeros((variables,), dtype=bool)
+    lower_tangent_mask = jnp.zeros((variables,), dtype=jnp.bool_)
+    upper_tangent_mask = jnp.zeros((variables,), dtype=jnp.bool_)
     lower_tangent_mask = lower_tangent_mask.at[fixed].set(True)
     lower_tangent_mask = lower_tangent_mask.at[lower].set(True)
     upper_tangent_mask = upper_tangent_mask.at[fixed].set(True)

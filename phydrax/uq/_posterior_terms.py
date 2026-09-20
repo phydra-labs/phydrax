@@ -87,7 +87,7 @@ class FixedObservationLikelihood(AbstractPosteriorTerm):
         if parameters is not None and not callable(parameters):
             raise TypeError("parameters must be callable or None.")
         target_array = _field_data(target)
-        if target_array.ndim == 0 or int(target_array.shape[0]) <= 0:
+        if target_array.ndim == 0 or target_array.shape[0] <= 0:
             raise ValueError("Fixed observations require a non-empty leading case axis.")
         if not bool(jnp.all(jnp.isfinite(target_array))):
             raise ValueError("Fixed observations must be finite.")
@@ -107,7 +107,7 @@ class FixedObservationLikelihood(AbstractPosteriorTerm):
             self.likelihood.log_prob(prediction, target, **likelihood_parameters)
         )
         _require_real_log_density(values, label=self.label)
-        return _reduce_cases(values, int(target.shape[0]), label=self.label)
+        return _reduce_cases(values, target.shape[0], label=self.label)
 
 
 class FixedResidualLikelihood(AbstractPosteriorTerm):
@@ -150,7 +150,7 @@ class FixedResidualLikelihood(AbstractPosteriorTerm):
 
     def per_case_log_prob(self, parameters: PyTree[Any], /) -> Array:
         residual = _field_data(self.residual_fn(parameters))
-        if residual.ndim == 0 or int(residual.shape[0]) <= 0:
+        if residual.ndim == 0 or residual.shape[0] <= 0:
             raise ValueError("Fixed residuals require a non-empty leading case axis.")
         target = jnp.broadcast_to(self.target, residual.shape)
         likelihood_parameters = _likelihood_parameters(self.parameters_fn, parameters)
@@ -158,7 +158,7 @@ class FixedResidualLikelihood(AbstractPosteriorTerm):
             self.likelihood.log_prob(residual, target, **likelihood_parameters)
         )
         _require_real_log_density(values, label=self.label)
-        return _reduce_cases(values, int(residual.shape[0]), label=self.label)
+        return _reduce_cases(values, residual.shape[0], label=self.label)
 
 
 class _ActiveResidual(StrictModule):
@@ -202,8 +202,8 @@ class ResidualPenaltyNoiseModel(StrictModule):
         field: Literal["real", "proper_complex"],
         interpretation_id: str,
     ):
-        coefficient_array = jnp.asarray(coefficients, dtype=float).reshape((-1,))
-        scale_array = jnp.asarray(penalty_scale, dtype=float).reshape(())
+        coefficient_array = jnp.asarray(coefficients, dtype=jnp.float64).reshape((-1,))
+        scale_array = jnp.asarray(penalty_scale, dtype=jnp.float64).reshape(())
         if (
             coefficient_array.size == 0
             or bool(jnp.any(~jnp.isfinite(coefficient_array)))
@@ -220,7 +220,7 @@ class ResidualPenaltyNoiseModel(StrictModule):
         if not identity:
             raise ValueError("interpretation_id must be non-empty.")
         active = jnp.flatnonzero(coefficient_array > 0.0, size=None)
-        if int(active.size) == 0:
+        if active.size == 0:
             raise ValueError(
                 "Residual likelihood interpretation needs a positive coefficient."
             )
@@ -375,7 +375,7 @@ class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
             physical_mean,
             state=state,
         )
-        return jnp.asarray(value, dtype=float).reshape((1,))
+        return jnp.asarray(value, dtype=jnp.float64).reshape((1,))
 
 
 class ComputationAwareGaussianProcessELBO(AbstractPosteriorTerm):
@@ -466,7 +466,7 @@ class ComputationAwareGaussianProcessELBO(AbstractPosteriorTerm):
             actions=action_policy,
             computation=self.computation,
         )
-        return jnp.asarray(value, dtype=float).reshape((1,))
+        return jnp.asarray(value, dtype=jnp.float64).reshape((1,))
 
 
 class FixedSupervisedLikelihood(AbstractPosteriorTerm):
@@ -497,7 +497,7 @@ class FixedSupervisedLikelihood(AbstractPosteriorTerm):
         batch_value = term.observed_batch() if batch is None else batch
         if not isinstance(batch_value, SupervisedDatasetBatch):
             raise TypeError("batch must be a SupervisedDatasetBatch or None.")
-        if int(batch_value.indices.size) <= 0:
+        if batch_value.indices.size <= 0:
             raise ValueError("Fixed supervised batches must be non-empty.")
         self.term = term
         self.functions_fn = functions
@@ -576,7 +576,7 @@ def _require_real_log_density(values: Array, /, *, label: str) -> None:
 
 
 def _reduce_cases(values: Array, case_count: int, /, *, label: str) -> Array:
-    if values.ndim == 0 or int(values.shape[0]) != case_count:
+    if values.ndim == 0 or values.shape[0] != case_count:
         raise ValueError(
             f"Posterior term {label!r} must retain its leading empirical-case axis."
         )

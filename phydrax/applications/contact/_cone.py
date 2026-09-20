@@ -54,10 +54,10 @@ class ContactConeProgram(StrictModule, NonTrainableState):
         compliance_ = jnp.asarray(compliance, dtype=free.dtype)
         dynamic = jnp.asarray(friction, dtype=free.dtype)
         keys = jnp.asarray(route_keys)
-        route_mask = jnp.asarray(valid, dtype=bool)
+        route_mask = jnp.asarray(valid, dtype=jnp.bool_)
         tangent = int(tangent_dimension)
         local_dimension = 1 + tangent
-        count = int(route_mask.size)
+        count = route_mask.size
         size = count * local_dimension
         static = (
             dynamic
@@ -72,7 +72,7 @@ class ContactConeProgram(StrictModule, NonTrainableState):
         available = (
             jnp.ones_like(route_mask)
             if mechanical_available is None
-            else jnp.asarray(mechanical_available, dtype=bool)
+            else jnp.asarray(mechanical_available, dtype=jnp.bool_)
         )
         if tangent < 0:
             raise ValueError("tangent_dimension must be nonnegative.")
@@ -110,7 +110,7 @@ class ContactConeProgram(StrictModule, NonTrainableState):
 
     @property
     def contact_count(self) -> int:
-        return int(self.valid.size)
+        return self.valid.size
 
     @property
     def local_dimension(self) -> int:
@@ -214,22 +214,22 @@ class ContactConeEvidence(StrictModule):
         dissipative=True,
         numeric_revision: ContactConeNumericRevision | None = None,
     ):
-        self.converged = jnp.asarray(converged, dtype=bool)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.projected_residual = jnp.asarray(projected_residual)
         self.complementarity_defect = jnp.asarray(complementarity_defect)
         self.cone_defect = jnp.asarray(cone_defect)
         self.minimum_normal_impulse = jnp.asarray(minimum_normal_impulse)
         self.dissipated_impulse_work = jnp.asarray(dissipated_impulse_work)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.program_id = str(program_id)
         self.solver_id = str(solver_id)
-        self.material_law_complete = jnp.asarray(material_law_complete, dtype=bool)
+        self.material_law_complete = jnp.asarray(material_law_complete, dtype=jnp.bool_)
         self.minimum_normal_velocity = jnp.asarray(minimum_normal_velocity)
         self.maximum_dissipation_defect = jnp.asarray(maximum_dissipation_defect)
         self.certificate_tolerance = jnp.asarray(certificate_tolerance)
-        self.dissipative = jnp.asarray(dissipative, dtype=bool)
+        self.dissipative = jnp.asarray(dissipative, dtype=jnp.bool_)
         self.numeric_revision = numeric_revision
 
 
@@ -330,7 +330,7 @@ def build_contact_cone_program(
         raise TypeError("materials must be ContactMaterialPairTable.")
     if not kinematics.batches:
         raise ValueError("Contact cone program requires positive route capacity.")
-    tangent_dimension = int(kinematics.batches[0].tangential_velocity.shape[-1])
+    tangent_dimension = kinematics.batches[0].tangential_velocity.shape[-1]
     if any(
         batch.tangential_velocity.shape[-1] != tangent_dimension
         for batch in kinematics.batches
@@ -359,7 +359,7 @@ def build_contact_cone_program(
         ),
         axis=-1,
     )
-    contact_count = int(valid.size)
+    contact_count = valid.size
     local_dimension = 1 + tangent_dimension
     size = contact_count * local_dimension
     effective = jnp.asarray(effective_mass, dtype=free.dtype)

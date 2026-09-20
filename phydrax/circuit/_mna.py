@@ -79,8 +79,8 @@ class MNAStamp(StrictModule):
         y_, b_, c_, d_ = (jnp.asarray(value) for value in (y, b, c, d))
         if any(value.ndim < 2 for value in (y_, b_, c_, d_)):
             raise ValueError("MNA stamp blocks must have at least two axes.")
-        terminals = int(y_.shape[-1])
-        auxiliaries = int(d_.shape[-1])
+        terminals = y_.shape[-1]
+        auxiliaries = d_.shape[-1]
         batch = y_.shape[:-2]
         if (
             y_.shape[-2:] != (terminals, terminals)
@@ -96,11 +96,11 @@ class MNAStamp(StrictModule):
 
     @property
     def terminal_count(self) -> int:
-        return int(self.y.shape[-1])
+        return self.y.shape[-1]
 
     @property
     def auxiliary_count(self) -> int:
-        return int(self.d.shape[-1])
+        return self.d.shape[-1]
 
 
 class AbstractMNAComponent(StrictModule):
@@ -513,7 +513,7 @@ def plan_mna(
         sparse_relation = None
     else:
         route_bytes = sum(
-            int(value.size * value.dtype.itemsize)
+            value.size * value.dtype.itemsize
             for value in (
                 relation.source_indices,
                 relation.target_indices,

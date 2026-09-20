@@ -357,7 +357,7 @@ def test_transport_exposes_topology_and_caustic_failures():
         output_topology_id="other-branch",
     )
     singular_lagrangian = jnp.concatenate(
-        (jnp.zeros((2, 2), dtype=complex), jnp.eye(2, dtype=complex)), axis=0
+        (jnp.zeros((2, 2), dtype="complex128"), jnp.eye(2, dtype="complex128")), axis=0
     )
     caustic_state = GaussianBeamletState(
         _ray(),

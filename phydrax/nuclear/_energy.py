@@ -44,7 +44,7 @@ class PreparedEnergyGroupStructure(StrictModule, NonTrainableState):
 
     @property
     def group_count(self) -> int:
-        return int(self.edges_j.shape[0] - 1)
+        return self.edges_j.shape[0] - 1
 
     def locate(self, energies_j: ArrayLike, /) -> EnergyGroupLocation:
         values = jnp.asarray(energies_j, dtype=self.edges_j.dtype)
@@ -105,7 +105,7 @@ class EnergyGroupStructure:
 
     @property
     def group_count(self) -> int:
-        return int(self.edges_j.size - 1)
+        return self.edges_j.size - 1
 
     def edges_in(self, unit: UnitDefinition, /) -> np.ndarray:
         factor = float(conversion_factor(JOULE, unit))

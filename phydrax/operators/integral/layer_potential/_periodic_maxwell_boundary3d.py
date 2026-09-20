@@ -110,8 +110,8 @@ def _outgoing_dyadic(displacement: np.ndarray, wavenumber: float, /) -> np.ndarr
 
 def _smooth_image_matrix(space, translations, phases, wavenumber, /):
     surface = space.surface
-    centroids = np.asarray(surface.face_centroids, dtype=float)
-    areas = np.asarray(surface.face_areas, dtype=float)
+    centroids = np.asarray(surface.face_centroids, dtype=np.float64)
+    areas = np.asarray(surface.face_areas, dtype=np.float64)
     basis = np.asarray(space.centroid_basis)
     face_edges = np.asarray(surface.face_edges, dtype=np.int32)
     edge_count = space.size
@@ -177,7 +177,7 @@ def prepare_periodic_maxwell_boundary_3d(
     bloch = (
         np.zeros(3)
         if bloch_wavevector is None
-        else np.asarray(bloch_wavevector, dtype=float)
+        else np.asarray(bloch_wavevector, dtype=np.float64)
     )
     if bloch.shape != (3,) or np.any(~np.isfinite(bloch)):
         raise ValueError("bloch_wavevector must be finite with shape (3,).")
@@ -190,7 +190,7 @@ def prepare_periodic_maxwell_boundary_3d(
     indices = indices[np.any(indices != 0, axis=1)]
     if indices.shape[0] > selected.maximum_images:
         raise ValueError("Periodic Maxwell image capacity exceeded.")
-    translations = indices @ np.asarray(cell.vectors, dtype=float)
+    translations = indices @ np.asarray(cell.vectors, dtype=np.float64)
     phases = np.exp(1j * (translations @ bloch))
     free = prepare_maxwell_efie_3d(
         current_space, k, wave_impedance=wave_impedance, policy=free_space_policy
@@ -228,7 +228,7 @@ def prepare_periodic_maxwell_boundary_3d(
         }
     )
     evidence = PeriodicMaxwellBoundaryEvidence3D(
-        image_count=int(indices.shape[0]),
+        image_count=indices.shape[0],
         resident_bytes=resident,
         central_free_space_singular_action=True,
         smooth_noncentral_images=True,

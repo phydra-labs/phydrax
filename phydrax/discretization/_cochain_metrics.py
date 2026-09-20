@@ -42,9 +42,9 @@ class PreparedCochainTopology(StrictModule, NonTrainableState):
             raise TypeError("Prepared cochain topology requires CellComplexTopology.")
         counts = tuple(entity.count for entity in topology.entity_sets)
         masks = (
-            tuple(np.zeros((count,), dtype=bool) for count in counts)
+            tuple(np.zeros((count,), dtype=np.bool_) for count in counts)
             if boundary_masks is None
-            else tuple(np.asarray(mask, dtype=bool) for mask in boundary_masks)
+            else tuple(np.asarray(mask, dtype=np.bool_) for mask in boundary_masks)
         )
         if len(masks) != len(counts) or any(
             mask.shape != (count,) for mask, count in zip(masks, counts, strict=True)
@@ -95,7 +95,7 @@ class CochainMetricEvidence(StrictModule, NonTrainableState):
     ):
         family = str(geometry_family_id)
         layout = str(geometry_layout_id)
-        masks = tuple(np.asarray(mask, dtype=bool) for mask in active_masks)
+        masks = tuple(np.asarray(mask, dtype=np.bool_) for mask in active_masks)
         if not topology_id or not family or not layout:
             raise ValueError("Cochain metric identities must be non-empty.")
         self.topology_id = topology_id
@@ -290,7 +290,7 @@ class CochainMetricState(StrictModule):
                 for entity in plan.prepared_topology.topology.entity_sets
             )
             if active_masks is None
-            else tuple(jnp.asarray(mask, dtype=bool) for mask in active_masks)
+            else tuple(jnp.asarray(mask, dtype=jnp.bool_) for mask in active_masks)
         )
         if len(masks) != len(counts) or any(
             mask.shape != (count,) for mask, count in zip(masks, counts, strict=True)

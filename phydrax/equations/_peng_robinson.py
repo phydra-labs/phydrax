@@ -46,10 +46,10 @@ class PengRobinsonParameters(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(catalog, ChemicalComponentCatalog):
             raise TypeError("catalog must be ChemicalComponentCatalog.")
-        temperature = np.asarray(critical_temperature, dtype=float)
-        pressure = np.asarray(critical_pressure, dtype=float)
-        acentric = np.asarray(acentric_factor, dtype=float)
-        interaction = np.asarray(binary_interaction, dtype=float)
+        temperature = np.asarray(critical_temperature, dtype=np.float64)
+        pressure = np.asarray(critical_pressure, dtype=np.float64)
+        acentric = np.asarray(acentric_factor, dtype=np.float64)
+        interaction = np.asarray(binary_interaction, dtype=np.float64)
         count = catalog.component_count
         if temperature.shape != (count,) or pressure.shape != (count,):
             raise ValueError("Critical properties must have shape (component_count,).")

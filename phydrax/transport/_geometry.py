@@ -45,8 +45,8 @@ def row_logsumexp(
 ) -> Array:
     """Reduce ``log_values - cost / epsilon`` over target atoms."""
     values = jnp.asarray(log_values)
-    source_count = int(source_points.shape[0])
-    target_count = int(target_points.shape[0])
+    source_count = source_points.shape[0]
+    target_count = target_points.shape[0]
     if values.shape != (target_count,):
         raise ValueError("row_logsumexp values must match target atom count.")
     if block_size is None:
@@ -101,8 +101,8 @@ def column_logsumexp(
 ) -> Array:
     """Reduce ``log_values - cost / epsilon`` over source atoms."""
     values = jnp.asarray(log_values)
-    source_count = int(source_points.shape[0])
-    target_count = int(target_points.shape[0])
+    source_count = source_points.shape[0]
+    target_count = target_points.shape[0]
     if values.shape != (source_count,):
         raise ValueError("column_logsumexp values must match source atom count.")
     if block_size is None:

@@ -43,7 +43,7 @@ class WignerLaguerrePlan(StrictModule, NonTrainableState):
         )
         self.layout_id = canonical_fingerprint(
             {
-                "kind": "wigner-laguerre-layout-v1",
+                "kind": "wigner-laguerre-layout",
                 "radial": radial.layout_id,
                 "wigner": wigner.layout_id,
                 "axes": ("p", "n", "ell", "m"),
@@ -51,7 +51,7 @@ class WignerLaguerrePlan(StrictModule, NonTrainableState):
         )
         self.fingerprint = canonical_fingerprint(
             {
-                "kind": "wigner-laguerre-plan-v1",
+                "kind": "wigner-laguerre-plan",
                 "radial": radial.transform_id,
                 "wigner": wigner.transform_id,
                 "sample_axes": ("p", "gamma", "beta", "alpha"),
@@ -69,7 +69,7 @@ class WignerLaguerrePlan(StrictModule, NonTrainableState):
         """Identity of the concrete radial and Wigner executions."""
         return canonical_fingerprint(
             {
-                "kind": "wigner-laguerre-execution-v1",
+                "kind": "wigner-laguerre-execution",
                 "transform": self.transform_id,
                 "radial": self.radial.execution_id,
                 "wigner": self.wigner.execution_id,
@@ -84,14 +84,8 @@ class WignerLaguerrePlan(StrictModule, NonTrainableState):
     def analysis(self, values: ArrayLike, /) -> Array:
         """Transform radial-SO(3) samples to padded ``(p, n, ell, m)`` modes."""
         array = jnp.asarray(values)
-        scalar = (
-            array.ndim >= 4
-            and tuple(int(size) for size in array.shape[-4:]) == self.sample_shape
-        )
-        channel = (
-            array.ndim >= 5
-            and tuple(int(size) for size in array.shape[-5:-1]) == self.sample_shape
-        )
+        scalar = array.ndim >= 4 and tuple(array.shape[-4:]) == self.sample_shape
+        channel = array.ndim >= 5 and tuple(array.shape[-5:-1]) == self.sample_shape
         if not scalar and not channel:
             raise ValueError(
                 "Wigner-Laguerre analysis expects (..., p, n_gamma, n_beta, "
@@ -109,18 +103,11 @@ class WignerLaguerrePlan(StrictModule, NonTrainableState):
     def synthesis(self, coefficients: ArrayLike, /) -> Array:
         """Transform padded ``(p, n, ell, m)`` modes to radial-SO(3) samples."""
         array = jnp.asarray(coefficients)
-        scalar = (
-            array.ndim >= 4
-            and tuple(int(size) for size in array.shape[-4:]) == self.coefficient_shape
-        )
-        channel = (
-            array.ndim >= 5
-            and tuple(int(size) for size in array.shape[-5:-1]) == self.coefficient_shape
-        )
+        scalar = array.ndim >= 4 and tuple(array.shape[-4:]) == self.coefficient_shape
+        channel = array.ndim >= 5 and tuple(array.shape[-5:-1]) == self.coefficient_shape
         if not scalar and not channel:
             raise ValueError(
-                "Wigner-Laguerre synthesis expects (..., p, 2*N-1, L, "
-                "2*L-1) or (..., p, 2*N-1, L, 2*L-1, channels)."
+                "Wigner-Laguerre synthesis expects (..., p, 2*N-1, L, 2*L-1) or (..., p, 2*N-1, L, 2*L-1, channels)."
             )
         if scalar:
             radial_last = jnp.moveaxis(array, -4, -1)

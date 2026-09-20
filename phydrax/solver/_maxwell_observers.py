@@ -84,13 +84,13 @@ class FieldProbePlan(AbstractMaxwellObserverPlan):
         if indices_.shape[1] <= 0:
             raise ValueError("Every probe requires nonempty support.")
         if weights is None:
-            weights_ = np.ones(indices_.shape, dtype=float)
+            weights_ = np.ones(indices_.shape, dtype=np.float64)
         else:
-            weights_ = np.asarray(weights, dtype=float)
+            weights_ = np.asarray(weights, dtype=np.float64)
         if weights_.shape != indices_.shape or np.any(~np.isfinite(weights_)):
             raise ValueError("Probe weights must be finite and match indices.")
         sums = np.sum(weights_, axis=1)
-        if np.any(np.abs(sums) <= np.finfo(float).eps):
+        if np.any(np.abs(sums) <= np.finfo(np.float64).eps):
             raise ValueError("Probe weights must have nonzero row sums.")
         weights_ = weights_ / sums[:, None]
         self.field = field
@@ -180,7 +180,7 @@ class DFTObserverPlan(AbstractMaxwellObserverPlan):
     ):
         if not isinstance(probe, FieldProbePlan):
             raise TypeError("probe must be a FieldProbePlan.")
-        frequencies = jnp.asarray(angular_frequencies, dtype=float)
+        frequencies = jnp.asarray(angular_frequencies, dtype=jnp.float64)
         if frequencies.ndim != 1 or frequencies.size == 0:
             raise ValueError("angular_frequencies must be a nonempty vector.")
         if bool(jnp.any(~jnp.isfinite(frequencies))) or bool(jnp.any(frequencies < 0.0)):
@@ -235,7 +235,7 @@ class PreparedDFTObserver(AbstractPreparedMaxwellObserver):
     def initialize(self, /) -> DFTObserverState:
         shape = (self.angular_frequencies.size, self.probe.indices.shape[0])
         return DFTObserverState(
-            accumulator=jnp.zeros(shape, dtype=complex),
+            accumulator=jnp.zeros(shape, dtype=jnp.complex128),
             normalization=jnp.asarray(0.0),
             samples=jnp.asarray(0, dtype=jnp.int32),
         )
@@ -257,7 +257,7 @@ class PreparedDFTObserver(AbstractPreparedMaxwellObserver):
         phase = jnp.exp(-1j * self.angular_frequencies * jnp.asarray(time))
         contribution = phase[:, None] * payload[None, :]
         accumulator = state.accumulator + jnp.where(active, contribution, 0)
-        normalization = state.normalization + active.astype(float)
+        normalization = state.normalization + active.astype("float64")
         samples = state.samples + active.astype(jnp.int32)
         return DFTObserverState(accumulator, normalization, samples)
 
@@ -276,8 +276,8 @@ class PoyntingFluxPlan(StrictModule):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, normals: ArrayLike, measures: ArrayLike, /):
-        normals_ = jnp.asarray(normals, dtype=float)
-        measures_ = jnp.asarray(measures, dtype=float)
+        normals_ = jnp.asarray(normals, dtype=jnp.float64)
+        measures_ = jnp.asarray(measures, dtype=jnp.float64)
         if normals_.ndim != 2 or normals_.shape[1] != 3:
             raise ValueError("Poynting normals must have shape (points, 3).")
         if measures_.shape != normals_.shape[:1]:
@@ -330,8 +330,8 @@ class SynchronizedEnergyObserverPlan(AbstractMaxwellObserverPlan):
         magnetic_weights: ArrayLike,
         /,
     ):
-        electric = jnp.asarray(electric_weights, dtype=float)
-        magnetic = jnp.asarray(magnetic_weights, dtype=float)
+        electric = jnp.asarray(electric_weights, dtype=jnp.float64)
+        magnetic = jnp.asarray(magnetic_weights, dtype=jnp.float64)
         if electric.ndim != 1 or magnetic.ndim != 1:
             raise ValueError("Energy observer weights must be vectors.")
         electric = eqx.error_if(
@@ -428,7 +428,7 @@ class ModeAmplitudeObserverPlan(AbstractMaxwellObserverPlan):
     ):
         electric = jnp.asarray(electric_modes)
         magnetic = jnp.asarray(magnetic_modes)
-        frequencies = jnp.asarray(angular_frequencies, dtype=float)
+        frequencies = jnp.asarray(angular_frequencies, dtype=jnp.float64)
         if (
             electric.ndim != 2
             or magnetic.ndim != 2
@@ -488,7 +488,7 @@ class PreparedModeAmplitudeObserver(AbstractPreparedMaxwellObserver):
     def initialize(self, /) -> ModeAmplitudeObserverState:
         shape = (self.angular_frequencies.size, self.electric_modes.shape[1])
         return ModeAmplitudeObserverState(
-            jnp.zeros(shape, dtype=complex),
+            jnp.zeros(shape, dtype=jnp.complex128),
             jnp.asarray(0, dtype=jnp.int32),
         )
 

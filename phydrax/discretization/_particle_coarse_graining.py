@@ -173,7 +173,7 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
         velocity = jnp.asarray(velocities, dtype=position.dtype)
         mass = jnp.asarray(masses, dtype=position.dtype)
         volume = jnp.asarray(particle_volumes, dtype=position.dtype)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         particle_shape = (self.particles.capacity, self.ambient_dimension)
         if position.shape != particle_shape or velocity.shape != particle_shape:
             raise ValueError(
@@ -193,7 +193,9 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
             )
         displacement = jnp.asarray(pair_displacement, dtype=position.dtype)
         force = jnp.asarray(pair_force, dtype=position.dtype)
-        interaction_active = jnp.asarray(pair_active, dtype=bool) & pair_relation.valid
+        interaction_active = (
+            jnp.asarray(pair_active, dtype=jnp.bool_) & pair_relation.valid
+        )
         pair_shape = (self.pair_capacity, self.ambient_dimension)
         if displacement.shape != pair_shape or force.shape != pair_shape:
             raise ValueError(f"Pair displacement and force must have shape {pair_shape}.")

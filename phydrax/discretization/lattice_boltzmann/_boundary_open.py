@@ -38,7 +38,7 @@ class LatticeBoltzmannBoundaryState(StrictModule):
         /,
     ):
         history = jnp.asarray(convective_history)
-        initialized = jnp.asarray(convective_initialized, dtype=bool)
+        initialized = jnp.asarray(convective_initialized, dtype=jnp.bool_)
         if history.shape != initialized.shape:
             raise ValueError("Convective history and initialization masks must match.")
         self.convective_history = history

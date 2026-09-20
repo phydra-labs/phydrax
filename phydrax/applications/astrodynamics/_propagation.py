@@ -97,8 +97,8 @@ class AstrodynamicsPropagationPlan(StrictModule):
     ):
         if not isinstance(force, AbstractAstrodynamicsForce):
             raise TypeError("force must be an AbstractAstrodynamicsForce.")
-        times = jnp.asarray(save_times, dtype=float)
-        if times.ndim != 1 or int(times.size) < 2:
+        times = jnp.asarray(save_times, dtype=jnp.float64)
+        if times.ndim != 1 or times.size < 2:
             raise ValueError(
                 "save_times must be a rank-one array with at least two nodes."
             )
@@ -130,7 +130,7 @@ class AstrodynamicsPropagationPlan(StrictModule):
             {
                 "kind": "astrodynamics-propagation-plan",
                 "force": force.force_id,
-                "num_times": int(times.size),
+                "num_times": times.size,
                 "solver": "default" if solver is None else type(solver).__name__,
                 "rtol": rtol,
                 "atol": atol,

@@ -44,12 +44,8 @@ class DynamicalHorizonStatus(IntFlag):
 def _time_derivative(values: Array, times: Array, /) -> Array:
     previous_width = times[1:-1] - times[:-2]
     next_width = times[2:] - times[1:-1]
-    previous_weight = -next_width / (
-        previous_width * (previous_width + next_width)
-    )
-    center_weight = (next_width - previous_width) / (
-        previous_width * next_width
-    )
+    previous_weight = -next_width / (previous_width * (previous_width + next_width))
+    center_weight = (next_width - previous_width) / (previous_width * next_width)
     next_weight = previous_width / (next_width * (previous_width + next_width))
     interior = (
         previous_weight * values[:-2]
@@ -106,24 +102,24 @@ class QuasilocalHorizonWorldtube(StrictModule, NonTrainableState):
         *,
         worldtube_name: str = "quasilocal-horizon-worldtube",
     ):
-        times_host = np.asarray(times, dtype=float)
+        times_host = np.asarray(times, dtype=np.float64)
         if (
             times_host.ndim != 1
             or times_host.size < 3
             or np.any(~np.isfinite(times_host))
             or np.any(np.diff(times_host) <= 0.0)
         ):
-            raise ValueError("Worldtube times must contain three finite increasing nodes.")
-        time_count = int(times_host.size)
+            raise ValueError(
+                "Worldtube times must contain three finite increasing nodes."
+            )
+        time_count = times_host.size
         if not isinstance(mots_slices, tuple) or not isinstance(geometry_slices, tuple):
             raise TypeError("MOTS and geometry histories must be fixed host tuples.")
         if len(mots_slices) != time_count or len(geometry_slices) != time_count:
             raise ValueError("MOTS and geometry histories must match time capacity.")
         if any(not isinstance(item, MOTSSolveResult) for item in mots_slices):
             raise TypeError("mots_slices must contain only MOTSSolveResult objects.")
-        if any(
-            not isinstance(item, HorizonGeometryEvidence) for item in geometry_slices
-        ):
+        if any(not isinstance(item, HorizonGeometryEvidence) for item in geometry_slices):
             raise TypeError(
                 "geometry_slices must contain only HorizonGeometryEvidence objects."
             )
@@ -145,7 +141,7 @@ class QuasilocalHorizonWorldtube(StrictModule, NonTrainableState):
             "gravitational_angular_momentum_flux",
             "worldtube_signature",
         )
-        fluxes = tuple(np.asarray(value, dtype=float) for value in flux_inputs)
+        fluxes = tuple(np.asarray(value, dtype=np.float64) for value in flux_inputs)
         for name, values in zip(flux_names, fluxes):
             if values.shape != (time_count,):
                 raise ValueError(f"{name} must match fixed worldtube time capacity.")
@@ -161,7 +157,10 @@ class QuasilocalHorizonWorldtube(StrictModule, NonTrainableState):
             tuple(item.christodoulou_mass for item in geometry_slices)
         )
         slice_finite = jnp.stack(
-            tuple(item.finite & geometry.finite for item, geometry in zip(mots_slices, geometry_slices))
+            tuple(
+                item.finite & geometry.finite
+                for item, geometry in zip(mots_slices, geometry_slices)
+            )
         )
         slice_converged = jnp.stack(tuple(item.converged for item in mots_slices))
         slice_physical = jnp.stack(
@@ -190,9 +189,7 @@ class QuasilocalHorizonWorldtube(StrictModule, NonTrainableState):
         self.horizon_mass = horizon_mass
         self.matter_energy_flux = jnp.asarray(fluxes[0], dtype=area.dtype)
         self.gravitational_energy_flux = jnp.asarray(fluxes[1], dtype=area.dtype)
-        self.matter_angular_momentum_flux = jnp.asarray(
-            fluxes[2], dtype=area.dtype
-        )
+        self.matter_angular_momentum_flux = jnp.asarray(fluxes[2], dtype=area.dtype)
         self.gravitational_angular_momentum_flux = jnp.asarray(
             fluxes[3], dtype=area.dtype
         )
@@ -211,9 +208,7 @@ class QuasilocalHorizonWorldtube(StrictModule, NonTrainableState):
                 "name": worldtube_name,
                 "times": times_host,
                 "surface_plan": self.surface_plan_id,
-                "surface_coefficients": tuple(
-                    item.coefficients for item in surfaces
-                ),
+                "surface_coefficients": tuple(item.coefficients for item in surfaces),
                 "surface_centers": tuple(item.center for item in surfaces),
                 "area": area,
                 "angular_momentum": angular_momentum,
@@ -302,8 +297,15 @@ class DynamicalHorizonBalancePlan(StrictModule, NonTrainableState):
         )
         if any(not np.isfinite(value) or value < 0.0 for value in tolerances):
             raise ValueError("Horizon balance tolerances must be finite and nonnegative.")
-        if tolerances[0] <= 0.0 or tolerances[2] <= 0.0 or tolerances[3] <= 0.0 or tolerances[4] <= 0.0:
-            raise ValueError("Absolute, isolation, rate, and signature tolerances must be positive.")
+        if (
+            tolerances[0] <= 0.0
+            or tolerances[2] <= 0.0
+            or tolerances[3] <= 0.0
+            or tolerances[4] <= 0.0
+        ):
+            raise ValueError(
+                "Absolute, isolation, rate, and signature tolerances must be positive."
+            )
         if not isinstance(plan_name, str) or not plan_name:
             raise ValueError("plan_name must be a nonempty string.")
         self.time_capacity = int(raw_capacity)
@@ -338,12 +340,12 @@ class DynamicalHorizonBalancePlan(StrictModule, NonTrainableState):
             + worldtube.gravitational_angular_momentum_flux
         )
         time_step = worldtube.times[1:] - worldtube.times[:-1]
-        energy_increment = 0.5 * (
-            total_energy_flux[1:] + total_energy_flux[:-1]
-        ) * time_step
-        angular_increment = 0.5 * (
-            total_angular_flux[1:] + total_angular_flux[:-1]
-        ) * time_step
+        energy_increment = (
+            0.5 * (total_energy_flux[1:] + total_energy_flux[:-1]) * time_step
+        )
+        angular_increment = (
+            0.5 * (total_angular_flux[1:] + total_angular_flux[:-1]) * time_step
+        )
         cumulative_energy = jnp.concatenate(
             (
                 jnp.zeros((1,), dtype=total_energy_flux.dtype),
@@ -373,9 +375,7 @@ class DynamicalHorizonBalancePlan(StrictModule, NonTrainableState):
         converged = jnp.all(energy_ratio <= 1.0) & jnp.all(angular_ratio <= 1.0)
 
         area_rate = _time_derivative(worldtube.area, worldtube.times)
-        area_interval_rate = (
-            worldtube.area[1:] - worldtube.area[:-1]
-        ) / time_step
+        area_interval_rate = (worldtube.area[1:] - worldtube.area[:-1]) / time_step
         mass_rate = _time_derivative(worldtube.horizon_mass, worldtube.times)
         derivative_mask = (jnp.arange(self.time_capacity) > 0) & (
             jnp.arange(self.time_capacity) < self.time_capacity - 1
@@ -430,15 +430,11 @@ class DynamicalHorizonBalancePlan(StrictModule, NonTrainableState):
         )
         energy_flux_physical = jnp.all(
             worldtube.matter_energy_flux >= -self.isolation_flux_tolerance
-        ) & jnp.all(
-            worldtube.gravitational_energy_flux >= -self.isolation_flux_tolerance
-        )
+        ) & jnp.all(worldtube.gravitational_energy_flux >= -self.isolation_flux_tolerance)
         signature_physical = jnp.all(
             worldtube.worldtube_signature >= -self.signature_tolerance
         )
-        area_nondecreasing = jnp.all(
-            area_interval_rate >= -self.isolation_rate_tolerance
-        )
+        area_nondecreasing = jnp.all(area_interval_rate >= -self.isolation_rate_tolerance)
         physically_valid = (
             jnp.all(worldtube.slice_physically_valid)
             & energy_flux_physical
@@ -454,10 +450,7 @@ class DynamicalHorizonBalancePlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(mass_rate[derivative_mask]))
         )
         qualified = (
-            finite
-            & converged
-            & physically_valid
-            & jnp.all(worldtube.slice_qualified)
+            finite & converged & physically_valid & jnp.all(worldtube.slice_qualified)
         )
         status = jnp.asarray(int(DynamicalHorizonStatus.SUCCESS), dtype=jnp.int32)
         status = status | jnp.where(

@@ -16,7 +16,7 @@ from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..conditions._evidence import AffineProjectionCertificate, ConditionRealizationStamp
 from ..conditions._ir import ProductFieldSpec
@@ -79,7 +79,7 @@ def _version(value: int, name: str = "numeric_version", /) -> int:
 def _fold_versions(values: Sequence[tuple[str, int]], /) -> int:
     digest = canonical_fingerprint(
         {
-            "kind": "linear-representation-numeric-version-v1",
+            "kind": "linear-representation-numeric-version",
             "children": [
                 {"representation": identifier, "numeric_version": version}
                 for identifier, version in values
@@ -94,7 +94,7 @@ def _scalar_nonnegative(value: Any, name: str, /) -> Array:
     if result.shape:
         raise ValueError(f"{name} must be scalar.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
-        result = result.astype(float)
+        result = result.astype("float64")
     if not bool(jnp.isfinite(result)) or bool(result < 0):
         raise ValueError(f"{name} must be finite and nonnegative.")
     return result
@@ -202,7 +202,7 @@ class LinearRepresentationCertificate(StrictModule, NonTrainableState):
         derivative_orders = tuple(maximum_derivative_orders)
         proof_ = _identifier(proof, "proof")
         payload = {
-            "kind": "linear-representation-certificate-v1",
+            "kind": "linear-representation-certificate",
             **identifiers,
             "field_names": list(field_names_),
             "coordinate_evidence_id": coordinate_id,
@@ -305,7 +305,7 @@ class LinearAssemblyEvidence(StrictModule, NonTrainableState):
                 numeric_fingerprint, "numeric_fingerprint"
             ),
         }
-        shape = tuple(int(size) for size in row_shape)
+        shape = tuple(row_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("row_shape dimensions must be positive.")
         dtype = np.dtype(row_dtype).name
@@ -346,7 +346,7 @@ class LinearAssemblyEvidence(StrictModule, NonTrainableState):
         self.zero_preserving = bool(zero_preserving)
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "linear-assembly-evidence-v1",
+                "kind": "linear-assembly-evidence",
                 **identifiers,
                 "row_shape": list(shape),
                 "row_dtype": dtype,
@@ -408,7 +408,7 @@ class LinearConditionAssembly(StrictModule, NonTrainableState):
         self.numeric_version = version
         self.assembly_id = canonical_fingerprint(
             {
-                "kind": "linear-condition-assembly-v1",
+                "kind": "linear-condition-assembly",
                 "operator": operator.operator_id,
                 "evidence": evidence.evidence_id,
                 "numeric_version": version,
@@ -434,13 +434,13 @@ class LinearConditionAssembly(StrictModule, NonTrainableState):
 class AbstractLinearRepresentation(StrictModule):
     """Explicit finite linear coordinates for one ordered field specification."""
 
-    field_spec: AbstractAttribute[ProductFieldSpec]
-    native_coefficient_space: AbstractAttribute[AbstractVectorSpace]
-    coefficient_space: AbstractAttribute[AbstractVectorSpace]
-    real_coordinates: AbstractAttribute[AbstractRealCoordinateMap | None]
-    certificate: AbstractAttribute[LinearRepresentationCertificate]
-    numeric_version: AbstractAttribute[int]
-    prepared_id: AbstractAttribute[str]
+    field_spec: eqx.AbstractVar[ProductFieldSpec]
+    native_coefficient_space: eqx.AbstractVar[AbstractVectorSpace]
+    coefficient_space: eqx.AbstractVar[AbstractVectorSpace]
+    real_coordinates: eqx.AbstractVar[AbstractRealCoordinateMap | None]
+    certificate: eqx.AbstractVar[LinearRepresentationCertificate]
+    numeric_version: eqx.AbstractVar[int]
+    prepared_id: eqx.AbstractVar[str]
 
     @property
     def representation_id(self) -> str:
@@ -507,7 +507,7 @@ class _ProductRealCoordinateMap(AbstractRealCoordinateMap, NonTrainableState):
                 raise ValueError("A child coordinate map has incompatible spaces.")
         identifier = canonical_fingerprint(
             {
-                "kind": "product-real-coordinate-map-v1",
+                "kind": "product-real-coordinate-map",
                 "source": source_space.space_id,
                 "coordinate": coordinate_space.space_id,
                 "maps": [
@@ -815,13 +815,13 @@ class ProductLinearRepresentation(AbstractLinearRepresentation, NonTrainableStat
             None if real_coordinates is None else real_coordinates.evidence.evidence_id
         )
         extraction_id = canonical_fingerprint(
-            {"kind": "product-extraction-v1", "children": list(child_ids)}
+            {"kind": "product-extraction", "children": list(child_ids)}
         )
         replacement_id = canonical_fingerprint(
-            {"kind": "product-replacement-v1", "children": list(child_ids)}
+            {"kind": "product-replacement", "children": list(child_ids)}
         )
         synthesis_id = canonical_fingerprint(
-            {"kind": "product-synthesis-v1", "children": list(child_ids)}
+            {"kind": "product-synthesis", "children": list(child_ids)}
         )
         certificate = LinearRepresentationCertificate(
             field_spec_id=field_spec.field_spec_id,
@@ -888,7 +888,7 @@ class ProductLinearRepresentation(AbstractLinearRepresentation, NonTrainableStat
         self.numeric_version = numeric_version
         self.prepared_id = canonical_fingerprint(
             {
-                "kind": "product-linear-representation-v1",
+                "kind": "product-linear-representation",
                 "representation": certificate.representation_id,
                 "numeric_version": numeric_version,
                 "children": [child.prepared_id for child in children],
@@ -972,7 +972,7 @@ class ProductLinearRepresentation(AbstractLinearRepresentation, NonTrainableStat
             axis="horizontal",
             operator_id=canonical_fingerprint(
                 {
-                    "kind": "product-linear-condition-operator-v1",
+                    "kind": "product-linear-condition-operator",
                     "representation": self.representation_id,
                     "children": [
                         assembly.operator.operator_id for assembly in assemblies
@@ -997,7 +997,7 @@ class ProductLinearRepresentation(AbstractLinearRepresentation, NonTrainableStat
             support_id=first.evidence.support_id,
             geometry_revision=canonical_fingerprint(
                 {
-                    "kind": "product-geometry-revision-v1",
+                    "kind": "product-geometry-revision",
                     "children": [
                         assembly.evidence.geometry_revision for assembly in assemblies
                     ],
@@ -1014,7 +1014,7 @@ class ProductLinearRepresentation(AbstractLinearRepresentation, NonTrainableStat
             ),
             numeric_fingerprint=canonical_fingerprint(
                 {
-                    "kind": "product-linear-assembly-numerics-v1",
+                    "kind": "product-linear-assembly-numerics",
                     "children": [
                         assembly.evidence.numeric_fingerprint for assembly in assemblies
                     ],
@@ -1121,7 +1121,7 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
             prepared.nullspace_operator,
             constraint_id=canonical_fingerprint(
                 {
-                    "kind": "coefficient-elimination-constraint-map-v1",
+                    "kind": "coefficient-elimination-constraint-map",
                     "assembly": assembly.assembly_id,
                     "prepared_constraint": prepared.prepared_id,
                 }
@@ -1134,7 +1134,7 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
         self.provider_id = "phydrax.enforcement.CoefficientElimination"
         self.realization_id = canonical_fingerprint(
             {
-                "kind": "coefficient-elimination-v1",
+                "kind": "coefficient-elimination",
                 "representation": representation.prepared_id,
                 "assembly": assembly.assembly_id,
                 "constraint": prepared.prepared_id,
@@ -1273,7 +1273,7 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
             verified,
             certificate_id=canonical_fingerprint(
                 {
-                    "kind": "coefficient-elimination-certificate-v1",
+                    "kind": "coefficient-elimination-certificate",
                     "realization": self.realization_id,
                     "condition": context.condition_id,
                     "accepted_step": context.accepted_step,

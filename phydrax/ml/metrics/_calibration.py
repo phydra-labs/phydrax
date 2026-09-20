@@ -57,7 +57,7 @@ class CalibrationResult(StrictModule):
         self.bin_weight = jnp.asarray(bin_weight)
         self.mean_probability = jnp.asarray(mean_probability)
         self.empirical_frequency = jnp.asarray(empirical_frequency)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.effective_weight = jnp.asarray(effective_weight)
         self.hard_binning = bool(hard_binning)

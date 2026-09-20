@@ -299,8 +299,8 @@ class ResolvedSizeField(StrictModule, NonTrainableState):
     ):
         if not isinstance(domain, SizeFieldDomain):
             raise TypeError("domain must be SizeFieldDomain.")
-        points = np.asarray(sample_points, dtype=float)
-        sizes = np.asarray(values, dtype=float)
+        points = np.asarray(sample_points, dtype=np.float64)
+        sizes = np.asarray(values, dtype=np.float64)
         if points.ndim != 2 or points.shape[0] == 0 or not np.all(np.isfinite(points)):
             raise ValueError("sample_points must be one non-empty finite matrix.")
         if (
@@ -409,7 +409,7 @@ class MeshMetricField(StrictModule, NonTrainableState):
     ):
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
-        metric = np.asarray(values, dtype=float)
+        metric = np.asarray(values, dtype=np.float64)
         minimum = _size(minimum_size, "minimum_size")
         maximum = _size(maximum_size, "maximum_size")
         anisotropy = float(maximum_anisotropy)
@@ -479,7 +479,7 @@ def resolve_size_controls(
         raise TypeError("domain must be SizeFieldDomain.")
     if not isinstance(combination, SizeCombinationPolicy):
         raise TypeError("combination must be SizeCombinationPolicy.")
-    points = np.asarray(sample_points, dtype=float)
+    points = np.asarray(sample_points, dtype=np.float64)
     identifiers = np.asarray(sample_entity_ids, dtype=np.int64)
     if (
         points.ndim != 2
@@ -487,8 +487,12 @@ def resolve_size_controls(
         or identifiers.shape != (points.shape[0],)
     ):
         raise ValueError("Size samples and entity IDs must be finite and aligned.")
-    curvature_values = None if curvature is None else np.asarray(curvature, dtype=float)
-    proximity_values = None if proximity is None else np.asarray(proximity, dtype=float)
+    curvature_values = (
+        None if curvature is None else np.asarray(curvature, dtype=np.float64)
+    )
+    proximity_values = (
+        None if proximity is None else np.asarray(proximity, dtype=np.float64)
+    )
     candidates = []
     masks = []
     lower_bounds = []
@@ -570,16 +574,16 @@ def resolve_size_controls(
         tuple(control.strength is SizeControlStrength.HARD for control in controls_)
     )
     priority_array = np.asarray(tuple(control.priority for control in controls_))
-    lower_array = np.asarray(lower_bounds, dtype=float)[:, None]
-    upper_array = np.asarray(upper_bounds, dtype=float)[:, None]
+    lower_array = np.asarray(lower_bounds, dtype=np.float64)[:, None]
+    upper_array = np.asarray(upper_bounds, dtype=np.float64)[:, None]
     hard_mask = mask_array & hard_array[:, None]
     admissible_minimum = np.max(np.where(hard_mask, lower_array, 0.0), axis=0)
     admissible_maximum = np.min(np.where(hard_mask, upper_array, np.inf), axis=0)
     if np.any(admissible_minimum > admissible_maximum):
         raise ValueError("Active hard size intervals have an empty intersection.")
 
-    preferred = np.empty((points.shape[0],), dtype=float)
-    raw = np.empty((points.shape[0],), dtype=float)
+    preferred = np.empty((points.shape[0],), dtype=np.float64)
+    raw = np.empty((points.shape[0],), dtype=np.float64)
     winners = []
     for sample in range(points.shape[0]):
         active = np.flatnonzero(mask_array[:, sample])
@@ -682,7 +686,7 @@ def normalize_mesh_metric(
 
     if not isinstance(metric, MeshMetricField):
         raise TypeError("metric must be MeshMetricField.")
-    values = np.asarray(metric.values, dtype=float)
+    values = np.asarray(metric.values, dtype=np.float64)
     eigenvalues, eigenvectors = np.linalg.eigh(values)
     lower = 1.0 / metric.maximum_size**2
     upper = 1.0 / metric.minimum_size**2

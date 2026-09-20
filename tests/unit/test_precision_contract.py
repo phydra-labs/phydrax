@@ -49,6 +49,11 @@ def test_precision_contracts_are_strict_nested_and_content_addressed():
     assert PrecisionRequest.from_dict(request.to_dict()) == request
     assert PrecisionResolution.from_dict(resolution.to_dict()) == resolution
     assert PrecisionEvidenceEnvelope.from_dict(evidence.to_dict()) == evidence
+    assert "version" not in request.to_dict()
+    assert "version" not in resolution.to_dict()
+    assert "version" not in evidence.to_dict()
+    with pytest.raises(ValueError, match="current canonical fields"):
+        PrecisionRequest.from_dict({**request.to_dict(), "version": 1})
 
     corrupted = evidence.to_dict()
     corrupted["observed"]["storage"] = "float64"

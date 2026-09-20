@@ -49,8 +49,7 @@ def reject_external_runtime(package: str, /) -> None:
     normalized = str(package).strip().lower()
     if normalized in FORBIDDEN_RUNTIME_PACKAGES:
         raise ValueError(
-            f"External runtime {package!r} is forbidden in core Phydrax; "
-            "use a neutral out-of-tree data adapter."
+            f"External runtime {package!r} is forbidden in core Phydrax; use a neutral out-of-tree data adapter."
         )
 
 

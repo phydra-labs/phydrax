@@ -55,7 +55,7 @@ class Fixed(Selection):
     value: Array
 
     def __init__(self, value: ArrayLike, /):
-        self.value = jnp.asarray(value, dtype=float)
+        self.value = jnp.asarray(value, dtype=jnp.float64)
 
 
 class FixedStart(Selection):
@@ -84,8 +84,7 @@ class SelectionSpec(StrictModule):
                 raise ValueError("Selection labels must be non-empty strings.")
             if not isinstance(selection, Selection):
                 raise TypeError(
-                    f"Selection for {label!r} must be a Selection, got "
-                    f"{type(selection).__name__}."
+                    f"Selection for {label!r} must be a Selection, got {type(selection).__name__}."
                 )
         self.by_label = frozendict(resolved)
 

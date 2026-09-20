@@ -60,7 +60,7 @@ class DyadicCellTopology(NonTrainableState, StrictModule):
 
     @property
     def cell_capacity(self) -> int:
-        return int(self.prefixes.shape[0])
+        return self.prefixes.shape[0]
 
 
 class DyadicAdaptationEvidence(NonTrainableState, StrictModule):
@@ -139,8 +139,7 @@ class AdaptiveDyadicGridPlan(StrictModule):
         topology, required = self._build_topology(leaf_set, epoch=epoch)
         if required > self.cell_capacity:
             raise ValueError(
-                f"Dyadic topology requires {required} cells but capacity is "
-                f"{self.cell_capacity}."
+                f"Dyadic topology requires {required} cells but capacity is {self.cell_capacity}."
             )
         if not bool(topology.evidence.successful):
             raise ValueError("Leaf keys violate the requested dyadic invariants.")
@@ -158,14 +157,14 @@ class AdaptiveDyadicGridPlan(StrictModule):
             raise TypeError("previous must be DyadicCellTopology.")
         expected = (self.cell_capacity,)
         refine = (
-            np.zeros(expected, dtype=bool)
+            np.zeros(expected, dtype=np.bool_)
             if refine_mask is None
-            else np.asarray(refine_mask, dtype=bool)
+            else np.asarray(refine_mask, dtype=np.bool_)
         )
         coarsen = (
-            np.zeros(expected, dtype=bool)
+            np.zeros(expected, dtype=np.bool_)
             if coarsen_mask is None
-            else np.asarray(coarsen_mask, dtype=bool)
+            else np.asarray(coarsen_mask, dtype=np.bool_)
         )
         if refine.shape != expected or coarsen.shape != expected:
             raise ValueError("Adaptation masks must match cell_capacity.")
@@ -284,8 +283,8 @@ class AdaptiveDyadicGridPlan(StrictModule):
         branching = 1 << self.address_plan.dimension
         prefixes = np.zeros((self.cell_capacity,), dtype=np.uint64)
         levels = np.zeros((self.cell_capacity,), dtype=np.int32)
-        allocated = np.zeros((self.cell_capacity,), dtype=bool)
-        leaf_active = np.zeros((self.cell_capacity,), dtype=bool)
+        allocated = np.zeros((self.cell_capacity,), dtype=np.bool_)
+        leaf_active = np.zeros((self.cell_capacity,), dtype=np.bool_)
         parents = -np.ones((self.cell_capacity,), dtype=np.int32)
         children = -np.ones((self.cell_capacity, branching), dtype=np.int32)
         for slot, (level, prefix) in enumerate(stored):

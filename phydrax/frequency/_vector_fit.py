@@ -36,7 +36,7 @@ def fit_fixed_poles(
     design = jnp.concatenate(
         (
             1 / (1j * omega[:, None] - poles_[None, :]),
-            jnp.ones((omega.size, 1), dtype=complex),
+            jnp.ones((omega.size, 1), dtype=jnp.complex128),
         ),
         axis=1,
     )

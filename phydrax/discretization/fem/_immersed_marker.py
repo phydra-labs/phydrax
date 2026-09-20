@@ -46,7 +46,7 @@ class FiniteElementImmersedMarkerMapPlan(StrictModule, NonTrainableState):
         if matrix.shape != expected:
             raise ValueError(f"interpolation_matrix must have shape {expected}.")
         if not np.issubdtype(matrix.dtype, np.inexact):
-            matrix = matrix.astype(float)
+            matrix = matrix.astype("float64")
         if np.any(~np.isfinite(matrix)):
             raise ValueError("interpolation_matrix must be finite.")
         self.markers = markers

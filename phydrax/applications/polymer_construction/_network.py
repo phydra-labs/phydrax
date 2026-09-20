@@ -31,12 +31,12 @@ def polymer_network_observables(state: PolymerReactionState, /) -> PolymerNetwor
     if not isinstance(state, PolymerReactionState):
         raise TypeError("state must be PolymerReactionState.")
     system = state.system
-    active = np.asarray(system.active_mask, dtype=bool)
+    active = np.asarray(system.active_mask, dtype=np.bool_)
     ids = np.asarray(system.particle_ids, dtype=np.int64)[active]
     index = {int(value): position for position, value in enumerate(ids)}
     parent = np.arange(ids.size, dtype=np.int32)
     size = np.ones((ids.size,), dtype=np.int32)
-    rank = int(state.image_counts.shape[1])
+    rank = state.image_counts.shape[1]
     offset = np.zeros((ids.size, rank), dtype=np.int64)
     spanning = False
 
@@ -82,9 +82,9 @@ def polymer_network_observables(state: PolymerReactionState, /) -> PolymerNetwor
             size[left_root] += size[right_root]
     roots = np.asarray([find(value)[0] for value in range(ids.size)], dtype=np.int32)
     unique, counts = np.unique(roots, return_counts=True)
-    components = int(unique.size)
+    components = unique.size
     largest = int(np.max(counts)) if counts.size else 0
-    cycle_rank = int(bonds.shape[0] - ids.size + components)
+    cycle_rank = bonds.shape[0] - ids.size + components
     available = sum(port.maximum_uses - port.uses for port in state.ports)
     used = state.initial_port_capacity - available
     accepted = sum(event.accepted for event in state.ledger)

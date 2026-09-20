@@ -78,7 +78,9 @@ class EventPosterior(StrictModule, NonTrainableState):
             raise ValueError(
                 "Sampling-prior values must be finite on every active posterior sample."
             )
-        source_ess = jnp.asarray(source_effective_sample_size, dtype=float).reshape(())
+        source_ess = jnp.asarray(source_effective_sample_size, dtype=jnp.float64).reshape(
+            ()
+        )
         active_count = jnp.sum(active)
         if not bool(
             jnp.isfinite(source_ess)
@@ -261,7 +263,7 @@ def prepare_population_sample_batch(
         sampling_log_prior,
         mask,
         jnp.stack(tuple(item.log_evidence for item in items)),
-        jnp.asarray(tuple(item.has_evidence for item in items), dtype=bool),
+        jnp.asarray(tuple(item.has_evidence for item in items), dtype=jnp.bool_),
         jnp.stack(tuple(item.source_effective_sample_size for item in items)),
         evidence_kinds,
         event_ids,
@@ -297,15 +299,15 @@ class SelectionInjectionSet(StrictModule, NonTrainableState):
         )
         if not leaves or leaves[0].ndim < 1:
             raise ValueError("Selection injections require a leading draw axis.")
-        count = int(leaves[0].shape[0])
-        if any(value.ndim < 1 or int(value.shape[0]) != count for value in leaves):
+        count = leaves[0].shape[0]
+        if any(value.ndim < 1 or value.shape[0] != count for value in leaves):
             raise ValueError("Every selection parameter leaf must share the draw axis.")
-        proposal = jnp.asarray(proposal_log_prob, dtype=float)
-        detection = jnp.asarray(detection_probability, dtype=float)
+        proposal = jnp.asarray(proposal_log_prob, dtype=jnp.float64)
+        detection = jnp.asarray(detection_probability, dtype=jnp.float64)
         active = (
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype=jnp.bool_)
             if mask is None
-            else jnp.asarray(mask, dtype=bool)
+            else jnp.asarray(mask, dtype=jnp.bool_)
         )
         if (
             proposal.shape != (count,)
@@ -350,7 +352,7 @@ class SelectionInjectionSet(StrictModule, NonTrainableState):
 
     @property
     def draw_count(self) -> int:
-        return int(self.mask.shape[0])
+        return self.mask.shape[0]
 
 
 class SelectionEfficiencyEstimate(StrictModule):
@@ -587,7 +589,7 @@ class PoissonPopulationPosteriorTerm(AbstractPosteriorTerm):
 
     def per_case_log_prob(self, hyperparameters: PyTree[Any], /) -> Array:
         values = self.conditional.per_case_log_prob(hyperparameters)
-        rate = jnp.asarray(self.rate(hyperparameters), dtype=float).reshape(())
+        rate = jnp.asarray(self.rate(hyperparameters), dtype=jnp.float64).reshape(())
         selection = estimate_selection_efficiency(
             self.selection,
             hyperparameters,

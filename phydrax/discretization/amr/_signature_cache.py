@@ -106,12 +106,12 @@ class PatchSignaturePolicy(StrictModule, NonTrainableState):
         halo_width: int | Sequence[int] = 1,
         power_of_two_growth: bool = True,
     ):
-        alignment_ = tuple(int(value) for value in alignment)
-        maximum = tuple(int(value) for value in maximum_envelope)
+        alignment_ = tuple(alignment)
+        maximum = tuple(maximum_envelope)
         halo = (
             (int(halo_width),) * len(alignment_)
             if isinstance(halo_width, int)
-            else tuple(int(value) for value in halo_width)
+            else tuple(halo_width)
         )
         if (
             not alignment_
@@ -143,7 +143,7 @@ class PatchSignaturePolicy(StrictModule, NonTrainableState):
         )
 
     def shape_signature(self, extent: Sequence[int], /) -> PatchShapeSignature:
-        values = tuple(int(value) for value in extent)
+        values = tuple(extent)
         if len(values) != len(self.alignment) or any(value <= 0 for value in values):
             raise ValueError("Runtime patch extent has incompatible rank or size.")
         envelope = []

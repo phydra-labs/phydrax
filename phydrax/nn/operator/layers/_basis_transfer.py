@@ -57,9 +57,7 @@ class InvariantBasisTransferPlan(StrictModule, NonTrainableState):
                 "Basis transfer requires a strictly higher target dimension."
             )
         axes = (
-            tuple(range(source_dimension))
-            if target_axes is None
-            else tuple(int(axis) for axis in target_axes)
+            tuple(range(source_dimension)) if target_axes is None else tuple(target_axes)
         )
         if (
             len(axes) != source_dimension
@@ -92,8 +90,7 @@ class InvariantBasisTransferPlan(StrictModule, NonTrainableState):
                 or source_block.multiplicity != target_block.multiplicity
             ):
                 raise ValueError(
-                    "Initial cross-dimensional transfer supports matching scalar and "
-                    "pseudoscalar tensor blocks only."
+                    "Initial cross-dimensional transfer supports matching scalar and pseudoscalar tensor blocks only."
                 )
         if (
             source_basis.input_layout.channel_count
@@ -156,8 +153,7 @@ class InvariantBasisTransferPlan(StrictModule, NonTrainableState):
         )
         if residual > self.residual_tolerance:
             raise ValueError(
-                "Invariant basis transfer residual exceeds tolerance: "
-                f"{residual} > {self.residual_tolerance}."
+                f"Invariant basis transfer residual exceeds tolerance: {residual} > {self.residual_tolerance}."
             )
         flat_basis = self.target_basis.basis.reshape(self.target_basis.rank, -1)
         target_coefficients = ein.contract(

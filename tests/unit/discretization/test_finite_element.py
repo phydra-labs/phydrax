@@ -251,5 +251,5 @@ def test_finite_elements_reject_degenerate_and_unconstrained_components():
         phx.discretization.dirichlet_constraint(
             _square_discretization(),
             "u",
-            boundary_mask=jnp.ones((5,), dtype=bool),
+            boundary_mask=jnp.ones((5,), dtype="bool"),
         )

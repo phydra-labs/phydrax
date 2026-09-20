@@ -89,8 +89,8 @@ class AsynchronousSchwarzState(StrictModule):
     ):
         self.functions = frozendict(functions)
         self.optimizer_states = tuple(optimizer_states)
-        self.local_steps = tuple(int(value) for value in local_steps)
-        self.patch_revisions = tuple(int(value) for value in patch_revisions)
+        self.local_steps = tuple(local_steps)
+        self.patch_revisions = tuple(patch_revisions)
         self.trace_history = tuple(trace_history)
         self.completed_updates = int(completed_updates)
         self.maximum_observed_staleness = int(maximum_observed_staleness)

@@ -1,5 +1,5 @@
 {
-  "catalog_id": "7df5c559bb37a90075951a7520742401c6042da6861cbea39f2abfd8e5cc0f67",
+  "catalog_id": "43e73de78a9b4219a332334e3d9fc63e0ef7d763aabf519924c4f37a29729de4",
   "declarations": [
     {
       "capability": "acoustics.vibroacoustic",
@@ -6859,7 +6859,7 @@
     },
     {
       "capability": "diagrammatic-field.low-order-fermion-diagram-monte-carlo",
-      "declaration_id": "a0028a35c3ced5329e740bcdc993d9281a4cb8471326d36f7bb4d8037454a37b",
+      "declaration_id": "a435e3070b0c8f1c2520c6dc2b8b18ca2bba9346a2c9b33e52c28c0a54155038",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -6879,7 +6879,7 @@
           "dependencies": [],
           "kind": "capability-profile",
           "name": "diagrammatic-field.low-order-fermion-diagram-monte-carlo.candidate",
-          "profile_id": "930a757920d13d54b2911219840ae6d32782056498a6462a4fdb6604463c6e56",
+          "profile_id": "66d9a65b1998412d09ce06a69de5f9bccdd5e9e6e9add44de1bd983205a7da8b",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -6892,12 +6892,12 @@
           "support_tuples": [
             {
               "attributes": {
-                "catalogue": "finite-caller-supplied",
+                "catalog": "finite-caller-supplied",
                 "proposal": "reversible-metropolis-hastings"
               },
               "capability": "diagrammatic-field.low-order-fermion-diagram-monte-carlo",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "4cd4e228f9e3a37c66d455d8cb8d28d53109f95903cd05aa26ea3a56d9025241"
+              "support_tuple_id": "4f70ebda08fe033373ac2f7c72cb8364f5dc33f95f91744450abca5d9eb7461c"
             }
           ],
           "version": "candidate"
@@ -6955,7 +6955,7 @@
     },
     {
       "capability": "dicom-medical-image-admission",
-      "declaration_id": "0c633108f9d8bf45aa774729b7fc9fc83af804370ac05e839b83e520286eded0",
+      "declaration_id": "f514ca7f7492010e341b14f2103b7684f1ac61b3e997b28a38ab031a7f312524",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -6971,64 +6971,6 @@
       ],
       "owner": "phydrax.imaging",
       "profiles": [
-        {
-          "dependencies": [],
-          "kind": "capability-profile",
-          "name": "imaging.dicom.enhanced-ct",
-          "profile_id": "420c673f935c64ba17aadc5c7d6ac206ded925392eb9a9d70508280ed32eadbb",
-          "provider": "phydrax",
-          "release_evidence": [],
-          "released": false,
-          "required_gates": [
-            "coordinate-validity",
-            "deidentification",
-            "semantic-round-trip",
-            "source-admission"
-          ],
-          "support_tuples": [
-            {
-              "attributes": {
-                "coordinate-system": "lps-voxel-centre",
-                "operation": "read-only-normalization",
-                "scope": "research-only-deidentified",
-                "sop-profile": "enhanced-ct-regular-grid"
-              },
-              "capability": "dicom-medical-image-admission",
-              "kind": "capability-support-tuple",
-              "support_tuple_id": "5dee42f9461e2bb36bdb88f925b12a7583d75efac5cfb0e2d9122a2e9d36195a"
-            }
-          ],
-          "version": "candidate"
-        },
-        {
-          "dependencies": [],
-          "kind": "capability-profile",
-          "name": "imaging.dicom.legacy-ct",
-          "profile_id": "58aa2a1551fccceb74979f96cb1e9b10d09901220625b20d8b14dbbf3af09fa0",
-          "provider": "phydrax",
-          "release_evidence": [],
-          "released": false,
-          "required_gates": [
-            "coordinate-validity",
-            "deidentification",
-            "semantic-round-trip",
-            "source-admission"
-          ],
-          "support_tuples": [
-            {
-              "attributes": {
-                "coordinate-system": "lps-voxel-centre",
-                "operation": "read-only-normalization",
-                "scope": "research-only-deidentified",
-                "sop-profile": "legacy-ct-image-series-regular-grid"
-              },
-              "capability": "dicom-medical-image-admission",
-              "kind": "capability-support-tuple",
-              "support_tuple_id": "e6655dbe5acf76ef54023580c53e5ada3fba6b5813175cf335be65b18a1cc1c8"
-            }
-          ],
-          "version": "candidate"
-        },
         {
           "dependencies": [],
           "kind": "capability-profile",
@@ -7060,6 +7002,35 @@
         {
           "dependencies": [],
           "kind": "capability-profile",
+          "name": "imaging.dicom.legacy-ct",
+          "profile_id": "ae8bb2cfebc6b9e9950db079a1f5719e8180dd36b59751821d8cc9730d0f9690",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "coordinate-validity",
+            "deidentification",
+            "semantic-round-trip",
+            "source-admission"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coordinate-system": "lps-voxel-center",
+                "operation": "read-only-normalization",
+                "scope": "research-only-deidentified",
+                "sop-profile": "legacy-ct-image-series-regular-grid"
+              },
+              "capability": "dicom-medical-image-admission",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "720d21ea778fd8e6346b65310adfe1d600a319c93fe78e3a38597c44fee52ed1"
+            }
+          ],
+          "version": "candidate"
+        },
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
           "name": "imaging.dicom.pet-activity-concentration",
           "profile_id": "c5cec7c7075723af5a0603883e69ccfcc98d22bd5552af3217ba2edd4e3168fc",
           "provider": "phydrax",
@@ -7081,6 +7052,35 @@
               "capability": "dicom-medical-image-admission",
               "kind": "capability-support-tuple",
               "support_tuple_id": "bb1be52a062166279b67028bcb4689ed34a19a3b6ce0a30f59c810d4e3f9a657"
+            }
+          ],
+          "version": "candidate"
+        },
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "imaging.dicom.enhanced-ct",
+          "profile_id": "cd68978dee4580194349581f52c4d160e35131037b432f7859bd2a9c0dfa1345",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "coordinate-validity",
+            "deidentification",
+            "semantic-round-trip",
+            "source-admission"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coordinate-system": "lps-voxel-center",
+                "operation": "read-only-normalization",
+                "scope": "research-only-deidentified",
+                "sop-profile": "enhanced-ct-regular-grid"
+              },
+              "capability": "dicom-medical-image-admission",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "cc9e752d764118e88420376aa6626f907fb2b647b69fb8a3e8259e0764f69a39"
             }
           ],
           "version": "candidate"
@@ -9778,7 +9778,7 @@
     },
     {
       "capability": "nucleic.strand-displacement",
-      "declaration_id": "e01719941916a5cd3272184039ddee8d2c1ae5a9b7d4c90a470b27ec76677da8",
+      "declaration_id": "d2acec9c240beb913b541de5621c4acca19a70ea240c1877508bb805bf810e7c",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -9797,8 +9797,8 @@
         {
           "dependencies": [],
           "kind": "capability-profile",
-          "name": "nucleic.strand-displacement.rna-to-dna.declared-condition.v1",
-          "profile_id": "886cdf5ea3099f6daa2e38ff08aeb86d99cd30f1a3c872fcb32e58678cbd2125",
+          "name": "nucleic.strand-displacement.rna-to-dna.declared-condition.canonical",
+          "profile_id": "d5d3044e97da06e34b61b55d7fc0a409e87d113da672709e1e8459f4dbdacd2f",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -11542,7 +11542,7 @@
     },
     {
       "capability": "protein-coordinate-proposal",
-      "declaration_id": "6deb6eb2df68d626054555cc0a8807412b32ff5701314654522d3150f8087642",
+      "declaration_id": "599dc76651df0717aec20ec89b32a45a1ee5135ccb24eb5cc8e9843f52553a35",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -11561,8 +11561,8 @@
         {
           "dependencies": [],
           "kind": "capability-profile",
-          "name": "protein.coordinate-proposal.fixed-construct-standard-chemistry.v1",
-          "profile_id": "3bd931806cf8acfcb770734e49e5ba937b411fab7975aef3288fee626616ffdf",
+          "name": "protein.coordinate-proposal.fixed-construct-standard-chemistry.canonical",
+          "profile_id": "4ba32fbacb67cadb926c2a182e743faaff85b58985f16f9cc31289e12f0bdae7",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -11592,7 +11592,7 @@
     },
     {
       "capability": "protein.mutation-stability-prediction",
-      "declaration_id": "ca8b544110225c904521b4ea3684d6737fc5c69d8e054ed34f96ae8f40455b54",
+      "declaration_id": "76cf61c9dbda5c67b87817e34c246a996249a32e4d7704e79ebd8e3d03ef274a",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -11611,8 +11611,8 @@
         {
           "dependencies": [],
           "kind": "capability-profile",
-          "name": "protein.stability.megascale-natural-small-domain.v1",
-          "profile_id": "66bddf35f6473a9f99452303f0c1347e4fa01d2c06b95a5ab4d93a722a9a6a08",
+          "name": "protein.stability.megascale-natural-small-domain.canonical",
+          "profile_id": "eb89c5b28a6a2591dfb87e510473454a42ac35e3c74af8a37c6b72099fbbf4aa",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13066,7 +13066,7 @@
     },
     {
       "capability": "rna-conditional-ensemble-inference",
-      "declaration_id": "c79f25f8c3a6d88ed6de54776a11a5f972990e35b77ca0a09d6a1e72925079a4",
+      "declaration_id": "5e3a3911256a62824c8234856858140331fa6d344db1f0990462ad4b50fa7b71",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -13085,8 +13085,8 @@
         {
           "dependencies": [],
           "kind": "capability-profile",
-          "name": "rna.ensemble.adenine-riboswitch.declared-protocol.v1",
-          "profile_id": "47185f3277511c43d5ed66d16ef5a2630cc60f00a63d38b9359ef51a46096b53",
+          "name": "rna.ensemble.adenine-riboswitch.declared-protocol.canonical",
+          "profile_id": "5a933d6a52551c24427debc65cbbd8955895fd418bd6ab83d5bf22fa779002f8",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13466,7 +13466,7 @@
     },
     {
       "capability": "semiconductor.detector.electrostatics",
-      "declaration_id": "03769b43c61d6bdc06256011e69447372d6e6b9df78a1082173f65d289eb53ad",
+      "declaration_id": "8f085c2797151b4a1798fccaf8e1fba026926c8bded68defe85316e8e53d227b",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -13485,8 +13485,8 @@
         {
           "dependencies": [],
           "kind": "capability-profile",
-          "name": "semiconductor.detector.fixed-linear-electrostatics.v1",
-          "profile_id": "d0f48b3080867bc8dab9a83e95e1cede2d6dee65e793719948c7703ebd5a891a",
+          "name": "semiconductor.detector.fixed-linear-electrostatics.canonical",
+          "profile_id": "c477c272ee15ed4ad26779aad83e096560f3b5d8887c9a744a5728b2561e1200",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13523,7 +13523,7 @@
     },
     {
       "capability": "semiconductor.detector.response",
-      "declaration_id": "3d0f82eff5d0f57bdf09fcb44f9d81621d3ef542b29a92759fdee916f02f8c42",
+      "declaration_id": "ce9ca8d3c8c30df3ad9b5864654bc6c6857670ade78d10c8116235757265fbb2",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -13542,15 +13542,15 @@
         {
           "dependencies": [
             {
-              "dependency_id": "a8851dc4d64d2de65000b677621bf6e7e4279e2de4f41c1d11af059aabfdc5de",
+              "dependency_id": "5f37c87fd504b4851719aa281e5e3c5441a0462b0c1b117c48ebe9b707432617",
               "kind": "exact-support-dependency",
-              "profile_id": "d0f48b3080867bc8dab9a83e95e1cede2d6dee65e793719948c7703ebd5a891a",
+              "profile_id": "c477c272ee15ed4ad26779aad83e096560f3b5d8887c9a744a5728b2561e1200",
               "support_tuple_id": "f336f1d78d4371ac958d13f4cbd04b577706b5e190ad0f1254c2757c1e06d881"
             }
           ],
           "kind": "capability-profile",
-          "name": "semiconductor.detector.prescribed-shockley-ramo.v1",
-          "profile_id": "21f58248264a164bba4c812d387db4d152b0912a47a5af1357df2bc11ed0e30a",
+          "name": "semiconductor.detector.prescribed-shockley-ramo.canonical",
+          "profile_id": "407a3104b88aadca74c95dc95d411eb1b132608579b45467871d974d30f2a4f2",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13588,7 +13588,7 @@
     },
     {
       "capability": "semiconductor.device.electrothermal",
-      "declaration_id": "01b2b8fac491d9ca9622b94a391b722a04c6a1f459f7fa460b88f8476a94ca8f",
+      "declaration_id": "807df5296a5a004b6890f4724a91557422cd5fa463d620eaa0f380a3052e8134",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -13607,15 +13607,15 @@
         {
           "dependencies": [
             {
-              "dependency_id": "744c0f8c36d470143638ea1a2ac16029f6d45c4fb4420156f7c81e625b715727",
+              "dependency_id": "164eaefbc8fe655bbd0e2527fbcf69e0cfa8a4e9a34175761ff56c45fe37a061",
               "kind": "exact-support-dependency",
-              "profile_id": "9b792fac0205dec76866d6154a4fae9b4b3cb934fbaac7f16816b0751b6f1c01",
+              "profile_id": "dafeae25844b31825d1f2e4c0f2e4ddbe99594ce0e7f578ecfe99123b0cb866d",
               "support_tuple_id": "a4552b2924fe74dd768c2c9a55a417f9eee728576460f8ad4abc4d6f7493e595"
             }
           ],
           "kind": "capability-profile",
-          "name": "semiconductor.device.electrothermal-dd.v1",
-          "profile_id": "1f396f3cb5f1e29edcb9088f9d499e337d3c6f2884e4b1bd9ba4472f46e77e86",
+          "name": "semiconductor.device.electrothermal-dd.canonical",
+          "profile_id": "61a0681ec270e31d887df77692a322d2100390356087d581963886cab90f23e1",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13650,7 +13650,7 @@
     },
     {
       "capability": "semiconductor.device.stationary",
-      "declaration_id": "53e0bcadc966fa9aeb046da48e15834cd93fd3c196e2a9e4f5540b6a43bc3b40",
+      "declaration_id": "f132cde2b96f1e8b99413c24e7e2d9073a5ba864083e2bfefb45df224e646891",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -13669,8 +13669,8 @@
         {
           "dependencies": [],
           "kind": "capability-profile",
-          "name": "semiconductor.device.isothermal-homojunction-dd.v1",
-          "profile_id": "9b792fac0205dec76866d6154a4fae9b4b3cb934fbaac7f16816b0751b6f1c01",
+          "name": "semiconductor.device.isothermal-homojunction-dd.canonical",
+          "profile_id": "dafeae25844b31825d1f2e4c0f2e4ddbe99594ce0e7f578ecfe99123b0cb866d",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13703,15 +13703,15 @@
         {
           "dependencies": [
             {
-              "dependency_id": "744c0f8c36d470143638ea1a2ac16029f6d45c4fb4420156f7c81e625b715727",
+              "dependency_id": "164eaefbc8fe655bbd0e2527fbcf69e0cfa8a4e9a34175761ff56c45fe37a061",
               "kind": "exact-support-dependency",
-              "profile_id": "9b792fac0205dec76866d6154a4fae9b4b3cb934fbaac7f16816b0751b6f1c01",
+              "profile_id": "dafeae25844b31825d1f2e4c0f2e4ddbe99594ce0e7f578ecfe99123b0cb866d",
               "support_tuple_id": "a4552b2924fe74dd768c2c9a55a417f9eee728576460f8ad4abc4d6f7493e595"
             }
           ],
           "kind": "capability-profile",
-          "name": "semiconductor.device.heterointerface-dd.v1",
-          "profile_id": "ff2bd1cb3d102e952e34868d17ea79c5b5c524750e8542444420b2e31df11d69",
+          "name": "semiconductor.device.heterointerface-dd.canonical",
+          "profile_id": "ef6ffc92b6847ffdb0d7194d8906f387721e449caa32a782f987b20c6b0e3c11",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13746,7 +13746,7 @@
     },
     {
       "capability": "semiconductor.device.stationary-hybrid",
-      "declaration_id": "a0c7c2a3a974400436bed8b05448423cea3b1e848ac3e8765d39d71995fc3aff",
+      "declaration_id": "f941b50bdcd0fc5b285219563118f66df6578e3f301860505bec8c6b4c98e135",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -13765,21 +13765,21 @@
         {
           "dependencies": [
             {
-              "dependency_id": "32ba08cd716cb7bd663ff0d7f7360fb3b1614922adcc3c9680bf79dfd673c070",
+              "dependency_id": "eb9a4267e6934cb497466f15ea4f8640f2733bde9186a54a4a70f65cec849855",
               "kind": "exact-support-dependency",
-              "profile_id": "3cd11df6a64ba7bce9d3bc7dd940ec59ac0250dcdad3997aba5564d88912cb60",
+              "profile_id": "c9e02114c6a0ffdb0f2c4f92659a8c9e2bb8bd9b3304c69faac377d8bdd00a61",
               "support_tuple_id": "5fe2ed504be79a9ed7034510dca9243ad00b5d4f8045541752a4204d03944be1"
             },
             {
-              "dependency_id": "744c0f8c36d470143638ea1a2ac16029f6d45c4fb4420156f7c81e625b715727",
+              "dependency_id": "164eaefbc8fe655bbd0e2527fbcf69e0cfa8a4e9a34175761ff56c45fe37a061",
               "kind": "exact-support-dependency",
-              "profile_id": "9b792fac0205dec76866d6154a4fae9b4b3cb934fbaac7f16816b0751b6f1c01",
+              "profile_id": "dafeae25844b31825d1f2e4c0f2e4ddbe99594ce0e7f578ecfe99123b0cb866d",
               "support_tuple_id": "a4552b2924fe74dd768c2c9a55a417f9eee728576460f8ad4abc4d6f7493e595"
             }
           ],
           "kind": "capability-profile",
-          "name": "semiconductor.device.stationary-quantum-classical-hybrid.v1",
-          "profile_id": "f8a56f7cf116899c86d8903178ca512a793f83e31e0a11f569092e3610b4b3c2",
+          "name": "semiconductor.device.stationary-quantum-classical-hybrid.canonical",
+          "profile_id": "84e5597603ba14d4c97e23eb85610f031ff1878edc47908b9fd440140e067d5c",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13813,7 +13813,7 @@
     },
     {
       "capability": "semiconductor.quantum.chain-coherent-ac",
-      "declaration_id": "d003f260c244e08c5792dbb81c8163bf02775f3b969ab04f1c64d30b7ba0141e",
+      "declaration_id": "7599572df18138c5e768e68cc9c37adbb8196f166e82a7dd3f8caad925f3bf68",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -13832,15 +13832,15 @@
         {
           "dependencies": [
             {
-              "dependency_id": "18424fcb1236b60be4984f3883c33afe03c887e75c301d662c2baa420d9ba384",
+              "dependency_id": "e55920082e96930f71838f733ab65a37c70380c848a5f1a8ba4bfdf06d522ccd",
               "kind": "exact-support-dependency",
-              "profile_id": "4a6c41ad809d199e77556919fcf41aba33da3e20ea14388918d2020ca60ed0b5",
+              "profile_id": "930f5409e67c8b52c11c6447217d13cbe95b761623b41771f9897be60a00591d",
               "support_tuple_id": "9ee16ce4ee7976da89af668e3d87b1200fddb98f8256f4d8a5192ca9e8e1c55e"
             }
           ],
           "kind": "capability-profile",
-          "name": "semiconductor.quantum.chain-coherent-ac.v1",
-          "profile_id": "d0dbd4dd43cb15ef667f617c3a7038490684fb5c1206462626693507a4ae6bef",
+          "name": "semiconductor.quantum.chain-coherent-ac.canonical",
+          "profile_id": "ebbee1220137697f3ae6e6799e3cf26019ea4a378aef5dfbd107bbe1754d233d",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13877,7 +13877,7 @@
     },
     {
       "capability": "semiconductor.quantum.chain-finite-lead-transient",
-      "declaration_id": "db1b344470111dcd17a402f392be907507ead109030c2e656b76aa72b8c11296",
+      "declaration_id": "c0552f32ae207fce4f4b9fc541aa857694d40c1248f0856a9aa7bfc01bca7d6b",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -13896,15 +13896,15 @@
         {
           "dependencies": [
             {
-              "dependency_id": "18424fcb1236b60be4984f3883c33afe03c887e75c301d662c2baa420d9ba384",
+              "dependency_id": "e55920082e96930f71838f733ab65a37c70380c848a5f1a8ba4bfdf06d522ccd",
               "kind": "exact-support-dependency",
-              "profile_id": "4a6c41ad809d199e77556919fcf41aba33da3e20ea14388918d2020ca60ed0b5",
+              "profile_id": "930f5409e67c8b52c11c6447217d13cbe95b761623b41771f9897be60a00591d",
               "support_tuple_id": "9ee16ce4ee7976da89af668e3d87b1200fddb98f8256f4d8a5192ca9e8e1c55e"
             }
           ],
           "kind": "capability-profile",
-          "name": "semiconductor.quantum.chain-finite-lead-transient.v1",
-          "profile_id": "cbb0a862f9c51bef7e34619096c001b5e9caffb6f00f8c11199bc4bfe4ec13f0",
+          "name": "semiconductor.quantum.chain-finite-lead-transient.canonical",
+          "profile_id": "25d5a4b0609c7d18214329b5d0649a9b469a01e1723b6ca2dcd90cad10682768",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13941,7 +13941,7 @@
     },
     {
       "capability": "semiconductor.quantum.chain-landauer",
-      "declaration_id": "a7fe4b4faac1487a88ed3b4c7e70788662512c1806742de3dd4cee124e5afdb5",
+      "declaration_id": "07197b8d63e9f2763295b58ef09f75c458cf2efbbadc913810fa2017344dea49",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -13960,8 +13960,8 @@
         {
           "dependencies": [],
           "kind": "capability-profile",
-          "name": "semiconductor.quantum.chain-landauer.v1",
-          "profile_id": "4a6c41ad809d199e77556919fcf41aba33da3e20ea14388918d2020ca60ed0b5",
+          "name": "semiconductor.quantum.chain-landauer.canonical",
+          "profile_id": "930f5409e67c8b52c11c6447217d13cbe95b761623b41771f9897be60a00591d",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -13999,7 +13999,7 @@
     },
     {
       "capability": "semiconductor.quantum.chain-optical-phonon-scba",
-      "declaration_id": "f75bc28c954ce9e745016167dbe551a73f9711de9b150ae43a0d8480cabb14eb",
+      "declaration_id": "3a541d43d03aa2886f732dc420fad5549e114f13d1548e7c7a0b83ccf5731ebe",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -14018,15 +14018,15 @@
         {
           "dependencies": [
             {
-              "dependency_id": "18424fcb1236b60be4984f3883c33afe03c887e75c301d662c2baa420d9ba384",
+              "dependency_id": "e55920082e96930f71838f733ab65a37c70380c848a5f1a8ba4bfdf06d522ccd",
               "kind": "exact-support-dependency",
-              "profile_id": "4a6c41ad809d199e77556919fcf41aba33da3e20ea14388918d2020ca60ed0b5",
+              "profile_id": "930f5409e67c8b52c11c6447217d13cbe95b761623b41771f9897be60a00591d",
               "support_tuple_id": "9ee16ce4ee7976da89af668e3d87b1200fddb98f8256f4d8a5192ca9e8e1c55e"
             }
           ],
           "kind": "capability-profile",
-          "name": "semiconductor.quantum.chain-optical-phonon-scba.v1",
-          "profile_id": "64aa44947ccdaaa95a669de601b7ec83b10772b81acdff9eb411a7e9c081d0e5",
+          "name": "semiconductor.quantum.chain-optical-phonon-scba.canonical",
+          "profile_id": "4810faadd9fe784cb1088c942fe18a6d736a44fd194589919d515fa0fdf189c2",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -14063,7 +14063,7 @@
     },
     {
       "capability": "semiconductor.quantum.stationary",
-      "declaration_id": "6060466ad1a08de10a3e6e98efbeebafe34ffcbb9daebb9afcdae20058877be9",
+      "declaration_id": "dc77f3fb701bc9065eac7fdd220d646461275e94bac461ae5f3c5a349d984282",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -14082,8 +14082,8 @@
         {
           "dependencies": [],
           "kind": "capability-profile",
-          "name": "semiconductor.quantum.effective-mass-1d.v1",
-          "profile_id": "3cd11df6a64ba7bce9d3bc7dd940ec59ac0250dcdad3997aba5564d88912cb60",
+          "name": "semiconductor.quantum.effective-mass-1d.canonical",
+          "profile_id": "c9e02114c6a0ffdb0f2c4f92659a8c9e2bb8bd9b3304c69faac377d8bdd00a61",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,

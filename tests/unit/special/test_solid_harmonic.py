@@ -224,7 +224,7 @@ def test_dtype_static_structure_jit_and_directional_ad_compose():
     with pytest.raises(ValueError):
         phx.special.solid_harmonic_irregular(2, 1, jnp.ones((4, 2)))
     with pytest.raises(TypeError):
-        phx.special.solid_harmonic_regular(2, 1, jnp.ones(3, dtype=complex))
+        phx.special.solid_harmonic_regular(2, 1, jnp.ones(3, dtype="complex128"))
     with pytest.raises(TypeError):
         jax.jit(lambda degree: phx.special.solid_harmonic_regular(degree, 0, high))(
             jnp.asarray(2)

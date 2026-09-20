@@ -456,7 +456,7 @@ def _compact_mass_neutral_basis(
                 "Deterministic compact pair/triple grouping exceeds compact_support_radius."
             )
     column_count = sum(1 if len(group) == 2 else 2 for group in groups)
-    basis = np.zeros((count, column_count), dtype=float)
+    basis = np.zeros((count, column_count), dtype=np.float64)
     column = 0
     for group in groups:
         if len(group) == 2:
@@ -476,7 +476,7 @@ def _compact_mass_neutral_basis(
 def _relative_loading_defect(loading: np.ndarray, scale: float, /) -> float:
     if loading.size == 0:
         return 0.0
-    return float(np.max(np.abs(loading))) / max(float(scale), np.finfo(float).tiny)
+    return float(np.max(np.abs(loading))) / max(float(scale), np.finfo(np.float64).tiny)
 
 
 class StochasticTurbulentInflowPreparationEvidence(StrictModule):
@@ -633,9 +633,9 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
         spectral_wavevectors: ArrayLike | None = None,
         divergence_operator: ArrayLike | None = None,
     ) -> PreparedStochasticTurbulentInflow:
-        points = np.asarray(coordinates, dtype=float)
-        normals = np.asarray(wall_normal, dtype=float)
-        weights = np.asarray(quadrature_weights, dtype=float)
+        points = np.asarray(coordinates, dtype=np.float64)
+        normals = np.asarray(wall_normal, dtype=np.float64)
+        weights = np.asarray(quadrature_weights, dtype=np.float64)
         velocity_covariance_ = np.asarray(velocity_covariance)
         if points.ndim != 2 or points.shape[0] < 2 or points.shape[1] not in (2, 3):
             raise ValueError(
@@ -661,9 +661,9 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
             velocity_covariance_
         ):
             raise ValueError("velocity_covariance must be a real spatial square matrix.")
-        velocity_covariance_ = np.asarray(velocity_covariance_, dtype=float)
+        velocity_covariance_ = np.asarray(velocity_covariance_, dtype=np.float64)
         if scalar_covariance is None:
-            scalar_covariance_ = np.zeros((0, 0), dtype=float)
+            scalar_covariance_ = np.zeros((0, 0), dtype=np.float64)
         else:
             scalar_covariance_ = np.asarray(scalar_covariance)
             if (
@@ -672,17 +672,17 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
                 or np.iscomplexobj(scalar_covariance_)
             ):
                 raise ValueError("scalar_covariance must be a real square matrix.")
-            scalar_covariance_ = np.asarray(scalar_covariance_, dtype=float)
+            scalar_covariance_ = np.asarray(scalar_covariance_, dtype=np.float64)
         scalar_count = scalar_covariance_.shape[0]
         if velocity_scalar_covariance is None:
-            cross = np.zeros((dimension, scalar_count), dtype=float)
+            cross = np.zeros((dimension, scalar_count), dtype=np.float64)
         else:
             cross = np.asarray(velocity_scalar_covariance)
             if cross.shape != (dimension, scalar_count) or np.iscomplexobj(cross):
                 raise ValueError(
                     "velocity_scalar_covariance must have shape (dimension, scalar_count)."
                 )
-            cross = np.asarray(cross, dtype=float)
+            cross = np.asarray(cross, dtype=np.float64)
         joint_covariance = np.block(
             [[velocity_covariance_, cross], [cross.T, scalar_covariance_]]
         )
@@ -720,19 +720,19 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
             spatial_basis, compact_groups, compact_diameter = _compact_mass_neutral_basis(
                 points, self.compact_support_radius
             )
-            synthesis = np.einsum(
+            synthesis = ein.contract(
                 "nm,ca->ncma", spatial_basis, covariance_root, optimize=True
             ).reshape((count, dimension + scalar_count, -1))
-            wavevectors = np.zeros((0, dimension), dtype=float)
+            wavevectors = np.zeros((0, dimension), dtype=np.float64)
         else:
             if spectral_wavevectors is None:
                 if covariance_rank:
                     raise ValueError(
                         "spectral_wavevectors must provide one wavevector per covariance mode."
                     )
-                wavevectors = np.zeros((0, dimension), dtype=float)
+                wavevectors = np.zeros((0, dimension), dtype=np.float64)
             else:
-                wavevectors = np.asarray(spectral_wavevectors, dtype=float)
+                wavevectors = np.asarray(spectral_wavevectors, dtype=np.float64)
             if wavevectors.shape != (covariance_rank, dimension) or np.any(
                 ~np.isfinite(wavevectors)
             ):
@@ -743,7 +743,7 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
                 wave_norm = np.linalg.norm(wavevectors, axis=-1)
                 if np.any(wave_norm <= 0.0):
                     raise ValueError("Every active spectral wavevector must be nonzero.")
-                normal_wave = np.einsum(
+                normal_wave = ein.contract(
                     "rd,nd->rn", wavevectors, unit_normals, optimize=True
                 )
                 if (
@@ -754,7 +754,7 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
                         "Spectral wavevectors must be tangent to the boundary."
                     )
             synthesis = np.zeros(
-                (count, dimension + scalar_count, 2 * covariance_rank), dtype=float
+                (count, dimension + scalar_count, 2 * covariance_rank), dtype=np.float64
             )
             for mode_index in range(covariance_rank):
                 phase = points @ wavevectors[mode_index]
@@ -765,7 +765,9 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
                     np.sin(phase)[:, None] * covariance_root[:, mode_index][None, :]
                 )
 
-        nodal_covariance = np.einsum("ncl,ndl->ncd", synthesis, synthesis, optimize=True)
+        nodal_covariance = ein.contract(
+            "ncl,ndl->ncd", synthesis, synthesis, optimize=True
+        )
         nodal_error = float(
             np.max(np.abs(nodal_covariance - joint_covariance[None, :, :]))
         )
@@ -774,7 +776,7 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Prepared inflow does not reproduce the prescribed covariance."
             )
-        mass_loading = np.einsum(
+        mass_loading = ein.contract(
             "n,nd,ndl->l",
             weights,
             unit_normals,
@@ -793,7 +795,7 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
         divergence_blocks: list[np.ndarray] = []
         divergence_kind = "unavailable"
         if self.mode == "spectral":
-            analytic = np.zeros((count, synthesis.shape[-1]), dtype=float)
+            analytic = np.zeros((count, synthesis.shape[-1]), dtype=np.float64)
             for mode_index in range(covariance_rank):
                 phase = points @ wavevectors[mode_index]
                 coefficient = float(
@@ -806,9 +808,9 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
                 analytic[:, 2 * mode_index + 1] = np.cos(phase) * coefficient
             divergence_blocks.append(analytic)
             divergence_kind = "analytic-represented-surface"
-        operator = np.zeros((0, count * dimension), dtype=float)
+        operator = np.zeros((0, count * dimension), dtype=np.float64)
         if divergence_operator is not None:
-            operator_ = np.asarray(divergence_operator, dtype=float)
+            operator_ = np.asarray(divergence_operator, dtype=np.float64)
             if operator_.ndim == 3 and operator_.shape[1:] == (count, dimension):
                 operator_ = operator_.reshape((operator_.shape[0], count * dimension))
             if (
@@ -832,10 +834,10 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
         divergence_loading = (
             np.concatenate(divergence_blocks, axis=0)
             if divergence_blocks
-            else np.zeros((0, synthesis.shape[-1]), dtype=float)
+            else np.zeros((0, synthesis.shape[-1]), dtype=np.float64)
         )
         divergence_available = bool(divergence_blocks)
-        divergence_scale = max(synthesis_scale, np.finfo(float).tiny)
+        divergence_scale = max(synthesis_scale, np.finfo(np.float64).tiny)
         if self.mode == "spectral" and covariance_rank:
             divergence_scale *= max(float(np.max(np.abs(wavevectors))), 1.0)
         if operator.size:
@@ -1231,8 +1233,7 @@ class PreparedVectorEquilibriumWallStressChannel(StrictModule, NonTrainableState
             )
         ):
             raise ValueError(
-                "Equilibrium channel wall stress supports only exactly zero prescribed "
-                "pressure gradient."
+                "Equilibrium channel wall stress supports only exactly zero prescribed pressure gradient."
             )
         if not bool(
             jnp.array_equal(
@@ -1255,7 +1256,7 @@ class PreparedVectorEquilibriumWallStressChannel(StrictModule, NonTrainableState
         if roughness.shape == ():
             roughness = np.broadcast_to(roughness, (2,))
         wall_axis = dynamics.discretization.axes[1]
-        wall_bounds = np.asarray(wall_axis.bounds, dtype=float)
+        wall_bounds = np.asarray(wall_axis.bounds, dtype=np.float64)
         wall_length = float(wall_bounds[1] - wall_bounds[0])
         if (
             density_.shape != ()
@@ -1294,13 +1295,13 @@ class PreparedVectorEquilibriumWallStressChannel(StrictModule, NonTrainableState
         self.dynamics = dynamics
         self.integrator = integrator
         self.density = jnp.asarray(float(density_))
-        self.sample_distances = jnp.asarray(distances, dtype=float)
-        self.sample_coordinates = jnp.asarray(sample_coordinates, dtype=float)
+        self.sample_distances = jnp.asarray(distances, dtype=jnp.float64)
+        self.sample_coordinates = jnp.asarray(sample_coordinates, dtype=jnp.float64)
         self.sample_evaluation = jnp.asarray(
             sample_evaluation,
             dtype=jnp.dtype(dynamics.discretization.plan.precision.coefficient_dtype),
         )
-        self.roughness_heights = jnp.asarray(roughness, dtype=float)
+        self.roughness_heights = jnp.asarray(roughness, dtype=jnp.float64)
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-vector-equilibrium-wall-stress-channel",
@@ -1558,15 +1559,14 @@ class PreparedStochasticTurbulentInflowMACBoundary(StrictModule, NonTrainableSta
             raise ValueError("Structured-MAC inflow axis must be non-empty.")
         if side not in ("lower", "upper"):
             raise ValueError("Structured-MAC inflow side must be 'lower' or 'upper'.")
-        shape = tuple(int(value) for value in boundary_shape)
+        shape = tuple(boundary_shape)
         if (
             len(shape) != inflow.spatial_dimension - 1
             or any(value <= 0 for value in shape)
             or math.prod(shape) != inflow.coordinates.shape[0]
         ):
             raise ValueError(
-                "boundary_shape must cover every prepared inflow node and have "
-                "spatial_dimension - 1 axes."
+                "boundary_shape must cover every prepared inflow node and have spatial_dimension - 1 axes."
             )
         if not bool(
             inflow.preparation.successful
@@ -1574,8 +1574,7 @@ class PreparedStochasticTurbulentInflowMACBoundary(StrictModule, NonTrainableSta
             & inflow.preparation.divergence_compatible
         ):
             raise ValueError(
-                "Structured-MAC inflow requires covariance, mass, and represented-"
-                "divergence compatible prepared modes."
+                "Structured-MAC inflow requires covariance, mass, and represented-divergence compatible prepared modes."
             )
         self.inflow = inflow
         self.boundary_shape = shape

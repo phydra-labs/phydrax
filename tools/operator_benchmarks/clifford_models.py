@@ -38,7 +38,7 @@ class PeriodicCliffordLaplacian(eqx.Module, NonTrainableState):
         *,
         periods: Sequence[float] | None = None,
     ):
-        shape = tuple(int(value) for value in grid_shape)
+        shape = tuple(grid_shape)
         if not shape or any(value <= 1 for value in shape):
             raise ValueError(
                 "Periodic Clifford Laplacian requires grid axes larger than one."
@@ -56,7 +56,7 @@ class PeriodicCliffordLaplacian(eqx.Module, NonTrainableState):
         self.periods = period_values
         self.operator_id = canonical_fingerprint(
             {
-                "kind": "periodic-clifford-fourier-laplacian-v1",
+                "kind": "periodic-clifford-fourier-laplacian",
                 "grid_shape": list(shape),
                 "periods": list(period_values),
             }
@@ -155,7 +155,7 @@ class DifferentialCliffordOperatorBlock(eqx.Module):
         self.residual_scale = scale
         self.candidate_id = canonical_fingerprint(
             {
-                "kind": "differential-clifford-operator-candidate-v1",
+                "kind": "differential-clifford-operator-candidate",
                 "representation": representation.representation_id,
                 "latent": latent.representation_id,
                 "context_operator": context_operator.operator_id,

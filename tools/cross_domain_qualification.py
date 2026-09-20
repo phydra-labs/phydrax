@@ -29,7 +29,6 @@ def main() -> None:
         [[1.0, 2.0], [0.5, 0.5]], source, target
     ).apply(phx.observation.TheoryVector([2.0, 3.0], source, "fixture"))
 
-
     report = {
         "gravity_adapter_error": float(
             jnp.max(jnp.abs(hierarchical.acceleration - direct))

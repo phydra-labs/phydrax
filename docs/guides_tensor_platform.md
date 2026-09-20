@@ -17,7 +17,7 @@ Choose the representation from the problem, not from a fallback hierarchy:
 - Abelian tensors for exact U(1), cyclic, or product-charge conservation;
 - graded tensors only when exchange signs are part of the algebra;
 - reduced SU(2) tensors only when irrep/fusion-tree structure is explicit;
-- labelled topology and contraction schedules for arbitrary finite networks;
+- labeled topology and contraction schedules for arbitrary finite networks;
 - finite rectangular PEPS/PEPO for two-dimensional open-boundary workloads.
 
 Unsupported combinations fail during planning. Phydrax never changes representation,

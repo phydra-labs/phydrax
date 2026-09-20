@@ -49,7 +49,9 @@ class EnvelopeNonlinearResponsePlan(StrictModule):
         maximum = int(maximum_response_elements)
         source = str(source_id)
         response = (
-            None if raman_response is None else np.asarray(raman_response, dtype=float)
+            None
+            if raman_response is None
+            else np.asarray(raman_response, dtype=np.float64)
         )
         if not np.isfinite(coefficient) or coefficient < 0.0:
             raise ValueError("nonlinear_coefficient must be finite and nonnegative.")

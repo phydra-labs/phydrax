@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
@@ -125,26 +126,23 @@ class DiscreteZeroSumHJBIProblem(StrictModule, NonTrainableState):
         expected_terminal = (spatial_grid.num_points,)
         if terminal.shape != expected_terminal:
             raise ValueError(
-                "terminal_values must have shape "
-                f"{expected_terminal}; got {terminal.shape}."
+                f"terminal_values must have shape {expected_terminal}; got {terminal.shape}."
             )
         boundary = _finite_real_array(boundary_values, "boundary_values")
         expected_boundary = (time_grid.num_times, 2)
         if boundary.shape != expected_boundary:
             raise ValueError(
-                "boundary_values must have shape "
-                f"{expected_boundary}; got {boundary.shape}."
+                f"boundary_values must have shape {expected_boundary}; got {boundary.shape}."
             )
         corner_residual = float(
             np.max(np.abs(boundary[-1] - terminal[[0, terminal.size - 1]]))
         )
         if corner_residual > tolerance:
             raise ValueError(
-                "Terminal values and final-time boundary data are incompatible at "
-                "the interval corners."
+                "Terminal values and final-time boundary data are incompatible at the interval corners."
             )
 
-        dtype = jnp.result_type(minimizer, maximizer, terminal, boundary, float)
+        dtype = jnp.result_type(minimizer, maximizer, terminal, boundary, jnp.float64)
         self.spatial_grid = spatial_grid
         self.time_grid = time_grid
         self.minimizer_actions = jnp.asarray(minimizer, dtype=dtype)
@@ -301,19 +299,19 @@ def _hjbi_coefficients(
     problem: DiscreteZeroSumHJBIProblem,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
-    times = np.asarray(problem.time_grid.times, dtype=float)
-    points = np.asarray(problem.spatial_grid.points, dtype=float)
-    minimizer = np.asarray(problem.minimizer_actions, dtype=float)
-    maximizer = np.asarray(problem.maximizer_actions, dtype=float)
+    times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    points = np.asarray(problem.spatial_grid.points, dtype=np.float64)
+    minimizer = np.asarray(problem.minimizer_actions, dtype=np.float64)
+    maximizer = np.asarray(problem.maximizer_actions, dtype=np.float64)
     shape = (
         times.size - 1,
         points.size - 2,
         minimizer.size,
         maximizer.size,
     )
-    drift = np.empty(shape, dtype=float)
-    variance = np.empty(shape, dtype=float)
-    cost = np.empty(shape, dtype=float)
+    drift = np.empty(shape, dtype=np.float64)
+    variance = np.empty(shape, dtype=np.float64)
+    cost = np.empty(shape, dtype=np.float64)
     maximum_courant = 0.0
     minimum_margin = 1.0
     dx = problem.spatial_grid.spacing
@@ -361,10 +359,9 @@ def _hjbi_coefficients(
                     )
                     maximum_courant = max(maximum_courant, courant)
                     minimum_margin = min(minimum_margin, 1.0 - courant)
-    if minimum_margin < -32.0 * np.finfo(float).eps:
+    if minimum_margin < -32.0 * np.finfo(np.float64).eps:
         raise ValueError(
-            "The declared time and spatial grids violate the explicit monotone "
-            "upwind-diffusion step condition."
+            "The declared time and spatial grids violate the explicit monotone upwind-diffusion step condition."
         )
     return drift, variance, cost, maximum_courant, minimum_margin
 
@@ -408,13 +405,13 @@ def _ordered_action_value(
 
 def _solve_hjbi_raw(problem: DiscreteZeroSumHJBIProblem, /) -> _RawHJBI:
     drift, variance, cost, maximum_courant, minimum_margin = _hjbi_coefficients(problem)
-    times = np.asarray(problem.time_grid.times, dtype=float)
-    terminal = np.asarray(problem.terminal_values, dtype=float)
-    boundary = np.asarray(problem.boundary_values, dtype=float)
+    times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    terminal = np.asarray(problem.terminal_values, dtype=np.float64)
+    boundary = np.asarray(problem.boundary_values, dtype=np.float64)
     value_shape = (times.size, problem.spatial_grid.num_points)
     selector_shape = (times.size - 1, value_shape[1] - 2)
-    lower_values = np.empty(value_shape, dtype=float)
-    upper_values = np.empty(value_shape, dtype=float)
+    lower_values = np.empty(value_shape, dtype=np.float64)
+    upper_values = np.empty(value_shape, dtype=np.float64)
     lower_minimizer = np.empty(selector_shape, dtype=np.int32)
     lower_maximizer = np.empty(selector_shape, dtype=np.int32)
     upper_minimizer = np.empty(selector_shape, dtype=np.int32)
@@ -555,8 +552,8 @@ def _refined_hjbi_problem(
     problem: DiscreteZeroSumHJBIProblem,
     /,
 ) -> DiscreteZeroSumHJBIProblem:
-    coarse_times = np.asarray(problem.time_grid.times, dtype=float)
-    fractions = np.arange(4, dtype=float) / 4.0
+    coarse_times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    fractions = np.arange(4, dtype=np.float64) / 4.0
     refined_times = np.concatenate(
         tuple(
             coarse_times[index]
@@ -570,17 +567,25 @@ def _refined_hjbi_problem(
         problem.spatial_grid.upper_bound,
         2 * (problem.spatial_grid.num_points - 1) + 1,
     )
-    coarse_points = np.asarray(problem.spatial_grid.points, dtype=float)
-    refined_points = np.asarray(refined_grid.points, dtype=float)
-    terminal = np.interp(
-        refined_points, coarse_points, np.asarray(problem.terminal_values, dtype=float)
+    coarse_points = np.asarray(problem.spatial_grid.points, dtype=np.float64)
+    refined_points = np.asarray(refined_grid.points, dtype=np.float64)
+    terminal = np.asarray(
+        linear_interpolate(
+            coarse_points,
+            np.asarray(problem.terminal_values, dtype=np.float64),
+            refined_points,
+            bounds="clip",
+        ).values
     )
     boundary = np.column_stack(
         tuple(
-            np.interp(
-                refined_times,
-                coarse_times,
-                np.asarray(problem.boundary_values, dtype=float)[:, side],
+            np.asarray(
+                linear_interpolate(
+                    coarse_times,
+                    np.asarray(problem.boundary_values, dtype=np.float64)[:, side],
+                    refined_times,
+                    bounds="clip",
+                ).values
             )
             for side in range(2)
         )
@@ -828,11 +833,11 @@ def scalar_lq_hjbi_solution(
         raise ValueError("gamma must be finite and strictly positive.")
     if not np.isfinite(terminal):
         raise ValueError("terminal_weight must be finite.")
-    times = np.asarray(time_grid.times, dtype=float)
+    times = np.asarray(time_grid.times, dtype=np.float64)
     denominator = 1.0 + terminal * (1.0 - gamma_value**-2) * (times[-1] - times)
     denominator_floor = (
         32.0
-        * np.finfo(float).eps
+        * np.finfo(np.float64).eps
         * np.maximum(
             1.0,
             np.abs(terminal * (1.0 - gamma_value**-2) * (times[-1] - times)),
@@ -840,8 +845,7 @@ def scalar_lq_hjbi_solution(
     )
     if not np.all(np.isfinite(denominator)) or np.any(denominator <= denominator_floor):
         raise ValueError(
-            "The scalar LQ HJBI Riccati denominator must remain strictly positive "
-            "over the declared horizon."
+            "The scalar LQ HJBI Riccati denominator must remain strictly positive over the declared horizon."
         )
     coefficient = terminal / denominator
     status = ScalarLQHJBIStatus.SUCCESS_ANALYTIC_SCALAR_LQ_HJBI

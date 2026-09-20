@@ -604,7 +604,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             raise TypeError("state must be WaveAMRState.")
         values = self.layout.bind_state(state.psi)
         scale = jnp.asarray(state.scale_factor, dtype=self.real_dtype)
-        accepted_boundary = jnp.asarray(state.accepted_boundary, dtype=bool)
+        accepted_boundary = jnp.asarray(state.accepted_boundary, dtype=jnp.bool_)
         if scale.shape != () or accepted_boundary.shape != ():
             raise ValueError("Wave AMR scale and accepted-boundary flag must be scalar.")
         matrix = self.layout.flatten_cells(values)
@@ -620,8 +620,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             | (scale <= 0.0)
             | (probability <= 0.0)
             | masked_nonzero,
-            "Wave AMR state must be finite, positive in norm/time, and zero on "
-            "inactive or covered composite storage.",
+            "Wave AMR state must be finite, positive in norm/time, and zero on inactive or covered composite storage.",
         )
         return WaveAMRState(self._hierarchy(tuple(checked)), scale, accepted_boundary)
 
@@ -1117,7 +1116,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
         indicators = self._indicator_levels(checked)
         tags = []
         for level in range(len(self.topology.plan.levels) - 1):
-            covered = np.asarray(self.topology.covered_cells[level], dtype=bool)
+            covered = np.asarray(self.topology.covered_cells[level], dtype=np.bool_)
             hysteresis = np.where(
                 covered,
                 adaptivity.coarsening_hysteresis,
@@ -1145,7 +1144,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
                     > hysteresis * adaptivity.vortex_threshold
                 )
             )
-            active = np.asarray(self.topology.levels[level].active, dtype=bool)
+            active = np.asarray(self.topology.levels[level].active, dtype=np.bool_)
             selected &= active.reshape(
                 (active.size,) + (1,) * len(self.topology.plan.levels[level].block_shape)
             )
@@ -1346,7 +1345,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
         target_centers = self._cell_centers(phase_routes, source=False)
         bounds = np.asarray(
             [np.asarray(axis.bounds) for axis in self.topology.plan.grid.structured_axes],
-            dtype=float,
+            dtype=np.float64,
         )
         lengths = bounds[:, 1] - bounds[:, 0]
         dimension = source_centers.shape[1]
@@ -1413,7 +1412,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
                 strict=True,
             )
         )
-        leaf_storage_rows = np.flatnonzero(np.asarray(target_row_leaf, dtype=bool))
+        leaf_storage_rows = np.flatnonzero(np.asarray(target_row_leaf, dtype=np.bool_))
         nearest = np.zeros((target_centers.shape[0],), dtype=np.int32)
         best_weight = np.full((leaf_storage_rows.size,), -np.inf)
         leaf_relation = phase_routes.leaf_routes.relation
@@ -2303,8 +2302,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             or float(end_host) <= float(start_host)
         ):
             raise ValueError(
-                "Distributed Wave AMR end scale factor must be finite and greater "
-                "than the current accepted level."
+                "Distributed Wave AMR end scale factor must be finite and greater than the current accepted level."
             )
         end = prepared.execution._replicate_scalar(end_scale_factor, self.real_dtype)
         kick = self.background.kick_factor(packed_state.scale_factor, end).astype(

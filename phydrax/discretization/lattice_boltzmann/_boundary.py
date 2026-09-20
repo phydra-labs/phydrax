@@ -64,7 +64,7 @@ class LatticeBoltzmannGeometrySnapshot(StrictModule, NonTrainableState):
     ):
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("Geometry snapshot requires an LBM discretization.")
-        mask = np.asarray(fluid_mask, dtype=bool)
+        mask = np.asarray(fluid_mask, dtype=np.bool_)
         if mask.shape != discretization.grid.shape:
             raise ValueError(
                 f"fluid_mask must have shape {discretization.grid.shape}; got {mask.shape}."
@@ -84,7 +84,7 @@ class LatticeBoltzmannGeometrySnapshot(StrictModule, NonTrainableState):
         )
         if not source:
             raise ValueError("source_id must be non-empty.")
-        self.fluid_mask = jnp.asarray(mask, dtype=bool)
+        self.fluid_mask = jnp.asarray(mask, dtype=jnp.bool_)
         self.discretization_id = discretization.prepared_id
         self.source_id = source
         self.fluid_count = fluid_count
@@ -104,13 +104,13 @@ class LatticeBoltzmannGeometrySnapshot(StrictModule, NonTrainableState):
     ) -> "LatticeBoltzmannGeometrySnapshot":
         return cls(
             discretization,
-            np.ones(discretization.grid.shape, dtype=bool),
+            np.ones(discretization.grid.shape, dtype=np.bool_),
             source_id="all-fluid",
         )
 
 
 class LatticeBoltzmannBoundaryPlan(StrictModule, NonTrainableState):
-    """Periodic or halfway-wall ownership for every nearest-neighbour link."""
+    """Periodic or halfway-wall ownership for every nearest-neighbor link."""
 
     geometry: LatticeBoltzmannGeometrySnapshot | None
     moving_faces: tuple[WallFace, ...] = eqx.field(static=True)
@@ -555,9 +555,9 @@ def compile_staged_lattice_boltzmann_boundary(
     body_index = np.full(shape, -1, dtype=np.int32)
     link_fraction = np.zeros(shape, dtype=np.float64)
     fluid = (
-        np.ones(discretization.grid.shape, dtype=bool)
+        np.ones(discretization.grid.shape, dtype=np.bool_)
         if geometry is None
-        else np.asarray(geometry.fluid_mask, dtype=bool)
+        else np.asarray(geometry.fluid_mask, dtype=np.bool_)
     )
     velocities = discretization.velocity_set.velocity_tuples
 
@@ -820,7 +820,9 @@ class PreparedStagedLatticeBoltzmannBoundary(StrictModule, NonTrainableState):
         )
         convective = self.topology.owner == int(LatticeBoltzmannLinkOwner.CONVECTIVE)
         initialized = (
-            convective if populations is not None else jnp.zeros(values.shape, dtype=bool)
+            convective
+            if populations is not None
+            else jnp.zeros(values.shape, dtype=jnp.bool_)
         )
         return LatticeBoltzmannBoundaryState(
             jnp.where(convective, values, 0.0),

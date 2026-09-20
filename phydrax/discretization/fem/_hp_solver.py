@@ -42,17 +42,13 @@ class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
         eliminations: Sequence[LocalEliminationPlan],
         /,
     ):
-        degrees = tuple(
-            tuple(int(value) for value in degree) for degree in bucket_degrees
-        )
+        degrees = tuple(tuple(degree) for degree in bucket_degrees)
         plans = tuple(eliminations)
         if (
             not degrees
             or len(degrees) != len(plans)
             or len(set(degrees)) != len(degrees)
-            or any(
-                not isinstance(plan, LocalEliminationPlan) for plan in plans
-            )
+            or any(not isinstance(plan, LocalEliminationPlan) for plan in plans)
         ):
             raise ValueError("hp condensation degrees or elimination plans are invalid.")
         self.bucket_degrees = degrees
@@ -72,7 +68,7 @@ class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
         local_rhs: ArrayLike,
         /,
     ) -> LocalEliminationResult:
-        key = tuple(int(value) for value in degree)
+        key = tuple(degree)
         if key not in self.bucket_degrees:
             raise KeyError(f"No hp condensation bucket for degree {key!r}.")
         return self.eliminations[self.bucket_degrees.index(key)].condense(
@@ -87,7 +83,7 @@ class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
         result: LocalEliminationResult,
         /,
     ) -> Array:
-        key = tuple(int(value) for value in degree)
+        key = tuple(degree)
         if key not in self.bucket_degrees:
             raise KeyError(f"No hp condensation bucket for degree {key!r}.")
         return self.eliminations[self.bucket_degrees.index(key)].reconstruct(
@@ -157,8 +153,7 @@ class FiniteElementHPSkeletonPlan(StrictModule, NonTrainableState):
             if valid
         )
         retained = tuple(
-            tuple(int(value) for value in np.asarray(plan.retained_dofs))
-            for plan in condensation.eliminations
+            tuple(np.asarray(plan.retained_dofs)) for plan in condensation.eliminations
         )
         self.trace_constraint_ids = constraints
         self.interface_ids = interfaces

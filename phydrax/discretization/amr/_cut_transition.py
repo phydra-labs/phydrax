@@ -122,11 +122,11 @@ class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
             numeric_version="cut-transition-target"
         )
         source_tetrahedra = tuple(
-            tuple(np.asarray(tetra, dtype=float) for tetra in component)
+            tuple(np.asarray(tetra, dtype=np.float64) for tetra in component)
             for component in source.component_tetrahedra
         )
         target_tetrahedra = tuple(
-            tuple(np.asarray(tetra, dtype=float) for tetra in component)
+            tuple(np.asarray(tetra, dtype=np.float64) for tetra in component)
             for component in target.component_tetrahedra
         )
         source_lower = np.asarray(
@@ -232,13 +232,13 @@ class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
                     if overlap > 0.0:
                         records.append((target_index, int(source_index), overlap))
         records.sort(key=lambda value: (value[0], value[1]))
-        source_coverage = np.zeros((source.component_count,), dtype=float)
-        target_coverage = np.zeros((target.component_count,), dtype=float)
+        source_coverage = np.zeros((source.component_count,), dtype=np.float64)
+        target_coverage = np.zeros((target.component_count,), dtype=np.float64)
         for target_index, source_index, overlap in records:
             source_coverage[source_index] += overlap
             target_coverage[target_index] += overlap
-        source_volumes = np.asarray(source_geometry.cell_volumes, dtype=float)
-        target_volumes = np.asarray(target_geometry.cell_volumes, dtype=float)
+        source_volumes = np.asarray(source_geometry.cell_volumes, dtype=np.float64)
+        target_volumes = np.asarray(target_geometry.cell_volumes, dtype=np.float64)
         source_complete = np.allclose(
             source_coverage,
             source_volumes,
@@ -263,7 +263,7 @@ class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
         source_indices = np.asarray(
             [source_index for _, source_index, _ in records], dtype=np.int32
         )
-        measures = np.asarray([value for _, _, value in records], dtype=float)
+        measures = np.asarray([value for _, _, value in records], dtype=np.float64)
         remap = UnstructuredConservativeRemapPlan(
             source_geometry,
             target_geometry,
@@ -319,7 +319,7 @@ class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
         /,
     ) -> MultivaluedCutCellTransitionResult:
         source = self._source_values(source_content, "Source cut-cell content")
-        target_active = jnp.ones((self.target.component_count,), dtype=bool)
+        target_active = jnp.ones((self.target.component_count,), dtype=jnp.bool_)
         transferred = self.remap.apply_content(
             source,
             target_active_mask=target_active,

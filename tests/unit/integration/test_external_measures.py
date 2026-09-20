@@ -86,7 +86,7 @@ def test_weighted_accumulator_merge_handles_an_empty_chunk():
     empty = LogWeightedAccumulator.from_values(
         values,
         log_weights,
-        mask=jnp.zeros_like(log_weights, dtype=bool),
+        mask=jnp.zeros_like(log_weights, dtype="bool"),
     )
     full = LogWeightedAccumulator.from_values(values, log_weights)
 
@@ -98,7 +98,7 @@ def test_weighted_accumulator_merge_handles_an_empty_chunk():
 
 def test_named_weighted_measure_reduces_multiple_sample_axes():
     samples = cx.AxisArray(
-        jnp.arange(2 * 2 * 3 * 2, dtype=float).reshape((2, 2, 3, 2)),
+        jnp.arange(2 * 2 * 3 * 2, dtype="float64").reshape((2, 2, 3, 2)),
         dims=("case", "chain", "draw", "state"),
     )
     log_weights = cx.AxisArray(

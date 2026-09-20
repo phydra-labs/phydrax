@@ -37,8 +37,7 @@ class StoutSmearingResourcePolicy(StrictModule):
         maximum_workspace_bytes: int = 2_147_483_648,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_links,
                 maximum_matrix_dimension,
                 maximum_iterations,
@@ -228,8 +227,8 @@ def stout_smear(plan: StoutSmearingPlan, links: ArrayLike, /) -> StoutSmearingRe
         xs=None,
         length=plan.iterations,
     )
-    finite = diagnostics[:, 0].astype(bool)
-    member = diagnostics[:, 1].astype(bool)
+    finite = diagnostics[:, 0].astype("bool")
+    member = diagnostics[:, 1].astype("bool")
     unitarity = jnp.max(diagnostics[:, 2])
     determinant = jnp.max(diagnostics[:, 3])
     successful = jnp.all(finite & member)

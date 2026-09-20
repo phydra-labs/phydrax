@@ -21,12 +21,12 @@ def polygon_integration_domains(
         raise TypeError("Polygon domains require PolygonalConnectivity.")
     connectivity = mesh.connectivity
     cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
-    valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
-    edge_count = int(connectivity.edges.shape[0])
+    valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
+    edge_count = connectivity.edges.shape[0]
     owner = np.full((edge_count,), -1, dtype=np.int32)
-    neighbour = np.full((edge_count,), -1, dtype=np.int32)
+    neighbor = np.full((edge_count,), -1, dtype=np.int32)
     owner_local = np.full((edge_count,), -1, dtype=np.int32)
-    neighbour_local = np.full((edge_count,), -1, dtype=np.int32)
+    neighbor_local = np.full((edge_count,), -1, dtype=np.int32)
     for cell in range(cell_edges.shape[0]):
         for local in range(cell_edges.shape[1]):
             if not valid[cell, local]:
@@ -36,10 +36,10 @@ def polygon_integration_domains(
                 owner[edge] = cell
                 owner_local[edge] = local
             else:
-                neighbour[edge] = cell
-                neighbour_local[edge] = local
-    exterior = np.flatnonzero(neighbour < 0).astype(np.int32)
-    interior = np.flatnonzero(neighbour >= 0).astype(np.int32)
+                neighbor[edge] = cell
+                neighbor_local[edge] = local
+    exterior = np.flatnonzero(neighbor < 0).astype(np.int32)
+    interior = np.flatnonzero(neighbor >= 0).astype(np.int32)
     cell_domain = IntegrationDomain(
         "cell",
         np.arange(connectivity.cell_count, dtype=np.int32),
@@ -60,9 +60,9 @@ def polygon_integration_domains(
         mesh.support.support_id,
         mesh.topology.entity_sets[1].entity_set_id,
         owner_cells=owner[interior],
-        neighbour_cells=neighbour[interior],
+        neighbor_cells=neighbor[interior],
         owner_local_entities=owner_local[interior],
-        neighbour_local_entities=neighbour_local[interior],
+        neighbor_local_entities=neighbor_local[interior],
     )
     return cell_domain, exterior_domain, interior_domain
 

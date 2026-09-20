@@ -313,7 +313,9 @@ def test_h_transfer_roles_and_epoch_transaction_are_distinct_and_conservative(
             1.0,
             atol=2.0e-13,
         )
-    target_dual = jnp.arange(target_values.size, dtype=float).reshape(target_values.shape)
+    target_dual = jnp.arange(target_values.size, dtype="float64").reshape(
+        target_values.shape
+    )
     np.testing.assert_allclose(
         jnp.vdot(target_values, target_dual),
         jnp.vdot(source_values, transfer.pullback_raw(target_dual)),

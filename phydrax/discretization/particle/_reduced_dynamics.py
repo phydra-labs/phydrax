@@ -244,9 +244,9 @@ def _status(
     output_finite: ArrayLike = True,
     residual_accepted: ArrayLike = True,
 ) -> Array:
-    inertia_positive_ = jnp.asarray(inertia_positive, dtype=bool)
-    output_finite_ = jnp.asarray(output_finite, dtype=bool)
-    residual_accepted_ = jnp.asarray(residual_accepted, dtype=bool)
+    inertia_positive_ = jnp.asarray(inertia_positive, dtype=jnp.bool_)
+    output_finite_ = jnp.asarray(output_finite, dtype=jnp.bool_)
+    residual_accepted_ = jnp.asarray(residual_accepted, dtype=jnp.bool_)
     status = jnp.asarray(int(ReducedDynamicsStatus.SUCCESS), dtype=jnp.int32)
     status = jnp.where(
         ~residual_accepted_,

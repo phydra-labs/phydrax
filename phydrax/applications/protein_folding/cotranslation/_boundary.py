@@ -55,9 +55,9 @@ class RibosomeBoundaryPotential(AbstractAtomisticEnergyTerm):
         sphere_radii: ArrayLike = (),
         exclusion_stiffness: float = 0.0,
     ):
-        anchor_ = np.asarray(anchor, dtype=float)
-        centers = np.asarray(sphere_centers, dtype=float).reshape((-1, 3))
-        radii = np.asarray(sphere_radii, dtype=float)
+        anchor_ = np.asarray(anchor, dtype=np.float64)
+        centers = np.asarray(sphere_centers, dtype=np.float64).reshape((-1, 3))
+        radii = np.asarray(sphere_radii, dtype=np.float64)
         if anchor_.shape != (3,) or radii.shape != (len(centers),):
             raise ValueError(
                 "Anchor and excluded sphere arrays have incompatible shapes."

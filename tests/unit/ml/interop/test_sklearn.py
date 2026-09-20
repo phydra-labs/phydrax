@@ -571,7 +571,7 @@ def test_tree_missing_routing_is_copied(sk):
                 0, : estimator.tree_.node_count
             ]
         ),
-        estimator.tree_.missing_go_to_left.astype(bool),
+        estimator.tree_.missing_go_to_left.astype("bool"),
     )
 
 
@@ -873,7 +873,7 @@ def test_conversion_is_immutable_source_free_and_provenance_is_complete(sk):
     assert result.provenance.source_version == sk.sklearn.__version__
     assert result.provenance.source_model.endswith(".LinearRegression")
     assert result.provenance.license_id == "BSD-3-Clause"
-    assert configuration["converter_schema"] == "phydrax.sklearn.fitted.v1"
+    assert configuration["converter_schema"] == "phydrax.sklearn.fitted"
     assert configuration["semantic_notes"]
     assert len(configuration["sha256"]) == 64
     assert configuration["sha256"] == _configuration(duplicate_result)["sha256"]

@@ -89,9 +89,9 @@ def _spatial_id(discretization: SpatialDiscretization, /) -> str:
 
 
 _ZERO_SEMILINEAR_NONLINEAR_ID = canonical_fingerprint(
-    {"kind": "semilinear-zero-nonlinear-drift-v1"}
+    {"kind": "semilinear-zero-nonlinear-drift"}
 )
-_NO_REACTION_ID = canonical_fingerprint({"kind": "reaction-diffusion-no-reaction-v1"})
+_NO_REACTION_ID = canonical_fingerprint({"kind": "reaction-diffusion-no-reaction"})
 
 
 def _resolve_optional_callable_id(
@@ -111,8 +111,7 @@ def _resolve_optional_callable_id(
         raise TypeError(f"{value_name} must be callable or None.")
     if not isinstance(identifier, str) or not identifier:
         raise ValueError(
-            f"{identifier_name} is required and must be non-empty when "
-            f"{value_name} is callable."
+            f"{identifier_name} is required and must be non-empty when {value_name} is callable."
         )
     return identifier
 
@@ -174,8 +173,7 @@ class _ReactionDiffusionDrift(StrictModule):
         coefficient_array = jnp.asarray(coefficient)
         if coefficient_array.shape not in ((), self.state_shape):
             raise ValueError(
-                "kappa must be scalar or have exact state shape "
-                f"{self.state_shape}; got {coefficient_array.shape}."
+                f"kappa must be scalar or have exact state shape {self.state_shape}; got {coefficient_array.shape}."
             )
         reaction = (
             jnp.zeros_like(state_array)
@@ -288,13 +286,12 @@ class SemidiscreteSPDE(StrictModule):
             (AbstractStrongFormDiscretization, TensorSpectralDiscretization),
         ):
             raise TypeError(
-                "spatial_discretization must provide a strong-form or tensor-spectral "
-                "state space."
+                "spatial_discretization must provide a strong-form or tensor-spectral state space."
             )
         if noise_basis is not None and not isinstance(noise_basis, SpatialNoiseBasis):
             raise TypeError("noise_basis must be a SpatialNoiseBasis or None.")
-        state = tuple(int(size) for size in state_shape)
-        noise = tuple(int(size) for size in noise_shape)
+        state = tuple(state_shape)
+        noise = tuple(noise_shape)
         if state != tuple(problem.initial_state.shape):
             raise ValueError("state_shape must match the differential problem state.")
         if noise != problem.noise_shape:
@@ -330,8 +327,7 @@ class SemidiscreteSPDE(StrictModule):
             )
         if not problem.stochastic and resolved_solution.noise_regularization != "none":
             raise ValueError(
-                "A deterministic semidiscrete problem must declare "
-                "noise_regularization='none'."
+                "A deterministic semidiscrete problem must declare noise_regularization='none'."
             )
         if resolved_solution.rough_forcing and resolved_solution.cutoff_id is None:
             raise ValueError(
@@ -418,7 +414,7 @@ class SemidiscreteSPDE(StrictModule):
                 "semidiscrete-spde",
                 canonical_fingerprint(
                     {
-                        "kind": "semidiscrete-spde-form-v2",
+                        "kind": "semidiscrete-spde-form",
                         "problem": problem.problem_id,
                         "spatial_discretization": spatial_discretization.prepared_id,
                         "noise_basis": basis_id,
@@ -500,18 +496,16 @@ def semidiscretize_spde(
         (AbstractStrongFormDiscretization, TensorSpectralDiscretization),
     ):
         raise TypeError(
-            "spatial_discretization must provide a strong-form or tensor-spectral "
-            "state space."
+            "spatial_discretization must provide a strong-form or tensor-spectral state space."
         )
     state = jnp.asarray(initial_state)
     spatial_shape = spatial_discretization.state_shape
     spatial_rank = len(spatial_shape)
     if state.ndim < spatial_rank or tuple(state.shape[:spatial_rank]) != spatial_shape:
         raise ValueError(
-            "initial_state must begin with spatial shape "
-            f"{spatial_shape}; got {state.shape}."
+            f"initial_state must begin with spatial shape {spatial_shape}; got {state.shape}."
         )
-    state_shape = tuple(int(size) for size in state.shape)
+    state_shape = tuple(state.shape)
     if semilinear_drift is not None:
         if not isinstance(semilinear_drift, SemilinearDrift):
             raise TypeError("semilinear_drift must be a SemilinearDrift or None.")
@@ -531,10 +525,7 @@ def semidiscretize_spde(
                 "noise basis field_space_id must match the spatial state field space."
             )
         resolved_noise_shape = noise_basis.noise_shape
-        if (
-            noise_shape is not None
-            and tuple(int(v) for v in noise_shape) != resolved_noise_shape
-        ):
+        if noise_shape is not None and tuple(noise_shape) != resolved_noise_shape:
             raise ValueError("noise_shape must agree with noise_basis.rank.")
         if basis_id is not None and str(basis_id) != noise_basis.basis_id:
             raise ValueError("basis_id must agree with noise_basis.basis_id.")
@@ -554,7 +545,7 @@ def semidiscretize_spde(
             raise ValueError(
                 "noise_shape is required for stochastic problems without a noise basis."
             )
-        resolved_noise_shape = tuple(int(size) for size in noise_shape)
+        resolved_noise_shape = tuple(noise_shape)
         if not resolved_noise_shape or any(size <= 0 for size in resolved_noise_shape):
             raise ValueError("noise_shape must contain positive dimensions.")
         resolved_basis_id = None if basis_id is None else str(basis_id)
@@ -565,8 +556,7 @@ def semidiscretize_spde(
     else:
         if noise_shape is not None or basis_id is not None or noise_structure is not None:
             raise ValueError(
-                "noise_shape, basis_id, and noise_structure are only valid for "
-                "stochastic problems."
+                "noise_shape, basis_id, and noise_structure are only valid for stochastic problems."
             )
         resolved_noise_shape = ()
         resolved_basis_id = None
@@ -584,9 +574,9 @@ def semidiscretize_spde(
         )
     )
     # Fail before entering Diffrax, while callback shapes are still easy to diagnose.
-    validated_drift(jnp.asarray(t0, dtype=float), state, args)
+    validated_drift(jnp.asarray(t0, dtype=jnp.float64), state, args)
     if validated_diffusion is not None:
-        validated_diffusion(jnp.asarray(t0, dtype=float), state, args)
+        validated_diffusion(jnp.asarray(t0, dtype=jnp.float64), state, args)
     wiener_terms = (
         ()
         if validated_diffusion is None
@@ -613,7 +603,7 @@ def semidiscretize_spde(
             "semidiscrete-spde:"
             + canonical_fingerprint(
                 {
-                    "kind": "semidiscrete-spde-v1",
+                    "kind": "semidiscrete-spde",
                     "dynamics": dynamics_identity,
                     "spatial_discretization": _spatial_id(spatial_discretization),
                     "state_shape": list(state_shape),
@@ -687,7 +677,7 @@ def semidiscretize_semilinear_spde(
         identifier_name="nonlinear_id",
         zero_identifier=_ZERO_SEMILINEAR_NONLINEAR_ID,
     )
-    state_shape = tuple(int(size) for size in jnp.asarray(initial_state).shape)
+    state_shape = tuple(jnp.asarray(initial_state).shape)
     if not isinstance(linear_operator, AbstractLinearOperator):
         raise TypeError("linear_operator must be an AbstractLinearOperator.")
     compatible_basis_id = (
@@ -774,7 +764,7 @@ def semidiscretize_reaction_diffusion(
         identifier_name="reaction_id",
         zero_identifier=_NO_REACTION_ID,
     )
-    state_shape = tuple(int(size) for size in jnp.asarray(initial_state).shape)
+    state_shape = tuple(jnp.asarray(initial_state).shape)
     semilinear: SemilinearDrift | None
     if callable(kappa):
         drift: Callable[[Array, Array, Any], ArrayLike] = _ReactionDiffusionDrift(

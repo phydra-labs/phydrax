@@ -42,7 +42,7 @@ def _periodic_problem(count=8, *, external_potential=None, external_potential_id
 
 def _positions(count=8):
     spacing = 1.0 / count
-    lattice = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    lattice = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     perturbation = 0.015 * spacing * jnp.sin(2.0 * jnp.pi * lattice)
     return lattice + perturbation
 

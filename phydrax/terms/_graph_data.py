@@ -100,8 +100,7 @@ def GraphTrajectorySupervisedTerm(
     """
     if not isinstance(component.domain, GraphTrajectoryDatasetDomain):
         raise TypeError(
-            "GraphTrajectorySupervisedTerm requires a "
-            "GraphTrajectoryDatasetDomain component."
+            "GraphTrajectorySupervisedTerm requires a GraphTrajectoryDatasetDomain component."
         )
     if reduction not in ("mean", "integral"):
         raise ValueError("reduction must be 'mean' or 'integral'.")

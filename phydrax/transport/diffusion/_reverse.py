@@ -26,13 +26,13 @@ from ...stochastic._wiener import WienerRealization
 
 
 def _sample_shape(value, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError("Reverse diffusion requires a non-empty positive sample_shape.")
     return shape
 
 
-class _ReverseScoreDrift(eqx.Module):
+class _ReverseScoreDrift(StrictModule):
     process: AbstractGaussianDiffusion
     score: StateTimeScoreField
 
@@ -43,7 +43,7 @@ class _ReverseScoreDrift(eqx.Module):
         return -self.process.drift(forward_time, state) + scale**2 * score
 
 
-class _ReverseDiffusionCoefficient(eqx.Module):
+class _ReverseDiffusionCoefficient(StrictModule):
     process: AbstractGaussianDiffusion
 
     def __call__(self, reverse_time: Array, state: Array, args: Any, /) -> Array:
@@ -109,6 +109,7 @@ class ReverseDiffusionRealization(StrictModule):
 
 class ReverseDiffusionResult(StrictModule):
     """Reverse-diffusion terminal states and canonical differential solution evidence."""
+
     terminal_states: Array
     solution: Any
     residual_signal_scale: Array
@@ -212,7 +213,9 @@ class ReverseDiffusion(StrictModule):
         if terminal_reference.process_id != process.process_id:
             raise ValueError("Terminal reference and diffusion process IDs must match.")
         if tuple(terminal_reference.law.event_shape) != process.state_shape:
-            raise ValueError("Terminal-reference event shape must match the process state.")
+            raise ValueError(
+                "Terminal-reference event shape must match the process state."
+            )
         if not isinstance(score_id, str) or not score_id:
             raise ValueError("score_id must be a non-empty string.")
         step = float(dt0)
@@ -223,7 +226,12 @@ class ReverseDiffusion(StrictModule):
             raise ValueError("wiener_tolerance must be positive and strictly below dt0.")
         relative = float(rtol)
         absolute = float(atol)
-        if not isfinite(relative) or not isfinite(absolute) or relative <= 0.0 or absolute <= 0.0:
+        if (
+            not isfinite(relative)
+            or not isfinite(absolute)
+            or relative <= 0.0
+            or absolute <= 0.0
+        ):
             raise ValueError("Reverse-diffusion tolerances must be finite and positive.")
         limit = int(max_steps)
         if limit <= 0:
@@ -329,16 +337,23 @@ class ReverseDiffusion(StrictModule):
     ) -> ReverseDiffusionResult:
         if not isinstance(realization, ReverseDiffusionRealization):
             raise TypeError("realization must be a ReverseDiffusionRealization.")
-        if realization.process_id != self.process.process_id or realization.score_id != self.score_id:
-            raise ValueError("Reverse-diffusion realization does not match this transport.")
+        if (
+            realization.process_id != self.process.process_id
+            or realization.score_id != self.score_id
+        ):
+            raise ValueError(
+                "Reverse-diffusion realization does not match this transport."
+            )
         if realization.terminal_reference_id != self.terminal_reference.reference_id:
             raise ValueError("Reverse-diffusion terminal reference does not match.")
         times = (
-            jnp.asarray([self.process.terminal_time], dtype=realization.terminal_states.dtype)
+            jnp.asarray(
+                [self.process.terminal_time], dtype=realization.terminal_states.dtype
+            )
             if save_times is None
             else jnp.asarray(save_times, dtype=realization.terminal_states.dtype)
         )
-        if times.ndim != 1 or int(times.shape[0]) <= 0:
+        if times.ndim != 1 or times.shape[0] <= 0:
             raise ValueError("save_times must be a non-empty vector.")
         if bool(
             jnp.any(~jnp.isfinite(times))

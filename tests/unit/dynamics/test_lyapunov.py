@@ -11,7 +11,7 @@ import phydrax as phx
 
 
 def _map_evolution(matrix, *, system_id):
-    state_shape = (int(matrix.shape[0]),)
+    state_shape = (matrix.shape[0],)
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: matrix @ state,
         state_layout=phx.dynamics.StateLayout(state_shape),

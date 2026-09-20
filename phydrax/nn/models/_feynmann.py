@@ -387,8 +387,7 @@ class FeynmaNN(_AbstractBaseModel):
                 x = x_arr
             else:
                 raise ValueError(
-                    "`x` must have scalar shape () or singleton feature shape (1,), "
-                    f"got {x_arr.shape}."
+                    f"`x` must have scalar shape () or singleton feature shape (1,), got {x_arr.shape}."
                 )
 
         assert (

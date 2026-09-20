@@ -238,7 +238,7 @@ their derived units, and physical/comoving/code coordinate identity. SI scales s
 the explicit SI reference system. `CODE_COSMOLOGY_SCALE` instead uses a distinct
 cosmology-code reference system, so it cannot be converted to SI without an explicit
 calibration rather than a label or floating conversion factor. `phydrax.artifacts` owns
-checksummed artifacts and derivative capabilities; `phydrax.observation` owns labelled
+checksummed artifacts and derivative capabilities; `phydrax.observation` owns labeled
 products, linear responses, covariance actions, and Gaussian likelihoods; core solver
 gravity owns direct kernels, sparse runtime Morton octrees, Barnes--Hut, Cartesian FMM,
 periodic Ewald, and TreePM; core AMR owns ratio-two prolong/restrict/reflux; core KDK

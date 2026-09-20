@@ -22,7 +22,9 @@ def _relative_residual(value: ArrayLike, reference: ArrayLike, /) -> Array:
     value_array = jnp.asarray(value)
     reference_array = jnp.asarray(reference)
     scale = jnp.maximum(
-        jnp.asarray(1.0, dtype=jnp.result_type(value_array, reference_array, float)),
+        jnp.asarray(
+            1.0, dtype=jnp.result_type(value_array, reference_array, jnp.float64)
+        ),
         _maximum_absolute(reference_array),
     )
     return _maximum_absolute(value_array - reference_array) / scale
@@ -58,8 +60,8 @@ class ManifoldValidationReport(StrictModule):
         identity_transport_residual: Array,
         transport_isometry_residual: Array,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.contains = jnp.asarray(contains, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.contains = jnp.asarray(contains, dtype=jnp.bool_)
         self.constraint_residual = jnp.asarray(constraint_residual)
         self.projection_idempotence_residual = jnp.asarray(
             projection_idempotence_residual
@@ -105,8 +107,8 @@ class StateGeometryValidationReport(StrictModule):
         transport_duality_residual: Array,
         transport_isometry_residual: Array,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.contains = jnp.asarray(contains, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.contains = jnp.asarray(contains, dtype=jnp.bool_)
         self.retraction_origin_residual = jnp.asarray(retraction_origin_residual)
         self.retraction_differential_residual = jnp.asarray(
             retraction_differential_residual
@@ -147,7 +149,7 @@ def validate_manifold(
     if cotangent.shape != point_array.shape:
         raise ValueError("ambient_cotangent must have the same shape as point.")
 
-    contains = jnp.asarray(manifold.contains(point_array), dtype=bool).reshape(())
+    contains = jnp.asarray(manifold.contains(point_array), dtype=jnp.bool_).reshape(())
     constraint_residual = jnp.asarray(manifold.constraint_residual(point_array)).reshape(
         ()
     )
@@ -240,7 +242,7 @@ def validate_state_geometry(
     if ambient.shape != state_array.shape:
         raise ValueError("ambient_vector must have the same shape as state storage.")
 
-    contains = jnp.asarray(geometry.contains(state_array), dtype=bool).reshape(())
+    contains = jnp.asarray(geometry.contains(state_array), dtype=jnp.bool_).reshape(())
     tangent = jnp.asarray(geometry.project_tangent(state_array, ambient))
     zero_local = jnp.asarray(geometry.inverse_retract(state_array, state_array))
     local_velocity = jnp.asarray(

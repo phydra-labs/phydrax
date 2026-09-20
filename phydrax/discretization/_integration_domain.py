@@ -20,10 +20,10 @@ class IntegrationDomain(StrictModule, NonTrainableState):
     kind: str = eqx.field(static=True)
     entity_indices: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     owner_local_entities: Array
-    neighbour_local_entities: Array
-    neighbour_trace_permutations: Array
+    neighbor_local_entities: Array
+    neighbor_trace_permutations: Array
     periodic_face_mask: Array
     support_id: str = eqx.field(static=True)
     entity_set_id: str = eqx.field(static=True)
@@ -40,10 +40,10 @@ class IntegrationDomain(StrictModule, NonTrainableState):
         /,
         *,
         owner_cells: ArrayLike | None = None,
-        neighbour_cells: ArrayLike | None = None,
+        neighbor_cells: ArrayLike | None = None,
         owner_local_entities: ArrayLike | None = None,
-        neighbour_local_entities: ArrayLike | None = None,
-        neighbour_trace_permutations: ArrayLike | None = None,
+        neighbor_local_entities: ArrayLike | None = None,
+        neighbor_trace_permutations: ArrayLike | None = None,
         periodic_face_mask: ArrayLike | None = None,
         selection_id: str | None = None,
     ):
@@ -72,18 +72,18 @@ class IntegrationDomain(StrictModule, NonTrainableState):
             return result
 
         owner = route("owner_cells", owner_cells, -1)
-        neighbour = route("neighbour_cells", neighbour_cells, -1)
+        neighbor = route("neighbor_cells", neighbor_cells, -1)
         owner_local = route("owner_local_entities", owner_local_entities, -1)
-        neighbour_local = route("neighbour_local_entities", neighbour_local_entities, -1)
+        neighbor_local = route("neighbor_local_entities", neighbor_local_entities, -1)
         if kind_ == "cell":
             if np.any(owner < 0):
                 owner = indices.copy()
         elif np.any(owner < 0):
             raise ValueError("Facet integration domains require owner cells.")
-        if kind_ == "interior_facet" and np.any(neighbour < 0):
-            raise ValueError("Interior facets require neighbour cells.")
-        if kind_ == "exterior_facet" and np.any(neighbour >= 0):
-            raise ValueError("Exterior facets cannot carry neighbour cells.")
+        if kind_ == "interior_facet" and np.any(neighbor < 0):
+            raise ValueError("Interior facets require neighbor cells.")
+        if kind_ == "exterior_facet" and np.any(neighbor >= 0):
+            raise ValueError("Exterior facets cannot carry neighbor cells.")
         support = str(support_id)
         entity_set = str(entity_set_id)
         if not support or not entity_set:
@@ -93,12 +93,12 @@ class IntegrationDomain(StrictModule, NonTrainableState):
             raise ValueError("selection_id must be non-empty or None.")
         trace_permutations = (
             np.empty((count, 0), dtype=np.int32)
-            if neighbour_trace_permutations is None
-            else np.asarray(neighbour_trace_permutations, dtype=np.int32)
+            if neighbor_trace_permutations is None
+            else np.asarray(neighbor_trace_permutations, dtype=np.int32)
         )
         if trace_permutations.ndim != 2 or trace_permutations.shape[0] != count:
             raise ValueError(
-                "Neighbour trace permutations require one row per domain entity."
+                "Neighbor trace permutations require one row per domain entity."
             )
         if trace_permutations.shape[1]:
             expected = np.arange(trace_permutations.shape[1], dtype=np.int32)
@@ -106,11 +106,11 @@ class IntegrationDomain(StrictModule, NonTrainableState):
                 not np.array_equal(np.sort(permutation), expected)
                 for permutation in trace_permutations
             ):
-                raise ValueError("Each neighbour trace map must be a permutation.")
+                raise ValueError("Each neighbor trace map must be a permutation.")
         periodic = (
-            np.zeros((count,), dtype=bool)
+            np.zeros((count,), dtype=np.bool_)
             if periodic_face_mask is None
-            else np.asarray(periodic_face_mask, dtype=bool)
+            else np.asarray(periodic_face_mask, dtype=np.bool_)
         )
         if periodic.shape != (count,):
             raise ValueError("periodic_face_mask must match the domain entities.")
@@ -121,7 +121,7 @@ class IntegrationDomain(StrictModule, NonTrainableState):
             if trace_permutations.shape[1] == 0
             else canonical_fingerprint(
                 {
-                    "kind": "neighbour-trace-map",
+                    "kind": "neighbor-trace-map",
                     "permutations": array_tree_fingerprint(trace_permutations),
                     "periodic": array_tree_fingerprint(periodic),
                 }
@@ -130,11 +130,11 @@ class IntegrationDomain(StrictModule, NonTrainableState):
         self.kind = kind_
         self.entity_indices = jnp.asarray(indices)
         self.owner_cells = jnp.asarray(owner)
-        self.neighbour_cells = jnp.asarray(neighbour)
+        self.neighbor_cells = jnp.asarray(neighbor)
         self.owner_local_entities = jnp.asarray(owner_local)
-        self.neighbour_trace_permutations = jnp.asarray(trace_permutations)
+        self.neighbor_trace_permutations = jnp.asarray(trace_permutations)
         self.periodic_face_mask = jnp.asarray(periodic)
-        self.neighbour_local_entities = jnp.asarray(neighbour_local)
+        self.neighbor_local_entities = jnp.asarray(neighbor_local)
         self.support_id = support
         self.entity_set_id = entity_set
         self.selection_id = selection
@@ -145,12 +145,10 @@ class IntegrationDomain(StrictModule, NonTrainableState):
                 "entity_kind": kind_,
                 "indices": array_tree_fingerprint(indices),
                 "owner": array_tree_fingerprint(owner),
-                "neighbour": array_tree_fingerprint(neighbour),
+                "neighbor": array_tree_fingerprint(neighbor),
                 "owner_local": array_tree_fingerprint(owner_local),
-                "neighbour_local": array_tree_fingerprint(neighbour_local),
-                "neighbour_trace_permutations": array_tree_fingerprint(
-                    trace_permutations
-                ),
+                "neighbor_local": array_tree_fingerprint(neighbor_local),
+                "neighbor_trace_permutations": array_tree_fingerprint(trace_permutations),
                 "periodic_face_mask": array_tree_fingerprint(periodic),
                 "trace_map": trace_map,
                 "support": support,

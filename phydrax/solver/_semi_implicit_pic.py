@@ -323,7 +323,7 @@ class PICGaussCorrectionPlan(StrictModule, NonTrainableState):
     ) -> PICGaussCorrectionResult:
         initial = jnp.asarray(position)
         target = jnp.asarray(target_charge)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
 
         def objective(value):
             routes = self.transfer.build(value, active_mask=active)

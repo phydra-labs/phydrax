@@ -31,7 +31,7 @@ class SiteMixturePlan(StrictModule, NonTrainableState):
 
     def __init__(self, site_ids: tuple[str, ...], number_densities: ArrayLike, /):
         identifiers = tuple(str(value).strip() for value in site_ids)
-        densities = np.asarray(number_densities, dtype=float)
+        densities = np.asarray(number_densities, dtype=np.float64)
         if (
             not identifiers
             or any(not value for value in identifiers)
@@ -105,7 +105,7 @@ class SequenceFormFactorPlan(StrictModule, NonTrainableState):
         )
 
     def evaluate(self, wave_numbers: ArrayLike, /) -> Array:
-        wave = jnp.asarray(wave_numbers, dtype=float)
+        wave = jnp.asarray(wave_numbers, dtype=jnp.float64)
         if wave.ndim != 1 or wave.shape[0] == 0:
             raise ValueError("wave_numbers must be a non-empty vector.")
         sequence = self.sequence_site_types
@@ -144,8 +144,8 @@ class TabulatedFormFactorPlan(StrictModule, NonTrainableState):
         *,
         source_id: str,
     ):
-        wave = np.asarray(wave_numbers, dtype=float)
-        matrix = np.asarray(values, dtype=float)
+        wave = np.asarray(wave_numbers, dtype=np.float64)
+        matrix = np.asarray(values, dtype=np.float64)
         source = str(source_id).strip()
         if (
             wave.ndim != 1
@@ -179,10 +179,10 @@ class TabulatedFormFactorPlan(StrictModule, NonTrainableState):
 
     @property
     def site_count(self) -> int:
-        return int(self.values.shape[-1])
+        return self.values.shape[-1]
 
     def evaluate(self, wave_numbers: ArrayLike, /) -> Array:
-        wave = np.asarray(wave_numbers, dtype=float)
+        wave = np.asarray(wave_numbers, dtype=np.float64)
         reference = np.asarray(self.wave_numbers)
         if wave.shape != reference.shape or not np.array_equal(wave, reference):
             raise ValueError(
@@ -205,8 +205,8 @@ class SitePairPotentialPlan(StrictModule, NonTrainableState):
         *,
         source_id: str,
     ):
-        radial = np.asarray(radii, dtype=float)
-        potential = np.asarray(beta_potential, dtype=float)
+        radial = np.asarray(radii, dtype=np.float64)
+        potential = np.asarray(beta_potential, dtype=np.float64)
         source = str(source_id).strip()
         if (
             radial.ndim != 1
@@ -236,7 +236,7 @@ class SitePairPotentialPlan(StrictModule, NonTrainableState):
 
     @property
     def site_count(self) -> int:
-        return int(self.beta_potential.shape[0])
+        return self.beta_potential.shape[0]
 
 
 __all__ = [

@@ -31,11 +31,13 @@ def test_free_surface_projection_sets_air_pressure_and_projects_liquid_divergenc
         operators, boundaries=boundaries, tolerance=1e-7
     )
     velocity = tuple(
-        jnp.sin(jnp.arange(math.prod(layout.shape), dtype=float)).reshape(layout.shape)
+        jnp.sin(jnp.arange(math.prod(layout.shape), dtype="float64")).reshape(
+            layout.shape
+        )
         * 1e-3
         for layout in finite_volume.face_layouts
     )
-    liquid = jnp.zeros(finite_volume.cell_shape, dtype=bool).at[2:6, 2:6].set(True)
+    liquid = jnp.zeros(finite_volume.cell_shape, dtype="bool").at[2:6, 2:6].set(True)
     result = projection.project(velocity, liquid, 1.0e-3)
     assert result.successful
     assert result.active_divergence_norm < 1e-6
@@ -48,7 +50,7 @@ def test_free_surface_projection_rejects_empty_liquid_mask():
     projection = phx.solver.MACFreeSurfaceProjectionPlan(operators, boundaries=boundaries)
     velocity = tuple(jnp.zeros(layout.shape) for layout in finite_volume.face_layouts)
     result = projection.project(
-        velocity, jnp.zeros(finite_volume.cell_shape, dtype=bool), 1.0e-3
+        velocity, jnp.zeros(finite_volume.cell_shape, dtype="bool"), 1.0e-3
     )
     assert not result.successful
 

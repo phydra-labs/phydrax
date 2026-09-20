@@ -29,7 +29,7 @@ def tetrahedral_qubit_tomography(
     return QuantumTomographyProblem(
         povm,
         data,
-        0.5 * jnp.eye(2, dtype=complex),
+        0.5 * jnp.eye(2, dtype=jnp.complex128),
         problem_id="tetrahedral-qubit-tomography",
     )
 

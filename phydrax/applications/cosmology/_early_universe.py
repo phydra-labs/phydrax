@@ -101,8 +101,8 @@ class BbnReactionNetworkPlan(StrictModule, NonTrainableState):
             {
                 "kind": "bbn-reaction-network",
                 "network_id": str(network_id),
-                "species": int(self.baryon_numbers.size),
-                "reactions": int(self.stoichiometry.shape[1]),
+                "species": self.baryon_numbers.size,
+                "reactions": self.stoichiometry.shape[1],
             }
         )
 
@@ -165,7 +165,7 @@ class RecombinationPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "native-recombination",
-                "nodes": int(self.scale_factors.size),
+                "nodes": self.scale_factors.size,
                 "redshift": float(recombination_redshift),
             }
         )

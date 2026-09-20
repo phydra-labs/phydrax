@@ -64,7 +64,7 @@ class PredictorInputBinding(StrictModule, NonTrainableState):
         upper = jnp.asarray(decision_upper)
         if matrix_.ndim != 2:
             raise ValueError("matrix must have shape (features, variables).")
-        features, variables = (int(size) for size in matrix_.shape)
+        features, variables = (size for size in matrix_.shape)
         if features < 1 or variables < 1:
             raise ValueError("Predictor bindings require features and variables.")
         if offset_.shape != (features,):
@@ -84,9 +84,9 @@ class PredictorInputBinding(StrictModule, NonTrainableState):
         if np.any(arrays[2] > arrays[3]):
             raise ValueError("decision_lower cannot exceed decision_upper.")
         discrete = (
-            jnp.zeros((variables,), dtype=bool)
+            jnp.zeros((variables,), dtype=jnp.bool_)
             if discrete_decisions is None
-            else jnp.asarray(discrete_decisions, dtype=bool)
+            else jnp.asarray(discrete_decisions, dtype=jnp.bool_)
         )
         if discrete.shape != (variables,):
             raise ValueError(f"discrete_decisions must have shape ({variables},).")
@@ -211,7 +211,7 @@ class PredictorConstraintCompilation(StrictModule, NonTrainableState):
         upper = jnp.asarray(auxiliary_upper)
         if lower.ndim != 1 or upper.shape != lower.shape:
             raise ValueError("Auxiliary bounds must be equal-length vectors.")
-        auxiliary = int(lower.shape[0])
+        auxiliary = lower.shape[0]
         total = base + auxiliary
         equality = jnp.asarray(equality_matrix)
         equality_rhs_ = jnp.asarray(equality_rhs)

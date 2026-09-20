@@ -82,8 +82,7 @@ class FeatureNormPotential(_AbstractBaseModel):
             or initial <= minimum
         ):
             raise ValueError(
-                "initial_quadratic must be finite and exceed a finite "
-                "non-negative minimum_quadratic."
+                "initial_quadratic must be finite and exceed a finite non-negative minimum_quadratic."
             )
         self.features = features
         self.quadratic = TransformedParameter(
@@ -172,8 +171,7 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
             "positive_semidefinite",
         ):
             raise ValueError(
-                "dissipation_structure must be 'positive_definite' or "
-                "'positive_semidefinite'."
+                "dissipation_structure must be 'positive_definite' or 'positive_semidefinite'."
             )
         if not dissipative and dissipation_model is not None:
             raise ValueError(
@@ -265,7 +263,7 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
             raw_dissipation = jnp.where(
                 row == column,
                 jnp.asarray(raw_diagonal),
-                jnp.zeros_like(row, dtype=float),
+                jnp.zeros_like(row, dtype=jnp.float64),
             )
             self.dissipation = TransformedParameter(raw_dissipation, transform)
             self.dissipation_model = None
@@ -331,7 +329,7 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
                 f"state must have shape ({self.state_size},), got {value.shape}."
             )
         if not jnp.issubdtype(value.dtype, jnp.inexact):
-            value = value.astype(float)
+            value = value.astype("float64")
         return value
 
     def _component_output(
@@ -385,7 +383,7 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
     ) -> Array:
         """Return the canonical lower factor ``L`` in ``R = L L.T``."""
         if not self.dissipative:
-            dtype = float if state is None else self._state(state).dtype
+            dtype = jnp.float64 if state is None else self._state(state).dtype
             return jnp.zeros((self.state_size, self.state_size), dtype=dtype)
         if self.dissipation_model is None:
             if self.dissipation is None:
@@ -505,8 +503,7 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
         control_array = jnp.asarray(control)
         if control_array.shape != (self.control_size,):
             raise ValueError(
-                f"control must have shape ({self.control_size},), "
-                f"got {control_array.shape}."
+                f"control must have shape ({self.control_size},), got {control_array.shape}."
             )
         return state_array, control_array
 

@@ -225,7 +225,7 @@ def test_ranking_invalid_empty_and_zero_denominator_states():
     score = jnp.array([1.0, 3.0, 2.0])
 
     empty = metrics.discounted_cumulative_gain(
-        relevance, score, mask=jnp.zeros(3, dtype=bool)
+        relevance, score, mask=jnp.zeros(3, dtype="bool")
     )
     invalid = metrics.ndcg_score(jnp.array([1.0, -1.0, 0.0]), score)
     zero_ndcg = metrics.ndcg_score(jnp.zeros(3), score)
@@ -337,7 +337,7 @@ def test_clustering_zero_denominator_empty_and_invalid_states():
         jnp.arange(4.0)[:, None],
         labels,
         num_clusters=2,
-        mask=jnp.zeros(4, dtype=bool),
+        mask=jnp.zeros(4, dtype="bool"),
     )
     invalid_label = metrics.silhouette_score(
         jnp.arange(4.0)[:, None],

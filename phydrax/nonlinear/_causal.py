@@ -91,8 +91,8 @@ class CausalRecurrenceProblem(StrictModule):
             raise ValueError("drivers must contain at least one array leaf.")
         if any(leaf.ndim < 1 for leaf in driver_leaves):
             raise ValueError("Every driver leaf must have a leading temporal axis.")
-        steps = int(driver_leaves[0].shape[0])
-        if steps < 1 or any(int(leaf.shape[0]) != steps for leaf in driver_leaves):
+        steps = driver_leaves[0].shape[0]
+        if steps < 1 or any(leaf.shape[0] != steps for leaf in driver_leaves):
             raise ValueError("Every driver leaf must share one nonempty temporal axis.")
 
         first_driver = jax.tree.map(lambda leaf: leaf[0], driver_tree)
@@ -122,7 +122,7 @@ class CausalRecurrenceProblem(StrictModule):
         self.parameters = parameters
         self.unravel_state = unravel
         self.num_steps = steps
-        self.state_size = int(flat_state.size)
+        self.state_size = flat_state.size
         self.problem_id = identifier
 
     @property
@@ -349,7 +349,7 @@ def _initial_flat_trajectory(
     leaves = jax.tree.leaves(trajectory)
     if not leaves or any(leaf.ndim < 1 for leaf in leaves):
         raise ValueError("initial_trajectory leaves need a leading temporal axis.")
-    if any(int(leaf.shape[0]) != problem.num_steps for leaf in leaves):
+    if any(leaf.shape[0] != problem.num_steps for leaf in leaves):
         raise ValueError("initial_trajectory must match the driver sequence length.")
     flat = jax.vmap(lambda state: ravel_pytree(state)[0])(trajectory)
     if flat.shape != (problem.num_steps, problem.state_size):
@@ -452,8 +452,8 @@ def _empty_histories(steps: int, dtype: Any, /) -> tuple[Array, ...]:
         nan,
         nan,
         nan,
-        jnp.zeros((steps,), dtype=bool),
-        jnp.zeros((steps,), dtype=bool),
+        jnp.zeros((steps,), dtype=jnp.bool_),
+        jnp.zeros((steps,), dtype=jnp.bool_),
     )
 
 

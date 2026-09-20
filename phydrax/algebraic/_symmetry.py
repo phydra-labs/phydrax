@@ -49,10 +49,10 @@ class ExponentLatticeScalingEvidence(StrictModule, NonTrainableState):
         torsion_generators: Sequence[Sequence[int]],
     ):
         support_id_ = str(support_id)
-        relations = tuple(tuple(int(value) for value in row) for row in relation_matrix)
-        free = tuple(tuple(int(value) for value in row) for row in free_generators)
-        orders = tuple(int(value) for value in torsion_orders)
-        torsion = tuple(tuple(int(value) for value in row) for row in torsion_generators)
+        relations = tuple(tuple(row) for row in relation_matrix)
+        free = tuple(tuple(row) for row in free_generators)
+        orders = tuple(torsion_orders)
+        torsion = tuple(tuple(row) for row in torsion_generators)
         rank = int(lattice_rank)
         variable_count = (
             len(relations[0])
@@ -86,7 +86,7 @@ class ExponentLatticeScalingEvidence(StrictModule, NonTrainableState):
         self.backend = "sympy-smith-normal-decomposition"
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "exponent-lattice-scaling-evidence-v1",
+                "kind": "exponent-lattice-scaling-evidence",
                 "support": support_id_,
                 "relations": [list(row) for row in relations],
                 "lattice_rank": rank,
@@ -126,9 +126,7 @@ def _exponent_relations(
     for equation in range(support.equation_count):
         rows = exponents[equation_indices == equation]
         reference = rows[0]
-        relations.extend(
-            tuple(int(value) for value in row - reference) for row in rows[1:]
-        )
+        relations.extend(tuple(row - reference) for row in rows[1:])
     return tuple(relations)
 
 

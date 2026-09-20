@@ -31,7 +31,7 @@ def _normal_2d(value: ArrayLike, /) -> tuple[float, float]:
     raw = np.asarray(value)
     if raw.shape != (2,) or np.iscomplexobj(raw):
         raise TypeError("Plane boundary normal must be real shape (2,).")
-    normal = np.asarray(raw, dtype=float)
+    normal = np.asarray(raw, dtype=np.float64)
     if not np.all(np.isfinite(normal)) or not np.any(normal != 0.0):
         raise ValueError("Plane boundary normal must be finite and nonzero.")
     return float(normal[0]), float(normal[1])

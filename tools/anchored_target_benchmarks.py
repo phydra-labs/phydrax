@@ -245,7 +245,7 @@ def _finite_element_response(cells):
             {"defect": defect, "state": result.value},
         )
 
-    return evaluate, int(source.size)
+    return evaluate, source.size
 
 
 def fine_fe(repeats, fine_cells, coarse_cells):

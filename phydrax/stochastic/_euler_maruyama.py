@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    resolved = tuple(int(size) for size in value)
+    resolved = tuple(value)
     if any(size <= 0 for size in resolved):
         raise ValueError(f"{owner} dimensions must be positive.")
     return resolved
@@ -69,13 +69,13 @@ def _euler_maruyama_parameters(
     state_size: int,
     valid: Array,
 ) -> EulerMaruyamaParameters:
-    dtype = jnp.result_type(state, drift, coefficient, float)
+    dtype = jnp.result_type(state, drift, coefficient, jnp.float64)
     interval = interval.astype(dtype)
     state_flat = state.astype(dtype).reshape((state_size,))
     drift_flat = drift.astype(dtype).reshape((state_size,))
     coefficient = coefficient.astype(dtype)
     valid = (
-        jnp.asarray(valid, dtype=bool)
+        jnp.asarray(valid, dtype=jnp.bool_)
         & jnp.isfinite(interval)
         & (interval > 0.0)
         & jnp.all(jnp.isfinite(state_flat))
@@ -245,8 +245,7 @@ class EulerMaruyamaTransitionKernel(AbstractTransitionKernel):
         )
         if tuple(drift.shape) != self.state_shape:
             raise ValueError(
-                "ContinuousSystem drift must preserve state shape; "
-                f"expected {self.state_shape}, got {drift.shape}."
+                f"ContinuousSystem drift must preserve state shape; expected {self.state_shape}, got {drift.shape}."
             )
         return drift
 
@@ -428,7 +427,7 @@ class EulerMaruyamaQuasiLikelihood(StrictModule):
             transition_end_input=inputs,
             observation_input=inputs,
             input_breakpoints=absent,
-            input_breakpoint_valid=jnp.empty((0,), dtype=bool),
+            input_breakpoint_valid=jnp.empty((0,), dtype=jnp.bool_),
             input_valid=jnp.asarray(True),
             input_signal=None,
         )

@@ -309,8 +309,7 @@ class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
             )
             decisions = tuple(
                 (
-                    f"level-{index}:transfers-reused;"
-                    "sparse-route-reused;coarse-values-refreshed"
+                    f"level-{index}:transfers-reused;sparse-route-reused;coarse-values-refreshed"
                     if (
                         previous_sparse_assemblies
                         and previous_sparse_assemblies[index] is not None
@@ -329,8 +328,7 @@ class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
             else:
                 invalidation = ""
             decisions = tuple(
-                f"level-{index}:{invalidation}builder-transfers-used;"
-                "coarse-values-recomputed"
+                f"level-{index}:{invalidation}builder-transfers-used;coarse-values-recomputed"
                 for index in range(len(concrete_transfers))
             )
         hierarchy = _prepare_galerkin_hierarchy(
@@ -664,10 +662,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
             index, estimate = rejected[0]
             role = "coarse solver" if index == len(estimates) - 1 else "smoother"
             route = "input-operator" if index == 0 else construction_modes[index - 1]
-            reason = (
-                f"level-{index} {role} on {route} rejected setup: "
-                f"{estimate.reason}; {planning_reason}"
-            )
+            reason = f"level-{index} {role} on {route} rejected setup: {estimate.reason}; {planning_reason}"
         return PreconditionerCostEstimate(
             component=self.builder_id,
             storage_bytes=hierarchy_storage
@@ -818,7 +813,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
         decisions: list[str] = []
         relaxation_factors: list[float] = []
         candidate_ranks: list[tuple[int, ...]] = []
-        workspace_bytes = int(
+        workspace_bytes = (
             matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
         )
         stop_reason = "maximum-levels"
@@ -871,8 +866,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                     else "coarse-values-recomputed"
                 )
                 decisions.append(
-                    f"level-{index}:{invalidation}aggregates-reused;"
-                    f"transfers-reused;{product_decision}"
+                    f"level-{index}:{invalidation}aggregates-reused;transfers-reused;{product_decision}"
                 )
                 current_operator = coarse
             refreshed_patterns = tuple(
@@ -923,14 +917,14 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                 if effective_mode == "reuse-aggregates":
                     aggregate = np.asarray(old_assignments[index], dtype=np.int64)
                     _validate_aggregate_assignment(aggregate, dimension)
-                    strength_workspace = int(aggregate.nbytes)
+                    strength_workspace = aggregate.nbytes
                     aggregate_decision = "aggregates-reused"
                 else:
                     strength = _strength_graph(
                         current_matrix, self.policy.strength_threshold
                     )
                     aggregate = _deterministic_aggregates(strength)
-                    strength_workspace = _csr_bytes(strength) + int(aggregate.nbytes)
+                    strength_workspace = _csr_bytes(strength) + aggregate.nbytes
                     aggregate_decision = "aggregates-rebuilt"
                 aggregate_count = int(aggregate.max()) + 1
                 if aggregate_count >= dimension:
@@ -963,7 +957,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                     damping=self.policy.prolongation_damping,
                 )
                 coarse_space = ArraySpace(
-                    (int(prolongator_matrix.shape[1]),),
+                    (prolongator_matrix.shape[1],),
                     dtype=_coordinate_dtype(current_operator.source),
                     space_id=canonical_fingerprint(
                         {
@@ -1019,14 +1013,13 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                 if limit_rejection is not None:
                     raise LinearCapabilityError(limit_rejection)
                 transfers.append((restriction, prolongation))
-                assignments.append(tuple(int(value) for value in aggregate))
+                assignments.append(tuple(aggregate))
                 relaxation_factors.append(relaxation_factor)
-                candidate_ranks.append(tuple(int(rank) for rank in ranks))
+                candidate_ranks.append(tuple(ranks))
                 construction_modes.append(construction_mode)
                 sparse_assemblies.append(sparse_assembly)
                 decisions.append(
-                    f"level-{index}:{invalidation}{aggregate_decision};"
-                    "transfers-rebuilt;coarse-values-recomputed"
+                    f"level-{index}:{invalidation}{aggregate_decision};transfers-rebuilt;coarse-values-recomputed"
                 )
                 workspace_bytes = max(
                     workspace_bytes,
@@ -1035,7 +1028,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                     strength_workspace,
                     _csr_bytes(tentative),
                     _csr_bytes(prolongator_matrix),
-                    int(current_candidates.nbytes + coarse_candidates.nbytes),
+                    current_candidates.nbytes + coarse_candidates.nbytes,
                 )
                 current_operator = coarse
                 if terminal:
@@ -1049,8 +1042,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                 current_candidates = coarse_candidates
         if not transfers:
             raise LinearCapabilityError(
-                "Smoothed aggregation could not produce a smaller coarse level under "
-                "the configured stopping policy."
+                "Smoothed aggregation could not produce a smaller coarse level under the configured stopping policy."
             )
         decisions.append(f"stop:{stop_reason}")
         return _prepare_levels_from_operators(
@@ -1115,7 +1107,7 @@ def _plan_smoothed_aggregation_levels(
     transfers: list[tuple[AbstractLinearOperator, AbstractLinearOperator]] = []
     sparse_assemblies: list[PreparedSparseAssembly | None] = []
     fallback_reasons: list[str] = []
-    workspace_bytes = max(_csr_bytes(current_matrix), int(current_candidates.nbytes))
+    workspace_bytes = max(_csr_bytes(current_matrix), current_candidates.nbytes)
     aggregate_entries = 0
     stop_reason = "maximum-levels"
     for index in range(builder.policy.max_levels - 1):
@@ -1125,7 +1117,7 @@ def _plan_smoothed_aggregation_levels(
             break
         strength = _strength_graph(current_matrix, builder.policy.strength_threshold)
         aggregate = _deterministic_aggregates(strength)
-        strength_workspace = _csr_bytes(strength) + int(aggregate.nbytes)
+        strength_workspace = _csr_bytes(strength) + aggregate.nbytes
         aggregate_count = int(aggregate.max()) + 1
         if aggregate_count >= dimension:
             stop_reason = "no-coarsening"
@@ -1162,8 +1154,7 @@ def _plan_smoothed_aggregation_levels(
                 0,
                 workspace_bytes,
                 (),
-                f"level-{index} smoothed prolongation requires finite nonzero "
-                "diagonal entries",
+                f"level-{index} smoothed prolongation requires finite nonzero diagonal entries",
             )
         prolongator = _smooth_prolongator(
             current_matrix,
@@ -1171,7 +1162,7 @@ def _plan_smoothed_aggregation_levels(
             steps=builder.policy.prolongation_smoothing_steps,
             damping=builder.policy.prolongation_damping,
         )
-        coarse_dimension = int(prolongator.shape[1])
+        coarse_dimension = prolongator.shape[1]
         coarse_space = ArraySpace(
             (coarse_dimension,),
             dtype=_coordinate_dtype(current_operator.source),
@@ -1198,8 +1189,7 @@ def _plan_smoothed_aggregation_levels(
                 0,
                 workspace_bytes,
                 (),
-                f"level-{index} pairing-aware dense transfers require an "
-                "active materialization policy",
+                f"level-{index} pairing-aware dense transfers require an active materialization policy",
             )
         prolongator_matrix = prolongator.tocsr(copy=True)
         prolongator_matrix.sum_duplicates()
@@ -1235,8 +1225,7 @@ def _plan_smoothed_aggregation_levels(
         coarse_operator = construction.operator
         if construction.mode == "matrix-free-composition" and not terminal:
             fallback = (
-                "matrix-free fallback is not allowed before a nonterminal "
-                "smoothed-aggregation level"
+                "matrix-free fallback is not allowed before a nonterminal smoothed-aggregation level"
                 if construction.fallback_reason is None
                 else construction.fallback_reason
             )
@@ -1245,8 +1234,7 @@ def _plan_smoothed_aggregation_levels(
                 0,
                 workspace_bytes,
                 (),
-                f"level-{index} requires an explicit coarse operator for the "
-                f"next strength/aggregate setup: {fallback}",
+                f"level-{index} requires an explicit coarse operator for the next strength/aggregate setup: {fallback}",
             )
         operators.append(coarse_operator)
         limit_rejection = _hierarchy_limit_rejection(builder.policy, operators)
@@ -1254,7 +1242,7 @@ def _plan_smoothed_aggregation_levels(
             return (), 0, workspace_bytes, (), limit_rejection
         construction_modes.append(construction.mode)
         sparse_assemblies.append(construction.sparse_assembly)
-        aggregate_entries += int(aggregate.size)
+        aggregate_entries += aggregate.size
         if construction.fallback_reason is not None:
             fallback_reasons.append(f"level-{index}:{construction.fallback_reason}")
         workspace_bytes = max(
@@ -1262,7 +1250,7 @@ def _plan_smoothed_aggregation_levels(
             strength_workspace,
             _csr_bytes(tentative),
             _csr_bytes(prolongator_matrix),
-            int(current_candidates.nbytes + coarse_candidates.nbytes),
+            current_candidates.nbytes + coarse_candidates.nbytes,
             transfer_workspace,
             construction.workspace_bytes,
         )
@@ -1282,8 +1270,7 @@ def _plan_smoothed_aggregation_levels(
             0,
             workspace_bytes,
             (),
-            "smoothed aggregation could not produce a smaller coarse level "
-            f"(stop:{stop_reason})",
+            f"smoothed aggregation could not produce a smaller coarse level (stop:{stop_reason})",
         )
     planning_reasons = [f"stop:{stop_reason}", *fallback_reasons]
     hierarchy_storage = (
@@ -1514,8 +1501,7 @@ def _plan_galerkin_hierarchy(
                 workspace,
                 tuple(sparse_assemblies),
                 False,
-                f"level-{source_index} {route}{fallback} rejected setup: "
-                f"{estimate.reason}",
+                f"level-{source_index} {route}{fallback} rejected setup: {estimate.reason}",
             )
         if source_index == len(transfers):
             break
@@ -1884,10 +1870,7 @@ def _construct_galerkin_operator(
             )
         fallback_reason = f"bounded-dense-product unavailable: {dense_rejection}"
         if sparse_rejection is not None:
-            fallback_reason = (
-                f"planned-sparse-assembly unavailable: {sparse_rejection}; "
-                f"{fallback_reason}"
-            )
+            fallback_reason = f"planned-sparse-assembly unavailable: {sparse_rejection}; {fallback_reason}"
         if not allow_matrix_free:
             fallback_reason += (
                 "; matrix-free-composition unavailable because the next setup "
@@ -1902,10 +1885,7 @@ def _construct_galerkin_operator(
         )
     fallback_reason = None
     if not allow_matrix_free:
-        fallback_reason = (
-            "matrix-free-composition unavailable because the next setup level "
-            "requires an explicit coarse operator"
-        )
+        fallback_reason = "matrix-free-composition unavailable because the next setup level requires an explicit coarse operator"
     return _GalerkinConstruction(
         _MatrixFreeGalerkinOperator(composed, role=role),
         "matrix-free-composition",
@@ -1990,9 +1970,9 @@ def _dense_galerkin_resources(
         for resident in resident_operators
         for array in _resident_dense_arrays(resident)
     }
-    entries = sum(int(array.size) for array in resident_arrays.values())
+    entries = sum(array.size for array in resident_arrays.values())
     required_bytes = sum(
-        int(array.size * array.dtype.itemsize) for array in resident_arrays.values()
+        array.size * array.dtype.itemsize for array in resident_arrays.values()
     )
     temporary_operands: dict[int, AbstractLinearOperator] = {}
     for operand in operands:
@@ -2073,7 +2053,7 @@ def _galerkin_stored_state_bytes(
     for sparse in sparse_operators.values():
         storage = sparse.sparse_storage()
         csr_bytes = sum(
-            int(array.size * array.dtype.itemsize)
+            array.size * array.dtype.itemsize
             for array in (storage.values, storage.indices, storage.indptr)
         )
         stored_bytes += max(
@@ -2466,7 +2446,7 @@ def _setup_diagnostics(
 
 def _operator_nnz(operator: AbstractLinearOperator, /) -> int | None:
     if isinstance(operator, AbstractSparseLinearOperator):
-        return int(operator.sparse_storage().values.size)
+        return operator.sparse_storage().values.size
     if isinstance(operator, DenseLinearOperator):
         return int(np.count_nonzero(np.asarray(operator.matrix)))
     return None
@@ -2475,9 +2455,9 @@ def _operator_nnz(operator: AbstractLinearOperator, /) -> int | None:
 def _operator_storage_bytes(operator: AbstractLinearOperator, /) -> int:
     if isinstance(operator, AbstractSparseLinearOperator):
         storage = operator.sparse_storage()
-        return int(storage.values.nbytes + storage.indices.nbytes + storage.indptr.nbytes)
+        return storage.values.nbytes + storage.indices.nbytes + storage.indptr.nbytes
     if isinstance(operator, DenseLinearOperator):
-        return int(operator.matrix.nbytes)
+        return operator.matrix.nbytes
     return _array_tree_storage_bytes(operator)
 
 
@@ -2492,10 +2472,7 @@ def _hierarchy_limit_rejection(
         policy.maximum_grid_complexity is not None
         and grid_complexity > policy.maximum_grid_complexity
     ):
-        return (
-            f"Grid complexity {grid_complexity:.6g} exceeds limit "
-            f"{policy.maximum_grid_complexity:.6g}."
-        )
+        return f"Grid complexity {grid_complexity:.6g} exceeds limit {policy.maximum_grid_complexity:.6g}."
     nonzeros = tuple(_operator_nnz(operator) for operator in operators)
     if all(value is not None for value in nonzeros) and nonzeros[0]:
         operator_complexity = sum(int(value) for value in nonzeros) / int(nonzeros[0])
@@ -2503,18 +2480,12 @@ def _hierarchy_limit_rejection(
             policy.maximum_operator_complexity is not None
             and operator_complexity > policy.maximum_operator_complexity
         ):
-            return (
-                f"Operator complexity {operator_complexity:.6g} exceeds limit "
-                f"{policy.maximum_operator_complexity:.6g}."
-            )
+            return f"Operator complexity {operator_complexity:.6g} exceeds limit {policy.maximum_operator_complexity:.6g}."
     if policy.maximum_level_storage_bytes is not None:
         for index, operator in enumerate(operators):
             storage = _operator_storage_bytes(operator)
             if storage > policy.maximum_level_storage_bytes:
-                return (
-                    f"Level {index} storage {storage} bytes exceeds limit "
-                    f"{policy.maximum_level_storage_bytes}."
-                )
+                return f"Level {index} storage {storage} bytes exceeds limit {policy.maximum_level_storage_bytes}."
     return None
 
 
@@ -2526,7 +2497,7 @@ def _compatible_relaxation_factor(
     damping: float,
 ) -> float:
     dimension = matrix.shape[0]
-    indices = np.arange(dimension, dtype=float)
+    indices = np.arange(dimension, dtype=np.float64)
     probe = np.sin((indices + 1.0) * np.sqrt(2.0)) + np.cos(
         (indices + 1.0) * np.sqrt(3.0)
     )
@@ -2598,7 +2569,7 @@ def _check_dense_budget(
 
 
 def _csr_bytes(matrix: sp.csr_matrix, /) -> int:
-    return int(matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes)
+    return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
 
 
 __all__ = [

@@ -33,7 +33,7 @@ class GlobalSurfaceFluxes(StrictModule):
 
 
 class GlobalSurfacePhysics(StrictModule):
-    """Grey radiative transfer and ventilated exchange over independent wet slabs.
+    """Gray radiative transfer and ventilated exchange over independent wet slabs.
 
     The time-independent incident diffuse TOA flux is
     ``solar_constant / 4 * (1 + solar_p2 * P2(sin(latitude)))``. Its spherical
@@ -97,7 +97,7 @@ class GlobalSurfacePhysics(StrictModule):
         ) = values
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "global-wet-slab-grey-surface-boundary",
+                "kind": "global-wet-slab-gray-surface-boundary",
                 "slab": slab.plan_id,
                 "surface_exchange": surface_exchange.plan_id,
                 "radiation": radiation.plan_id,

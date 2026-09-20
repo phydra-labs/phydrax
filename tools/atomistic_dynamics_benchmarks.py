@@ -147,7 +147,7 @@ def main() -> None:
             "python": platform.python_version(),
             "platform": platform.platform(),
             "jax_backend": jax.default_backend(),
-            "position_bytes": int(positions.nbytes),
+            "position_bytes": positions.nbytes,
         },
     }
     print(json.dumps(payload, indent=2, sort_keys=True))

@@ -54,8 +54,7 @@ class VectorBundleConnection(StrictModule):
         )
         if values.shape != expected:
             raise ValueError(
-                f"Bundle connection coefficients must have shape {expected}; "
-                f"got {values.shape}."
+                f"Bundle connection coefficients must have shape {expected}; got {values.shape}."
             )
         return values
 

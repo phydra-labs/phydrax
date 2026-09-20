@@ -89,8 +89,8 @@ class ObservationSchedule(StrictModule, NonTrainableState):
         kinds = jnp.asarray(observable_index, dtype=jnp.int32)
         observed_ = jnp.asarray(observed)
         root = jnp.asarray(covariance_root)
-        mask_ = jnp.asarray(mask, dtype=bool)
-        count = int(times_.size)
+        mask_ = jnp.asarray(mask, dtype=jnp.bool_)
+        count = times_.size
         if (
             times_.shape != (count,)
             or stations.shape != (count,)
@@ -172,7 +172,7 @@ class TrackingObservationPlan(StrictModule, NonTrainableState):
 
     def evaluate(self, spacecraft_states: ArrayLike, /) -> TrackingObservationResult:
         states = jnp.asarray(spacecraft_states)
-        count = int(self.schedule.times.size)
+        count = self.schedule.times.size
         if states.shape != (count, 6):
             raise ValueError("Spacecraft states must have shape (num_observations,6).")
         stations = self.stations.position[self.schedule.station_index]

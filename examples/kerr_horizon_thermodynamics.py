@@ -17,7 +17,7 @@ def main() -> None:
     compact = phx.applications.compact_objects
     scale = phx.RelativityScaleContract.si()
 
-    mass = 1_000.0  # geometric length in metres
+    mass = 1_000.0  # geometric length in meters
     dimensionless_spin = 0.8
     parameters = compact.KerrInput(
         mass,

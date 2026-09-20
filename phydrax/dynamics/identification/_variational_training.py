@@ -213,7 +213,7 @@ class VariationalCoordinateModel(AbstractArrayModel):
         self.mean = mean_
         self.rotations = rotations_
         self.in_size = encoder.in_size
-        self.out_size = int(rotations_.shape[1])
+        self.out_size = rotations_.shape[1]
 
     def __call__(self, value, /, *, key=None):
         encoded = self.encoder(value, key=key)
@@ -296,7 +296,7 @@ def _score(
     _, _, c00, c11, c01 = _weighted_covariances(
         encoded_source, encoded_target, active, weights
     )
-    size = int(encoded_source.shape[-1])
+    size = encoded_source.shape[-1]
     identity = jnp.eye(size, dtype=encoded_source.dtype)
     properties = OperatorProperties(
         self_adjoint=True,
@@ -432,7 +432,7 @@ def fit_variational_kinetic_model(
             jnp.asarray(value) for value in loaded.history["validation_scores"]
         ]
         valid_history = [
-            jnp.asarray(value, dtype=bool) for value in loaded.history["valid"]
+            jnp.asarray(value, dtype=jnp.bool_) for value in loaded.history["valid"]
         ]
     else:
         initial_score, initial_valid = _score(
@@ -609,7 +609,7 @@ def fit_variational_kinetic_model(
         steps=jnp.asarray(steps, dtype=jnp.int32),
         training_scores=jnp.asarray(training_scores),
         validation_scores=jnp.asarray(validation_scores),
-        valid=jnp.asarray(valid_history, dtype=bool),
+        valid=jnp.asarray(valid_history, dtype=jnp.bool_),
     )
     valid_result = kinetics.valid & jnp.all(history.valid)
     status = jnp.where(

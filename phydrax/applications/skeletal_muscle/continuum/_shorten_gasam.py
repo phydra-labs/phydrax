@@ -41,7 +41,7 @@ class ShortenGasamActivationCalibration(StrictModule):
         if resting.shape != () or saturated.shape != ():
             raise ValueError("Crossbridge calibration anchors must be scalar.")
         if not jnp.issubdtype(resting.dtype, jnp.inexact):
-            resting = resting.astype(float)
+            resting = resting.astype("float64")
         saturated = saturated.astype(resting.dtype)
         self.resting_crossbridge_uM = resting
         self.saturated_crossbridge_uM = saturated
@@ -139,14 +139,12 @@ class HomogenizedShortenGasamCouplingPlan(StrictModule, NonTrainableState):
     calibration_asset_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(
-        self, source_weights: ArrayLike, /, *, calibration_asset_id: str
-    ):
+    def __init__(self, source_weights: ArrayLike, /, *, calibration_asset_id: str):
         weights = jnp.asarray(source_weights)
         if weights.ndim != 2:
             raise ValueError("source_weights must have shape (fiber, node).")
         if not jnp.issubdtype(weights.dtype, jnp.inexact):
-            weights = weights.astype(float)
+            weights = weights.astype("float64")
         asset = str(calibration_asset_id).strip()
         if not asset:
             raise ValueError("calibration_asset_id must be nonempty.")
@@ -156,7 +154,9 @@ class HomogenizedShortenGasamCouplingPlan(StrictModule, NonTrainableState):
             or np.any(host < 0.0)
             or not np.isclose(np.sum(host), 1.0, rtol=0.0, atol=1.0e-10)
         ):
-            raise ValueError("source_weights must be finite, nonnegative, and sum to one.")
+            raise ValueError(
+                "source_weights must be finite, nonnegative, and sum to one."
+            )
         self.source_weights = weights
         self.calibration_asset_id = asset
         self.plan_id = canonical_fingerprint(
@@ -183,7 +183,9 @@ class PreparedHomogenizedShortenGasamCoupling(StrictModule):
     plan: HomogenizedShortenGasamCouplingPlan
     calibration: ShortenGasamActivationCalibration
 
-    def activation_from_crossbridge(self, crossbridge_uM: ArrayLike, /) -> tuple[Array, Array]:
+    def activation_from_crossbridge(
+        self, crossbridge_uM: ArrayLike, /
+    ) -> tuple[Array, Array]:
         values = jnp.asarray(crossbridge_uM)
         if values.shape != self.plan.source_weights.shape:
             raise ValueError(
@@ -233,9 +235,9 @@ class PreparedHomogenizedShortenGasamCoupling(StrictModule):
         )
         finite = jnp.isfinite(weighted) & jnp.isfinite(activation)
         in_support = (activation >= 0.0) & (activation <= 1.0)
-        unclipped = (
-            weighted > self.calibration.resting_crossbridge_uM
-        ) & (weighted < self.calibration.saturated_crossbridge_uM)
+        unclipped = (weighted > self.calibration.resting_crossbridge_uM) & (
+            weighted < self.calibration.saturated_crossbridge_uM
+        )
         source_ok = source.evidence.successful
         target_ok = target.evidence.valid
         successful = (

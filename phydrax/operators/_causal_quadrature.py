@@ -31,8 +31,8 @@ def causal_reference_rule(
             "Nontrivial causal clustering currently requires GaussLegendreRule."
         )
     data = interval_rule_data(rule)
-    unit_nodes = (jnp.asarray(data.nodes, dtype=float) + 1.0) / 2.0
-    unit_weights = jnp.asarray(data.weights, dtype=float) / 2.0
+    unit_nodes = (jnp.asarray(data.nodes, dtype=jnp.float64) + 1.0) / 2.0
+    unit_weights = jnp.asarray(data.weights, dtype=jnp.float64) / 2.0
     if exponent == 1.0:
         return unit_nodes, unit_weights
     mapped_nodes = jnp.power(unit_nodes, exponent)

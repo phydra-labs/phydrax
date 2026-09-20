@@ -133,7 +133,7 @@ class ProcessStackResult:
 
 
 def _footprint_loops(footprint: PlanarMeshRegion, /) -> tuple[np.ndarray, ...]:
-    vertices = np.asarray(footprint.vertices, dtype=float)
+    vertices = np.asarray(footprint.vertices, dtype=np.float64)
     edges = np.asarray(footprint.edges, dtype=np.int64)
     offsets = np.asarray(footprint.loop_offsets, dtype=np.int64)
     if vertices.ndim != 2 or vertices.shape[1] != 2 or not np.all(np.isfinite(vertices)):

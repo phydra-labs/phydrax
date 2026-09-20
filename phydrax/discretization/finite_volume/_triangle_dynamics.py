@@ -239,8 +239,8 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         self, time: Array, state: Array, args: Any, /
     ) -> tuple[Array, Array, Array]:
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         if isinstance(
             self.method.reconstruction,
             (
@@ -253,11 +253,11 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
             )
         else:
             left = self.precision.reconstruction(state[owner])
-            right = self.precision.reconstruction(state[safe_neighbour])
+            right = self.precision.reconstruction(state[safe_neighbor])
         unit_normal = (
             self.discretization.area_vectors / self.discretization.face_measures[:, None]
         )
-        boundary = neighbour < 0
+        boundary = neighbor < 0
         for patch_id, policy in enumerate(self.boundaries.boundaries):
             patch_mask = boundary & (self.discretization.boundary_patch_ids == patch_id)
             exterior = policy.exterior_state(
@@ -298,7 +298,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
             self.precision.reconstruction(state),
             self.precision.reconstruction(self.discretization.face_quadrature_points),
         )
-        neighbour = self.discretization.neighbour_cells
+        neighbor = self.discretization.neighbor_cells
         normal = (
             self.discretization.area_vectors / self.discretization.face_measures[:, None]
         )
@@ -306,7 +306,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
             normal[:, None, :],
             self.discretization.face_quadrature_points.shape,
         )
-        boundary = neighbour < 0
+        boundary = neighbor < 0
         for patch_id, policy in enumerate(self.boundaries.boundaries):
             patch_mask = boundary & (self.discretization.boundary_patch_ids == patch_id)
             exterior = policy.exterior_state(
@@ -369,15 +369,15 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
             self.discretization.face_measures[:, None]
         )
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
+        neighbor = self.discretization.neighbor_cells
         residual = jnp.zeros(
             self.discretization.state_shape,
             dtype=jnp.dtype(self.precision.reduction_dtype),
         )
         residual = residual.at[owner].add(-integrated)
-        safe_neighbour = jnp.maximum(neighbour, 0)
-        residual = residual.at[safe_neighbour].add(
-            jnp.where((neighbour >= 0)[:, None], integrated, 0.0)
+        safe_neighbor = jnp.maximum(neighbor, 0)
+        residual = residual.at[safe_neighbor].add(
+            jnp.where((neighbor >= 0)[:, None], integrated, 0.0)
         )
         return self.precision.storage(
             residual / self.precision.reduction(self.discretization.cell_volumes[:, None])
@@ -425,9 +425,9 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
             dtype=jnp.dtype(self.precision.reduction_dtype),
         )
         rate = rate.at[self.discretization.owner_cells].add(weighted)
-        neighbour = self.discretization.neighbour_cells
-        rate = rate.at[jnp.maximum(neighbour, 0)].add(
-            jnp.where(neighbour >= 0, weighted, 0.0)
+        neighbor = self.discretization.neighbor_cells
+        rate = rate.at[jnp.maximum(neighbor, 0)].add(
+            jnp.where(neighbor >= 0, weighted, 0.0)
         )
         return self.precision.decision(
             rate / self.precision.reduction(self.discretization.cell_volumes)
@@ -472,7 +472,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         flux, speed = self.face_fluxes(time, state, args)
         source = self.source_value(time, state, args)
         residual = self(time, state, args)
-        boundary = self.discretization.neighbour_cells < 0
+        boundary = self.discretization.neighbor_cells < 0
         integrated = self.precision.reduction(flux) * self.precision.reduction(
             self.discretization.face_measures[:, None]
         )

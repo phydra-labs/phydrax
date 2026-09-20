@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, Bool, Key
 
-from .._sampling import get_sampler
+from .._sampling import materialize_design
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._measure import BaseMeasure, ExactMass
@@ -25,7 +25,7 @@ ReferenceMeasure = Literal["uniform", "standard-normal"]
 
 def open_unit_interval(values: Any, /) -> Array:
     """Map probabilities into the representable open unit interval."""
-    unit = jnp.asarray(values, dtype=float)
+    unit = jnp.asarray(values, dtype=jnp.float64)
     epsilon = jnp.finfo(unit.dtype).eps
     return jnp.clip(unit, epsilon, 1.0 - epsilon)
 
@@ -61,7 +61,7 @@ class ReferenceTransportEvidence(StrictModule, NonTrainableState):
             )
         self.provider = provider
         self.reference_measure = reference_measure
-        self.event_shape = tuple(int(size) for size in event_shape)
+        self.event_shape = tuple(event_shape)
         self.maximum_round_trip_residual = residual
         self.orientation_preserving = bool(orientation_preserving)
         self.tail_open = bool(tail_open)
@@ -95,7 +95,7 @@ class ReferenceTransport(StrictModule, NonTrainableState):
             )
         if log_abs_det_jacobian is not None and not callable(log_abs_det_jacobian):
             raise TypeError("log_abs_det_jacobian must be callable when supplied.")
-        shape = tuple(int(size) for size in event_shape)
+        shape = tuple(event_shape)
         if any(size < 1 for size in shape):
             raise ValueError("Reference transport event dimensions must be positive.")
         resolved_evidence = evidence or ReferenceTransportEvidence(
@@ -116,10 +116,10 @@ class ReferenceTransport(StrictModule, NonTrainableState):
         self.evidence = resolved_evidence
 
     def from_reference(self, value: Any, /) -> Array:
-        return jnp.asarray(self.forward_map(value), dtype=float)
+        return jnp.asarray(self.forward_map(value), dtype=jnp.float64)
 
     def to_reference(self, value: Any, /) -> Array:
-        return jnp.asarray(self.inverse_map(value), dtype=float)
+        return jnp.asarray(self.inverse_map(value), dtype=jnp.float64)
 
 
 @runtime_checkable
@@ -245,8 +245,7 @@ class ProbabilityDomain(AbstractScalarDomain):
     ):
         if not isinstance(distribution, _ProbabilityLaw):
             raise TypeError(
-                "distribution must provide sample, icdf, log_prob, contains, support, "
-                "and equivalent."
+                "distribution must provide sample, icdf, log_prob, contains, support, and equivalent."
             )
         if not isinstance(label, str) or not label:
             raise ValueError("label must be a non-empty string.")
@@ -270,7 +269,7 @@ class ProbabilityDomain(AbstractScalarDomain):
 
     @property
     def measure(self) -> Array:
-        return jnp.asarray(1.0, dtype=float)
+        return jnp.asarray(1.0, dtype=jnp.float64)
 
     @property
     def reference_transport(self) -> ReferenceTransport:
@@ -310,9 +309,9 @@ class ProbabilityDomain(AbstractScalarDomain):
                 "Endpoint-dependent components are unavailable for unbounded distributions."
             )
         if which == "start":
-            return jnp.asarray(support[0], dtype=float).reshape(())
+            return jnp.asarray(support[0], dtype=jnp.float64).reshape(())
         if which == "end":
-            return jnp.asarray(support[1], dtype=float).reshape(())
+            return jnp.asarray(support[1], dtype=jnp.float64).reshape(())
         raise ValueError("fixed(which) must be 'start' or 'end'.")
 
     def sample(
@@ -327,10 +326,17 @@ class ProbabilityDomain(AbstractScalarDomain):
             raise ValueError("num_points must be non-negative.")
         if sampler == "uniform":
             return jnp.asarray(
-                self.distribution.sample(key, sample_shape=(count,)), dtype=float
+                self.distribution.sample(key, sample_shape=(count,)), dtype=jnp.float64
             )
-        unit = open_unit_interval(get_sampler(sampler)(count, 1, key)).reshape((count,))
-        return jnp.asarray(self.distribution.icdf(unit), dtype=float)
+        unit = open_unit_interval(
+            materialize_design(
+                sampler,
+                count=count,
+                dimension=1,
+                key=key,
+            )
+        ).reshape((count,))
+        return jnp.asarray(self.distribution.icdf(unit), dtype=jnp.float64)
 
     def _same_factor_support(self, other: object, /) -> bool:
         return isinstance(other, ProbabilityDomain) and self.distribution.equivalent(
@@ -338,7 +344,7 @@ class ProbabilityDomain(AbstractScalarDomain):
         )
 
     def _contains(self, points: Array) -> Bool[Array, " num_points"]:
-        return jnp.asarray(self.distribution.contains(points), dtype=bool)
+        return jnp.asarray(self.distribution.contains(points), dtype=jnp.bool_)
 
 
 __all__ = [

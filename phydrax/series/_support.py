@@ -24,7 +24,7 @@ def _identifier(value: str, name: str, /) -> str:
 def _series_shape(
     value: Sequence[int] | None, inferred: tuple[int, ...], /
 ) -> tuple[int, ...]:
-    shape = inferred if value is None else tuple(int(size) for size in value)
+    shape = inferred if value is None else tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("SeriesSupport series_shape entries must be positive.")
     return shape
@@ -55,13 +55,12 @@ def _boolean_mask(
 ) -> Array:
     if value is None:
         return default
-    mask = jnp.asarray(value, dtype=bool)
+    mask = jnp.asarray(value, dtype=jnp.bool_)
     if mask.shape == shared_shape:
         return jnp.broadcast_to(mask, full_shape)
     if mask.shape != full_shape:
         raise ValueError(
-            f"SeriesSupport {name} must have shape {shared_shape} or {full_shape}; "
-            f"got {mask.shape}."
+            f"SeriesSupport {name} must have shape {shared_shape} or {full_shape}; got {mask.shape}."
         )
     return mask
 
@@ -99,7 +98,7 @@ class SeriesSupport(StrictModule):
         coordinate_id: str = "coordinate",
     ):
         coordinates_ = jnp.asarray(coordinates)
-        if coordinates_.ndim < 1 or int(coordinates_.shape[-1]) < 1:
+        if coordinates_.ndim < 1 or coordinates_.shape[-1] < 1:
             raise ValueError(
                 "SeriesSupport coordinates must have a non-empty trailing coordinate axis."
             )
@@ -115,20 +114,19 @@ class SeriesSupport(StrictModule):
         if coordinate_kind not in ("continuous", "discrete"):
             raise ValueError("coordinate_kind must be 'continuous' or 'discrete'.")
 
-        capacity = int(coordinates_.shape[-1])
+        capacity = coordinates_.shape[-1]
         inferred_shape = () if coordinates_.ndim == 1 else tuple(coordinates_.shape[:-1])
         shape = _series_shape(series_shape, inferred_shape)
         full_node_shape = shape + (capacity,)
         shared = coordinates_.ndim == 1
         if not shared and coordinates_.shape != full_node_shape:
             raise ValueError(
-                "SeriesSupport per-series coordinates must have shape "
-                f"{full_node_shape}; got {coordinates_.shape}."
+                f"SeriesSupport per-series coordinates must have shape {full_node_shape}; got {coordinates_.shape}."
             )
 
         nodes = _boolean_mask(
             node_valid,
-            default=jnp.ones(full_node_shape, dtype=bool),
+            default=jnp.ones(full_node_shape, dtype=jnp.bool_),
             full_shape=full_node_shape,
             shared_shape=(capacity,),
             name="node_valid",

@@ -67,11 +67,11 @@ class CompressorMapPlan(StrictModule):
         reference_pressure: float,
         provenance: str,
     ) -> None:
-        speed = np.asarray(corrected_speed_axis, dtype=float)
-        line = np.asarray(operating_line_axis, dtype=float)
-        flow = np.asarray(corrected_flow, dtype=float)
-        ratio = np.asarray(pressure_ratio, dtype=float)
-        efficiency = np.asarray(isentropic_efficiency, dtype=float)
+        speed = np.asarray(corrected_speed_axis, dtype=np.float64)
+        line = np.asarray(operating_line_axis, dtype=np.float64)
+        flow = np.asarray(corrected_flow, dtype=np.float64)
+        ratio = np.asarray(pressure_ratio, dtype=np.float64)
+        efficiency = np.asarray(isentropic_efficiency, dtype=np.float64)
         shape = (speed.size, line.size)
         reference_temperature_value = float(reference_temperature)
         reference_pressure_value = float(reference_pressure)

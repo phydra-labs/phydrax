@@ -136,11 +136,11 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
 
     @property
     def attachment_count(self) -> int:
-        return int(self.dof_routes.shape[0])
+        return self.dof_routes.shape[0]
 
     @property
     def ambient_dimension(self) -> int:
-        return int(self.reference_positions.shape[1])
+        return self.reference_positions.shape[1]
 
     @property
     def field_space(self) -> ArraySpace:
@@ -460,10 +460,10 @@ class RigidDeformableAttachmentPlan(StrictModule, NonTrainableState):
         if not np.all(present):
             raise ValueError("An attachment body ID is absent from rigid-body support.")
         indices = order[ranks].astype(np.int32)
-        active = np.asarray(bodies.particles.active_mask, dtype=bool)
+        active = np.asarray(bodies.particles.active_mask, dtype=np.bool_)
         if not np.all(active[indices]):
             raise ValueError("Attachments require active rigid bodies.")
-        if np.any(np.asarray(bodies.fixed_mask, dtype=bool)[indices]):
+        if np.any(np.asarray(bodies.fixed_mask, dtype=np.bool_)[indices]):
             raise ValueError("KKT attachments require mobile rigid bodies.")
         rank_limit = float(rank_tolerance)
         physical_limit = float(tolerance)

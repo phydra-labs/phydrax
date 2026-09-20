@@ -14,7 +14,7 @@ def _geometry():
     return phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(
             ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, -1)),
-            dtype=float,
+            dtype="float64",
         ),
         tetrahedra=np.asarray(((0, 1, 2, 3), (0, 2, 1, 4))),
     ).prepare()
@@ -214,8 +214,8 @@ def test_joint_petrophysical_geological_and_time_lapse_workflows_are_explicit():
         lambda value: -0.5 * (value[0] - 1.0) ** 2,
         lambda value: value,
         "toy-data",
-        likelihood_id="toy-gaussian-v1",
-        prediction_id="toy-identity-v1",
+        likelihood_id="toy-gaussian",
+        prediction_id="toy-identity",
     )
     joint = geo.MultimodalJointInferencePlan(parameter_space, (term,))
     assert joint.posterior().log_density(jnp.asarray((0.5,))) < 0

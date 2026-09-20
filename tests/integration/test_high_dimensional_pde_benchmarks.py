@@ -23,7 +23,6 @@ def test_high_dimensional_reference_benchmark_schema_and_replay():
         (4, 12), num_samples=2048, repeats=1, seed=12
     )
 
-    assert first["schema_version"] == 1
     assert first["dimensions"] == [4, 12]
     assert first["passed"]
     assert len(first["records"]) == 8
@@ -46,7 +45,6 @@ def test_high_dimensional_method_matrix_runs_with_common_result_schema():
         seed=13,
     )
 
-    assert result["schema_version"] == 2
     assert result["dimensions"] == [4, 12]
     assert result["passed"]
     assert len(result["method_matrix"]) == len(HIGH_DIMENSIONAL_METHOD_MATRIX)

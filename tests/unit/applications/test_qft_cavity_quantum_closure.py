@@ -44,7 +44,7 @@ def test_qft_cavity_modes_have_declared_single_quantum_energy():
         hbar=2.0,
         equipartition_tolerance=1e-12,
     )
-    electric = jnp.asarray(((1.0, 0.0), (0.0, 2.0)), dtype=complex)
+    electric = jnp.asarray(((1.0, 0.0), (0.0, 2.0)), dtype="complex128")
     magnetic = electric
     result = eqx.filter_jit(plan.prepare().normalize)(electric, magnetic)
 
@@ -115,7 +115,7 @@ def test_qft_maxwell_bloch_and_lindblad_rhs_preserve_quantum_constraints():
         == "full"
     )
 
-    lowering = jnp.asarray(((0.0, 1.0), (0.0, 0.0)), dtype=complex)
+    lowering = jnp.asarray(((0.0, 1.0), (0.0, 0.0)), dtype="complex128")
     lindblad_plan = MaxwellLindbladPlan(
         jnp.diag(jnp.asarray((0.0, 1.0))),
         lowering,

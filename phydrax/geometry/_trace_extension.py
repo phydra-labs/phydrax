@@ -70,8 +70,8 @@ class TraceExtensionEvidence(StrictModule, NonTrainableState):
         preservation_certificate_id: str | None,
         stability_owner_ids: tuple[str, ...],
     ):
-        inverse_error = jnp.asarray(right_inverse_error, dtype=float).reshape(())
-        invariant_error = jnp.asarray(preservation_error, dtype=float).reshape(())
+        inverse_error = jnp.asarray(right_inverse_error, dtype=jnp.float64).reshape(())
+        invariant_error = jnp.asarray(preservation_error, dtype=jnp.float64).reshape(())
         version_int = int(numeric_version)
         if version_int < 0:
             raise ValueError("numeric_version must be non-negative.")
@@ -125,7 +125,7 @@ class TraceExtensionEvidence(StrictModule, NonTrainableState):
         self.physical_exact = cover.evidence.physical_exact
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "trace-extension-evidence-v1",
+                "kind": "trace-extension-evidence",
                 "provider": provider,
                 "support": cover.cover_id,
                 "trace": self.trace_operator_id,
@@ -216,7 +216,7 @@ class PreparedTraceExtension(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-trace-extension-v1",
+                "kind": "prepared-trace-extension",
                 "trace": trace_operator.operator_id,
                 "candidate": candidate_operator.operator_id,
                 "response": response.prepared_id,
@@ -394,7 +394,7 @@ class TransfiniteCorrectionProvider(_TraceCorrectionProvider):
             cover,
             exactness=TraceExtensionExactness.ANALYTIC_REPRESENTED,
             construction_certificate_id=cardinal_certificate_id,
-            provider_kind="transfinite-trace-correction-v1",
+            provider_kind="transfinite-trace-correction",
         )
 
 
@@ -422,7 +422,7 @@ class ClosestPointCorrectionProvider(_TraceCorrectionProvider):
             cover,
             exactness=TraceExtensionExactness.ANALYTIC_REPRESENTED,
             construction_certificate_id=declared,
-            provider_kind="closest-point-trace-correction-v1",
+            provider_kind="closest-point-trace-correction",
         )
 
 
@@ -444,7 +444,7 @@ class PartitionOfUnityCorrectionProvider(_TraceCorrectionProvider):
             cover,
             exactness=TraceExtensionExactness.ANALYTIC_REPRESENTED,
             construction_certificate_id=partition_certificate_id,
-            provider_kind="partition-of-unity-trace-correction-v1",
+            provider_kind="partition-of-unity-trace-correction",
         )
 
 
@@ -481,7 +481,7 @@ class EllipticExtensionCorrectionProvider(_TraceCorrectionProvider):
             construction_certificate_id=coercivity_certificate_id,
             preservation_operator=preservation_operator,
             preservation_certificate_id=preservation_certificate_id,
-            provider_kind="elliptic-trace-correction-v1",
+            provider_kind="elliptic-trace-correction",
         )
         self.pure_neumann = pure
         self.gauge_certificate_id = gauge
@@ -517,7 +517,7 @@ class DiscreteTraceCorrectionProvider(_TraceCorrectionProvider):
             preservation_operator=preservation_operator,
             preservation_certificate_id=preservation_certificate_id,
             stability_owner_ids=tuple(stability_owner_ids),
-            provider_kind="discrete-trace-correction-v1",
+            provider_kind="discrete-trace-correction",
         )
         self.representation_id = representation
 

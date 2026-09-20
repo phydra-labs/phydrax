@@ -368,7 +368,7 @@ def compiler_evidence(
 
 def logical_array_bytes(value: Any, /) -> int:
     """Return unique logical JAX/NumPy array payload bytes in an object graph."""
-    return sum(int(leaf.nbytes) for leaf in _array_leaves(value))
+    return sum(leaf.nbytes for leaf in _array_leaves(value))
 
 
 def installed_package_fingerprint() -> str:

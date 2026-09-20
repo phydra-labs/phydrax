@@ -43,7 +43,7 @@ def _operator():
         return phx.operators.ConnectedConfigurations(
             connected,
             -0.5 * jnp.ones(shape),
-            jnp.ones(shape, dtype=bool),
+            jnp.ones(shape, dtype="bool"),
             configuration_shape=(2,),
         )
 

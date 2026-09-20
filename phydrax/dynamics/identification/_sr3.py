@@ -123,8 +123,7 @@ class SR3Regression(AbstractSparseRegression):
             raise TypeError("design must be a SINDyDesign.")
         if design.num_features > self.max_features:
             raise ValueError(
-                f"SR3 design has {design.num_features} features; "
-                f"max_features={self.max_features}."
+                f"SR3 design has {design.num_features} features; max_features={self.max_features}."
             )
         normalized = normalize_least_squares_design(
             design.matrix,
@@ -160,7 +159,7 @@ class SR3Regression(AbstractSparseRegression):
         )
         sparse = jnp.zeros((design.num_features, design.output_size), dtype=moment.dtype)
         relaxed = sparse
-        converged = jnp.zeros((design.output_size,), dtype=bool)
+        converged = jnp.zeros((design.output_size,), dtype=jnp.bool_)
         iterations = jnp.zeros((design.output_size,), dtype=jnp.int32)
         coefficient_history = [sparse.T]
         support_history = [(sparse.T != 0.0)]

@@ -229,7 +229,7 @@ class DynamicKSGSInputs(StrictModule):
         self.leonard_stress = leonard
         self.modeled_stress = modeled
         self.averaging_weight = _inexact(averaging_weight)
-        self.accept_update = jnp.asarray(accept_update, dtype=bool)
+        self.accept_update = jnp.asarray(accept_update, dtype=jnp.bool_)
 
 
 class LowReKSGSInputs(StrictModule):
@@ -446,8 +446,7 @@ class DynamicKSGSPlan(AbstractKSGSPlan):
             or test_filter.commutation_status != resolved_filter.commutation_status
         ):
             raise ValueError(
-                "Dynamic KSGS filters require matching modeled or commuting "
-                "derivative-commutation semantics."
+                "Dynamic KSGS filters require matching modeled or commuting derivative-commutation semantics."
             )
         if test_filter.repeated_filter_semantics == "unmodeled" or (
             test_filter.family == "explicit-filter"
@@ -538,7 +537,7 @@ def replace_ksgs_kinetic_energy(
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(jnp.result_type(array, float))
+        array = array.astype(jnp.result_type(array, jnp.float64))
     return array
 
 
@@ -630,7 +629,7 @@ def _dynamic_transition(state: KSGSState, inputs: DynamicKSGSInputs, /) -> KSGSS
     if inputs.leonard_stress.shape != shape + (3, 3):
         raise ValueError("Dynamic KSGS stress leading shape must match k.")
     weight = _inexact(inputs.averaging_weight)
-    accepted = jnp.asarray(inputs.accept_update, dtype=bool)
+    accepted = jnp.asarray(inputs.accept_update, dtype=jnp.bool_)
     if weight.shape != shape or accepted.shape != shape:
         raise ValueError("Dynamic KSGS averaging fields must have the shape of k.")
     weight = eqx.error_if(
@@ -692,7 +691,7 @@ def _transport(
         else jnp.full_like(kinetic, plan.coefficients.eddy_viscosity)
     )
     damping = jnp.ones_like(kinetic)
-    distance_finite = jnp.ones_like(kinetic, dtype=bool)
+    distance_finite = jnp.ones_like(kinetic, dtype=jnp.bool_)
     if isinstance(plan, LowReKSGSPlan):
         if wall_distance is None:
             raise ValueError("Low-Re KSGS transport requires resolved wall distance.")
@@ -782,7 +781,9 @@ def _evaluate(
             * gradient_squared
         )
     wall_distance_finite = (
-        jnp.ones_like(kinetic, dtype=bool) if low_re is None else jnp.isfinite(low_re[1])
+        jnp.ones_like(kinetic, dtype=jnp.bool_)
+        if low_re is None
+        else jnp.isfinite(low_re[1])
     )
     eddy_viscosity = transport.eddy_viscosity
     diffusivity = transport.diffusivity
@@ -804,11 +805,11 @@ def _evaluate(
         rhs=rhs,
     )
     accepted = (
-        jnp.zeros_like(kinetic, dtype=bool)
+        jnp.zeros_like(kinetic, dtype=jnp.bool_)
         if dynamic_update_accepted is None
-        else jnp.asarray(dynamic_update_accepted, dtype=bool)
+        else jnp.asarray(dynamic_update_accepted, dtype=jnp.bool_)
     )
-    finite = jnp.ones_like(kinetic, dtype=bool)
+    finite = jnp.ones_like(kinetic, dtype=jnp.bool_)
     for value in (
         kinetic,
         gradient,

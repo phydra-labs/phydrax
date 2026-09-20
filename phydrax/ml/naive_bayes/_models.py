@@ -15,7 +15,7 @@ from jaxtyping import Array
 import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -54,22 +54,22 @@ class NaiveBayesDiagnostics(StrictModule):
         domain_valid: Any,
         method: str,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.effective_samples = jnp.asarray(effective_samples)
         self.class_mass = jnp.asarray(class_mass)
         self.absent_classes = self.class_mass <= 0.0
         self.feature_mass = jnp.asarray(feature_mass)
-        self.domain_valid = jnp.asarray(domain_valid, dtype=bool)
+        self.domain_valid = jnp.asarray(domain_valid, dtype=jnp.bool_)
         self.method = str(method)
 
 
 class AbstractNaiveBayesModel(AbstractArrayModel):
     """Common normalized classification API for native Naive Bayes models."""
 
-    labels: AbstractAttribute[Array]
-    target_schema: AbstractAttribute[TargetSchema]
-    case_shape: AbstractAttribute[tuple[int, ...]]
+    labels: eqx.AbstractVar[Array]
+    target_schema: eqx.AbstractVar[TargetSchema]
+    case_shape: eqx.AbstractVar[tuple[int, ...]]
 
     @abstractmethod
     def joint_log_likelihood(self, x: Any, /) -> Array:
@@ -121,8 +121,8 @@ class GaussianNaiveBayesModel(AbstractNaiveBayesModel):
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
         self.case_shape = tuple(case_shape)
-        self.in_size = int(self.means.shape[-1])
-        self.out_size = int(self.means.shape[-2])
+        self.in_size = self.means.shape[-1]
+        self.out_size = self.means.shape[-2]
 
     def joint_log_likelihood(self, x: Any, /) -> Array:
         values = jnp.asarray(x)
@@ -169,8 +169,8 @@ class BernoulliNaiveBayesModel(AbstractNaiveBayesModel):
         self.target_schema = target_schema
         self.threshold = float(threshold)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(self.feature_log_prob.shape[-1])
-        self.out_size = int(self.feature_log_prob.shape[-2])
+        self.in_size = self.feature_log_prob.shape[-1]
+        self.out_size = self.feature_log_prob.shape[-2]
 
     def joint_log_likelihood(self, x: Any, /) -> Array:
         raw = jnp.asarray(x)
@@ -215,8 +215,8 @@ class MultinomialNaiveBayesModel(AbstractNaiveBayesModel):
         self.target_schema = target_schema
         self.complement = bool(complement)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(self.feature_log_prob.shape[-1])
-        self.out_size = int(self.feature_log_prob.shape[-2])
+        self.in_size = self.feature_log_prob.shape[-1]
+        self.out_size = self.feature_log_prob.shape[-2]
 
     def joint_log_likelihood(self, x: Any, /) -> Array:
         values = jnp.asarray(x)
@@ -265,7 +265,7 @@ class CategoricalNaiveBayesModel(AbstractNaiveBayesModel):
         self.category_counts = tuple(category_counts)
         self.case_shape = tuple(case_shape)
         self.in_size = len(self.category_counts)
-        self.out_size = int(self.feature_log_prob.shape[-3])
+        self.out_size = self.feature_log_prob.shape[-3]
 
     def joint_log_likelihood(self, x: Any, /) -> Array:
         raw_values = jnp.asarray(x)
@@ -277,7 +277,7 @@ class CategoricalNaiveBayesModel(AbstractNaiveBayesModel):
         extra = values.ndim - len(self.case_shape) - 1
         table = _reshape_for_samples(self.feature_log_prob, self.case_shape, extra)
         score = jnp.zeros(values.shape[:-1] + (self.out_size,), dtype=table.dtype)
-        domain_valid = jnp.ones(values.shape[:-1], dtype=bool)
+        domain_valid = jnp.ones(values.shape[:-1], dtype=jnp.bool_)
         for feature, categories in enumerate(self.category_counts):
             raw = raw_values[..., feature]
             valid = (
@@ -432,7 +432,7 @@ class GaussianNaiveBayesRecipe(AbstractRecipe):
         self.num_classes, self.class_prior, self.weight_policy = _validate_common(
             num_classes, class_prior, weight_policy
         )
-        self.var_smoothing = jnp.asarray(var_smoothing, dtype=float)
+        self.var_smoothing = jnp.asarray(var_smoothing, dtype=jnp.float64)
         if self.var_smoothing.ndim != 0 or float(self.var_smoothing) <= 0.0:
             raise ValueError("var_smoothing must be positive.")
 
@@ -448,7 +448,7 @@ class GaussianNaiveBayesRecipe(AbstractRecipe):
             x = x.astype(jnp.float32)
         raw_finite = jnp.isfinite(jnp.real(x)) & jnp.isfinite(jnp.imag(x))
         finite = raw_finite & batch.feature_mask
-        classes = int(labels.shape[0])
+        classes = labels.shape[0]
         class_weight, mass = _membership(y, weight, classes)
         feature_weight = class_weight[..., :, :, None] * finite[..., :, None, :]
         feature_mass = jnp.sum(feature_weight, axis=-3)
@@ -509,7 +509,7 @@ class BernoulliNaiveBayesRecipe(AbstractRecipe):
         self.num_classes, self.class_prior, self.weight_policy = _validate_common(
             num_classes, class_prior, weight_policy
         )
-        self.alpha = jnp.asarray(alpha, dtype=float)
+        self.alpha = jnp.asarray(alpha, dtype=jnp.float64)
         self.threshold = float(threshold)
         if self.alpha.ndim != 0 or float(self.alpha) <= 0.0:
             raise ValueError("alpha must be positive.")
@@ -524,7 +524,7 @@ class BernoulliNaiveBayesRecipe(AbstractRecipe):
         raw_finite = jnp.isfinite(x)
         finite = raw_finite & batch.feature_mask
         binary = (jnp.where(finite, x, 0) > self.threshold).astype(weight.dtype)
-        class_weight, mass = _membership(y, weight, int(labels.shape[0]))
+        class_weight, mass = _membership(y, weight, labels.shape[0])
         feature_weight = class_weight[..., :, :, None] * finite[..., :, None, :]
         feature_mass = jnp.sum(feature_weight, axis=-3)
         positive = ein.contract("...ncf,...nf->...cf", feature_weight, binary)
@@ -571,7 +571,7 @@ def _fit_multinomial(recipe: Any, batch: MLBatch, *, complement: bool) -> FitRes
     safe_values = jnp.where(
         entry_active & jnp.isfinite(values) & (values >= 0.0), values, 0.0
     )
-    class_weight, mass = _membership(y, weight, int(labels.shape[0]))
+    class_weight, mass = _membership(y, weight, labels.shape[0])
     counts = ein.contract("...nc,...nf->...cf", class_weight, safe_values)
     feature_mass = counts
     if complement:
@@ -616,7 +616,7 @@ class MultinomialNaiveBayesRecipe(AbstractRecipe):
         self.num_classes, self.class_prior, self.weight_policy = _validate_common(
             num_classes, class_prior, weight_policy
         )
-        self.alpha = jnp.asarray(alpha, dtype=float)
+        self.alpha = jnp.asarray(alpha, dtype=jnp.float64)
         if self.alpha.ndim != 0 or float(self.alpha) <= 0.0:
             raise ValueError("alpha must be positive.")
 
@@ -642,7 +642,7 @@ class ComplementNaiveBayesRecipe(AbstractRecipe):
         self.num_classes, self.class_prior, self.weight_policy = _validate_common(
             num_classes, class_prior, weight_policy
         )
-        self.alpha = jnp.asarray(alpha, dtype=float)
+        self.alpha = jnp.asarray(alpha, dtype=jnp.float64)
         if self.alpha.ndim != 0 or float(self.alpha) <= 0.0:
             raise ValueError("alpha must be positive.")
 
@@ -668,7 +668,7 @@ class CategoricalNaiveBayesRecipe(AbstractRecipe):
         alpha: float = 1.0,
         weight_policy: WeightPolicy = "statistical",
     ):
-        self.category_counts = tuple(int(count) for count in category_counts)
+        self.category_counts = tuple(category_counts)
         if not self.category_counts or any(count < 2 for count in self.category_counts):
             raise ValueError(
                 "Each categorical feature must declare at least two categories."
@@ -676,7 +676,7 @@ class CategoricalNaiveBayesRecipe(AbstractRecipe):
         self.num_classes, self.class_prior, self.weight_policy = _validate_common(
             num_classes, class_prior, weight_policy
         )
-        self.alpha = jnp.asarray(alpha, dtype=float)
+        self.alpha = jnp.asarray(alpha, dtype=jnp.float64)
         if self.alpha.ndim != 0 or float(self.alpha) <= 0.0:
             raise ValueError("alpha must be positive.")
 
@@ -690,12 +690,12 @@ class CategoricalNaiveBayesRecipe(AbstractRecipe):
         if jnp.issubdtype(x.dtype, jnp.complexfloating):
             raise TypeError("Categorical Naive Bayes requires real category codes.")
         values = jnp.asarray(x, dtype=jnp.int32)
-        classes = int(labels.shape[0])
+        classes = labels.shape[0]
         max_categories = max(self.category_counts)
         class_weight, mass = _membership(y, weight, classes)
         tables = []
         masses = []
-        domain = jnp.ones(batch.case_shape, dtype=bool)
+        domain = jnp.ones(batch.case_shape, dtype=jnp.bool_)
         for feature, categories in enumerate(self.category_counts):
             raw = x[..., feature]
             valid = (

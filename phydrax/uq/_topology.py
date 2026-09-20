@@ -42,9 +42,9 @@ class TopologyEnsembleSummary(StrictModule, NonTrainableState):
         if len(topology_ids) != 1 or len(threshold_shapes) != 1:
             raise ValueError("Topology ensemble snapshots must share topology and axes.")
         weight_values = (
-            jnp.ones((len(values),), dtype=float)
+            jnp.ones((len(values),), dtype=jnp.float64)
             if weights is None
-            else jnp.asarray(weights, dtype=float)
+            else jnp.asarray(weights, dtype=jnp.float64)
         )
         if weight_values.shape != (len(values),):
             raise ValueError("Topology ensemble weights do not match sample count.")

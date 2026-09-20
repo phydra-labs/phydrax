@@ -46,8 +46,8 @@ class SpatialICMEModel:
         *,
         homogenization: str = "voigt",
     ) -> SpatialICMEModel:
-        properties = np.asarray(phase_properties, dtype=float)
-        rates = np.asarray(kinetic_rates_s_inv, dtype=float)
+        properties = np.asarray(phase_properties, dtype=np.float64)
+        rates = np.asarray(kinetic_rates_s_inv, dtype=np.float64)
         if properties.ndim < 1 or properties.shape[0] < 1:
             raise ValueError("ICME phase properties require a leading phase axis.")
         if rates.shape != (properties.shape[0],) or np.any(rates < 0):

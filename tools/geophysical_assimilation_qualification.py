@@ -1,5 +1,5 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Run the geophysical linear-Gaussian and labelled heat-reservoir qualifications.
+"""Run the geophysical linear-Gaussian and labeled heat-reservoir qualifications.
 
 PYTHONPATH=. python tools/geophysical_assimilation_qualification.py
 """

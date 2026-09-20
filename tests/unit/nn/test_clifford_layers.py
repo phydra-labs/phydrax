@@ -39,7 +39,7 @@ def test_clifford_grade_representation_round_trip_and_field_schema():
         algebra,
         (1, 1, 1),
     )
-    values = jnp.arange(12, dtype=float).reshape((3, 4))
+    values = jnp.arange(12, dtype="float64").reshape((3, 4))
     assert jnp.array_equal(representation.join(representation.split(values)), values)
     restored = phx.nn.operator.representations.CliffordGradeRepresentation.from_dict(
         representation.to_dict()

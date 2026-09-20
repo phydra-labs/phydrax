@@ -103,8 +103,7 @@ def test_bilby_json_import_rejects_ambiguous_metadata(tmp_path, name, value, err
 def test_bilby_json_import_rejects_duplicate_object_keys(tmp_path):
     path = tmp_path / "duplicate.json"
     path.write_text(
-        '{"search_parameter_keys":["x"],"search_parameter_keys":["x"],'
-        '"posterior":{"x":[1.0]}}',
+        '{"search_parameter_keys":["x"],"search_parameter_keys":["x"],"posterior":{"x":[1.0]}}',
         encoding="utf-8",
     )
 

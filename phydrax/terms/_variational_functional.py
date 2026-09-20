@@ -35,8 +35,7 @@ def _source_target(source: IntegrationSource, /):
     if isinstance(source, FixedIntegration):
         return source.realization.target
     raise TypeError(
-        "Functional bindings support fixed, per-step, caller, or typed adaptive "
-        "integration sources."
+        "Functional bindings support fixed, per-step, caller, or typed adaptive integration sources."
     )
 
 

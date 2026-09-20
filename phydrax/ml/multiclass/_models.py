@@ -39,13 +39,13 @@ class CompositionDiagnostics(StrictModule):
     method: str = eqx.field(static=True)
 
     def __init__(self, component_valid: Any, component_status: Any, /, *, method: str):
-        validity = jnp.asarray(component_valid, dtype=bool)
+        validity = jnp.asarray(component_valid, dtype=jnp.bool_)
         statuses = jnp.asarray(component_status, dtype=jnp.int32)
         self.component_valid = validity
         self.component_status = statuses
         self.valid = jnp.all(validity, axis=-1)
         self.status = jnp.max(statuses, axis=-1).astype(jnp.int32)
-        self.component_count = int(validity.shape[-1])
+        self.component_count = validity.shape[-1]
         self.method = str(method)
 
 
@@ -112,7 +112,7 @@ def _scalar_vocabulary_valid(batch: MLBatch, targets: Array, labels: Array) -> A
     target_valid = (
         batch.target_mask
         if batch.target_mask is not None
-        else jnp.ones_like(targets, dtype=bool)
+        else jnp.ones_like(targets, dtype=jnp.bool_)
     )
     known = jnp.any(targets[..., None] == labels, axis=-1)
     return jnp.all(~(batch.sample_mask & target_valid) | known, axis=-1)
@@ -122,7 +122,7 @@ def _multilabel_domain_valid(batch: MLBatch, targets: Array) -> Array:
     target_valid = (
         batch.target_mask
         if batch.target_mask is not None
-        else jnp.ones_like(targets, dtype=bool)
+        else jnp.ones_like(targets, dtype=jnp.bool_)
     )
     required = batch.sample_mask[..., None] & target_valid
     binary = (targets == 0) | (targets == 1)
@@ -140,7 +140,7 @@ def _composition_result(
     component_valid = jnp.stack(tuple(result.valid for result in results), axis=-1)
     component_status = jnp.stack(tuple(result.status for result in results), axis=-1)
     if semantic_valid is not None:
-        semantic = jnp.asarray(semantic_valid, dtype=bool)
+        semantic = jnp.asarray(semantic_valid, dtype=jnp.bool_)
         component_valid = jnp.concatenate((component_valid, semantic[..., None]), axis=-1)
         semantic_status = jnp.where(semantic, ML_SUCCESS, ML_INFEASIBLE).astype(jnp.int32)
         component_status = jnp.concatenate(
@@ -202,7 +202,7 @@ class OneVsRestModel(AbstractArrayModel):
         target_schema: TargetSchema,
     ):
         _validate_binary_models(models, same_input=True)
-        if len(models) < 2 or len(models) != int(jnp.asarray(labels).shape[0]):
+        if len(models) < 2 or len(models) != jnp.asarray(labels).shape[0]:
             raise ValueError("One-vs-rest components must align with class labels.")
         self.models = tuple(models)
         self.labels = jnp.asarray(labels)
@@ -245,7 +245,7 @@ class OneVsRestRecipe(AbstractRecipe):
         y = batch.require_targets()
         if batch.target_shape != ():
             raise ValueError("One-vs-rest requires scalar multiclass targets.")
-        keys = _child_keys(key, int(labels.shape[0]))
+        keys = _child_keys(key, labels.shape[0])
         results = tuple(
             self.base_recipe.fit_batch(
                 _subbatch(
@@ -289,7 +289,7 @@ class OneVsOneModel(AbstractArrayModel):
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
         self.in_size = _flat_input_size(models[0], "OneVsOneModel")
-        self.out_size = int(self.labels.shape[0])
+        self.out_size = self.labels.shape[0]
 
     def pairwise_decision_function(self, x: Any, /) -> Array:
         return jnp.stack(tuple(_binary_score(model, x) for model in self.models), axis=-1)
@@ -347,9 +347,7 @@ class OneVsOneRecipe(AbstractRecipe):
         if batch.target_shape != ():
             raise ValueError("One-vs-one requires scalar multiclass targets.")
         pairs = tuple(
-            (i, j)
-            for i in range(int(labels.shape[0]))
-            for j in range(i + 1, int(labels.shape[0]))
+            (i, j) for i in range(labels.shape[0]) for j in range(i + 1, labels.shape[0])
         )
         keys = _child_keys(key, len(pairs))
         results = []
@@ -398,13 +396,13 @@ class OutputCodeModel(AbstractArrayModel):
         if (
             not codebook
             or len(models) != len(codebook[0])
-            or len(codebook) != int(jnp.asarray(labels).shape[0])
+            or len(codebook) != jnp.asarray(labels).shape[0]
         ):
             raise ValueError(
                 "Output-code models must align with codebook rows and columns."
             )
         self.models = tuple(models)
-        self.codebook = tuple(tuple(int(bit) for bit in row) for row in codebook)
+        self.codebook = tuple(tuple(row) for row in codebook)
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
         self.in_size = _flat_input_size(models[0], "OutputCodeModel")
@@ -426,7 +424,7 @@ class OutputCodeModel(AbstractArrayModel):
 
     def predict_indices(self, x: Any, /) -> Array:
         hard_bits = self.code_decision_function(x) >= 0.0
-        code = jnp.asarray(self.codebook, dtype=bool)
+        code = jnp.asarray(self.codebook, dtype=jnp.bool_)
         distance = jnp.sum(hard_bits[..., None, :] != code, axis=-1)
         return jnp.argmin(distance, axis=-1)
 
@@ -454,7 +452,7 @@ class OutputCodeRecipe(AbstractRecipe):
         if not isinstance(base_recipe, AbstractRecipe):
             raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
-        self.codebook = tuple(tuple(int(bit) for bit in row) for row in codebook)
+        self.codebook = tuple(tuple(row) for row in codebook)
         self.num_classes = None if num_classes is None else int(num_classes)
         if self.codebook:
             width = len(self.codebook[0])
@@ -487,7 +485,7 @@ class OutputCodeRecipe(AbstractRecipe):
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         labels, schema = _labels_for(batch, self.num_classes)
-        classes = int(labels.shape[0])
+        classes = labels.shape[0]
         y = batch.require_targets()
         if batch.target_shape != ():
             raise ValueError(
@@ -572,7 +570,7 @@ class MultilabelRecipe(AbstractRecipe):
         targets = batch.require_targets()
         if len(batch.target_shape or ()) != 1:
             raise ValueError("Multilabel targets must end in one label axis.")
-        labels = int(targets.shape[-1])
+        labels = targets.shape[-1]
         keys = _child_keys(key, labels)
         results = tuple(
             self.base_recipe.fit_batch(
@@ -741,7 +739,7 @@ def _fit_chain(
     targets = batch.require_targets()
     if len(batch.target_shape or ()) != 1:
         raise ValueError("Classifier-chain targets must end in one label axis.")
-    count = int(targets.shape[-1])
+    count = targets.shape[-1]
     keys = _child_keys(key, count)
     results = []
     for index, child_key in enumerate(keys):
@@ -749,7 +747,7 @@ def _fit_chain(
             current = batch
         else:
             target_mask = (
-                jnp.ones_like(targets[..., :index], dtype=bool)
+                jnp.ones_like(targets[..., :index], dtype=jnp.bool_)
                 if batch.target_mask is None
                 else batch.target_mask[..., :index]
             )

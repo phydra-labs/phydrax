@@ -107,7 +107,7 @@ def _load_tree_contract(
         if not jnp.issubdtype(array.dtype, jnp.inexact) or jnp.iscomplexobj(array):
             raise TypeError("Load-parameter leaves must be real inexact arrays.")
         paths.append(jax.tree_util.keystr(path))
-        shapes.append(tuple(int(size) for size in array.shape))
+        shapes.append(tuple(array.shape))
         dtypes.append(str(array.dtype))
     return str(structure), tuple(paths), tuple(shapes), tuple(dtypes)
 
@@ -271,10 +271,10 @@ class ForceDensityProblem(StrictModule, NonTrainableState):
             sign_array = np.asarray(fixed_signs)
             if sign_array.shape != (structure.member_count,):
                 raise ValueError("fixed_signs must contain one sign per member.")
-            active = np.asarray(structure.member_valid, dtype=bool)
+            active = np.asarray(structure.member_valid, dtype=np.bool_)
             if np.any(np.abs(sign_array[active]) != 1):
                 raise ValueError("Active fixed_signs must be -1 or +1.")
-            signs = jnp.asarray(sign_array, dtype=float)
+            signs = jnp.asarray(sign_array, dtype=jnp.float64)
         elif fixed_signs is not None:
             raise ValueError("fixed_signs is valid only in fixed-mixed mode.")
         tolerances_ = ForceDensityTolerances() if tolerances is None else tolerances
@@ -432,8 +432,7 @@ def _validated_force_densities(
     densities = inputs.force_densities
     if densities.shape != (structure.member_count,):
         raise ValueError(
-            "force_densities must have shape "
-            f"({structure.member_count},); got {densities.shape}."
+            f"force_densities must have shape ({structure.member_count},); got {densities.shape}."
         )
     if inputs.prescribed_values.shape != (structure.constrained_dof_count,):
         raise ValueError(
@@ -1271,7 +1270,7 @@ def solve_force_density_batch(
         raise ValueError(
             "Batched force_densities and prescribed_values must have one leading case axis."
         )
-    batch_size = int(densities.shape[0])
+    batch_size = densities.shape[0]
     if prescribed.shape[0] != batch_size:
         raise ValueError("Batched inputs must share one case count.")
     for leaf in jax.tree.leaves(load_parameters):
@@ -1320,7 +1319,7 @@ def force_density_load_path(
     selected = (
         state.member_valid
         if member_mask is None
-        else jnp.asarray(member_mask, dtype=bool)
+        else jnp.asarray(member_mask, dtype=jnp.bool_)
     )
     if selected.shape != state.member_valid.shape:
         raise ValueError("member_mask must match the member axis.")

@@ -58,7 +58,7 @@ class SpatialUnbalancedSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
             raise TypeError("reference must be a PreparedUnbalancedSinkhornReference.")
         if encoder is not None and not callable(encoder):
             raise TypeError("encoder must be callable or None.")
-        weight_ = jnp.asarray(weight, dtype=float)
+        weight_ = jnp.asarray(weight, dtype=jnp.float64)
         if weight_.shape != ():
             raise ValueError("weight must be scalar.")
         self.objective_vars = () if objective_vars is None else tuple(objective_vars)
@@ -88,8 +88,7 @@ class SpatialUnbalancedSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
             ),
         ):
             raise TypeError(
-                "measure_builder must return a supported physical measure or "
-                "IntegrationRealization."
+                "measure_builder must return a supported physical measure or IntegrationRealization."
             )
         result = unbalanced_sinkhorn_divergence_against(
             source,

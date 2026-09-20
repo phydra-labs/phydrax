@@ -104,8 +104,8 @@ class FreeSpaceMagneticPlan(StrictModule, NonTrainableState):
         if not isinstance(coordinates, GeospatialContract):
             raise TypeError("Magnetic observations require GeospatialContract.")
         coordinates.require_cartesian(dimensions=3)
-        observations = np.asarray(observations_m, dtype=float)
-        reference = np.asarray(reference_direction, dtype=float)
+        observations = np.asarray(observations_m, dtype=np.float64)
+        reference = np.asarray(reference_direction, dtype=np.float64)
         separation = float(minimum_separation_m)
         if (
             observations.ndim != 2

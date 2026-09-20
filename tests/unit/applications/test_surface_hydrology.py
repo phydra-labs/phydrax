@@ -47,7 +47,7 @@ def _surface(*, lateral=True):
             (2, 0, 1),
             (2, 1, 1),
         ],
-        dtype=float,
+        dtype="float64",
     )
     cells = (
         (
@@ -83,12 +83,12 @@ def test_boundary_trace_parent_rates_cancel_and_transpose():
     np.testing.assert_allclose(
         jnp.sum(plan.trace.volume_content_rate(rates)) + jnp.sum(rates), 0
     )
-    face_values = jnp.arange(fv.face_measures.size, dtype=float)
+    face_values = jnp.arange(fv.face_measures.size, dtype="float64")
     np.testing.assert_allclose(
         jnp.vdot(plan.trace.gather(face_values), rates),
         jnp.vdot(face_values, plan.trace.scatter(rates)),
     )
-    interior = np.flatnonzero(np.asarray(fv.neighbour_cells) >= 0)
+    interior = np.flatnonzero(np.asarray(fv.neighbor_cells) >= 0)
     with pytest.raises(ValueError, match="interior"):
         BoundarySurfaceTrace(fv, interior)
 
@@ -162,7 +162,7 @@ def _equilibrium_subsurface(*, heat=False, surface_depth=0.1, dry_head=0.0):
     top = set(np.asarray(surface.trace.parent_faces).tolist())
     pressure = {
         int(face): float(face_pressure[face])
-        for face in np.flatnonzero(np.asarray(discretization.neighbour_cells) < 0)
+        for face in np.flatnonzero(np.asarray(discretization.neighbor_cells) < 0)
         if int(face) not in top
     }
     boundary = PorousBoundaryConditions(discretization, pressure_Pa=pressure)
@@ -232,7 +232,7 @@ def test_four_field_surface_water_heat_root_preserves_shared_equilibrium():
         dirichlet={
             int(face): 300.0
             for face in np.flatnonzero(
-                np.asarray(water.discretization.neighbour_cells) < 0
+                np.asarray(water.discretization.neighbor_cells) < 0
             )
             if int(face) not in top
         },

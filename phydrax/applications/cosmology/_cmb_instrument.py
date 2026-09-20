@@ -186,7 +186,7 @@ class CmbPointingProduct(StrictModule, NonTrainableState):
     ):
         pixels = jax.lax.stop_gradient(jnp.asarray(pixel_indices, dtype=jnp.int32))
         angles = jax.lax.stop_gradient(jnp.asarray(polarization_angles))
-        flags_ = jax.lax.stop_gradient(jnp.asarray(flags, dtype=bool))
+        flags_ = jax.lax.stop_gradient(jnp.asarray(flags, dtype=jnp.bool_))
         detectors = jax.lax.stop_gradient(jnp.asarray(detector_indices, dtype=jnp.int32))
         count = int(pixel_count)
         if (

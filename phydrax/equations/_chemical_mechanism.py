@@ -177,10 +177,10 @@ class PreparedChemicalMechanism(StrictModule):
         }
         reaction_count = len(mechanism.reactions)
         species_count = mechanism.schema.species_count
-        reactant = np.zeros((reaction_count, species_count), dtype=float)
+        reactant = np.zeros((reaction_count, species_count), dtype=np.float64)
         product = np.zeros_like(reactant)
         orders = np.zeros_like(reactant)
-        thermodynamic_reverse = np.zeros(reaction_count, dtype=bool)
+        thermodynamic_reverse = np.zeros(reaction_count, dtype=np.bool_)
         for reaction_index, reaction in enumerate(mechanism.reactions):
             for species, coefficient in reaction.reactants:
                 if species not in species_index:
@@ -402,7 +402,7 @@ class PreparedChemicalMechanism(StrictModule):
         delta_gibbs = jnp.sum(net * thermodynamics.molar_gibbs_energy, axis=-1)
         logarithmic_equilibrium = -delta_gibbs / (UNIVERSAL_GAS_CONSTANT * temperature)
         standard_concentrations = []
-        phase_ids = tuple(int(value) for value in np.asarray(self.schema.phase_ids))
+        phase_ids = tuple(np.asarray(self.schema.phase_ids))
         for phase_id in phase_ids:
             phase = self.schema.phase_specs[phase_id]
             if phase.kind is ChemicalPhaseKind.GAS:

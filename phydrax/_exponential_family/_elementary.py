@@ -73,8 +73,8 @@ class BernoulliFamily(_AbstractAnalyticExponentialFamily):
         return _natural_domain_result(
             self.signature,
             values,
-            interior=jnp.ones(shape, dtype=bool),
-            boundary=jnp.zeros(shape, dtype=bool),
+            interior=jnp.ones(shape, dtype=jnp.bool_),
+            boundary=jnp.zeros(shape, dtype=jnp.bool_),
         )
 
     def _mean_domain(self, values: Array, /) -> ExponentialFamilyDomainResult:
@@ -133,8 +133,8 @@ class PoissonFamily(_AbstractAnalyticExponentialFamily):
         return _natural_domain_result(
             self.signature,
             values,
-            interior=jnp.ones(shape, dtype=bool),
-            boundary=jnp.zeros(shape, dtype=bool),
+            interior=jnp.ones(shape, dtype=jnp.bool_),
+            boundary=jnp.zeros(shape, dtype=jnp.bool_),
         )
 
     def _mean_domain(self, values: Array, /) -> ExponentialFamilyDomainResult:

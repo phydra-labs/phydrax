@@ -55,7 +55,7 @@ def test_beer_lambert_and_iterative_reconstruction_reduce_projection_residual():
 
 
 def test_tetrahedral_projector_has_matched_transpose():
-    vertices = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=float)
+    vertices = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype="float64")
     transform = phx.imaging.tomography.TetrahedralXRayTransformPlan(
         _support(origin=(-1.0, 0.1, 0.1)), vertices, np.asarray(((0, 1, 2, 3),))
     )

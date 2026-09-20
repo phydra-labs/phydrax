@@ -32,7 +32,7 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
         mean = jnp.asarray(location)
         if not jnp.iscomplexobj(mean):
             raise TypeError("ComplexNormalLaw location must be complex-valued.")
-        shape = tuple(int(size) for size in event_shape)
+        shape = tuple(event_shape)
         if mean.shape != shape:
             raise ValueError("Complex Normal location must match event_shape exactly.")
         value = jnp.broadcast_to(jnp.asarray(variance, dtype=mean.real.dtype), shape)
@@ -76,7 +76,9 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
     def log_prob(self, value: ArrayLike, /) -> Array:
         return self.real_law.log_prob(self.layout.to_real_coordinates(value))
 
-    def score(self, value: ArrayLike, /, *, convention: ComplexScoreConvention = "real-packed"):
+    def score(
+        self, value: ArrayLike, /, *, convention: ComplexScoreConvention = "real-packed"
+    ):
         packed = self.real_law.score(self.layout.to_real_coordinates(value))
         if convention == "real-packed":
             return packed
@@ -122,7 +124,9 @@ class ComplexVariancePreservingDiffusion(StrictModule):
     def terminal_time(self) -> float:
         return self.real_process.terminal_time
 
-    def perturb(self, key: Key[Array, ""], clean: ArrayLike, /, *, time: ArrayLike) -> Array:
+    def perturb(
+        self, key: Key[Array, ""], clean: ArrayLike, /, *, time: ArrayLike
+    ) -> Array:
         packed = self.layout.to_real_coordinates(clean)
         perturbed = self.real_process.perturb(key, packed, t1=time)
         return self.layout.from_real_coordinates(perturbed)

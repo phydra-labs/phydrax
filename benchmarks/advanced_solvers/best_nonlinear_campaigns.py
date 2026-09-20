@@ -1052,7 +1052,7 @@ def _run_least_squares(case_id, implementation):
         scipy_result = scipy_optimize.least_squares(
             lambda value: np.asarray(
                 residual(jnp.asarray(value), args),
-                dtype=float,
+                dtype="float64",
             ),
             np.asarray(initial),
             bounds=(np.asarray(lower), np.asarray(upper)),

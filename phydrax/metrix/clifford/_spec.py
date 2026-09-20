@@ -43,7 +43,7 @@ class CliffordAlgebraSpec(StrictModule, NonTrainableState):
             for value in entries
         ):
             raise TypeError("Clifford signature entries must be integers in {-1, 0, 1}.")
-        resolved = tuple(int(value) for value in entries)
+        resolved = tuple(entries)
         if any(value not in (-1, 0, 1) for value in resolved):
             raise ValueError("Clifford signature entries must lie in {-1, 0, 1}.")
         if basis_labels is None:
@@ -64,7 +64,7 @@ class CliffordAlgebraSpec(StrictModule, NonTrainableState):
         budget_ = CliffordResourceBudget() if budget is None else budget
         if not isinstance(budget_, CliffordResourceBudget):
             raise TypeError("budget must be a CliffordResourceBudget or None.")
-        blade_order = "grade-lexicographic-v1"
+        blade_order = "grade-lexicographic"
         self.diagonal = resolved
         self.basis_labels = labels
         self.orientation = orientation_
@@ -72,7 +72,7 @@ class CliffordAlgebraSpec(StrictModule, NonTrainableState):
         self.budget = budget_
         self.algebra_id = canonical_fingerprint(
             {
-                "kind": "clifford-algebra-v1",
+                "kind": "clifford-algebra",
                 "diagonal": list(resolved),
                 "basis_labels": list(labels),
                 "blade_order": blade_order,
@@ -80,7 +80,7 @@ class CliffordAlgebraSpec(StrictModule, NonTrainableState):
         )
         self.spec_id = canonical_fingerprint(
             {
-                "kind": "clifford-algebra-spec-v1",
+                "kind": "clifford-algebra-spec",
                 "algebra": self.algebra_id,
                 "orientation": orientation_,
                 "budget": budget_.budget_id,
@@ -102,7 +102,7 @@ class CliffordAlgebraSpec(StrictModule, NonTrainableState):
             for value in raw_counts
         ):
             raise TypeError("Clifford inertia counts must be integers.")
-        counts = tuple(int(value) for value in raw_counts)
+        counts = tuple(raw_counts)
         if any(value < 0 for value in counts) or sum(counts) <= 0:
             raise ValueError(
                 "Clifford inertia counts must be nonnegative with positive total."

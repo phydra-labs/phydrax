@@ -99,8 +99,7 @@ def prepare_periodic_laplace_single_layer_dp0_3d(
             "and deterministic real/reciprocal Ewald complement"
         ),
         gauge=(
-            "zero reciprocal mode removed; zero-cell-mean periodic Green "
-            "function; neutral DP0 sources required"
+            "zero reciprocal mode removed; zero-cell-mean periodic Green function; neutral DP0 sources required"
             if zero_bloch
             else "nonzero-Bloch scalar resolvent; no constant-mode gauge"
         ),

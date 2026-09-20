@@ -11,6 +11,8 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array
 
+from phydrax._strict import StrictModule
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._trajectory import TrajectoryData
 
@@ -18,7 +20,7 @@ from .._trajectory import TrajectoryData
 _KEY_POLICY_ID = "trajectory-window:case-start-depth-objective"
 
 
-class _NeuralWindowBatch(eqx.Module):
+class _NeuralWindowBatch(StrictModule):
     """One gathered batch of lazy parent/start trajectory windows."""
 
     parent_index: Array
@@ -32,7 +34,7 @@ class _NeuralWindowBatch(eqx.Module):
 
     @property
     def size(self) -> int:
-        return int(self.parent_index.shape[0])
+        return self.parent_index.shape[0]
 
 
 class _NeuralWindowSource:
@@ -61,7 +63,7 @@ class _NeuralWindowSource:
         self.step_rtol = float(step_rtol)
         self.step_atol = float(step_atol)
         coordinates = np.asarray(trajectory.coordinates)
-        valid_transitions = np.asarray(trajectory.transition_valid, dtype=bool)
+        valid_transitions = np.asarray(trajectory.transition_valid, dtype=np.bool_)
         intervals = coordinates[..., 1:] - coordinates[..., :-1]
         fixed = np.isfinite(intervals) & np.isclose(
             intervals,
@@ -93,7 +95,7 @@ class _NeuralWindowSource:
 
     def prepare(self, indices: np.ndarray | Array, /) -> _NeuralWindowBatch:
         logical = jnp.asarray(indices, dtype=jnp.int32)
-        if logical.ndim != 1 or int(logical.size) < 1:
+        if logical.ndim != 1 or logical.size < 1:
             raise ValueError("Window indices must be a nonempty vector.")
         parents = logical // self.starts_per_parent
         starts = logical % self.starts_per_parent
@@ -179,7 +181,7 @@ class _NeuralWindowSource:
                 len(trajectory.input_layout.shape),
             )
 
-        prefix_valid = jnp.cumprod(step_valid.astype(jnp.int32), axis=1).astype(bool)
+        prefix_valid = jnp.cumprod(step_valid.astype(jnp.int32), axis=1).astype("bool")
         sanitized_coordinates = jnp.where(
             node_valid,
             gathered_coordinates,

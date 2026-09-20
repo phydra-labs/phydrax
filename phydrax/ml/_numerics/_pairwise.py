@@ -84,8 +84,8 @@ def chunked_pairwise_apply(
     if block <= 0:
         raise ValueError("chunk_size must be positive.")
     outputs = []
-    for start in range(0, int(x.shape[-2]), block):
-        stop = min(start + block, int(x.shape[-2]))
+    for start in range(0, x.shape[-2], block):
+        stop = min(start + block, x.shape[-2])
         outputs.append(
             reducer(pairwise_distances(x[..., start:stop, :], y, metric=metric), start)
         )
@@ -99,10 +99,12 @@ def soft_assignments(
     temperature: ArrayLike = 1.0,
     mask: ArrayLike | None = None,
 ) -> Array:
-    temperature_ = jnp.asarray(temperature, dtype=float)
-    logits = -jnp.asarray(distances) / jnp.maximum(temperature_, jnp.finfo(float).tiny)
+    temperature_ = jnp.asarray(temperature, dtype=jnp.float64)
+    logits = -jnp.asarray(distances) / jnp.maximum(
+        temperature_, jnp.finfo(jnp.float64).tiny
+    )
     if mask is not None:
-        logits = jnp.where(jnp.asarray(mask, dtype=bool), logits, -jnp.inf)
+        logits = jnp.where(jnp.asarray(mask, dtype=jnp.bool_), logits, -jnp.inf)
     probabilities = jax.nn.softmax(logits, axis=-1)
     return jnp.where(jnp.isfinite(probabilities), probabilities, 0.0)
 

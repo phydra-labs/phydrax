@@ -33,7 +33,7 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _scalar(value: ArrayLike, name: str, /, *, nonnegative: bool = False) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     host = float(np.asarray(jax.device_get(result)))
@@ -44,7 +44,7 @@ def _scalar(value: ArrayLike, name: str, /, *, nonnegative: bool = False) -> Arr
 
 
 def _face_units(face: CurrencyAmount, /) -> Array:
-    return face.atoms.astype(float) / float(face.currency.atoms_per_unit)
+    return face.atoms.astype("float64") / float(face.currency.atoms_per_unit)
 
 
 def _validate_payment_times(
@@ -52,7 +52,7 @@ def _validate_payment_times(
 ) -> Array:
     if not isinstance(schedule, ResolvedSchedule):
         raise TypeError("schedule must be a ResolvedSchedule.")
-    times = jnp.asarray(payment_times, dtype=float)
+    times = jnp.asarray(payment_times, dtype=jnp.float64)
     host = np.asarray(jax.device_get(times))
     mask = np.asarray(jax.device_get(schedule.valid))
     if times.shape != (schedule.capacity,):
@@ -152,12 +152,14 @@ class DefaultEventState(StrictModule):
         coupling_id: str,
         recovery_terms_id: str,
     ):
-        times = jnp.asarray(default_times, dtype=float)
+        times = jnp.asarray(default_times, dtype=jnp.float64)
         event_mask = jnp.asarray(occurred)
-        recovery = jnp.asarray(recoveries, dtype=float)
+        recovery = jnp.asarray(recoveries, dtype=jnp.float64)
         path_valid = jnp.asarray(valid)
         status_ = jnp.asarray(status)
-        if event_mask.dtype != jnp.dtype(bool) or path_valid.dtype != jnp.dtype(bool):
+        if event_mask.dtype != jnp.dtype(jnp.bool_) or path_valid.dtype != jnp.dtype(
+            jnp.bool_
+        ):
             raise TypeError("occurred and valid must be boolean arrays.")
         if not jnp.issubdtype(status_.dtype, jnp.integer):
             raise TypeError("Default-event status must have an integer dtype.")
@@ -416,7 +418,7 @@ class CreditDefaultSwapContract(AbstractResolvedContract):
         # known unconditional obligations.
         return CashflowBatch(
             (),
-            np.zeros((0,), dtype=float),
+            np.zeros((0,), dtype=np.float64),
             (),
             capacity=self.schedule.capacity,
         )

@@ -33,6 +33,8 @@ structure across dense and coord-separable batches.
     ```
 """
 
+from importlib import import_module
+
 from .._model import StructuredDerivativeProvider
 from . import (
     delay,
@@ -49,10 +51,10 @@ from . import (
 from ._composition import pullback
 
 # Re-export objects from submodules
-from .delay import (  # noqa: F401
+from .delay import (
     delay as delay_operator,
 )
-from .differential import (  # noqa: F401
+from .differential import (
     ambient_surface_hessian_trace,
     as_lorentzian_metric_field,
     bilaplacian,
@@ -182,13 +184,13 @@ from .differential import (  # noqa: F401
     weighted_riemannian_div,
     weighted_riemannian_grad,
 )
-from .functional import (  # noqa: F401
+from .functional import (
     spatial_inner_product,
     spatial_l2_norm,
     spatial_lp_norm,
     spatial_mean,
 )
-from .graph import (  # noqa: F401
+from .graph import (
     cochain_codifferential,
     cochain_exterior_derivative,
     cochain_harmonic_projection,
@@ -208,8 +210,7 @@ from .graph import (  # noqa: F401
     graph_poisson_residual,
     neighbor_aggregate,
 )
-from .integral import *  # noqa: F401,F403
-from .integral import (  # noqa: F401
+from .integral import (
     __all__ as _integral_all,
     AbstractLayerBackend,
     AbstractLayerKernel,
@@ -298,9 +299,8 @@ from .integral import (  # noqa: F401
     SurfaceTargetReport3D,
     time_convolution,
 )
-from .integral.vortex import *  # noqa: F401,F403
 from .integral.vortex import __all__ as _vortex_all
-from .interpolation import (  # noqa: F401
+from .interpolation import (
     AdaptiveSmolyakInterpolationDiagnostics,
     AdaptiveSmolyakInterpolationPlan,
     AdaptiveSmolyakInterpolationResult,
@@ -316,7 +316,6 @@ from .interpolation import (  # noqa: F401
     fourier_type1,
     fourier_type2,
     FourierFitDiagnostics,
-    FourierFitMethod,
     FourierInterpolant,
     FourierScatteredFitPlan,
     FourierWeightPolicy,
@@ -331,7 +330,7 @@ from .interpolation import (  # noqa: F401
     SmolyakInterpolationPlan,
     SmolyakInterpolationRule,
 )
-from .linalg import (  # noqa: F401
+from .linalg import (
     adjoint,
     conjugate,
     det,
@@ -341,7 +340,7 @@ from .linalg import (  # noqa: F401
     real_part,
     trace,
 )
-from .mechanics import (  # noqa: F401
+from .mechanics import (
     canonical_hamiltonian_residual,
     canonical_hamiltonian_vector_field,
     canonical_momentum,
@@ -371,7 +370,7 @@ from .mechanics import (  # noqa: F401
     VolumetricConstraint,
     VolumetricConstraintKind,
 )
-from .path_integral import (  # noqa: F401
+from .path_integral import (
     AbstractIncrementalLatticeAction,
     AbstractLatticeEuclideanAction,
     brownian_bridge_from_noise,
@@ -402,7 +401,7 @@ from .path_integral import (  # noqa: F401
     survival_probability,
     WilsonGaugeAction,
 )
-from .quantum import (  # noqa: F401
+from .quantum import (
     AbstractDiscreteQuantumOperator,
     AbstractLocalQuantumOperator,
     amplitude_ratio,
@@ -494,6 +493,23 @@ from .quantum import (  # noqa: F401
     von_neumann_entropy,
     von_neumann_residual,
 )
+
+
+_FACADE_EXPORT_MODULES = (".integral", ".integral.vortex")
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [
@@ -910,7 +926,6 @@ __all__ = [
     "fit_fourier_scattered",
     "fit_mixed_tensor",
     "FourierFitDiagnostics",
-    "FourierFitMethod",
     "FourierInterpolant",
     "FourierScatteredFitPlan",
     "FourierWeightPolicy",

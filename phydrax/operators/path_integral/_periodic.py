@@ -101,13 +101,13 @@ def periodic_path_action(
     values = jnp.asarray(beads)
     if values.ndim < 2 or values.shape[-2:] != (plan.bead_count, values.shape[-1]):
         raise ValueError("beads must have trailing shape (bead_count, state_dimension).")
-    if int(values.shape[-1]) < 1:
+    if values.shape[-1] < 1:
         raise ValueError("Periodic paths require a nonempty state dimension.")
     following = jnp.roll(values, -1, axis=-2)
     difference = following - values
     if plan.periodic_cell_lengths is not None:
         cell = jnp.asarray(plan.periodic_cell_lengths, dtype=values.dtype)
-        if cell.shape != (int(values.shape[-1]),):
+        if cell.shape != (values.shape[-1],):
             raise ValueError(
                 "periodic cell dimension must match the path state dimension."
             )
@@ -118,7 +118,7 @@ def periodic_path_action(
         * jnp.sum(difference * difference, axis=(-2, -1))
         / (2.0 * plan.hbar**2 * step)
     )
-    flat = values.reshape((-1, int(values.shape[-1])))
+    flat = values.reshape((-1, values.shape[-1]))
     potential_values = jnp.asarray(jax.vmap(potential)(flat))
     if potential_values.shape != (flat.shape[0],) or jnp.iscomplexobj(potential_values):
         raise ValueError("potential must return one real scalar per bead.")
@@ -155,12 +155,12 @@ def estimate_path_partition_function(
 ) -> PathPartitionEstimate:
     """Estimate log Z only relative to a caller-declared known reference."""
     samples = jnp.asarray(lambda_derivative_samples)
-    schedule = jnp.asarray(lambda_schedule, dtype=float)
+    schedule = jnp.asarray(lambda_schedule, dtype=jnp.float64)
     if samples.ndim < 2 or schedule.ndim != 1 or samples.shape[0] != schedule.shape[0]:
         raise ValueError(
             "samples need shape (lambda, draws...) matching lambda_schedule."
         )
-    if int(schedule.shape[0]) < 2:
+    if schedule.shape[0] < 2:
         raise ValueError("lambda_schedule requires at least two nodes.")
     if not isinstance(reference_id, str) or not reference_id:
         raise ValueError("reference_id must be nonempty.")
@@ -170,7 +170,7 @@ def estimate_path_partition_function(
     trapezoid = jnp.sum(0.5 * widths * (means[:-1] + means[1:]))
     left = jnp.sum(widths * means[:-1])
     draw_integrals = jnp.sum(0.5 * widths[:, None] * (flat[:-1] + flat[1:]), axis=0)
-    count = int(draw_integrals.shape[0])
+    count = draw_integrals.shape[0]
     standard_error = (
         jnp.std(draw_integrals, ddof=1) / jnp.sqrt(float(count))
         if count > 1

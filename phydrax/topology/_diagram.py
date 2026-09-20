@@ -46,7 +46,7 @@ class PersistenceDiagram(StrictModule, NonTrainableState):
         deaths = np.asarray(death_values)
         birth_ids = np.asarray(birth_entity_ids, dtype=np.int64)
         death_ids = np.asarray(death_entity_ids, dtype=np.int64)
-        finite = np.asarray(has_finite_death, dtype=bool)
+        finite = np.asarray(has_finite_death, dtype=np.bool_)
         indices = np.asarray(pairing_indices, dtype=np.int32)
         arrays = (degree_array, births, deaths, birth_ids, death_ids, finite, indices)
         if any(value.ndim != 1 for value in arrays):
@@ -86,7 +86,7 @@ class PersistenceDiagram(StrictModule, NonTrainableState):
 
     @property
     def interval_count(self) -> int:
-        return int(self.degrees.shape[0])
+        return self.degrees.shape[0]
 
     @property
     def essential_count(self) -> int:
@@ -138,7 +138,7 @@ class PackedPersistenceDiagram(StrictModule, NonTrainableState):
         self.death_values = pad(diagram.death_values)
         self.birth_entity_ids = pad(diagram.birth_entity_ids, dtype=np.int64)
         self.death_entity_ids = pad(diagram.death_entity_ids, dtype=np.int64)
-        self.has_finite_death = pad(diagram.has_finite_death, dtype=bool)
+        self.has_finite_death = pad(diagram.has_finite_death, dtype=jnp.bool_)
         self.pairing_indices = pad(diagram.pairing_indices, dtype=np.int32)
         self.capacity = size
         self.source_diagram_id = diagram.diagram_id

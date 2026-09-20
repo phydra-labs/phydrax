@@ -22,7 +22,7 @@ from phydrax.operators.integral import (
 
 def _interval_rule(count, lower=0.0, upper=1.0):
     step = (upper - lower) / count
-    points = lower + step * (jnp.arange(count, dtype=float) + 0.5)
+    points = lower + step * (jnp.arange(count, dtype="float64") + 0.5)
     return {
         "points": points[:, None],
         "weights": jnp.full((count,), step),
@@ -35,7 +35,7 @@ def _ball_rule(radius, dimension, count):
         return {"offsets": rule["points"], "weights": rule["weights"]}
     if dimension != 2:
         raise ValueError("Test helper supports one- and two-dimensional balls.")
-    index = jnp.arange(count, dtype=float)
+    index = jnp.arange(count, dtype="float64")
     radial = radius * jnp.sqrt((index + 0.5) / count)
     angle = index * jnp.pi * (3.0 - jnp.sqrt(5.0))
     offsets = jnp.stack((radial * jnp.cos(angle), radial * jnp.sin(angle)), axis=1)
@@ -144,7 +144,7 @@ def test_nonlocal_integral_zero_field_zero_result():
     function = DomainFunction(domain=domain, deps=(), func=jnp.array(0.0))
 
     def integrand(delta_value, displacement):
-        return (jnp.abs(displacement[0]) < 0.25).astype(float) * delta_value
+        return (jnp.abs(displacement[0]) < 0.25).astype("float64") * delta_value
 
     operator = nonlocal_integral(function, integrand=integrand, quad=_interval_rule(512))
     points = jnp.linspace(0.1, 0.9, 5)[:, None]

@@ -281,7 +281,7 @@ class _ConstantPowerPeriodicNonlinearDrift(StrictModule):
         self.forcing_id = forcing.forcing_id
         self.nonlinear_id = canonical_fingerprint(
             {
-                "kind": "constant-power-periodic-production-drift-v1",
+                "kind": "constant-power-periodic-production-drift",
                 "base": base.nonlinear_id,
                 "forcing": forcing.forcing_id,
             }
@@ -672,8 +672,7 @@ class PreparedPeriodicDynamicETDRKMethod(AbstractFixedStepMethod):
         if self.continuation_required:
             if not isinstance(state, PeriodicDynamicLESProductionState):
                 raise TypeError(
-                    "Lagrangian periodic dynamic LES requires "
-                    "PeriodicDynamicLESProductionState."
+                    "Lagrangian periodic dynamic LES requires PeriodicDynamicLESProductionState."
                 )
             return self.coordinates.validate_state(
                 state.velocity
@@ -947,7 +946,7 @@ class MACConstantPressureGradientForcing(StrictModule, NonTrainableState):
     ):
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
-        gradient = np.asarray(pressure_gradient, dtype=float)
+        gradient = np.asarray(pressure_gradient, dtype=np.float64)
         density_ = float(density)
         dimension = len(operators.discretization.cell_shape)
         if (
@@ -965,7 +964,7 @@ class MACConstantPressureGradientForcing(StrictModule, NonTrainableState):
         self.density = density_
         self.forcing_id = canonical_fingerprint(
             {
-                "kind": "mac-constant-pressure-gradient-forcing-v1",
+                "kind": "mac-constant-pressure-gradient-forcing",
                 "operators": operators.prepared_id,
                 "pressure_gradient": gradient.tolist(),
                 "density": density_,
@@ -1170,11 +1169,11 @@ class _ChannelStatisticsEvaluator(StrictModule):
 
     def __init__(self, statistics: SpectralChannelStatisticsPlan, /):
         self.statistics = statistics
-        count = int(statistics.wall_normal_coordinates.size)
+        count = statistics.wall_normal_coordinates.size
         self.value_size = 15 * count + 9
         self.evaluator_id = canonical_fingerprint(
             {
-                "kind": "spectral-channel-production-statistics-observer-v1",
+                "kind": "spectral-channel-production-statistics-observer",
                 "statistics": statistics.plan_id,
             }
         )
@@ -1238,11 +1237,11 @@ class _MACStatisticsEvaluator(StrictModule):
         self.statistics = statistics
         self.pressure_gradient = pressure_gradient
         dimension = len(statistics.operators.discretization.cell_shape)
-        count = int(statistics.wall_normal_coordinates.size)
+        count = statistics.wall_normal_coordinates.size
         self.value_size = count * dimension + 2 * count * dimension**2 + 3 * dimension + 8
         self.evaluator_id = canonical_fingerprint(
             {
-                "kind": "structured-mac-production-statistics-observer-v1",
+                "kind": "structured-mac-production-statistics-observer",
                 "dynamics": dynamics.compilation_id,
                 "statistics": statistics.plan_id,
                 "pressure_gradient": None
@@ -1456,8 +1455,7 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
         if dynamics.algebraic_les is not None:
             if not guarded:
                 raise ValueError(
-                    "Static periodic LES production requires "
-                    "PreparedLESStabilityGuardedETDRKMethod."
+                    "Static periodic LES production requires PreparedLESStabilityGuardedETDRKMethod."
                 )
             if method.dynamics.compilation_id != dynamics.compilation_id:
                 raise ValueError(
@@ -1467,8 +1465,7 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
         elif dynamic:
             if guarded:
                 raise ValueError(
-                    "Dynamic periodic LES uses its transactional ETDRK route, "
-                    "not the static LES guard."
+                    "Dynamic periodic LES uses its transactional ETDRK route, not the static LES guard."
                 )
             base_method = method
         else:
@@ -1544,8 +1541,7 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
             observer_forcing = forcing
         elif forcing is not None and compiled_forcing_id != forcing.forcing_id:
             raise ValueError(
-                "The compiled periodic dynamics do not bind the declared "
-                "constant-power forcing."
+                "The compiled periodic dynamics do not bind the declared constant-power forcing."
             )
         if dynamic:
             selected_method = PreparedPeriodicDynamicETDRKMethod(base_method, dynamics)
@@ -1906,7 +1902,7 @@ class SpectralChannelProductionPlan(StrictModule, NonTrainableState):
         source_problem = _required_identifier(problem_id, "problem_id")
         case_problem_id = canonical_fingerprint(
             {
-                "kind": "spectral-channel-production-case-v1",
+                "kind": "spectral-channel-production-case",
                 "problem": source_problem,
                 "dynamics": method.dynamics.compilation_id,
                 "statistics": statistics.plan_id,
@@ -1939,7 +1935,7 @@ class SpectralChannelProductionPlan(StrictModule, NonTrainableState):
         self.checkpoint_retention = retention
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "spectral-channel-production-plan-v1",
+                "kind": "spectral-channel-production-plan",
                 "manifest": manifest.manifest_id,
                 "runtime": runtime_plan.plan_id,
                 "checkpoint_encoding": encoding.encoding_id,
@@ -1967,7 +1963,7 @@ class SpectralChannelProductionPlan(StrictModule, NonTrainableState):
 
 
 class PreparedSpectralChannelProduction(_PreparedProductionRoute):
-    _prepared_kind = "prepared-spectral-channel-production-v1"
+    _prepared_kind = "prepared-spectral-channel-production"
 
     def __init__(
         self,
@@ -2142,7 +2138,7 @@ class StructuredMACProductionPlan(StrictModule, NonTrainableState):
         )
         case_problem_id = canonical_fingerprint(
             {
-                "kind": "structured-mac-production-case-v1",
+                "kind": "structured-mac-production-case",
                 "problem": dynamics.problem.problem_id,
                 "dynamics": dynamics.compilation_id,
                 "forcing": forcing_id,
@@ -2179,7 +2175,7 @@ class StructuredMACProductionPlan(StrictModule, NonTrainableState):
         self.checkpoint_retention = retention
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "structured-mac-production-plan-v1",
+                "kind": "structured-mac-production-plan",
                 "manifest": manifest.manifest_id,
                 "runtime": runtime_plan.plan_id,
                 "checkpoint_encoding": encoding.encoding_id,
@@ -2207,7 +2203,7 @@ class StructuredMACProductionPlan(StrictModule, NonTrainableState):
 
 
 class PreparedStructuredMACProduction(_PreparedProductionRoute):
-    _prepared_kind = "prepared-structured-mac-production-v1"
+    _prepared_kind = "prepared-structured-mac-production"
 
     def __init__(
         self,

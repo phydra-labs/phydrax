@@ -58,10 +58,10 @@ class SuperconductingMaterialLawPlan(StrictModule, NonTrainableState):
         commercial_use: bool = False,
         export: bool = False,
     ):
-        temperature = np.asarray(temperature_axis, dtype=float)
-        field = np.asarray(magnetic_field_axis, dtype=float)
-        angle = np.asarray(angle_axis, dtype=float)
-        current = np.asarray(critical_current_density, dtype=float)
+        temperature = np.asarray(temperature_axis, dtype=np.float64)
+        field = np.asarray(magnetic_field_axis, dtype=np.float64)
+        angle = np.asarray(angle_axis, dtype=np.float64)
+        current = np.asarray(critical_current_density, dtype=np.float64)
         values = tuple(
             float(value)
             for value in (

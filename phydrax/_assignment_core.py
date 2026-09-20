@@ -30,7 +30,7 @@ def hungarian_assignment_one(
             row = row_index + 1
             matching_current = matching_current.at[0].set(row)
             minimum = jnp.full((columns + 1,), jnp.inf, dtype=dtype)
-            used = jnp.zeros((columns + 1,), dtype=bool)
+            used = jnp.zeros((columns + 1,), dtype=jnp.bool_)
             way = jnp.zeros((columns + 1,), dtype=jnp.int32)
             inner_initial = (
                 u_current,

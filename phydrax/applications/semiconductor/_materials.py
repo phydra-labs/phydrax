@@ -216,8 +216,7 @@ class SemiconductorMaterial(StrictModule):
                     or law.carrier != carrier
                 ):
                     raise ValueError(
-                        f"{carrier} energy laws must share this material's "
-                        "thermodynamics and carrier identity."
+                        f"{carrier} energy laws must share this material's thermodynamics and carrier identity."
                     )
         self.electron_saturation, self.hole_saturation = (
             electron_saturation,

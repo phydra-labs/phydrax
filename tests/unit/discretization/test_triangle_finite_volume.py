@@ -146,7 +146,7 @@ def test_triangle_wlsq_is_affine_exact_and_muscl_preserves_face_values():
         - 0.7 * discretization.face_centers[:, 1]
     )[:, None]
     np.testing.assert_allclose(left, exact, rtol=1e-11, atol=1e-11)
-    interior = discretization.neighbour_cells >= 0
+    interior = discretization.neighbor_cells >= 0
     np.testing.assert_allclose(right[interior], exact[interior], rtol=1e-11, atol=1e-11)
 
 
@@ -485,7 +485,7 @@ def test_triangle_muscl_reports_distorted_mesh_residual_order_and_conservation()
         balance_terms = np.asarray(discretization.cell_volumes[:, None] * residual)
         integrated = np.asarray(flux * discretization.face_measures[:, None])
         boundary_terms = np.where(
-            np.asarray(discretization.neighbour_cells < 0)[:, None],
+            np.asarray(discretization.neighbor_cells < 0)[:, None],
             integrated,
             0.0,
         )
@@ -550,7 +550,7 @@ def test_triangle_k_exact_reconstructs_true_quadratic_cell_averages():
     )[:, None]
 
     np.testing.assert_allclose(left, exact, rtol=2e-10, atol=2e-10)
-    interior_faces = discretization.neighbour_cells >= 0
+    interior_faces = discretization.neighbor_cells >= 0
     np.testing.assert_allclose(
         right[interior_faces],
         exact[interior_faces],
@@ -835,12 +835,12 @@ def test_triangle_viscous_flux_recovers_affine_couette_stress():
     state = system.primitive_to_conserved(primitive)
     flux = viscous.face_fluxes(system, 0.0, state, discretization, boundaries)
     owner_centers = centers[discretization.owner_cells]
-    neighbour_centers = centers[jnp.maximum(discretization.neighbour_cells, 0)]
+    neighbor_centers = centers[jnp.maximum(discretization.neighbor_cells, 0)]
     interior = (
-        (discretization.neighbour_cells >= 0)
+        (discretization.neighbor_cells >= 0)
         & jnp.all((owner_centers > 0.2) & (owner_centers < 0.8), axis=-1)
         & jnp.all(
-            (neighbour_centers > 0.2) & (neighbour_centers < 0.8),
+            (neighbor_centers > 0.2) & (neighbor_centers < 0.8),
             axis=-1,
         )
     )
@@ -908,7 +908,7 @@ def test_triangle_thermal_wall_requires_viscous_closure_and_sets_heat_flux():
     )
     state = system.primitive_to_conserved(primitive)
     flux = viscous.face_fluxes(system, 0.0, state, discretization, boundaries)
-    boundary_faces = discretization.neighbour_cells < 0
+    boundary_faces = discretization.neighbor_cells < 0
     assert jnp.max(jnp.abs(flux[boundary_faces, -1])) > 0.0
     compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     normal = discretization.area_vectors / discretization.face_measures[:, None]

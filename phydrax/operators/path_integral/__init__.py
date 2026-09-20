@@ -4,6 +4,8 @@
 
 """Differentiable finite-dimensional Euclidean path-integral operators."""
 
+from importlib import import_module
+
 from ._action import (
     discrete_euclidean_action,
     kinetic_action,
@@ -41,7 +43,6 @@ from ._geometry import (
     specular_reflect,
     SpecularReflectionResult,
 )
-from ._improved_gauge import *  # noqa: F403
 from ._improved_gauge import __all__ as _improved_gauge_all
 from ._lattice_action import (
     AbstractIncrementalLatticeAction,
@@ -53,7 +54,6 @@ from ._lattice_action import (
     LatticeActionEvidence,
     LatticeReferenceMeasure,
 )
-from ._lattice_fermion import *  # noqa: F403
 from ._lattice_fermion import __all__ as _lattice_fermion_all
 from ._lattice_gauge import (
     CompactU1GaugeMeasure,
@@ -77,10 +77,8 @@ from ._periodic import (
     periodic_path_action,
     PeriodicPathPlan,
 )
-from ._pseudofermion import *  # noqa: F403
 from ._pseudofermion import __all__ as _pseudofermion_all
 from ._pseudofermion_operator import AbstractPseudofermionDiracOperator
-from ._rational_approximation import *  # noqa: F403
 from ._rational_approximation import __all__ as _rational_approximation_all
 from ._real_time import (
     continue_real_time_regulator_from_noise,
@@ -101,13 +99,35 @@ from ._scalar_lattice import (
     Phi4LatticeAction,
     prepare_local_phi4_action,
 )
-from ._smearing import *  # noqa: F403
 from ._smearing import __all__ as _smearing_all
 from ._wilson_gauge import (
     GaugeLinkProposalPayload,
     WilsonGaugeAction,
     WilsonGaugeActionCache,
 )
+
+
+_FACADE_EXPORT_MODULES = (
+    "._improved_gauge",
+    "._lattice_fermion",
+    "._pseudofermion",
+    "._rational_approximation",
+    "._smearing",
+)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

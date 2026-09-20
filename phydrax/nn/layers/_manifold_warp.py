@@ -172,13 +172,13 @@ class ManifoldMultiheadWarp(StrictModule):
         /,
     ) -> tuple[Array, Array, Array, tuple[int, ...], int]:
         field = jnp.asarray(values)
-        if field.ndim < 2 or int(field.shape[-1]) != self.in_channels:
+        if field.ndim < 2 or field.shape[-1] != self.in_channels:
             raise ValueError(
                 "Manifold warp values must end in points and configured channels."
             )
-        case_shape = tuple(int(size) for size in field.shape[:-2])
-        count = int(field.shape[-2])
-        geometry = jnp.asarray(points, dtype=jnp.result_type(field.dtype, float))
+        case_shape = tuple(field.shape[:-2])
+        count = field.shape[-2]
+        geometry = jnp.asarray(points, dtype=jnp.result_type(field.dtype, jnp.float64))
         if geometry.shape == (count, self.ambient_dim):
             geometry = jnp.broadcast_to(
                 geometry,
@@ -186,13 +186,12 @@ class ManifoldMultiheadWarp(StrictModule):
             )
         elif geometry.shape != case_shape + (count, self.ambient_dim):
             raise ValueError(
-                "Manifold points must be shared or match the value case shape; "
-                f"got {geometry.shape}."
+                f"Manifold points must be shared or match the value case shape; got {geometry.shape}."
             )
         if source_mask is None:
-            mask = jnp.ones(case_shape + (count,), dtype=bool)
+            mask = jnp.ones(case_shape + (count,), dtype=jnp.bool_)
         else:
-            mask = jnp.asarray(source_mask, dtype=bool)
+            mask = jnp.asarray(source_mask, dtype=jnp.bool_)
             if mask.shape == (count,):
                 mask = jnp.broadcast_to(mask, case_shape + (count,))
             elif mask.shape != case_shape + (count,):
@@ -236,7 +235,7 @@ class ManifoldMultiheadWarp(StrictModule):
                     f"Manifold condition must have shape {expected}; got {condition_.shape}."
                 )
             hidden = hidden + self.displacement_condition(condition_).reshape(
-                case_shape + (1, int(hidden.shape[-1]))
+                case_shape + (1, hidden.shape[-1])
             )
         ambient = self.displacement_output(jax.nn.gelu(hidden)).reshape(
             case_shape + (count, self.num_heads, self.ambient_dim)

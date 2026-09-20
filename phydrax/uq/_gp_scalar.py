@@ -56,12 +56,12 @@ class ExactGaussianProcessFactor(StrictModule):
     @property
     def factor_storage_elements(self) -> int:
         """Number of elements in the dominant dense covariance factor."""
-        return int(self.cholesky.size)
+        return self.cholesky.size
 
     def log_probability(self, residual: ArrayLike, /) -> Array:
         """Evaluate a residual log density without refactorizing covariance."""
         values = _as_vector(residual, name="GP residual")
-        if int(values.shape[0]) != int(self.observation_points.shape[0]):
+        if values.shape[0] != self.observation_points.shape[0]:
             raise ValueError("GP residual must align with factor observations.")
         return exact_gp_log_probability(values, self.cholesky)
 
@@ -120,12 +120,11 @@ class FiniteFeatureGaussianProcessFactor(StrictModule):
         _require_state(state)
         if kernel_feature_rank(state.kernel) is None:
             raise TypeError(
-                "FiniteFeatureGaussianProcessFactor requires an exact "
-                "finite-feature kernel representation."
+                "FiniteFeatureGaussianProcessFactor requires an exact finite-feature kernel representation."
             )
         noise = _observation_noise(
             state.noise_scale,
-            count=int(points.shape[0]),
+            count=points.shape[0],
         )
         features = kernel_features(state.kernel, points)
         diagonal = noise * noise + state.jitter
@@ -141,16 +140,12 @@ class FiniteFeatureGaussianProcessFactor(StrictModule):
     @property
     def factor_storage_elements(self) -> int:
         """Number of elements retained by the exact weight-space factor."""
-        return (
-            int(self.features.size)
-            + int(self.diagonal.size)
-            + int(self.correction_cholesky.size)
-        )
+        return self.features.size + self.diagonal.size + self.correction_cholesky.size
 
     def log_probability(self, residual: ArrayLike, /) -> Array:
         """Evaluate an exact finite-feature GP log density."""
         values = _as_vector(residual, name="GP residual")
-        if int(values.shape[0]) != int(self.observation_points.shape[0]):
+        if values.shape[0] != self.observation_points.shape[0]:
             raise ValueError("GP residual must align with factor observations.")
         return sparse_gp_log_probability_from_factors(
             values,
@@ -238,16 +233,16 @@ class SparseGaussianProcessFactor(StrictModule):
     def factor_storage_elements(self) -> int:
         """Number of elements retained by the reusable FITC factors."""
         return (
-            int(self.features.size)
-            + int(self.diagonal.size)
-            + int(self.correction_cholesky.size)
-            + int(self.inducing_cholesky.size)
+            self.features.size
+            + self.diagonal.size
+            + self.correction_cholesky.size
+            + self.inducing_cholesky.size
         )
 
     def log_probability(self, residual: ArrayLike, /) -> Array:
         """Evaluate a residual FITC log density without rebuilding factors."""
         values = _as_vector(residual, name="GP residual")
-        if int(values.shape[0]) != int(self.observation_points.shape[0]):
+        if values.shape[0] != self.observation_points.shape[0]:
             raise ValueError("GP residual must align with factor observations.")
         return sparse_gp_log_probability_from_factors(
             values,
@@ -330,7 +325,7 @@ class ExactGaussianProcessDiscrepancy(StrictModule):
         """Use exact weight space when feature rank is below observation count."""
         _require_state(state)
         rank = kernel_feature_rank(state.kernel)
-        if rank is not None and rank < int(self.observation_points.shape[0]):
+        if rank is not None and rank < self.observation_points.shape[0]:
             return FiniteFeatureGaussianProcessFactor(
                 self.observation_points,
                 state=state,
@@ -403,23 +398,21 @@ class SparseGaussianProcessDiscrepancy(StrictModule):
         """Choose a deterministic index-spaced inducing subset."""
         points = _as_design(_field_data(observation_points))
         count = int(num_inducing)
-        if not 0 < count < int(points.shape[0]):
+        if not 0 < count < points.shape[0]:
             raise ValueError(
                 "num_inducing must be positive and smaller than observation count."
             )
-        indices = jnp.round(jnp.linspace(0, int(points.shape[0]) - 1, count)).astype(
-            jnp.int32
-        )
+        indices = jnp.round(jnp.linspace(0, points.shape[0] - 1, count)).astype(jnp.int32)
         return cls(observation_points, observations, points[indices])
 
     @property
     def num_inducing(self) -> int:
-        return int(self.inducing_points.shape[0])
+        return self.inducing_points.shape[0]
 
     @property
     def factor_storage_elements(self) -> int:
         """Dominant FITC factor storage, versus n squared for the exact GP."""
-        observations = int(self.observation_points.shape[0])
+        observations = self.observation_points.shape[0]
         inducing = self.num_inducing
         return observations * inducing + 2 * inducing**2 + observations
 
@@ -504,26 +497,26 @@ class SparseGaussianProcessDiscrepancy(StrictModule):
 
 def _field_data(value: Any) -> Array:
     return jnp.asarray(
-        value.data if isinstance(value, cx.AxisArray) else value, dtype=float
+        value.data if isinstance(value, cx.AxisArray) else value, dtype=jnp.float64
     )
 
 
 def _as_design(value: ArrayLike) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim == 1:
         array = array[:, None]
     if array.ndim < 2:
         raise ValueError(
             "GP inputs must have one design axis and at least one input axis."
         )
-    if any(int(size) <= 0 for size in array.shape[1:]):
+    if any(size <= 0 for size in array.shape[1:]):
         raise ValueError("GP kernel input axes must be nonempty.")
     return array
 
 
 def _as_vector(value: ArrayLike, /, *, name: str) -> Array:
-    array = jnp.asarray(value, dtype=float)
-    if array.ndim == 2 and int(array.shape[1]) == 1:
+    array = jnp.asarray(value, dtype=jnp.float64)
+    if array.ndim == 2 and array.shape[1] == 1:
         array = array[:, 0]
     if array.ndim != 1:
         raise ValueError(f"{name} must be a one-dimensional scalar-output array.")
@@ -562,7 +555,7 @@ def _validated_observations(
 ) -> tuple[Array, Array]:
     points = _as_design(_field_data(observation_points))
     values = _as_vector(_field_data(observations), name=name)
-    if int(points.shape[0]) != int(values.shape[0]):
+    if points.shape[0] != values.shape[0]:
         raise ValueError("GP observations must align with observation points.")
     if not bool(jnp.all(jnp.isfinite(points))) or not bool(jnp.all(jnp.isfinite(values))):
         raise ValueError("GP observations and points must be finite.")
@@ -579,7 +572,7 @@ def _observation_noise(noise_scale: ArrayLike, /, *, count: int) -> Array:
 
 
 def _validate_inducing_design(points: Array, inducing: Array, /) -> None:
-    if not 0 < int(inducing.shape[0]) < int(points.shape[0]):
+    if not 0 < inducing.shape[0] < points.shape[0]:
         raise ValueError("Sparse GP requires fewer inducing points than observations.")
 
 

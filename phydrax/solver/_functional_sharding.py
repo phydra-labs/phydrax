@@ -104,7 +104,7 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
         for axis, size in zip(field.dims, field.data.shape, strict=True):
             device_axis = None if axis is None else self.axis_mapping.get(axis)
             if device_axis is not None:
-                device_count = int(self.mesh.shape[device_axis])
+                device_count = self.mesh.shape[device_axis]
                 if int(size) % device_count:
                     raise ValueError(
                         f"Sample axis {axis!r} size {size} is not divisible by "

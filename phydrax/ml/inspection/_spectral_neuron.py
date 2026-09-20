@@ -99,7 +99,7 @@ class SpectralNeuronInspection(StrictModule):
         self.matrix = jnp.asarray(matrix)
         self.eigenvalues = jnp.asarray(eigenvalues)
         self.selected_eigenvalue = jnp.asarray(selected_eigenvalue)
-        self.cluster_mask = jnp.asarray(cluster_mask, dtype=bool)
+        self.cluster_mask = jnp.asarray(cluster_mask, dtype=jnp.bool_)
         self.cluster_size = jnp.asarray(cluster_size, dtype=jnp.int32)
         self.cluster_lower_index = jnp.asarray(cluster_lower_index, dtype=jnp.int32)
         self.cluster_upper_index = jnp.asarray(cluster_upper_index, dtype=jnp.int32)
@@ -115,12 +115,18 @@ class SpectralNeuronInspection(StrictModule):
         self.local_sensitivities = jnp.asarray(local_sensitivities)
         self.local_sensitivity_bounds = jnp.asarray(local_sensitivity_bounds)
         self.selected_is_numerically_simple = jnp.asarray(
-            selected_is_numerically_simple, dtype=bool
+            selected_is_numerically_simple, dtype=jnp.bool_
         )
-        self.local_sensitivity_valid = jnp.asarray(local_sensitivity_valid, dtype=bool)
-        self.guaranteed_nondecreasing = jnp.asarray(guaranteed_nondecreasing, dtype=bool)
-        self.guaranteed_nonincreasing = jnp.asarray(guaranteed_nonincreasing, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.local_sensitivity_valid = jnp.asarray(
+            local_sensitivity_valid, dtype=jnp.bool_
+        )
+        self.guaranteed_nondecreasing = jnp.asarray(
+            guaranteed_nondecreasing, dtype=jnp.bool_
+        )
+        self.guaranteed_nonincreasing = jnp.asarray(
+            guaranteed_nonincreasing, dtype=jnp.bool_
+        )
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.precision = precision
         self.precision_evidence = precision_evidence
         self.eigen_index = int(eigen_index)
@@ -237,10 +243,10 @@ def inspect_spectral_neuron(
     )
 
     guaranteed_nondecreasing = jnp.asarray(
-        tuple(mode == "increasing" for mode in model.monotonicity), dtype=bool
+        tuple(mode == "increasing" for mode in model.monotonicity), dtype=jnp.bool_
     )
     guaranteed_nonincreasing = jnp.asarray(
-        tuple(mode == "decreasing" for mode in model.monotonicity), dtype=bool
+        tuple(mode == "decreasing" for mode in model.monotonicity), dtype=jnp.bool_
     )
     coefficient_valid = (
         jnp.all(jnp.isfinite(base))

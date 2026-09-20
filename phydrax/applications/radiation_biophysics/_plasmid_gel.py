@@ -48,8 +48,8 @@ class PlasmidGelAssay:
         *,
         calibration_covariance: ArrayLike | None = None,
     ):
-        response = np.asarray(response_matrix, dtype=float)
-        offset = np.asarray(background, dtype=float)
+        response = np.asarray(response_matrix, dtype=np.float64)
+        offset = np.asarray(background, dtype=np.float64)
         if (
             response.shape != (3, 3)
             or not np.all(np.isfinite(response))
@@ -72,7 +72,7 @@ class PlasmidGelAssay:
         covariance = (
             None
             if calibration_covariance is None
-            else np.asarray(calibration_covariance, dtype=float)
+            else np.asarray(calibration_covariance, dtype=np.float64)
         )
         if covariance is not None and (
             covariance.shape != (12, 12)
@@ -228,19 +228,18 @@ class PlasmidGelObservations:
             or len(tuples) != n
         ):
             raise ValueError(
-                "Unique observation IDs and aligned preparation/day/physical tuples "
-                "are required."
+                "Unique observation IDs and aligned preparation/day/physical tuples are required."
             )
         for value in (*identifiers, *preparations, *days, *tuples):
             _text(value, "plasmid-gel identity")
-        gain = np.asarray(lane_gain, dtype=float)
+        gain = np.asarray(lane_gain, dtype=np.float64)
         gain_errors = (
             None
             if lane_gain_standard_errors is None
-            else np.asarray(lane_gain_standard_errors, dtype=float)
+            else np.asarray(lane_gain_standard_errors, dtype=np.float64)
         )
-        values = np.asarray(intensities, dtype=float)
-        errors = np.asarray(standard_errors, dtype=float)
+        values = np.asarray(intensities, dtype=np.float64)
+        errors = np.asarray(standard_errors, dtype=np.float64)
         if gain.shape != (n,) or not np.all(np.isfinite(gain)) or np.any(gain <= 0.0):
             raise ValueError("Each gel lane requires a finite positive calibrated gain.")
         if gain_errors is not None and (
@@ -270,7 +269,7 @@ class PlasmidGelObservations:
         error_covariance = (
             np.stack(tuple(np.diag(row**2) for row in errors))
             if observation_covariance is None
-            else np.asarray(observation_covariance, dtype=float)
+            else np.asarray(observation_covariance, dtype=np.float64)
         )
         if (
             error_covariance.shape != (n, 3, 3)
@@ -407,7 +406,7 @@ class PlasmidFormPrediction:
             raise ValueError(
                 "Prediction and fit physical tuples must belong to the history profile."
             )
-        fractions = np.asarray(form_fractions, dtype=float)
+        fractions = np.asarray(form_fractions, dtype=np.float64)
         if (
             fractions.shape != (len(tuples), 3)
             or not np.all(np.isfinite(fractions))
@@ -421,7 +420,7 @@ class PlasmidFormPrediction:
         fraction_covariance = (
             None
             if form_fraction_covariance is None
-            else np.asarray(form_fraction_covariance, dtype=float)
+            else np.asarray(form_fraction_covariance, dtype=np.float64)
         )
         if fraction_covariance is not None and (
             fraction_covariance.shape != (len(tuples), 3, 3)
@@ -533,13 +532,13 @@ def evaluate_plasmid_gel(
     fractions = np.asarray(prediction.form_fractions)
     predicted = assay.expected_intensity(fractions, observations.lane_gain)
     limitations = []
-    calibration_covariance = np.zeros((*fractions.shape[:-1], 3, 3), dtype=float)
+    calibration_covariance = np.zeros((*fractions.shape[:-1], 3, 3), dtype=np.float64)
     lane_gain_errors = observations.lane_gain_standard_errors
     if assay.calibration_covariance is None:
         limitations.append("gel-response-background-calibration-covariance")
     else:
         gain_errors = (
-            np.zeros(np.asarray(observations.lane_gain).shape, dtype=float)
+            np.zeros(np.asarray(observations.lane_gain).shape, dtype=np.float64)
             if lane_gain_errors is None
             else np.asarray(lane_gain_errors)
         )
@@ -566,7 +565,7 @@ def evaluate_plasmid_gel(
             np.asarray(observations.lane_gain)[..., None, None]
             * np.asarray(assay.response_matrix)[None, ...]
         )
-        calibration_covariance += np.einsum(
+        calibration_covariance += ein.contract(
             "...oi,...ij,...pj->...op",
             fraction_response,
             np.asarray(prediction.form_fraction_covariance),
@@ -582,7 +581,7 @@ def evaluate_plasmid_gel(
         )
     )
     raw_residuals = np.asarray(predicted) - np.asarray(observations.intensities)
-    residuals = np.zeros_like(raw_residuals, dtype=float)
+    residuals = np.zeros_like(raw_residuals, dtype=np.float64)
     covariance_valid = True
     for lane in range(raw_residuals.shape[0]):
         covariance = total_covariance[lane]

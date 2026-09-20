@@ -17,7 +17,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._wiener import WienerRealization
 
 
@@ -55,7 +55,7 @@ def _support(value: tuple[float, float], /, *, owner: str) -> tuple[float, float
 
 
 def _sample_shape(value: Sequence[int], /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("sample_shape dimensions must be positive.")
     return shape
@@ -70,10 +70,10 @@ class AbstractLevyProcess(StrictModule):
     represented. This separates process law from reusable path randomness.
     """
 
-    dimension: AbstractAttribute[int]
-    mark_dimension: AbstractAttribute[int]
-    drift: AbstractAttribute[Array]
-    process_id: AbstractAttribute[str]
+    dimension: eqx.AbstractVar[int]
+    mark_dimension: eqx.AbstractVar[int]
+    drift: eqx.AbstractVar[Array]
+    process_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def series_terms(
@@ -133,21 +133,21 @@ class SymmetricStableLevyProcess(AbstractLevyProcess):
         stability = float(alpha)
         if not isfinite(stability) or not 0.0 < stability < 2.0:
             raise ValueError("alpha must be finite and lie strictly between 0 and 2.")
-        scale_value = jnp.asarray(scale, dtype=float)
+        scale_value = jnp.asarray(scale, dtype=jnp.float64)
         if scale_value.ndim > 1:
             raise ValueError("scale must be scalar or a rank-1 component vector.")
         if scale_value.ndim == 0:
             resolved_dimension = 1 if dimension is None else int(dimension)
             scale_value = jnp.broadcast_to(scale_value, (resolved_dimension,))
         else:
-            resolved_dimension = int(scale_value.size)
+            resolved_dimension = scale_value.size
             if dimension is not None and int(dimension) != resolved_dimension:
                 raise ValueError("dimension must match the vector scale length.")
         if resolved_dimension <= 0:
             raise ValueError("dimension must be positive.")
         if bool(jnp.any(~jnp.isfinite(scale_value))) or bool(jnp.any(scale_value <= 0.0)):
             raise ValueError("scale values must be finite and positive.")
-        drift_value = jnp.asarray(drift, dtype=float)
+        drift_value = jnp.asarray(drift, dtype=jnp.float64)
         if drift_value.ndim == 0:
             drift_value = jnp.broadcast_to(drift_value, (resolved_dimension,))
         if drift_value.shape != (resolved_dimension,):
@@ -186,13 +186,13 @@ class SymmetricStableLevyProcess(AbstractLevyProcess):
         duration: ArrayLike,
         /,
     ) -> tuple[Array, Array]:
-        arrivals = jnp.asarray(arrival_levels, dtype=float)
-        marks = jnp.asarray(uniform_marks, dtype=float)
+        arrivals = jnp.asarray(arrival_levels, dtype=jnp.float64)
+        marks = jnp.asarray(uniform_marks, dtype=jnp.float64)
         if marks.shape != arrivals.shape + (self.mark_dimension,):
             raise ValueError(
                 "uniform_marks must have arrival_levels.shape + (mark_dimension,)."
             )
-        time = jnp.asarray(duration, dtype=float)
+        time = jnp.asarray(duration, dtype=jnp.float64)
         if time.shape != ():
             raise ValueError("duration must be scalar.")
         time = eqx.error_if(
@@ -222,7 +222,7 @@ class SymmetricStableLevyProcess(AbstractLevyProcess):
         return signs[..., None] * radii[..., None] * directions, radii
 
     def small_jump_covariance(self, cutoff: ArrayLike, /) -> Array:
-        threshold = jnp.asarray(cutoff, dtype=float)
+        threshold = jnp.asarray(cutoff, dtype=jnp.float64)
         if threshold.shape != ():
             raise ValueError("cutoff must be scalar.")
         threshold = eqx.error_if(
@@ -239,7 +239,7 @@ class SymmetricStableLevyProcess(AbstractLevyProcess):
         return jnp.diag(variances)
 
     def truncation_drift(self, cutoff: ArrayLike, /) -> Array:
-        threshold = jnp.asarray(cutoff, dtype=float)
+        threshold = jnp.asarray(cutoff, dtype=jnp.float64)
         if threshold.shape != ():
             raise ValueError("cutoff must be scalar.")
         threshold = eqx.error_if(
@@ -291,11 +291,11 @@ class LevyJumpSeries(StrictModule):
     ):
         samples = _sample_shape(sample_shape)
         dimension_value = int(dimension)
-        time_values = jnp.asarray(times, dtype=float)
+        time_values = jnp.asarray(times, dtype=jnp.float64)
         jump_values = jnp.asarray(jumps)
-        arrival_values = jnp.asarray(arrival_levels, dtype=float)
-        radius_values = jnp.asarray(truncation_radii, dtype=float)
-        expected_prefix = samples + (int(time_values.shape[-1]),)
+        arrival_values = jnp.asarray(arrival_levels, dtype=jnp.float64)
+        radius_values = jnp.asarray(truncation_radii, dtype=jnp.float64)
+        expected_prefix = samples + (time_values.shape[-1],)
         if time_values.ndim != len(samples) + 1:
             raise ValueError("times must have shape sample_shape + (num_terms,).")
         if (
@@ -305,7 +305,7 @@ class LevyJumpSeries(StrictModule):
             raise ValueError("arrival levels and radii must align with series times.")
         if jump_values.shape != expected_prefix + (dimension_value,):
             raise ValueError("jumps must append the declared process dimension.")
-        term_count = int(time_values.shape[-1])
+        term_count = time_values.shape[-1]
         if term_count <= 0 or dimension_value <= 0:
             raise ValueError("num_terms and dimension must be positive.")
         if bool(jnp.any(~jnp.isfinite(time_values))) or bool(
@@ -349,13 +349,13 @@ class LevyJumpSeries(StrictModule):
 
     def complete_above(self, cutoff: ArrayLike, /) -> Array:
         """Whether every proposal above cutoff is represented on each path."""
-        threshold = jnp.asarray(cutoff, dtype=float)
+        threshold = jnp.asarray(cutoff, dtype=jnp.float64)
         if threshold.shape != () or not bool(jnp.isfinite(threshold) & (threshold > 0.0)):
             raise ValueError("cutoff must be a finite positive scalar.")
         return self.smallest_radius <= threshold
 
     def num_jumps_above(self, cutoff: ArrayLike, /) -> Array:
-        threshold = jnp.asarray(cutoff, dtype=float)
+        threshold = jnp.asarray(cutoff, dtype=jnp.float64)
         if threshold.shape != () or not bool(jnp.isfinite(threshold) & (threshold > 0.0)):
             raise ValueError("cutoff must be a finite positive scalar.")
         norms = jnp.linalg.norm(self.jumps, axis=-1)
@@ -370,11 +370,11 @@ class LevyJumpSeries(StrictModule):
         cutoff: ArrayLike = 0.0,
     ) -> Array:
         """Sum represented jumps in half-open path intervals ``(start, end]``."""
-        start = jnp.asarray(starts, dtype=float)
-        end = jnp.asarray(ends, dtype=float)
+        start = jnp.asarray(starts, dtype=jnp.float64)
+        end = jnp.asarray(ends, dtype=jnp.float64)
         if start.shape != end.shape:
             raise ValueError("increment bounds must have matching shapes.")
-        threshold = jnp.asarray(cutoff, dtype=float)
+        threshold = jnp.asarray(cutoff, dtype=jnp.float64)
         if threshold.shape != () or not bool(
             jnp.isfinite(threshold) & (threshold >= 0.0)
         ):
@@ -548,7 +548,7 @@ class LevyProcessRealization(StrictModule):
     def arrival_levels(self) -> Array:
         keys = self._term_keys(0)
         flat = keys.reshape((-1,) + tuple(self.root_key.shape))
-        increments = jax.vmap(lambda key: jr.exponential(key, dtype=float))(flat)
+        increments = jax.vmap(lambda key: jr.exponential(key, dtype=jnp.float64))(flat)
         return jnp.cumsum(
             increments.reshape(self.sample_shape + (self.max_terms,)),
             axis=-1,
@@ -560,7 +560,7 @@ class LevyProcessRealization(StrictModule):
         flat = keys.reshape((-1,) + tuple(self.root_key.shape))
         start, end = self.support
         values = jax.vmap(
-            lambda key: jr.uniform(key, dtype=float, minval=start, maxval=end)
+            lambda key: jr.uniform(key, dtype=jnp.float64, minval=start, maxval=end)
         )(flat)
         return values.reshape(self.sample_shape + (self.max_terms,))
 
@@ -570,7 +570,7 @@ class LevyProcessRealization(StrictModule):
             raise ValueError("mark_dimension must be positive.")
         keys = self._term_keys(2)
         flat = keys.reshape((-1,) + tuple(self.root_key.shape))
-        values = jax.vmap(lambda key: jr.uniform(key, (size,), dtype=float))(flat)
+        values = jax.vmap(lambda key: jr.uniform(key, (size,), dtype=jnp.float64))(flat)
         return values.reshape(self.sample_shape + (self.max_terms, size))
 
     def series(self, process: AbstractLevyProcess, /) -> LevyJumpSeries:
@@ -610,8 +610,8 @@ class LevyProcessRealization(StrictModule):
         cutoff: ArrayLike,
     ) -> Array:
         """Evaluate drift-plus-jump increments for one explicit cutoff."""
-        start = jnp.asarray(starts, dtype=float)
-        end = jnp.asarray(ends, dtype=float)
+        start = jnp.asarray(starts, dtype=jnp.float64)
+        end = jnp.asarray(ends, dtype=jnp.float64)
         jumps = self.series(process).increments(start, end, cutoff=cutoff)
         durations = end - start
         deterministic_rate = process.drift + process.truncation_drift(cutoff)

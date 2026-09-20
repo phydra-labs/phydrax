@@ -385,8 +385,7 @@ def _validate_precision_policy(
             )
         if factorization_dtype != coordinate_dtype:
             raise LinearCapabilityError(
-                f"{rejection}: Spineax cuDSS currently requires factorization_dtype "
-                "to match stored sparse coordinates."
+                f"{rejection}: Spineax cuDSS currently requires factorization_dtype to match stored sparse coordinates."
             )
         if (
             precision.preconditioner_dtype is not None
@@ -434,8 +433,7 @@ def _validate_precision_policy(
             )
         if residual_dtype != coordinate_dtype or accumulation_dtype != coordinate_dtype:
             raise LinearCapabilityError(
-                f"{rejection}: native Krylov residual and accumulation must remain "
-                "in the stored coordinate precision."
+                f"{rejection}: native Krylov residual and accumulation must remain in the stored coordinate precision."
             )
         if precision.factorization_dtype is not None:
             raise LinearCapabilityError(
@@ -443,14 +441,12 @@ def _validate_precision_policy(
             )
         if precision.preconditioner_dtype is None and precision.krylov_dtype is None:
             raise LinearCapabilityError(
-                f"{rejection}: iterative precision requires a preconditioner or "
-                "Krylov basis dtype."
+                f"{rejection}: iterative precision requires a preconditioner or Krylov basis dtype."
             )
         if precision.krylov_dtype is not None:
             if not isinstance(method, (GMRES, FGMRES)):
                 raise LinearCapabilityError(
-                    f"{rejection}: compressed basis storage currently supports "
-                    "GMRES/FGMRES only."
+                    f"{rejection}: compressed basis storage currently supports GMRES/FGMRES only."
                 )
             krylov_dtype = jnp.dtype(precision.krylov_dtype)
             same_kind = jnp.issubdtype(
@@ -458,8 +454,7 @@ def _validate_precision_policy(
             ) == jnp.issubdtype(krylov_dtype, jnp.complexfloating)
             if not same_kind or krylov_dtype.itemsize > coordinate_dtype.itemsize:
                 raise LinearCapabilityError(
-                    f"{rejection}: Krylov dtype must have the coordinate kind and "
-                    "no greater precision."
+                    f"{rejection}: Krylov dtype must have the coordinate kind and no greater precision."
                 )
         if precision.preconditioner_dtype is not None:
             if policy.preconditioning is None:
@@ -472,8 +467,7 @@ def _validate_precision_policy(
             ) == jnp.issubdtype(preconditioner_dtype, jnp.complexfloating)
             if not same_kind or preconditioner_dtype.itemsize > coordinate_dtype.itemsize:
                 raise LinearCapabilityError(
-                    f"{rejection}: preconditioner dtype must have the coordinate kind "
-                    "and no greater precision."
+                    f"{rejection}: preconditioner dtype must have the coordinate kind and no greater precision."
                 )
         if precision.maximum_refinement_steps or precision.condition_limit is not None:
             raise LinearCapabilityError(
@@ -497,8 +491,7 @@ def _validate_precision_policy(
         and _has_euclidean_pairing(problem.operator.target)
     ):
         raise LinearCapabilityError(
-            f"{rejection}: mixed-precision refinement currently requires "
-            "Euclidean source and target pairings."
+            f"{rejection}: mixed-precision refinement currently requires Euclidean source and target pairings."
         )
     if precision.preconditioner_dtype is not None:
         raise LinearCapabilityError(
@@ -537,13 +530,11 @@ def _validate_precision_policy(
         )
     if residual_dtype != operator_dtype:
         raise LinearCapabilityError(
-            f"{rejection}: jax-dense certification requires residual_dtype to "
-            "match the stored operator precision."
+            f"{rejection}: jax-dense certification requires residual_dtype to match the stored operator precision."
         )
     if accumulation_dtype != operator_dtype:
         raise LinearCapabilityError(
-            f"{rejection}: jax-dense refinement requires accumulation_dtype to "
-            "match the stored operator precision."
+            f"{rejection}: jax-dense refinement requires accumulation_dtype to match the stored operator precision."
         )
     factorization_supported = (
         jnp.dtype(jnp.float32),
@@ -553,8 +544,7 @@ def _validate_precision_policy(
     )
     if factorization_dtype not in factorization_supported:
         raise LinearCapabilityError(
-            f"{rejection}: jax-dense LU does not support "
-            f"factorization_dtype={factorization_dtype.name!r}."
+            f"{rejection}: jax-dense LU does not support factorization_dtype={factorization_dtype.name!r}."
         )
     same_scalar_kind = jnp.issubdtype(
         operator_dtype, jnp.complexfloating
@@ -569,8 +559,7 @@ def _validate_precision_policy(
         precision.maximum_refinement_steps > 0 or precision.condition_limit is not None
     ) and not lower_factorization:
         raise LinearCapabilityError(
-            f"{rejection}: refinement and condition screening require a lower "
-            "factorization precision."
+            f"{rejection}: refinement and condition screening require a lower factorization precision."
         )
 
 
@@ -601,8 +590,7 @@ def _make_preconditioner_plan(
         raise ValueError(f"{method.name} does not accept preconditioning.")
     if preconditioning.side not in ("auto", required_side):
         raise ValueError(
-            f"{method.name} requires {required_side} preconditioning; "
-            f"got {preconditioning.side!r}."
+            f"{method.name} requires {required_side} preconditioning; got {preconditioning.side!r}."
         )
     return PreconditionerPlan(
         preconditioning,
@@ -645,8 +633,7 @@ def _auto_method(
                 (),
             )
         rejected.append(
-            "projected-pcg: requires a fixed, linear, self-adjoint, "
-            "positive-definite preconditioner"
+            "projected-pcg: requires a fixed, linear, self-adjoint, positive-definite preconditioner"
         )
     elif (
         isinstance(problem, LinearSystem)
@@ -671,8 +658,7 @@ def _auto_method(
         ):
             return SparseQR(), "canonical CSR with native CUDA sparse QR", ()
         rejected.append(
-            "sparse-qr/jax-cuda: execution requires CUDA, no preconditioning, "
-            "and no numerical rank cutoff"
+            "sparse-qr/jax-cuda: execution requires CUDA, no preconditioning, and no numerical rank cutoff"
         )
     if isinstance(problem, LinearSystem):
         dense_method: AbstractLinearMethod
@@ -689,8 +675,7 @@ def _auto_method(
             rejected.append(f"{dense_method.name}: {explanation}")
         elif explicit:
             rejected.append(
-                f"{dense_method.name}: dense direct execution does not accept "
-                "preconditioning"
+                f"{dense_method.name}: dense direct execution does not accept preconditioning"
             )
         properties = _preconditioner_properties(problem, policy)
         preconditioner_is_positive = properties is None or properties.certifies(
@@ -798,7 +783,7 @@ def _validate_method(
                 "Dense square direct methods cannot enforce a numerical rank cutoff."
             )
         if not isinstance(problem, LinearSystem):
-            raise ValueError(f"{method.name} requires a LinearSystem.")
+            raise TypeError(f"{method.name} requires a LinearSystem.")
         if isinstance(method, DenseCholesky) and not _certified_positive_definite(
             operator
         ):
@@ -815,7 +800,7 @@ def _validate_method(
         if preconditioner is not None:
             raise ValueError("Dense rectangular methods do not accept preconditioners.")
         if not isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
-            raise ValueError(
+            raise TypeError(
                 f"{method.name} requires least-squares or minimum-norm semantics."
             )
         if isinstance(method, DenseQR) and isinstance(problem, MinimumNormProblem):
@@ -835,9 +820,9 @@ def _validate_method(
         return "jax-dense"
     if isinstance(method, (SparseQR, SparseLU, SparseCholesky, SparseLDLT)):
         if not isinstance(problem, LinearSystem):
-            raise ValueError(f"{method.name} requires a LinearSystem.")
+            raise TypeError(f"{method.name} requires a LinearSystem.")
         if not isinstance(operator, AbstractSparseLinearOperator):
-            raise ValueError(f"{method.name} requires canonical sparse storage.")
+            raise TypeError(f"{method.name} requires canonical sparse storage.")
         if _has_rank_cutoff(policy):
             raise ValueError(
                 "Sparse direct methods cannot enforce a numerical rank cutoff."
@@ -859,8 +844,7 @@ def _validate_method(
                 raise ValueError("Spineax cuDSS execution requires 32-bit CSR indices.")
             if policy.differentiation.mode == "algorithmic":
                 raise ValueError(
-                    "SparseLDLT exposes mathematical differentiation, not an "
-                    "algorithmic factorization derivative."
+                    "SparseLDLT exposes mathematical differentiation, not an algorithmic factorization derivative."
                 )
             availability = sparse_provider_availability(method.provider)
             if not availability.available:
@@ -884,14 +868,12 @@ def _validate_method(
                 )
             if policy.differentiation.mode == "algorithmic":
                 raise ValueError(
-                    "SparseQR exposes mathematical differentiation, not an "
-                    "algorithmic QR derivative."
+                    "SparseQR exposes mathematical differentiation, not an algorithmic QR derivative."
                 )
             return "jax-sparse"
         if policy.differentiation.mode != "none":
             raise ValueError(
-                "Host sparse direct providers are non-JIT and require "
-                "DifferentiationPolicy('none')."
+                "Host sparse direct providers are non-JIT and require DifferentiationPolicy('none')."
             )
         if isinstance(method, SparseLU):
             provider: SparseProviderName = (
@@ -940,7 +922,7 @@ def _validate_method(
                 f"{method.name} requires a planned layout with multiple right-hand sides."
             )
         if not isinstance(problem, LinearSystem):
-            raise ValueError(f"{method.name} requires a LinearSystem.")
+            raise TypeError(f"{method.name} requires a LinearSystem.")
         if policy.differentiation.mode == "algorithmic":
             raise ValueError(
                 "Block Krylov rank transitions do not expose algorithmic differentiation."
@@ -960,8 +942,7 @@ def _validate_method(
                 and preconditioner_properties.certifies("stationary")
             ):
                 raise ValueError(
-                    "BlockCG requires a fixed, linear, self-adjoint, "
-                    "positive-definite left preconditioner."
+                    "BlockCG requires a fixed, linear, self-adjoint, positive-definite left preconditioner."
                 )
         elif preconditioner_properties is not None and not (
             preconditioner_properties.certifies("linear")
@@ -980,13 +961,12 @@ def _validate_method(
             and preconditioner_properties.certifies("stationary")
         ):
             raise ValueError(
-                "ProjectedPCG requires a fixed, linear, self-adjoint, "
-                "positive-definite preconditioner."
+                "ProjectedPCG requires a fixed, linear, self-adjoint, positive-definite preconditioner."
             )
         return "native-krylov"
     if isinstance(method, PCG):
         if not isinstance(problem, LinearSystem):
-            raise ValueError("PCG requires a LinearSystem.")
+            raise TypeError("PCG requires a LinearSystem.")
         if not _certified_positive_definite(operator):
             raise ValueError("PCG requires certified positive definiteness.")
         if preconditioner_properties is not None and not (
@@ -996,13 +976,12 @@ def _validate_method(
             and preconditioner_properties.certifies("stationary")
         ):
             raise ValueError(
-                "PCG requires a fixed, linear, self-adjoint, "
-                "positive-definite preconditioner."
+                "PCG requires a fixed, linear, self-adjoint, positive-definite preconditioner."
             )
         return "native-krylov"
     if isinstance(method, MINRES):
         if not isinstance(problem, LinearSystem):
-            raise ValueError("MINRES requires a LinearSystem.")
+            raise TypeError("MINRES requires a LinearSystem.")
         if not _certified_self_adjoint(operator):
             raise ValueError("MINRES requires certified self-adjoint structure.")
         if preconditioner_properties is not None and not (
@@ -1012,17 +991,16 @@ def _validate_method(
             and preconditioner_properties.certifies("stationary")
         ):
             raise ValueError(
-                "MINRES requires a fixed, linear, self-adjoint, "
-                "positive-definite preconditioner."
+                "MINRES requires a fixed, linear, self-adjoint, positive-definite preconditioner."
             )
         return "native-krylov"
     if isinstance(method, FGMRES):
         if not isinstance(problem, LinearSystem):
-            raise ValueError("FGMRES requires a LinearSystem.")
+            raise TypeError("FGMRES requires a LinearSystem.")
         return "native-krylov"
     if isinstance(method, GeneralizedLSMR):
         if not isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
-            raise ValueError("GeneralizedLSMR requires least-squares semantics.")
+            raise TypeError("GeneralizedLSMR requires least-squares semantics.")
         if preconditioner is not None:
             raise ValueError(
                 "GeneralizedLSMR uses problem transforms, not solve preconditioners."
@@ -1039,7 +1017,7 @@ def _validate_method(
         return "matfree"
     if isinstance(method, ConjugateGradient):
         if not isinstance(problem, LinearSystem):
-            raise ValueError("CG requires a LinearSystem.")
+            raise TypeError("CG requires a LinearSystem.")
         if not _has_diagonal_pairing(operator.source):
             raise ValueError(
                 "Lineax methods require a Euclidean or diagonal source pairing; "
@@ -1061,24 +1039,22 @@ def _validate_method(
         return "lineax"
     if isinstance(method, GMRES):
         if not isinstance(problem, LinearSystem):
-            raise ValueError("GMRES requires a LinearSystem.")
+            raise TypeError("GMRES requires a LinearSystem.")
         if not _has_diagonal_pairing(operator.source):
             raise ValueError(
-                "GMRES requires a Euclidean or diagonal source pairing; "
-                "use FGMRES for a general Hilbert pairing."
+                "GMRES requires a Euclidean or diagonal source pairing; use FGMRES for a general Hilbert pairing."
             )
         if preconditioner_properties is not None and not (
             preconditioner_properties.certifies("linear")
             and preconditioner_properties.certifies("stationary")
         ):
             raise ValueError(
-                "GMRES requires fixed linear preconditioning; use FGMRES for "
-                "variable or nonlinear actions."
+                "GMRES requires fixed linear preconditioning; use FGMRES for variable or nonlinear actions."
             )
         return "native-krylov"
     if isinstance(method, BiCGStab):
         if not isinstance(problem, LinearSystem):
-            raise ValueError("bicgstab requires a LinearSystem.")
+            raise TypeError("bicgstab requires a LinearSystem.")
         if not _has_diagonal_pairing(operator.source):
             raise ValueError(
                 "Lineax methods require a Euclidean or diagonal source pairing."
@@ -1088,8 +1064,7 @@ def _validate_method(
             and preconditioner_properties.certifies("stationary")
         ):
             raise ValueError(
-                "BiCGStab requires fixed linear preconditioning; use FGMRES for "
-                "variable or nonlinear actions."
+                "BiCGStab requires fixed linear preconditioning; use FGMRES for variable or nonlinear actions."
             )
         _reject_algorithmic_lineax(policy)
         return "lineax"
@@ -1214,9 +1189,9 @@ def _structured_factorization_bytes(
 ) -> int:
     itemsize = _coordinate_dtype(operator.source).itemsize
     if isinstance(operator, TreeLinearOperator):
-        return operator.source.size * itemsize + jnp.dtype(bool).itemsize
+        return operator.source.size * itemsize + jnp.dtype(jnp.bool_).itemsize
     if isinstance(operator, TransformDiagonalLinearOperator):
-        return operator.source.size * itemsize + jnp.dtype(bool).itemsize
+        return operator.source.size * itemsize + jnp.dtype(jnp.bool_).itemsize
     if isinstance(operator, KroneckerSumLinearOperator):
         real_itemsize = (
             max(1, itemsize // 2)
@@ -1231,7 +1206,7 @@ def _structured_factorization_bytes(
             sum(size * size * itemsize for size in factor_dimensions)
             + 2 * sum(factor_dimensions) * real_itemsize
             + operator.source.size * real_itemsize
-            + (operator.source.size + 1) * jnp.dtype(bool).itemsize
+            + (operator.source.size + 1) * jnp.dtype(jnp.bool_).itemsize
         )
     if isinstance(operator, LocalBlockDiagonalLinearOperator):
         real_itemsize = jnp.empty((), dtype=operator.blocks.dtype).real.dtype.itemsize
@@ -1241,7 +1216,7 @@ def _structured_factorization_bytes(
             * operator.input_block_size
             * jnp.dtype(jnp.int32).itemsize
             + operator.num_blocks * operator.input_block_size * real_itemsize
-            + operator.num_blocks * jnp.dtype(bool).itemsize
+            + operator.num_blocks * jnp.dtype(jnp.bool_).itemsize
         )
     return _structured_factorization_entries(operator) * itemsize
 
@@ -1600,8 +1575,8 @@ def _krylov_storage_bytes(
     derivative_steps = policy.derivative_solve.maximum_steps or columns
     if isinstance(method, (BlockCG, BlockGMRES)):
         # Native block differentiation uses one independent scalar Krylov
-        # basis per tangent column, independent of the primal block-step limit.
-        restart = columns
+        # basis per tangent column under the derivative work limit.
+        restart = min(derivative_steps, columns)
     else:
         restart = min(30, derivative_steps, columns)
     tangent = ((2 * restart + 1) * columns + (restart + 1) * restart) * itemsize
@@ -1732,8 +1707,7 @@ def _require_selected_resources(
     for name, required, available in checks:
         if required > available:
             raise ValueError(
-                f"Selected {estimate.method} requires {required} {name} bytes, "
-                f"exceeding the policy budget {available}."
+                f"Selected {estimate.method} requires {required} {name} bytes, exceeding the policy budget {available}."
             )
 
 

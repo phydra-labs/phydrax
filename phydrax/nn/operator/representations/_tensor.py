@@ -108,8 +108,7 @@ class TensorType(StrictModule):
         if self.rank:
             if array.ndim < self.rank or array.shape[-self.rank :] != component_shape:
                 raise ValueError(
-                    f"Tensor values must end in component shape {component_shape}; "
-                    f"got {array.shape}."
+                    f"Tensor values must end in component shape {component_shape}; got {array.shape}."
                 )
             leading_shape = array.shape[: -self.rank]
         else:
@@ -215,10 +214,9 @@ class TensorFieldLayout(StrictModule):
     def unpack(self, values: Array, /) -> tuple[Array, ...]:
         """Unpack one flat channel axis into named tensor blocks."""
         array = jnp.asarray(values)
-        if array.ndim < 1 or int(array.shape[-1]) != self.channel_count:
+        if array.ndim < 1 or array.shape[-1] != self.channel_count:
             raise ValueError(
-                f"Tensor field values must end in {self.channel_count} channels; "
-                f"got {array.shape}."
+                f"Tensor field values must end in {self.channel_count} channels; got {array.shape}."
             )
         leading_shape = array.shape[:-1]
         unpacked = []
@@ -249,8 +247,7 @@ class TensorFieldLayout(StrictModule):
             block_ndim = len(block.value_shape)
             if array.ndim < block_ndim or array.shape[-block_ndim:] != block.value_shape:
                 raise ValueError(
-                    f"Tensor block {block.name!r} must end in {block.value_shape}; "
-                    f"got {array.shape}."
+                    f"Tensor block {block.name!r} must end in {block.value_shape}; got {array.shape}."
                 )
             current_leading = array.shape[:-block_ndim]
             if leading_shape is None:

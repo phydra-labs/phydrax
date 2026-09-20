@@ -65,7 +65,7 @@ def _guard_nonwood_modes(
         )
     indices = _integer_cube(policy.reciprocal_cutoff)
     stored_reciprocal = np.asarray(periodic_reciprocal_vectors_3d(cell))
-    reciprocal = stored_reciprocal.astype(float)
+    reciprocal = stored_reciprocal.astype("float64")
     modes = indices @ reciprocal + bloch_wavevector[None, :]
     mode_norm_squared = np.sum(modes * modes, axis=1)
     denominators = mode_norm_squared - wavenumber * wavenumber
@@ -87,7 +87,7 @@ def _guard_nonwood_modes(
         singular_value * (policy.reciprocal_cutoff + 1)
         - float(np.linalg.norm(bloch_wavevector)),
     )
-    mode_index = tuple(int(value) for value in indices[closest])
+    mode_index = tuple(indices[closest])
     if minimum <= tolerance:
         raise PeriodicHelmholtzWoodAnomalyError(
             "The quasi-periodic Helmholtz resolvent is at a retained Wood mode.",
@@ -98,8 +98,7 @@ def _guard_nonwood_modes(
         )
     if outside_lower <= wavenumber + relative_tolerance * max(1.0, wavenumber):
         raise PeriodicHelmholtzWoodAnomalyError(
-            "The reciprocal cutoff cannot exclude a Wood mode in the "
-            "unsearched spectral tail.",
+            "The reciprocal cutoff cannot exclude a Wood mode in the unsearched spectral tail.",
             closest_mode_index=mode_index,
             minimum_denominator=minimum,
             denominator_tolerance=tolerance,

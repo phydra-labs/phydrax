@@ -136,7 +136,7 @@ class _IRKArguments(StrictModule):
     args: Any
 
 
-class _IRKResidual(eqx.Module):
+class _IRKResidual(StrictModule):
     problem: DifferentialProblem
     method: GaussLegendreIRK
     precision: TemporalPrecisionPolicy
@@ -166,7 +166,7 @@ class _IRKResidual(eqx.Module):
         )(nodes, stage_states, stage_rates)
 
 
-class GaussLegendreInterpolation(eqx.Module):
+class GaussLegendreInterpolation(StrictModule):
     """Collocation-polynomial dense output over accepted fixed steps."""
 
     times: Array

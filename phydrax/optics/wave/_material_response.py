@@ -490,7 +490,7 @@ class DrudePlasmaResponsePlan(StrictModule, NonTrainableState):
         *,
         temporal_axis: int,
     ) -> "PreparedDrudePlasmaResponse":
-        dummy_mask = jnp.ones(time_space.shape, dtype=bool)
+        dummy_mask = jnp.ones(time_space.shape, dtype=jnp.bool_)
         _, shape, axis = _prepared_geometry(
             time_space, dummy_mask, field_shape, temporal_axis
         )
@@ -624,7 +624,7 @@ class PreparedDrudePlasmaResponse(StrictModule, NonTrainableState):
 class IonizingDrudeResponsePlan(AbstractCarrierResolvedResponse):
     """Composite scalar multiphoton depletion plus causal Drude ADE response.
 
-    ``neutral_number_density`` is in inverse cubic metres and
+    ``neutral_number_density`` is in inverse cubic meters and
     ``ionization_potential`` is the energy in joules required per new electron.
     """
 

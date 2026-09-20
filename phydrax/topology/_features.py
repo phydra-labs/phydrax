@@ -150,7 +150,7 @@ class PersistenceFeatureEvidence(StrictModule, NonTrainableState):
         policy_id: str,
     ):
         value_ = jnp.asarray(value)
-        valid = jnp.asarray(ordering_valid, dtype=bool)
+        valid = jnp.asarray(ordering_valid, dtype=jnp.bool_)
         self.value = value_
         self.ordering_valid = valid
         self.source_id = str(source_id)

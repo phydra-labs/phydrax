@@ -66,12 +66,12 @@ def prepare_weighted_least_squares(
     rcond: float = 1e-12,
     condition_limit: float = 1e8,
 ) -> PreparedWeightedLeastSquares:
-    design_ = np.asarray(design, dtype=float)
-    weights_ = np.asarray(weights, dtype=float)
+    design_ = np.asarray(design, dtype=np.float64)
+    weights_ = np.asarray(weights, dtype=np.float64)
     valid_host = np.asarray(valid)
-    if valid_host.dtype != np.dtype(bool):
+    if valid_host.dtype != np.dtype(np.bool_):
         raise TypeError("valid must have boolean dtype.")
-    valid_ = np.asarray(valid_host, dtype=bool)
+    valid_ = np.asarray(valid_host, dtype=np.bool_)
     if design_.ndim != 3:
         raise ValueError("design must have shape (rows, support, features).")
     if weights_.shape != design_.shape[:2] or valid_.shape != design_.shape[:2]:

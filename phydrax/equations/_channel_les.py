@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
+from .._interpolation import linear_interpolate
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.spectral import TensorSpectralDiscretization
@@ -83,10 +84,13 @@ class ChannelLESFilterGeometry(StrictModule, NonTrainableState):
         evaluation_nodes = np.asarray(evaluation_wall_axis.nodes)
         order = np.argsort(retained_nodes)
         wall_widths = jnp.asarray(
-            np.interp(
-                evaluation_nodes,
-                retained_nodes[order],
-                retained_measures[order],
+            np.asarray(
+                linear_interpolate(
+                    retained_nodes[order],
+                    retained_measures[order],
+                    evaluation_nodes,
+                    bounds="clip",
+                ).values
             ),
             dtype=evaluation_wall_axis.nodes.dtype,
         )

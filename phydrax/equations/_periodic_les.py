@@ -97,8 +97,7 @@ class PreparedPeriodicFourierGridFilter(StrictModule, NonTrainableState):
             axis.family != "fourier" or not axis.periodic for axis in discretization.axes
         ):
             raise ValueError(
-                "Periodic Fourier grid filtering requires exactly three periodic "
-                "Fourier axes."
+                "Periodic Fourier grid filtering requires exactly three periodic Fourier axes."
             )
         if tuple(discretization.plan.axis_names) != plan.resolved_filter.axis_names:
             raise ValueError(

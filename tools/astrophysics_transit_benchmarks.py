@@ -32,7 +32,7 @@ def main():
         "kind": "astrophysics-transit-benchmark",
         "device": str(jax.devices()[0]),
         "dtype": str(flux.dtype),
-        "cadences": int(separation.size),
+        "cadences": separation.size,
         "compile_seconds": compile_seconds,
         "warm_seconds": warm_seconds,
         "gradient_compile_seconds": gradient_compile,

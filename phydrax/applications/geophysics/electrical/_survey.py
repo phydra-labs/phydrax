@@ -90,9 +90,9 @@ class ElectricalSurvey(StrictModule, NonTrainableState):
         if np.iscomplexobj(currents) or np.iscomplexobj(receiver_weights):
             raise TypeError("DC currents and receiver weights must be real.")
         current = np.asarray(
-            convert_value(currents, source=current_unit, target=AMPERE), dtype=float
+            convert_value(currents, source=current_unit, target=AMPERE), dtype=np.float64
         )
-        receivers = np.asarray(receiver_weights, dtype=float)
+        receivers = np.asarray(receiver_weights, dtype=np.float64)
         sources = np.asarray(source_indices)
         electrode_count = len(patches_)
         if (
@@ -125,7 +125,7 @@ class ElectricalSurvey(StrictModule, NonTrainableState):
             if np.any(~np.isfinite(values)) or np.any(magnitude == 0):
                 raise ValueError(f"Every {label} pattern must be finite and nonzero.")
             # Relative to the actual pattern, never to an arbitrary unit current.
-            tolerance = 64.0 * np.finfo(float).eps * magnitude
+            tolerance = 64.0 * np.finfo(np.float64).eps * magnitude
             if np.any(np.abs(np.sum(values, axis=1)) > tolerance):
                 raise ValueError(f"Every {label} pattern must be balanced (sum to zero).")
         self.patches = patches_

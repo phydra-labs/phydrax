@@ -83,7 +83,7 @@ class CliffordMetricField(StrictModule):
         if not callable(metric):
             raise TypeError("metric must be callable.")
         dimension_ = int(dimension)
-        signature_ = tuple(int(value) for value in signature)
+        signature_ = tuple(signature)
         if (
             dimension_ < 1
             or dimension_ > 6
@@ -190,7 +190,7 @@ class CliffordInverseResult(StrictModule):
         self.value = jnp.asarray(value)
         self.left_residual = jnp.asarray(left_residual)
         self.right_residual = jnp.asarray(right_residual)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 def invert_multivector(
@@ -273,7 +273,7 @@ class PinElement(StrictModule):
             raise ValueError("Pin membership requires one unbatched metric evaluation.")
         grades = tuple(bitmap.bit_count() for bitmap in range(product.blade_count))
         forbidden_parity = jnp.asarray(
-            tuple(grade % 2 != parity_ for grade in grades), dtype=bool
+            tuple(grade % 2 != parity_ for grade in grades), dtype=jnp.bool_
         )
         parity_residual = jnp.max(jnp.where(forbidden_parity, jnp.abs(value_), 0.0))
 
@@ -311,7 +311,7 @@ class PinElement(StrictModule):
             )
         )(vector_basis)
         vector_mask = (
-            jnp.zeros((product.blade_count,), dtype=bool)
+            jnp.zeros((product.blade_count,), dtype=jnp.bool_)
             .at[jnp.asarray(vector_indices)]
             .set(True)
         )

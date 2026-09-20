@@ -2,7 +2,7 @@
 
 The cardiovascular anatomy layer turns a fixed affine tetrahedral mesh into audited boundary semantics, harmonic profile coordinates, ventricular material frames, and differentiable chamber volumes. It keeps topology preparation outside differentiated kernels and carries stable identities and numerical evidence into mechanics and electrophysiology.
 
-The geometry kernel uses millimetres. Harmonic coordinates are dimensionless. Angles passed to the ventricular microstructure plan are degrees and committed angle fields are radians.
+The geometry kernel uses millimeters. Harmonic coordinates are dimensionless. Angles passed to the ventricular microstructure plan are degrees and committed angle fields are radians.
 
 ## Boundary roles are semantic, not numeric
 
@@ -123,7 +123,7 @@ coordinates = candidate_coordinates.commit()
 The committed fixed-shape record contains:
 
 - `nodal_values[coordinate, node]`;
-- exact affine cell-centre `cell_values[coordinate, cell]`;
+- exact affine cell-center `cell_values[coordinate, cell]`;
 - exact affine `cell_gradients[coordinate, cell, xyz]`;
 - strong Dirichlet masks; and
 - solver status, free residual, boundary error, maximum-principle violation, finite flags, and success flags.

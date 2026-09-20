@@ -152,7 +152,7 @@ class NestedSamplingResult(StrictModule):
         self.diagnostics = diagnostics
         self.root_key = jnp.asarray(root_key)
         self.status = jnp.asarray(status, dtype=jnp.int32)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.num_live = int(num_live)
         self.num_dead = int(num_dead)
         self.num_likelihood_evaluations = int(num_likelihood_evaluations)
@@ -170,7 +170,7 @@ class NestedSamplingResult(StrictModule):
 
     @property
     def num_samples(self) -> int:
-        return int(self.log_likelihood.shape[0])
+        return self.log_likelihood.shape[0]
 
     def resample_posterior(
         self,
@@ -319,7 +319,7 @@ def sample_nested(
 
 
 def _tree_nbytes(tree: PyTree[Any], /) -> int:
-    return sum(int(jnp.asarray(leaf).nbytes) for leaf in jax.tree_util.tree_leaves(tree))
+    return sum(jnp.asarray(leaf).nbytes for leaf in jax.tree_util.tree_leaves(tree))
 
 
 __all__ = [

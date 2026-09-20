@@ -123,8 +123,7 @@ class TensorNetworkPrecisionPolicy(StrictModule, NonTrainableState):
             for value in reduction_inputs
         ):
             raise ValueError(
-                "Tensor-network accumulation cannot be narrower than contraction "
-                "or factorization precision."
+                "Tensor-network accumulation cannot be narrower than contraction or factorization precision."
             )
         if (
             decision is not None
@@ -172,8 +171,7 @@ class TensorNetworkPrecisionPolicy(StrictModule, NonTrainableState):
         observed = _tree_dtype(value, "Tensor-network storage")
         if self.storage_dtype is not None and observed != self.storage_dtype:
             raise TypeError(
-                f"Tensor-network storage dtype {observed} does not match "
-                f"{self.storage_dtype}."
+                f"Tensor-network storage dtype {observed} does not match {self.storage_dtype}."
             )
         return observed
 

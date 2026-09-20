@@ -24,7 +24,7 @@ def _safe_ratio(numerator: Array, denominator: Array, /) -> Array:
 
 def _masked_mean(values: Array, valid: Array, /) -> Array:
     values_ = jnp.asarray(values)
-    base_valid = jnp.asarray(valid, dtype=bool)
+    base_valid = jnp.asarray(valid, dtype=jnp.bool_)
     valid_ = base_valid
     while valid_.ndim < values_.ndim:
         valid_ = valid_[..., None]
@@ -67,7 +67,7 @@ class QualificationEvidence(StrictModule, NonTrainableState):
         self.metric = metric_
         self.value = value_
         self.support = support_
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.status = status_
         self.evidence_id = canonical_fingerprint(
             {
@@ -117,7 +117,7 @@ class PIVQualificationResult(StrictModule, NonTrainableState):
         self.p95_endpoint_error = jnp.asarray(p95_endpoint_error).reshape(())
         self.coverage = jnp.asarray(coverage).reshape(())
         self.valid_count = jnp.asarray(valid_count, dtype=jnp.int32).reshape(())
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.evidence = evidence_
         self.result_id = canonical_fingerprint(
             {
@@ -269,7 +269,7 @@ class PTVQualificationResult(StrictModule, NonTrainableState):
         self.track_identity_accuracy = jnp.asarray(track_identity_accuracy).reshape(())
         self.track_completeness = jnp.asarray(track_completeness).reshape(())
         self.matched_count = jnp.asarray(matched_count, dtype=jnp.int32).reshape(())
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.evidence = evidence_
         self.result_id = canonical_fingerprint(
             {
@@ -299,10 +299,10 @@ def qualify_ptv(
     must be unique within each frame so detection evidence cannot be double counted.
     """
     reconstructed = jnp.asarray(reconstructed_xyz)
-    reconstructed_mask = jnp.asarray(reconstructed_valid, dtype=bool)
+    reconstructed_mask = jnp.asarray(reconstructed_valid, dtype=jnp.bool_)
     matched = jnp.asarray(matched_truth_indices, dtype=jnp.int32)
     truth = jnp.asarray(truth_xyz)
-    truth_mask = jnp.asarray(truth_valid, dtype=bool)
+    truth_mask = jnp.asarray(truth_valid, dtype=jnp.bool_)
     if reconstructed.ndim != 3 or reconstructed.shape[-1] != 3:
         raise ValueError("reconstructed_xyz must have shape (frames, capacity, 3).")
     if truth.ndim != 3 or truth.shape[-1] != 3:
@@ -323,7 +323,7 @@ def qualify_ptv(
         raise ValueError("matched_truth_indices contain an out-of-range truth slot.")
     for frame in range(reconstructed.shape[0]):
         assigned = matched[frame][reconstructed_mask[frame] & (matched[frame] >= 0)]
-        if int(jnp.unique(assigned).size) != int(assigned.size):
+        if jnp.unique(assigned).size != assigned.size:
             raise ValueError("Truth matches must be unique within each frame.")
 
     clipped = jnp.clip(matched, 0, max(0, truth_capacity - 1))
@@ -354,7 +354,8 @@ def qualify_ptv(
     triangulation_coverage = recall
 
     matched_one_hot = (
-        jax.nn.one_hot(clipped, truth_capacity, dtype=bool) & true_positive[..., None]
+        jax.nn.one_hot(clipped, truth_capacity, dtype=jnp.bool_)
+        & true_positive[..., None]
     )
     truth_detected = jnp.any(matched_one_hot, axis=1)
     active_per_track = jnp.sum(truth_mask, axis=0)
@@ -504,7 +505,7 @@ class STBQualificationResult(StrictModule, NonTrainableState):
         self.explained_energy = jnp.asarray(explained_energy).reshape(())
         self.coverage = jnp.asarray(coverage).reshape(())
         self.valid_count = jnp.asarray(valid_count, dtype=jnp.int32).reshape(())
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.evidence = evidence_
         self.result_id = canonical_fingerprint(
             {
@@ -531,9 +532,9 @@ def qualify_stb(
             "STB reconstructed and observed image stacks must share a shape."
         )
     if valid_mask is None:
-        requested_valid = jnp.ones(observed.shape, dtype=bool)
+        requested_valid = jnp.ones(observed.shape, dtype=jnp.bool_)
     else:
-        requested_valid = jnp.asarray(valid_mask, dtype=bool)
+        requested_valid = jnp.asarray(valid_mask, dtype=jnp.bool_)
         if requested_valid.shape != observed.shape:
             raise ValueError("valid_mask must exactly match the STB image stack shape.")
     finite_pixels = jnp.isfinite(reconstructed) & jnp.isfinite(observed)

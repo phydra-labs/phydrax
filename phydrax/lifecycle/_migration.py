@@ -477,16 +477,14 @@ class CompatibilityRegistry(StrictModule, NonTrainableState):
                     queue.append((edge.target_format_id, candidate))
         if not candidates:
             raise UnsupportedMigrationError(
-                f"Format {source!r} cannot migrate to current writer "
-                f"{self.current_writer_id!r}."
+                f"Format {source!r} cannot migrate to current writer {self.current_writer_id!r}."
             )
         shortest = tuple(
             candidate for candidate in candidates if len(candidate) == shortest_length
         )
         if len(shortest) != 1:
             raise AmbiguousMigrationError(
-                f"Format {source!r} has multiple shortest paths to current writer "
-                f"{self.current_writer_id!r}."
+                f"Format {source!r} has multiple shortest paths to current writer {self.current_writer_id!r}."
             )
         return shortest[0]
 

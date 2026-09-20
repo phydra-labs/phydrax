@@ -108,18 +108,16 @@ class SelectedEvaluationPlan(StrictModule, NonTrainableState):
         output = int(residual_output_size)
         provider = str(provider_id)
         workspace = 8 * (
-            int(entities.closure_dof_indices.size)
-            + int(entities.entity_indices.size)
-            + output
+            entities.closure_dof_indices.size + entities.entity_indices.size + output
         )
         if output <= 0 or not provider:
             raise ValueError(
                 "Selected residual output size and provider ID must be valid."
             )
         if not resource_policy.admit(
-            full_dimension=max(int(entities.closure_dof_indices.size), 1),
+            full_dimension=max(entities.closure_dof_indices.size, 1),
             reduced_dimension=max(output, 1),
-            samples=int(entities.entity_indices.size),
+            samples=entities.entity_indices.size,
             workspace_bytes=max(workspace, 1),
         ):
             raise ValueError("Selected evaluation exceeds the ROM resource policy.")

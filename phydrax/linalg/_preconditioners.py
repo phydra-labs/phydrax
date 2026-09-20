@@ -40,7 +40,7 @@ from ._spaces import (
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _validated(value: Array, invalid: Array, message: str, /) -> Array:
@@ -63,8 +63,7 @@ def _coerce_coefficients(
     )
     if result_dtype != space_dtype:
         raise TypeError(
-            f"{name} acting on {space_dtype} coordinates would produce "
-            f"{result_dtype} coordinates."
+            f"{name} acting on {space_dtype} coordinates would produce {result_dtype} coordinates."
         )
     return value.astype(space_dtype)
 
@@ -340,7 +339,7 @@ class BlockDiagonalPreconditioner(AbstractPreconditioner):
                 jnp.any(~jnp.isfinite(inverse)),
                 "Every preconditioner block must be nonsingular.",
             )
-            sizes.append(int(matrix.shape[0]))
+            sizes.append(matrix.shape[0])
             inverses.append(inverse)
         if sum(sizes) != space.size:
             raise ValueError("Block dimensions must partition the preconditioner space.")
@@ -413,7 +412,7 @@ class LocalBlockPreconditioner(AbstractPreconditioner):
         if (
             matrices.ndim != 3
             or matrices.shape[1] != matrices.shape[2]
-            or any(int(size) < 1 for size in matrices.shape)
+            or any(size < 1 for size in matrices.shape)
         ):
             raise ValueError("blocks must contain nonempty equal-sized square matrices.")
         num_blocks, block_size, _ = map(int, matrices.shape)
@@ -541,7 +540,7 @@ class IncompleteFactorizationPreconditioner(AbstractPreconditioner):
             or lower_.shape[0] != lower_.shape[1]
         ):
             raise ValueError("lower and upper must be equal-sized square matrices.")
-        size = int(lower_.shape[0])
+        size = lower_.shape[0]
         space_ = (
             ArraySpace((size,), dtype=jnp.result_type(lower_, upper_))
             if space is None
@@ -632,7 +631,7 @@ class LowRankWoodburyPreconditioner(AbstractPreconditioner):
         right_ = left_ if right is None else _inexact(right)
         if diagonal_.ndim != 1:
             raise ValueError("diagonal must be one-dimensional.")
-        size = int(diagonal_.size)
+        size = diagonal_.size
         if (
             left_.ndim != 2
             or right_.ndim != 2
@@ -642,7 +641,7 @@ class LowRankWoodburyPreconditioner(AbstractPreconditioner):
             raise ValueError(
                 "Low-rank factors must have leading dimension len(diagonal)."
             )
-        rank = int(left_.shape[1])
+        rank = left_.shape[1]
         if right_.shape[1] != rank or core_.shape != (rank, rank):
             raise ValueError("Low-rank factors and core dimensions must agree.")
         dtype = jnp.result_type(diagonal_, left_, right_, core_)

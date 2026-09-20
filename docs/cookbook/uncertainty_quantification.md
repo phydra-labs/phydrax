@@ -926,7 +926,7 @@ Matérn-5/2, the exact state-space path avoids dense observation-space storage:
 ```python
 sensor_time = jnp.linspace(0.0, 1.0, 16)
 forecast_time = jnp.linspace(-0.1, 1.1, 24)
-sensor_available = jnp.ones(sensor_time.shape, dtype=bool)
+sensor_available = jnp.ones(sensor_time.shape, dtype="bool")
 sensor_residual = 0.02 * jnp.sin(2.0 * jnp.pi * sensor_time)
 
 temporal_plan = phx.uq.compile_state_space_kernel(
@@ -1031,7 +1031,7 @@ observed point/channel rows and a PSD output covariance:
 
 ```python
 output_names = ("velocity", "pressure")
-observed_output_mask = jnp.ones((sensor_x.size, 2), dtype=bool)
+observed_output_mask = jnp.ones((sensor_x.size, 2), dtype="bool")
 observed_output_mask = observed_output_mask.at[::3, 1].set(False)
 vector_physical_mean = jnp.stack((4.0 * sensor_basis, -2.0 * sensor_basis), axis=1)
 vector_observations = vector_physical_mean + jnp.stack(

@@ -67,11 +67,11 @@ class MagneticSymmetryRepresentationPlan(StrictModule, NonTrainableState):
             raise TypeError("group must be FiniteMetricIsometryGroup.")
         if group.algebra.dimension != 3:
             raise ValueError("Magnetic symmetry initially requires a 3D point group.")
-        flags = np.asarray(antiunitary, dtype=bool)
+        flags = np.asarray(antiunitary, dtype=np.bool_)
         sites = np.asarray(site_permutations)
         routes = np.asarray(route_permutations)
         wraps = np.asarray(lattice_wraps)
-        representations = np.asarray(coefficient_representations, dtype=complex)
+        representations = np.asarray(coefficient_representations, dtype=np.complex128)
         order = group.order
         if flags.shape != (order,):
             raise ValueError("antiunitary must have one flag per group operation.")
@@ -85,7 +85,7 @@ class MagneticSymmetryRepresentationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "coefficient_representations must have shape (group, coeff, coeff)."
             )
-        coefficient_count = int(representations.shape[1])
+        coefficient_count = representations.shape[1]
         if coefficient_count < 1 or representations.shape[2] != coefficient_count:
             raise ValueError("Coefficient representations must be nonempty and square.")
         if np.any(~np.isfinite(representations)):
@@ -148,7 +148,7 @@ class MagneticSymmetryRepresentationPlan(StrictModule, NonTrainableState):
             wraps[identity] != 0
         ):
             raise ValueError("Magnetic identity must fix routes and lattice wraps.")
-        matrices = np.asarray(group.matrices, dtype=float)
+        matrices = np.asarray(group.matrices, dtype=np.float64)
         operations = []
         for index, matrix in enumerate(matrices):
             determinant = float(np.linalg.det(matrix))
@@ -273,9 +273,9 @@ def compile_magnetic_symmetry_constraints(
         if nearest <= plan.tolerance * scale:
             raise ValueError("Magnetic symmetry constraint rank is unresolved at cutoff.")
     nullity = 2 * count - rank
-    basis = np.asarray(vh.conj().T[:, rank:], dtype=float)
+    basis = np.asarray(vh.conj().T[:, rank:], dtype=np.float64)
     subspace = LinearSubspace(
-        ArraySpace((2 * count,), dtype=float),
+        ArraySpace((2 * count,), dtype=jnp.float64),
         jnp.asarray(basis),
         dimension=nullity,
         orthonormal=True,

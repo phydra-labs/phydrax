@@ -39,8 +39,7 @@ def minimize(
     if isinstance(problem_or_objective, MinimizationProblem):
         if bounds is not None or constraints:
             raise ValueError(
-                "bounds and constraints must be declared on an existing "
-                "MinimizationProblem, not passed twice."
+                "bounds and constraints must be declared on an existing MinimizationProblem, not passed twice."
             )
         problem = problem_or_objective
     else:

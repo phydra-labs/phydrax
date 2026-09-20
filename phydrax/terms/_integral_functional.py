@@ -66,8 +66,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         if isinstance(source, AdaptiveIntegration):
             if not isinstance(source.policy, AdaptiveSignedEstimator):
                 raise TypeError(
-                    "IntegralFunctional AdaptiveIntegration requires an "
-                    "AdaptiveSignedEstimator policy."
+                    "IntegralFunctional AdaptiveIntegration requires an AdaptiveSignedEstimator policy."
                 )
         nonfinite_policy = str(nonfinite_integrand).lower()
         if nonfinite_policy not in ("raise", "propagate"):
@@ -129,8 +128,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         integrand = value if isinstance(value, DomainFunction) else value(functions)
         if not isinstance(integrand, DomainFunction):
             raise TypeError(
-                "IntegralFunctional integrand must produce a DomainFunction; "
-                f"got {type(integrand).__name__}."
+                f"IntegralFunctional integrand must produce a DomainFunction; got {type(integrand).__name__}."
             )
         return integrand
 
@@ -145,13 +143,12 @@ class IntegralFunctional(AbstractSamplingTerm):
     ) -> Array:
         """Execute and return the raw signed scalar integral."""
         if self.weight == 0.0:
-            return jnp.zeros((), dtype=float)
+            return jnp.zeros((), dtype=jnp.float64)
         realization = batch
         if realization is None:
             if isinstance(self.source, CallerIntegration):
                 raise ValueError(
-                    "Caller-managed IntegralFunctional requires "
-                    "batch=IntegrationRealization."
+                    "Caller-managed IntegralFunctional requires batch=IntegrationRealization."
                 )
             realization = self.sample(key=key)
         elif isinstance(self.source, CallerIntegration):
@@ -165,8 +162,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         estimate = reduce(self._integrand_function(functions), realization, **kwargs)
         if estimate.value.dims != ():
             raise ValueError(
-                "IntegralFunctional must reduce to a scalar Field, "
-                f"got dims={estimate.value.dims}."
+                f"IntegralFunctional must reduce to a scalar Field, got dims={estimate.value.dims}."
             )
         value = jnp.asarray(estimate.value.data).reshape(())
         if jnp.iscomplexobj(value):

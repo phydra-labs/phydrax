@@ -9,15 +9,15 @@ import pytest
 import phydrax as phx
 from phydrax._sampling import (
     derive_key,
-    get_sampler,
-    get_sampler_host,
+    host_design_factory,
+    materialize_design,
     SampleAddress,
 )
 
 
 def test_hammersley_sampler_is_deterministic_and_bounded():
-    sample = get_sampler_host("hammersley", dim=3, seed=0)(16)
-    repeat = get_sampler_host("hammersley", dim=3, seed=123)(16)
+    sample = host_design_factory("hammersley", dimension=3, seed=0)(16)
+    repeat = host_design_factory("hammersley", dimension=3, seed=123)(16)
     assert sample.shape == (16, 3)
     assert np.all(sample >= 0.0)
     assert np.all(sample <= 1.0)
@@ -26,7 +26,7 @@ def test_hammersley_sampler_is_deterministic_and_bounded():
 
 
 def test_hammersley_first_axis_is_stratified():
-    sample = get_sampler_host("hammersley", dim=2, seed=0)(8)
+    sample = host_design_factory("hammersley", dimension=2, seed=0)(8)
     expected = (np.arange(1, 9) - 0.5) / 8.0
     assert np.allclose(sample[:, 0], expected)
 
@@ -52,18 +52,18 @@ def test_halton_and_sobol_plain_and_scrambled_sequences_are_distinct():
     }
 
     for name, expected in references.items():
-        plain = get_sampler_host(name, dim=2, seed=1)(4)
-        plain_other_seed = get_sampler_host(name, dim=2, seed=999)(4)
+        plain = host_design_factory(name, dimension=2, seed=1)(4)
+        plain_other_seed = host_design_factory(name, dimension=2, seed=999)(4)
         scrambled_name = f"{name}_scrambled"
-        scrambled = get_sampler_host(scrambled_name, dim=2, seed=7)(4)
-        scrambled_repeat = get_sampler_host(
+        scrambled = host_design_factory(scrambled_name, dimension=2, seed=7)(4)
+        scrambled_repeat = host_design_factory(
             scrambled_name,
-            dim=2,
+            dimension=2,
             seed=7,
         )(4)
-        scrambled_other_seed = get_sampler_host(
+        scrambled_other_seed = host_design_factory(
             scrambled_name,
-            dim=2,
+            dimension=2,
             seed=8,
         )(4)
 
@@ -77,15 +77,39 @@ def test_halton_and_sobol_plain_and_scrambled_sequences_are_distinct():
         assert not np.array_equal(plain, scrambled)
 
 
-def test_qmc_callback_wrappers_preserve_scrambling_semantics():
+def test_qmc_materializer_preserves_scrambling_semantics():
     for name in ("halton", "sobol"):
-        plain = get_sampler(name)
-        plain_first = np.asarray(plain(8, 3, jr.key(1)))
-        plain_second = np.asarray(plain(8, 3, jr.key(2)))
-        scrambled = get_sampler(f"{name}_scrambled")
-        scrambled_first = np.asarray(scrambled(8, 3, jr.key(3)))
-        scrambled_repeat = np.asarray(scrambled(8, 3, jr.key(3)))
-        scrambled_second = np.asarray(scrambled(8, 3, jr.key(4)))
+        plain_first = np.asarray(
+            materialize_design(name, count=8, dimension=3, key=jr.key(1))
+        )
+        plain_second = np.asarray(
+            materialize_design(name, count=8, dimension=3, key=jr.key(2))
+        )
+        scrambled_name = f"{name}_scrambled"
+        scrambled_first = np.asarray(
+            materialize_design(
+                scrambled_name,
+                count=8,
+                dimension=3,
+                key=jr.key(3),
+            )
+        )
+        scrambled_repeat = np.asarray(
+            materialize_design(
+                scrambled_name,
+                count=8,
+                dimension=3,
+                key=jr.key(3),
+            )
+        )
+        scrambled_second = np.asarray(
+            materialize_design(
+                scrambled_name,
+                count=8,
+                dimension=3,
+                key=jr.key(4),
+            )
+        )
 
         assert np.array_equal(plain_first, plain_second)
         assert np.array_equal(scrambled_first, scrambled_repeat)
@@ -125,7 +149,7 @@ def test_typed_design_capabilities_and_random_access():
         phx.sampling.LatinHypercubeDesign()
     ).factorwise_composable
     assert np.array_equal(suffix, full[3:])
-    assert phx.sampling.design_signature(design) == "sobol:v1"
+    assert phx.sampling.design_signature(design) == "sobol"
     assert empty.shape == (0, 3)
 
     with pytest.raises(ValueError, match="start index"):
@@ -158,10 +182,9 @@ def test_semantic_sample_addresses_are_stable_and_distinct():
         target=("x", "p"),
         role="sobol_scrambled",
     )
-    next_version = SampleAddress(
+    other_operation = SampleAddress(
         "domain",
-        "paired-block",
-        algorithm_version=2,
+        "paired-block-transformed",
         target=("x", "t"),
         role="sobol_scrambled",
     )
@@ -180,5 +203,5 @@ def test_semantic_sample_addresses_are_stable_and_distinct():
     )
     assert not np.array_equal(
         jr.key_data(derive_key(root, address, 3)),
-        jr.key_data(derive_key(root, next_version, 3)),
+        jr.key_data(derive_key(root, other_operation, 3)),
     )

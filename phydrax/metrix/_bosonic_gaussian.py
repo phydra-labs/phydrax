@@ -14,7 +14,7 @@ from .._strict import StrictModule
 from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
 
 
-def canonical_commutation_matrix(mode_count: int, /, *, dtype=float) -> Array:
+def canonical_commutation_matrix(mode_count: int, /, *, dtype=jnp.float64) -> Array:
     modes = int(mode_count)
     if modes < 1:
         raise ValueError("mode_count must be positive.")

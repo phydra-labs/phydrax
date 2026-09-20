@@ -106,16 +106,14 @@ class ChartTransition(StrictModule):
         )
         if result.shape[-1:] != (self.target.dimension,):
             raise ValueError(
-                "Chart transition output must have trailing dimension "
-                f"{self.target.dimension}; got {result.shape}."
+                f"Chart transition output must have trailing dimension {self.target.dimension}; got {result.shape}."
             )
         return result
 
     def inverse(self, coordinates: ArrayLike, /) -> Array:
         if self.inverse_function is None:
             raise ValueError(
-                f"Chart transition {self.source.name!r} -> {self.target.name!r} "
-                "does not provide an inverse."
+                f"Chart transition {self.source.name!r} -> {self.target.name!r} does not provide an inverse."
             )
         result = _pointwise_array(
             self.inverse_function,
@@ -143,8 +141,7 @@ class ChartTransition(StrictModule):
     def inverse_jacobian(self, coordinates: ArrayLike, /) -> Array:
         if self.inverse_function is None:
             raise ValueError(
-                f"Chart transition {self.source.name!r} -> {self.target.name!r} "
-                "does not provide an inverse."
+                f"Chart transition {self.source.name!r} -> {self.target.name!r} does not provide an inverse."
             )
         result = _pointwise_jacfwd(
             self.inverse_function,

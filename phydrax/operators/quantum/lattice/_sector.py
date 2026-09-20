@@ -102,7 +102,7 @@ class _FixedChargeCoordinateBasis(AbstractSectorBasis):
         if not isinstance(resources, SectorBasisResourcePolicy):
             raise TypeError("resources must be SectorBasisResourcePolicy.")
         sites = tuple(str(value) for value in site_ids)
-        charges = tuple(tuple(int(item) for item in values) for values in state_charges)
+        charges = tuple(tuple(values) for values in state_charges)
         charge_label = str(quantum_number_label)
         target = int(quantum_number)
         if (
@@ -127,8 +127,7 @@ class _FixedChargeCoordinateBasis(AbstractSectorBasis):
             raise ValueError("The requested fixed-charge sector is empty.")
         if dimension > resources.maximum_dimension:
             raise ValueError(
-                f"Sector dimension {dimension} exceeds admitted maximum_dimension "
-                f"{resources.maximum_dimension}."
+                f"Sector dimension {dimension} exceeds admitted maximum_dimension {resources.maximum_dimension}."
             )
         if dimension >= np.iinfo(np.int32).max:
             raise OverflowError(
@@ -145,9 +144,9 @@ class _FixedChargeCoordinateBasis(AbstractSectorBasis):
             )
         self.state_charges = jnp.asarray(padded)
         self.suffix_counts = jnp.asarray(table_host, dtype=jnp.int64)
-        self.maximum_local_dimension = int(padded.shape[1])
+        self.maximum_local_dimension = padded.shape[1]
         self.charge_minimum = -offset
-        self.charge_maximum = int(table_host.shape[1] - offset - 1)
+        self.charge_maximum = table_host.shape[1] - offset - 1
         self.site_ids = sites
         self.site_dimensions = tuple(len(values) for values in charges)
         self.quantum_number_label = charge_label
@@ -322,7 +321,7 @@ class FixedSpinProjectionBasis(_FixedChargeCoordinateBasis):
         *,
         resources: SectorBasisResourcePolicy,
     ):
-        spins = tuple(int(value) for value in twice_spins)
+        spins = tuple(twice_spins)
         if not spins or any(value < 1 for value in spins):
             raise ValueError("twice_spins must contain positive integers.")
         projection = int(twice_projection)
@@ -354,7 +353,7 @@ class FixedBosonNumberBasis(_FixedChargeCoordinateBasis):
         *,
         resources: SectorBasisResourcePolicy,
     ):
-        bounds = tuple(int(value) for value in cutoffs)
+        bounds = tuple(cutoffs)
         if not bounds or any(value < 2 for value in bounds):
             raise ValueError("Boson cutoffs must retain at least states zero and one.")
         number = int(boson_number)

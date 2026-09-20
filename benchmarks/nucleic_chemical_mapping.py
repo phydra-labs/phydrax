@@ -125,7 +125,7 @@ def main():
         "license": source.license_id,
         "training_constructs": args.training_constructs,
         "withheld_constructs": len(withheld.observations),
-        "withheld_measurements": int(residual.size),
+        "withheld_measurements": residual.size,
         "negative_reactivities_preserved": sum(
             int(jnp.sum(entry.observation.reactivity < 0)) for entry in imported.entries
         ),

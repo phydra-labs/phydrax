@@ -32,16 +32,16 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _host_vector(value: ArrayLike, shape: tuple[int, ...], name: str, /) -> np.ndarray:
-    result = np.asarray(jax.device_get(jnp.asarray(value, dtype=float)))
+    result = np.asarray(jax.device_get(jnp.asarray(value, dtype=jnp.float64)))
     if result.shape == ():
         result = np.broadcast_to(result, shape)
     if result.shape != shape or not np.all(np.isfinite(result)):
         raise ValueError(f"{name} must be finite and have shape {shape}.")
-    return np.asarray(result, dtype=float)
+    return np.asarray(result, dtype=np.float64)
 
 
 def _host_recovery(value: ArrayLike, name: str, /) -> float:
-    result = np.asarray(jax.device_get(jnp.asarray(value, dtype=float)))
+    result = np.asarray(jax.device_get(jnp.asarray(value, dtype=jnp.float64)))
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     scalar = float(result)
@@ -58,7 +58,7 @@ def _independent_profile_id(profile: ExposureProfile, /) -> str:
             "value_state_id": profile.value_state_id,
             "weighting_id": profile.weighting_id,
             "wrong_way_link_id": profile.wrong_way_link_id,
-            "time_count": int(profile.times.shape[0]),
+            "time_count": profile.times.shape[0],
         }
     )
 
@@ -179,7 +179,7 @@ def replay_xva(
             np.sum(replay_buckets[3] * widths),
             np.sum(replay_buckets[4] * widths),
         ),
-        dtype=float,
+        dtype=np.float64,
     )
     recorded_buckets = (
         np.asarray(jax.device_get(result.cva.bucket_contributions)),
@@ -197,14 +197,14 @@ def replay_xva(
             float(np.asarray(jax.device_get(component.adjustment)))
             for component in (result.cva, result.dva, result.fva, result.mva, result.kva)
         ),
-        dtype=float,
+        dtype=np.float64,
     )
     bucket_errors = np.asarray(
         [
             np.max(np.abs(left - right))
             for left, right in zip(recorded_buckets, replay_buckets, strict=True)
         ],
-        dtype=float,
+        dtype=np.float64,
     )
     component_matches = np.isclose(recorded, replayed, rtol=rtol, atol=atol)
     bucket_matches = np.asarray(
@@ -212,7 +212,7 @@ def replay_xva(
             np.allclose(left, right, rtol=rtol, atol=atol)
             for left, right in zip(recorded_buckets, replay_buckets, strict=True)
         ],
-        dtype=bool,
+        dtype=np.bool_,
     )
     component_matches &= bucket_matches
     recorded_total = float(np.asarray(jax.device_get(result.total_adjustment)))

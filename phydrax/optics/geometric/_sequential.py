@@ -83,12 +83,12 @@ class _SurfaceIntersection(StrictModule):
 def _host_real_vector(values: ArrayLike, size: int, name: str, /) -> np.ndarray:
     raw = np.asarray(values)
     if (
-        raw.dtype == np.dtype(bool)
+        raw.dtype == np.dtype(np.bool_)
         or not np.issubdtype(raw.dtype, np.number)
         or np.issubdtype(raw.dtype, np.complexfloating)
     ):
         raise TypeError(f"{name} must be real numeric data.")
-    result = raw.astype(float)
+    result = raw.astype("float64")
     if result.shape != (size,) or np.any(~np.isfinite(result)):
         raise ValueError(f"{name} must be a finite real array with shape ({size},).")
     return result
@@ -751,14 +751,14 @@ class SequentialOpticsPlan(StrictModule, NonTrainableState):
         conic = _host_real_vector(conic_constants, surface_count, "conic_constants")
         coefficient_values = np.asarray(even_asphere_coefficients)
         if (
-            coefficient_values.dtype == np.dtype(bool)
+            coefficient_values.dtype == np.dtype(np.bool_)
             or not np.issubdtype(coefficient_values.dtype, np.number)
             or np.issubdtype(coefficient_values.dtype, np.complexfloating)
         ):
             raise TypeError("even_asphere_coefficients must be real numeric data.")
-        coefficients = coefficient_values.astype(float)
+        coefficients = coefficient_values.astype("float64")
         active_coefficients = np.asarray(coefficient_active)
-        if active_coefficients.dtype != np.dtype(bool):
+        if active_coefficients.dtype != np.dtype(np.bool_):
             raise TypeError("coefficient_active must contain booleans.")
         if coefficients.ndim != 2 or coefficients.shape[0] != surface_count:
             raise ValueError(
@@ -772,7 +772,7 @@ class SequentialOpticsPlan(StrictModule, NonTrainableState):
             clear_semi_diameters, surface_count, "clear_semi_diameters"
         )
         active_aperture = np.asarray(aperture_active)
-        if active_aperture.dtype != np.dtype(bool):
+        if active_aperture.dtype != np.dtype(np.bool_):
             raise TypeError("aperture_active must contain booleans.")
         if active_aperture.shape != (surface_count,):
             raise ValueError(f"aperture_active must have shape ({surface_count},).")
@@ -1034,8 +1034,8 @@ class PreparedSequentialOptics(StrictModule, NonTrainableState):
         if (
             jnp.issubdtype(origin_input.dtype, jnp.complexfloating)
             or jnp.issubdtype(direction_input.dtype, jnp.complexfloating)
-            or origin_input.dtype == jnp.dtype(bool)
-            or direction_input.dtype == jnp.dtype(bool)
+            or origin_input.dtype == jnp.dtype(jnp.bool_)
+            or direction_input.dtype == jnp.dtype(jnp.bool_)
         ):
             raise TypeError("Sequential geometric rays must be real numeric arrays.")
         dtype = jnp.result_type(origin_input.dtype, direction_input.dtype, 0.0)

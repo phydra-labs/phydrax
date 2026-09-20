@@ -58,10 +58,9 @@ class _StaticMaskProjection(StrictModule):
         predicted = jnp.asarray(predicted, dtype=self.dtype)
         if predicted.shape != self.observation_shape:
             raise ValueError(
-                "Skeletal observation prediction has shape "
-                f"{predicted.shape}; expected {self.observation_shape}."
+                f"Skeletal observation prediction has shape {predicted.shape}; expected {self.observation_shape}."
             )
-        mask = jnp.asarray(self.valid_mask, dtype=bool).reshape(
+        mask = jnp.asarray(self.valid_mask, dtype=jnp.bool_).reshape(
             self.observation_shape
         )
         sanitized = jnp.where(
@@ -141,13 +140,13 @@ class SkeletalObservationChannel(StrictModule, NonTrainableState):
         if jnp.issubdtype(data.dtype, jnp.complexfloating):
             raise TypeError("Observation values must be real.")
         if not jnp.issubdtype(data.dtype, jnp.floating):
-            data = jnp.asarray(data, dtype=float)
+            data = jnp.asarray(data, dtype=jnp.float64)
 
         uncertainty_input = jnp.asarray(standard_uncertainty)
         if jnp.issubdtype(uncertainty_input.dtype, jnp.complexfloating):
             raise TypeError("Observation uncertainty must be real.")
         uncertainty = jnp.asarray(uncertainty_input, dtype=data.dtype)
-        mask = jnp.asarray(valid_mask, dtype=bool)
+        mask = jnp.asarray(valid_mask, dtype=jnp.bool_)
         if (
             data.ndim == 0
             or uncertainty.shape not in ((), data.shape)
@@ -177,9 +176,7 @@ class SkeletalObservationChannel(StrictModule, NonTrainableState):
             np.where(mask_host, uncertainty_host, 1.0),
             dtype=data.dtype,
         )
-        active_indices = tuple(
-            int(index) for index in np.flatnonzero(mask_host.reshape((-1,)))
-        )
+        active_indices = tuple(np.flatnonzero(mask_host.reshape((-1,))))
 
         self.channel_id, self.asset_id = identifiers
         self.quantity_id = quantity_spec.quantity_id
@@ -194,9 +191,7 @@ class SkeletalObservationChannel(StrictModule, NonTrainableState):
                 "quantity_id": quantity_spec.quantity_id,
                 "asset_id": identifiers[1],
                 "values": array_tree_fingerprint(sanitized_data),
-                "uncertainty": array_tree_fingerprint(
-                    sanitized_uncertainty
-                ),
+                "uncertainty": array_tree_fingerprint(sanitized_uncertainty),
                 "valid_mask": array_tree_fingerprint(mask),
             }
         )
@@ -260,19 +255,14 @@ class SkeletalMultimodalLikelihoodPlan(StrictModule, NonTrainableState):
         if not isinstance(predictions, Mapping):
             raise TypeError("predictions must be a channel-to-callable mapping.")
         missing = tuple(
-            channel_id
-            for channel_id in self.channel_ids
-            if channel_id not in predictions
+            channel_id for channel_id in self.channel_ids if channel_id not in predictions
         )
         unexpected = tuple(
-            channel_id
-            for channel_id in predictions
-            if channel_id not in self.channel_ids
+            channel_id for channel_id in predictions if channel_id not in self.channel_ids
         )
         if missing or unexpected:
             raise ValueError(
-                "predictions must contain exactly the planned channel IDs; "
-                f"missing={missing}, unexpected={unexpected}."
+                f"predictions must contain exactly the planned channel IDs; missing={missing}, unexpected={unexpected}."
             )
         functions = tuple(predictions[channel_id] for channel_id in self.channel_ids)
         if any(not callable(function) for function in functions):

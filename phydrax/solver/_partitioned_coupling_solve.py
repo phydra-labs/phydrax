@@ -360,7 +360,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
             saved_indices = tuple(range(0, count + 1, self.checkpoint_stride))
             if saved_indices[-1] != count:
                 saved_indices = (*saved_indices, count)
-            save_after_window = np.zeros((count,), dtype=bool)
+            save_after_window = np.zeros((count,), dtype=np.bool_)
             for endpoint in saved_indices[1:]:
                 save_after_window[endpoint - 1] = True
             save_mask = jnp.asarray(save_after_window)
@@ -386,7 +386,9 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                 )
                 for value in prepared.reference_state.exchange_values
             )
-            retained_valid = jnp.zeros((len(saved_indices),), dtype=bool).at[0].set(True)
+            retained_valid = (
+                jnp.zeros((len(saved_indices),), dtype=jnp.bool_).at[0].set(True)
+            )
 
             def checkpoint_step(carry, window_index):
                 base_carry, participants, exchanges, valid_buffer, cursor = carry

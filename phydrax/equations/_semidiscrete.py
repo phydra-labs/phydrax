@@ -62,7 +62,7 @@ def _value_fingerprint(value: Any | None, /) -> str:
         raise ValueError("Compiled PDE parameter values must be finite.")
     digest = hashlib.sha256()
     digest.update(str(array.dtype).encode("utf-8"))
-    digest.update(repr(tuple(int(size) for size in array.shape)).encode("utf-8"))
+    digest.update(repr(tuple(array.shape)).encode("utf-8"))
     digest.update(np.ascontiguousarray(array).tobytes())
     return digest.hexdigest()
 
@@ -136,7 +136,7 @@ class DiscreteStateLayout(StrictModule):
             shape = discretization.physical_shape
             base_space = discretization.physical_space
         else:
-            shape = tuple(int(size) for size in discretization.state_shape)
+            shape = tuple(discretization.state_shape)
             base_space = discretization.field_spaces[0]
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("Prepared spatial shape must contain positive dimensions.")
@@ -204,7 +204,7 @@ class DiscreteStateLayout(StrictModule):
         self.state_shape = state_shape
         self.squeezed = squeezed
         self.layout_id = _stable_id(
-            "discrete-state-layout-v3",
+            "discrete-state-layout",
             *(space.field_space_id for space in spaces),
             repr(shape),
         )
@@ -247,8 +247,7 @@ class DiscreteStateLayout(StrictModule):
     def pack(self, fields: Mapping[str, ArrayLike], /) -> Array:
         if set(fields) != set(self.field_names):
             raise ValueError(
-                "Packed field keys must exactly match "
-                f"{self.field_names}; got {tuple(fields)}."
+                f"Packed field keys must exactly match {self.field_names}; got {tuple(fields)}."
             )
         values: list[Array] = []
         for index, (name, count) in enumerate(
@@ -396,8 +395,7 @@ class _SemidiscreteEvaluator(StrictModule):
             )
             if array.shape not in allowed:
                 raise ValueError(
-                    f"PDE parameter {name!r} must end in {components} components; "
-                    f"got {array.shape}."
+                    f"PDE parameter {name!r} must end in {components} components; got {array.shape}."
                 )
         return array
 
@@ -438,8 +436,7 @@ class _SemidiscreteEvaluator(StrictModule):
                 expected = self.layout.field_shape(name)
                 if tuple(value.shape) != expected:
                     raise ValueError(
-                        f"Boundary lift {lift.lift_id!r} must have shape "
-                        f"{expected}; got {value.shape}."
+                        f"Boundary lift {lift.lift_id!r} must have shape {expected}; got {value.shape}."
                     )
                 return value
         return None
@@ -929,8 +926,7 @@ class _SemidiscreteEvaluator(StrictModule):
             field_name = _temporal_field(node, self.time_coordinate)
             if field_name is None:
                 raise ValueError(
-                    "Semidiscrete DAE residuals support only direct first temporal "
-                    "derivatives of fields."
+                    "Semidiscrete DAE residuals support only direct first temporal derivatives of fields."
                 )
             if rate_fields is None:
                 raise ValueError(
@@ -1218,8 +1214,7 @@ class _SemidiscreteEvaluator(StrictModule):
         if compatible:
             return jnp.broadcast_to(result, expected)
         raise ValueError(
-            f"Semidiscrete value for field {name!r} must have shape {expected}; "
-            f"got {result.shape}."
+            f"Semidiscrete value for field {name!r} must have shape {expected}; got {result.shape}."
         )
 
     def physical_state(self, time: ArrayLike, state: ArrayLike, args: Any, /) -> Array:
@@ -1227,8 +1222,7 @@ class _SemidiscreteEvaluator(StrictModule):
         value = jnp.asarray(state)
         if tuple(value.shape) != self.layout.state_shape:
             raise ValueError(
-                f"Semidiscrete state must have shape {self.layout.state_shape}; "
-                f"got {value.shape}."
+                f"Semidiscrete state must have shape {self.layout.state_shape}; got {value.shape}."
             )
         return self.layout.pack(self._physical_fields(time_array, value, args))
 
@@ -1243,8 +1237,7 @@ class _SemidiscreteEvaluator(StrictModule):
         value = jnp.asarray(state_rate)
         if tuple(value.shape) != self.layout.state_shape:
             raise ValueError(
-                f"Semidiscrete state rate must have shape {self.layout.state_shape}; "
-                f"got {value.shape}."
+                f"Semidiscrete state rate must have shape {self.layout.state_shape}; got {value.shape}."
             )
         fields = self.layout.unpack(value)
         for lift in self.boundary_lifts:
@@ -1252,8 +1245,7 @@ class _SemidiscreteEvaluator(StrictModule):
             expected = self.layout.field_shape(lift.field_name)
             if tuple(derivative.shape) != expected:
                 raise ValueError(
-                    f"Boundary lift derivative {lift.lift_id!r} has shape "
-                    f"{derivative.shape}; expected {expected}."
+                    f"Boundary lift derivative {lift.lift_id!r} has shape {derivative.shape}; expected {expected}."
                 )
             fields[lift.field_name] = fields[lift.field_name] + derivative
         return self.layout.pack(fields)
@@ -1271,13 +1263,11 @@ class _SemidiscreteEvaluator(StrictModule):
         rate = jnp.asarray(state_rate)
         if tuple(value.shape) != self.layout.state_shape:
             raise ValueError(
-                f"Semidiscrete state must have shape {self.layout.state_shape}; "
-                f"got {value.shape}."
+                f"Semidiscrete state must have shape {self.layout.state_shape}; got {value.shape}."
             )
         if tuple(rate.shape) != self.layout.state_shape:
             raise ValueError(
-                f"Semidiscrete state rate must have shape {self.layout.state_shape}; "
-                f"got {rate.shape}."
+                f"Semidiscrete state rate must have shape {self.layout.state_shape}; got {rate.shape}."
             )
         fields = self._physical_fields(time_array, value, args)
         rate_fields = self.layout.unpack(self.physical_state_rate(time_array, rate, args))
@@ -1304,8 +1294,7 @@ class _SemidiscreteEvaluator(StrictModule):
         value = jnp.asarray(state)
         if tuple(value.shape) != self.layout.state_shape:
             raise ValueError(
-                f"Semidiscrete state must have shape {self.layout.state_shape}; "
-                f"got {value.shape}."
+                f"Semidiscrete state must have shape {self.layout.state_shape}; got {value.shape}."
             )
         fields = self._physical_fields(time, value, args)
         derivatives: dict[str, Array] = {}
@@ -1453,7 +1442,7 @@ class SemidiscreteDAEStructuralReport(StrictModule):
         )
         variables = tuple(variable_roles)
         residual_roles = tuple(equation_roles)
-        counts = tuple(int(count) for count in temporal_derivative_counts)
+        counts = tuple(temporal_derivative_counts)
         if not fields or not variables:
             raise ValueError("Semidiscrete DAE structural evidence must not be empty.")
         if not (
@@ -1470,7 +1459,7 @@ class SemidiscreteDAEStructuralReport(StrictModule):
         self.regularity_verified = False
         self.index_assumption = "regular-index-1-required-unverified"
         self.report_id = _stable_id(
-            "semidiscrete-dae-structure-v2",
+            "semidiscrete-dae-structure",
             repr((fields, equations, targets, variables, residual_roles, counts)),
         )
 
@@ -1697,8 +1686,7 @@ def _dae_residual_layout(
         missing = sorted(equation_names - set(targets))
         extra = sorted(set(targets) - equation_names)
         raise ValueError(
-            "equation_targets must name every PDE equation exactly once; "
-            f"missing={missing}, extra={extra}."
+            f"equation_targets must name every PDE equation exactly once; missing={missing}, extra={extra}."
         )
     if set(targets.values()) != field_names or len(set(targets.values())) != len(targets):
         raise ValueError(
@@ -1798,14 +1786,12 @@ def _evolution_rhs(
                 temporal.append((sign, field_name))
         if len(temporal) != 1:
             raise ValueError(
-                f"PDE equation {equation.name!r} must contain exactly one direct "
-                "first temporal derivative."
+                f"PDE equation {equation.name!r} must contain exactly one direct first temporal derivative."
             )
         coefficient, field_name = temporal[0]
         if field_name not in field_names:
             raise ValueError(
-                f"Evolution equation {equation.name!r} references unknown field "
-                f"{field_name!r}."
+                f"Evolution equation {equation.name!r} references unknown field {field_name!r}."
             )
         if field_name in equations:
             raise ValueError(
@@ -1823,8 +1809,7 @@ def _evolution_rhs(
     missing = field_names - set(equations)
     if missing:
         raise ValueError(
-            "Every PDE field requires exactly one temporal evolution equation; "
-            f"missing {sorted(missing)}."
+            f"Every PDE field requires exactly one temporal evolution equation; missing {sorted(missing)}."
         )
     rhs = tuple(equations[field.name] for field in problem.fields)
     if any(
@@ -1999,8 +1984,7 @@ def _validate_boundary_conditions(
             )
         if condition.coordinate is None or condition.coordinate not in axes_by_coordinate:
             raise ValueError(
-                f"Boundary condition {condition.name!r} requires a compiled spatial "
-                "coordinate."
+                f"Boundary condition {condition.name!r} requires a compiled spatial coordinate."
             )
         region_coordinates = tuple(
             coordinate
@@ -2016,21 +2000,18 @@ def _validate_boundary_conditions(
         form = _boundary_form(condition.expression)
         if form is None:
             raise ValueError(
-                f"Boundary condition {condition.name!r} must directly constrain a "
-                "field or its normal derivative."
+                f"Boundary condition {condition.name!r} must directly constrain a field or its normal derivative."
             )
         kind, field_name, derivative_coordinate, derivative_axis, order = form
         for axis in axes_by_coordinate[condition.coordinate]:
             basis = discretization.axes[axis].family
             if basis == "fourier":
                 raise ValueError(
-                    f"Boundary condition {condition.name!r} is incompatible with "
-                    f"periodic basis {basis!r}."
+                    f"Boundary condition {condition.name!r} is incompatible with periodic basis {basis!r}."
                 )
             if basis not in ("sine", "cosine"):
                 raise ValueError(
-                    "Polynomial boundary equations require a constrained-basis or "
-                    "generalized tau formulation."
+                    "Polynomial boundary equations require a constrained-basis or generalized tau formulation."
                 )
             expected = "dirichlet" if basis == "sine" else "neumann"
             if kind != expected:
@@ -2047,8 +2028,7 @@ def _validate_boundary_conditions(
             )
         ):
             raise ValueError(
-                f"Neumann condition {condition.name!r} must use one first derivative "
-                "normal to its boundary coordinate."
+                f"Neumann condition {condition.name!r} must use one first derivative normal to its boundary coordinate."
             )
         if not _homogeneous_target(condition.target) and field_name not in lifts:
             raise ValueError(
@@ -2231,7 +2211,7 @@ def _spectral_representation(
         discretization.plan.analysis,
         discretization.plan.synthesis,
         representation_id=_stable_id(
-            "semidiscrete-spectral-v1",
+            "semidiscrete-spectral",
             discretization.discretization_id,
             repr(coefficient),
         ),
@@ -2273,8 +2253,7 @@ def _semidiscrete_setup(
     for field in problem.fields:
         if time_coordinate not in field.coordinates:
             raise ValueError(
-                f"Semidiscrete field {field.name!r} must depend on time coordinate "
-                f"{time_coordinate!r}."
+                f"Semidiscrete field {field.name!r} must depend on time coordinate {time_coordinate!r}."
             )
         field_spatial_coordinates = tuple(
             coordinate
@@ -2455,8 +2434,7 @@ def _validate_semidiscrete_expressions(
                 and infer_expression_type(node.args[0], problem).is_scalar
             ):
                 raise ValueError(
-                    f"{node.op} requires a vector-like operand, not a scalar "
-                    "with the same component count."
+                    f"{node.op} requires a vector-like operand, not a scalar with the same component count."
                 )
             assert node.coordinate is not None
             axes = evaluator._axes(node.coordinate)
@@ -2516,8 +2494,7 @@ def compile_semidiscrete_pde(
     ):
         if not isinstance(spatial_method, PseudospectralMethodPlan):
             raise TypeError(
-                "Spectral compilation requires a PseudospectralMethodPlan as "
-                "its third positional argument."
+                "Spectral compilation requires a PseudospectralMethodPlan as its third positional argument."
             )
         from ._spectral_compile import compile_spectral_pde
 
@@ -2531,8 +2508,7 @@ def compile_semidiscrete_pde(
         )
     if spatial_method is not None:
         raise ValueError(
-            "A spatial_method may only be supplied for a discretization that "
-            "declares one."
+            "A spatial_method may only be supplied for a discretization that declares one."
         )
 
     if isinstance(discretization, PreparedTensorGrid):
@@ -2543,8 +2519,7 @@ def compile_semidiscrete_pde(
             )
         if parameter_values:
             raise ValueError(
-                "Native FD parameters are supplied through runtime args, not "
-                "compile-time parameter_values."
+                "Native FD parameters are supplied through runtime args, not compile-time parameter_values."
             )
         if method == "semilinear":
             raise ValueError("Native FD semilinear decomposition is not yet certified.")
@@ -2566,7 +2541,7 @@ def compile_semidiscrete_pde(
     )
     lift_bindings = tuple(sorted((lift.field_name, lift.lift_id) for lift in lifts))
     binding_id = _stable_id(
-        "semidiscrete-bindings-v1",
+        "semidiscrete-bindings",
         problem.canonical_hash,
         discretization.discretization_id,
         layout.layout_id,
@@ -2627,8 +2602,7 @@ def compile_semidiscrete_pde(
         linear_operator = None
     if method == "semilinear" and linear_operator is None:
         raise ValueError(
-            "The requested semilinear method could not conservatively isolate a "
-            "time-independent linear operator."
+            "The requested semilinear method could not conservatively isolate a time-independent linear operator."
         )
 
     semilinear: Any | None = None
@@ -2637,7 +2611,7 @@ def compile_semidiscrete_pde(
         resolved: ResolvedSemidiscreteMethod = "direct"
     else:
         operator_id = _stable_id(
-            "semidiscrete-linear-operator-v1",
+            "semidiscrete-linear-operator",
             binding_id,
             type(linear_operator).__name__,
             repr(coefficients),
@@ -2696,7 +2670,7 @@ def compile_semidiscrete_pde(
             "semilinear-spectral" if spectral is not None else "semilinear-matrix-free"
         )
         nonlinear_id = _stable_id(
-            "semidiscrete-nonlinear-drift-v1",
+            "semidiscrete-nonlinear-drift",
             binding_id,
             operator_id,
             method,
@@ -2715,7 +2689,7 @@ def compile_semidiscrete_pde(
         drift = semilinear
 
     compilation_id = _stable_id(
-        "semidiscrete-pde-compiler-v2",
+        "semidiscrete-pde-compiler",
         binding_id,
         method,
         resolved,
@@ -2770,7 +2744,7 @@ def compile_semidiscrete_dae(
     )
     lift_bindings = tuple(sorted((lift.field_name, lift.lift_id) for lift in lifts))
     binding_id = _stable_id(
-        "semidiscrete-dae-bindings-v2",
+        "semidiscrete-dae-bindings",
         problem.canonical_hash,
         discretization.discretization_id,
         layout.layout_id,
@@ -2799,7 +2773,7 @@ def compile_semidiscrete_dae(
         allow_temporal_derivatives=True,
     )
     compilation_id = _stable_id(
-        "semidiscrete-dae-compiler-v2",
+        "semidiscrete-dae-compiler",
         binding_id,
         _value_fingerprint(state_scale),
         _value_fingerprint(state_rate_scale),

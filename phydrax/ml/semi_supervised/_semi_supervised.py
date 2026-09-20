@@ -32,7 +32,7 @@ from .._sparse_features import SparseFeatures
 
 class GraphFitDiagnostics(StrictModule):
     residual: Array
-    labelled_samples: Array
+    labeled_samples: Array
     iterations: Array
     valid: Array
     status: Array
@@ -41,7 +41,7 @@ class GraphFitDiagnostics(StrictModule):
     def __init__(
         self,
         residual: Any,
-        labelled_samples: Any,
+        labeled_samples: Any,
         /,
         *,
         iterations: int,
@@ -50,16 +50,16 @@ class GraphFitDiagnostics(StrictModule):
         method: str,
     ):
         self.residual = jnp.asarray(residual)
-        self.labelled_samples = jnp.asarray(labelled_samples)
+        self.labeled_samples = jnp.asarray(labeled_samples)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.method = str(method)
 
 
 class SelfTrainingDiagnostics(StrictModule):
     confidence: Array
-    labelled_samples: Array
+    labeled_samples: Array
     child_status: Array
     valid: Array
     status: Array
@@ -69,7 +69,7 @@ class SelfTrainingDiagnostics(StrictModule):
     def __init__(
         self,
         confidence: Any,
-        labelled_samples: Any,
+        labeled_samples: Any,
         child_status: Any,
         /,
         *,
@@ -79,9 +79,9 @@ class SelfTrainingDiagnostics(StrictModule):
         method: str,
     ):
         self.confidence = jnp.asarray(confidence)
-        self.labelled_samples = jnp.asarray(labelled_samples)
+        self.labeled_samples = jnp.asarray(labeled_samples)
         self.child_status = jnp.asarray(child_status, dtype=jnp.int32)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.method = str(method)
@@ -111,7 +111,7 @@ def _kernel_matrix_cases(
     return matrix.reshape(case_shape + (left.shape[-2], right.shape[-2]))
 
 
-def _normalise_probabilities(value: Array) -> Array:
+def _normalize_probabilities(value: Array) -> Array:
     nonnegative = jnp.maximum(jnp.real(value), 0.0)
     total = jnp.sum(nonnegative, axis=-1, keepdims=True)
     classes = value.shape[-1]
@@ -135,8 +135,7 @@ def _target_distributions(
         classes = len(schema_labels) if num_classes is None else int(num_classes)
         if classes < 2:
             raise ValueError(
-                "num_classes or a target-schema class vocabulary is required "
-                "for hard labels."
+                "num_classes or a target-schema class vocabulary is required for hard labels."
             )
         if schema_labels and len(schema_labels) != classes:
             raise ValueError(
@@ -152,19 +151,21 @@ def _target_distributions(
         ):
             raise TypeError("Class labels must be a real one-dimensional vocabulary.")
         target_mask = batch.target_mask
-        labelled = batch.sample_mask & (
-            jnp.ones_like(targets, dtype=bool) if target_mask is None else target_mask
+        labeled = batch.sample_mask & (
+            jnp.ones_like(targets, dtype=jnp.bool_)
+            if target_mask is None
+            else target_mask
         )
         matches = targets[..., None] == class_labels
         targets = eqx.error_if(
             targets,
-            jnp.any(labelled & (~jnp.isfinite(targets) | ~jnp.any(matches, axis=-1))),
-            "Every labelled hard target must occur in the class vocabulary.",
+            jnp.any(labeled & (~jnp.isfinite(targets) | ~jnp.any(matches, axis=-1))),
+            "Every labeled hard target must occur in the class vocabulary.",
         )
         distribution_dtype = jnp.result_type(targets.dtype, jnp.float32)
         distributions = matches.astype(distribution_dtype)
     elif targets.ndim == sample_ndim + 1:
-        classes = int(targets.shape[-1])
+        classes = targets.shape[-1]
         if num_classes is not None and int(num_classes) != classes:
             raise ValueError("num_classes does not match the soft-target axis.")
         if schema_labels and len(schema_labels) != classes:
@@ -182,39 +183,38 @@ def _target_distributions(
             raise TypeError("Class labels must be a real one-dimensional vocabulary.")
         target_mask = batch.target_mask
         if target_mask is not None:
-            partially_labelled = jnp.any(target_mask, axis=-1) & ~jnp.all(
+            partially_labeled = jnp.any(target_mask, axis=-1) & ~jnp.all(
                 target_mask, axis=-1
             )
             targets = eqx.error_if(
                 targets,
-                jnp.any(batch.sample_mask & partially_labelled),
+                jnp.any(batch.sample_mask & partially_labeled),
                 "Soft label masks must select either every class or no class.",
             )
-        labelled = batch.sample_mask & (
-            jnp.ones(targets.shape[:-1], dtype=bool)
+        labeled = batch.sample_mask & (
+            jnp.ones(targets.shape[:-1], dtype=jnp.bool_)
             if target_mask is None
             else jnp.all(target_mask, axis=-1)
         )
         targets = eqx.error_if(
             targets,
             jnp.any(
-                labelled
+                labeled
                 & (
                     ~jnp.all(jnp.isfinite(targets), axis=-1)
                     | jnp.any(targets < 0.0, axis=-1)
                     | (jnp.sum(targets, axis=-1) <= 0.0)
                 )
             ),
-            "Labelled soft targets must be finite nonnegative distributions.",
+            "Labeled soft targets must be finite nonnegative distributions.",
         )
-        distributions = _normalise_probabilities(targets)
+        distributions = _normalize_probabilities(targets)
     else:
         raise ValueError(
-            "Graph propagation requires hard labels or one class-probability "
-            "vector per sample."
+            "Graph propagation requires hard labels or one class-probability vector per sample."
         )
-    distributions = jnp.where(labelled[..., None], distributions, 0.0)
-    return distributions, labelled, classes, class_labels
+    distributions = jnp.where(labeled[..., None], distributions, 0.0)
+    return distributions, labeled, classes, class_labels
 
 
 class LabelPropagationModel(AbstractArrayModel):
@@ -277,12 +277,12 @@ class LabelPropagationModel(AbstractArrayModel):
         self.training_features = x
         self.distributions = probabilities
         self.training_weight = weights
-        self.prior = _normalise_probabilities(prior)
+        self.prior = _normalize_probabilities(prior)
         self.kernel = kernel
         self.class_labels = labels
-        self.case_shape = tuple(int(size) for size in x.shape[:-2])
-        self.in_size = int(x.shape[-1])
-        self.out_size = int(probabilities.shape[-1])
+        self.case_shape = tuple(x.shape[:-2])
+        self.in_size = x.shape[-1]
+        self.out_size = probabilities.shape[-1]
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -308,7 +308,7 @@ class LabelPropagationModel(AbstractArrayModel):
             numerator / jnp.maximum(denominator, jnp.finfo(weighted.dtype).tiny),
             prior,
         )
-        probabilities = _normalise_probabilities(probabilities)
+        probabilities = _normalize_probabilities(probabilities)
         return probabilities[..., 0, :] if squeeze else probabilities
 
 
@@ -359,13 +359,11 @@ class LabelPropagationRecipe(AbstractRecipe):
         x = batch.dense_features()
         if jnp.issubdtype(x.dtype, jnp.complexfloating):
             raise TypeError("Graph propagation kernels require real-valued features.")
-        targets, labelled, _, class_labels = _target_distributions(
-            batch, self.num_classes
-        )
+        targets, labeled, _, class_labels = _target_distributions(batch, self.num_classes)
         weights = _validated_sample_weight(batch)
         valid_weight = jnp.where(batch.sample_mask, weights, 0.0)
         graph = _kernel_matrix_cases(self.kernel, x, x)
-        identity = jnp.eye(batch.sample_count, dtype=bool)
+        identity = jnp.eye(batch.sample_count, dtype=jnp.bool_)
         graph = jnp.where(identity, 0.0, graph)
         graph = graph * valid_weight[..., :, None] * valid_weight[..., None, :]
         propagation_dtype = jnp.result_type(graph.dtype, targets.dtype)
@@ -377,15 +375,15 @@ class LabelPropagationRecipe(AbstractRecipe):
 
         def update(_, current):
             propagated = ein.contract("...nm,...mc->...nc", transition, current)
-            return jnp.where(labelled[..., None], targets, propagated)
+            return jnp.where(labeled[..., None], targets, propagated)
 
         distributions = jax.lax.fori_loop(0, self.iterations, update, targets)
-        distributions = _normalise_probabilities(distributions)
+        distributions = _normalize_probabilities(distributions)
         residual = jnp.max(
             jnp.abs(update(0, distributions) - distributions), axis=(-2, -1)
         )
-        labelled_count = jnp.sum(labelled, axis=-1)
-        enough = labelled_count > 0
+        labeled_count = jnp.sum(labeled, axis=-1)
+        enough = labeled_count > 0
         finite = jnp.isfinite(residual)
         converged = residual <= self.tolerance
         valid = enough & finite & converged
@@ -400,7 +398,7 @@ class LabelPropagationRecipe(AbstractRecipe):
         )
         diagnostics = GraphFitDiagnostics(
             residual,
-            labelled_count,
+            labeled_count,
             iterations=self.iterations,
             valid=valid,
             status=status,
@@ -425,7 +423,7 @@ class LabelPropagationRecipe(AbstractRecipe):
                 fit_weights="conditional",
                 fit_hyperparameters="conditional",
                 fit_mode="unrolled",
-                conditions=("The class vocabulary and labelled mask are fixed.",),
+                conditions=("The class vocabulary and labeled mask are fixed.",),
             ),
         )
 
@@ -464,13 +462,11 @@ class LabelSpreadingRecipe(AbstractRecipe):
         x = batch.dense_features()
         if jnp.issubdtype(x.dtype, jnp.complexfloating):
             raise TypeError("Graph spreading kernels require real-valued features.")
-        targets, labelled, _, class_labels = _target_distributions(
-            batch, self.num_classes
-        )
+        targets, labeled, _, class_labels = _target_distributions(batch, self.num_classes)
         weights = _validated_sample_weight(batch)
         valid_weight = jnp.where(batch.sample_mask, weights, 0.0)
         graph = _kernel_matrix_cases(self.kernel, x, x)
-        identity = jnp.eye(batch.sample_count, dtype=bool)
+        identity = jnp.eye(batch.sample_count, dtype=jnp.bool_)
         graph = jnp.where(identity, 0.0, graph)
         graph = graph * valid_weight[..., :, None] * valid_weight[..., None, :]
         propagation_dtype = jnp.result_type(graph.dtype, targets.dtype)
@@ -488,12 +484,12 @@ class LabelSpreadingRecipe(AbstractRecipe):
             )
 
         distributions = jax.lax.fori_loop(0, self.iterations, update, targets)
-        distributions = _normalise_probabilities(distributions)
+        distributions = _normalize_probabilities(distributions)
         residual = jnp.max(
             jnp.abs(update(0, distributions) - distributions), axis=(-2, -1)
         )
-        labelled_count = jnp.sum(labelled, axis=-1)
-        enough = labelled_count > 0
+        labeled_count = jnp.sum(labeled, axis=-1)
+        enough = labeled_count > 0
         finite = jnp.isfinite(residual)
         converged = residual <= self.tolerance
         valid = enough & finite & converged
@@ -508,7 +504,7 @@ class LabelSpreadingRecipe(AbstractRecipe):
         )
         diagnostics = GraphFitDiagnostics(
             residual,
-            labelled_count,
+            labeled_count,
             iterations=self.iterations,
             valid=valid,
             status=status,
@@ -532,7 +528,7 @@ class LabelSpreadingRecipe(AbstractRecipe):
                 fit_weights="conditional",
                 fit_hyperparameters="conditional",
                 fit_mode="unrolled",
-                conditions=("The class vocabulary and labelled mask are fixed.",),
+                conditions=("The class vocabulary and labeled mask are fixed.",),
             ),
         )
 
@@ -597,34 +593,34 @@ def _self_training_targets(batch: MLBatch) -> tuple[Array, Array]:
     if jnp.issubdtype(targets.dtype, jnp.complexfloating):
         raise TypeError("Class probabilities cannot be complex.")
     if batch.target_mask is not None:
-        partially_labelled = jnp.any(batch.target_mask, axis=-1) & ~jnp.all(
+        partially_labeled = jnp.any(batch.target_mask, axis=-1) & ~jnp.all(
             batch.target_mask, axis=-1
         )
         targets = eqx.error_if(
             targets,
-            jnp.any(batch.sample_mask & partially_labelled),
+            jnp.any(batch.sample_mask & partially_labeled),
             "Self-training masks must select either every class or no class.",
         )
-    labelled = batch.sample_mask & (
-        jnp.ones(targets.shape[:-1], dtype=bool)
+    labeled = batch.sample_mask & (
+        jnp.ones(targets.shape[:-1], dtype=jnp.bool_)
         if batch.target_mask is None
         else jnp.all(batch.target_mask, axis=-1)
     )
     targets = eqx.error_if(
         targets,
         jnp.any(
-            labelled
+            labeled
             & (
                 ~jnp.all(jnp.isfinite(targets), axis=-1)
                 | jnp.any(targets < 0.0, axis=-1)
                 | (jnp.sum(targets, axis=-1) <= 0.0)
             )
         ),
-        "Labelled self-training targets must be finite nonnegative distributions.",
+        "Labeled self-training targets must be finite nonnegative distributions.",
     )
-    known = _normalise_probabilities(targets)
+    known = _normalize_probabilities(targets)
     uniform = jnp.full_like(known, 1.0 / targets.shape[-1])
-    return jnp.where(labelled[..., None], known, uniform), labelled
+    return jnp.where(labeled[..., None], known, uniform), labeled
 
 
 class SoftSelfTrainingModel(AbstractArrayModel):
@@ -676,23 +672,23 @@ class SoftSelfTrainingRecipe(AbstractRecipe):
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         if key is None:
             raise ValueError("SoftSelfTrainingRecipe requires an explicit JAX key.")
-        current, labelled = _self_training_targets(batch)
+        current, labeled = _self_training_targets(batch)
         base_weight = _validated_sample_weight(batch)
         known = current
-        confidence = labelled.astype(base_weight.dtype)
+        confidence = labeled.astype(base_weight.dtype)
         statuses = []
         result = None
         for step in range(self.iterations):
-            weights = base_weight * jnp.where(labelled, 1.0, confidence)
+            weights = base_weight * jnp.where(labeled, 1.0, confidence)
             training = _replace_targets(
                 batch,
                 current,
-                target_mask=jnp.ones_like(current, dtype=bool),
+                target_mask=jnp.ones_like(current, dtype=jnp.bool_),
                 sample_weight=weights,
             )
             result = self.recipe.fit_batch(training, key=jr.fold_in(key, step))
             statuses.append(result.status)
-            probabilities = _normalise_probabilities(
+            probabilities = _normalize_probabilities(
                 jnp.asarray(
                     result.model(batch.dense_features(), key=jr.fold_in(key, 1000 + step))
                 )
@@ -703,14 +699,14 @@ class SoftSelfTrainingRecipe(AbstractRecipe):
                 )
             updated = (1.0 - self.blend) * current + self.blend * probabilities
             current = jnp.where(
-                labelled[..., None], known, _normalise_probabilities(updated)
+                labeled[..., None], known, _normalize_probabilities(updated)
             )
-            confidence = jnp.where(labelled, 1.0, jnp.sum(current * current, axis=-1))
+            confidence = jnp.where(labeled, 1.0, jnp.sum(current * current, axis=-1))
         final_training = _replace_targets(
             batch,
             current,
-            target_mask=jnp.ones_like(current, dtype=bool),
-            sample_weight=base_weight * jnp.where(labelled, 1.0, confidence),
+            target_mask=jnp.ones_like(current, dtype=jnp.bool_),
+            sample_weight=base_weight * jnp.where(labeled, 1.0, confidence),
         )
         result = self.recipe.fit_batch(
             final_training, key=jr.fold_in(key, self.iterations)
@@ -720,7 +716,7 @@ class SoftSelfTrainingRecipe(AbstractRecipe):
         status = result.status
         diagnostics = SelfTrainingDiagnostics(
             confidence,
-            jnp.sum(labelled, axis=-1),
+            jnp.sum(labeled, axis=-1),
             jnp.stack(statuses),
             valid=valid,
             status=status,
@@ -739,7 +735,7 @@ class SoftSelfTrainingRecipe(AbstractRecipe):
                 fit_weights="conditional",
                 fit_hyperparameters="conditional",
                 fit_mode="unrolled",
-                conditions=("The labelled mask and class axis are fixed.",),
+                conditions=("The labeled mask and class axis are fixed.",),
             ),
         )
 
@@ -770,17 +766,17 @@ class HardSelfTrainingRecipe(AbstractRecipe):
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         if key is None:
             raise ValueError("HardSelfTrainingRecipe requires an explicit JAX key.")
-        current, labelled = _self_training_targets(batch)
+        current, labeled = _self_training_targets(batch)
         base_weight = _validated_sample_weight(batch)
         known = current
-        confidence = labelled.astype(base_weight.dtype)
+        confidence = labeled.astype(base_weight.dtype)
         statuses = []
         result = None
         for step in range(self.iterations):
             accepted = (
-                labelled
+                labeled
                 if step == 0
-                else labelled | (confidence >= self.confidence_threshold)
+                else labeled | (confidence >= self.confidence_threshold)
             )
             training = _replace_targets(
                 batch,
@@ -790,7 +786,7 @@ class HardSelfTrainingRecipe(AbstractRecipe):
             )
             result = self.recipe.fit_batch(training, key=jr.fold_in(key, step))
             statuses.append(result.status)
-            probabilities = _normalise_probabilities(
+            probabilities = _normalize_probabilities(
                 jnp.asarray(
                     result.model(batch.dense_features(), key=jr.fold_in(key, 1000 + step))
                 )
@@ -803,9 +799,9 @@ class HardSelfTrainingRecipe(AbstractRecipe):
             pseudo = jax.lax.stop_gradient(
                 jax.nn.one_hot(indices, current.shape[-1], dtype=current.dtype)
             )
-            current = jnp.where(labelled[..., None], known, pseudo)
+            current = jnp.where(labeled[..., None], known, pseudo)
             confidence = jax.lax.stop_gradient(jnp.max(probabilities, axis=-1))
-        accepted = labelled | (confidence >= self.confidence_threshold)
+        accepted = labeled | (confidence >= self.confidence_threshold)
         final_training = _replace_targets(
             batch,
             current,
@@ -820,7 +816,7 @@ class HardSelfTrainingRecipe(AbstractRecipe):
         status = result.status
         diagnostics = SelfTrainingDiagnostics(
             confidence,
-            jnp.sum(labelled, axis=-1),
+            jnp.sum(labeled, axis=-1),
             jnp.stack(statuses),
             valid=valid,
             status=status,

@@ -64,8 +64,8 @@ def _time_interval(
     *,
     support: tuple[float, float],
 ) -> tuple[Array, Array]:
-    start = jnp.asarray(t0, dtype=float)
-    end = jnp.asarray(t1, dtype=float)
+    start = jnp.asarray(t0, dtype=jnp.float64)
+    end = jnp.asarray(t1, dtype=jnp.float64)
     if start.shape != () or end.shape != ():
         raise ValueError("Jump solve time bounds must be scalar.")
     if bool(~(jnp.isfinite(start) & jnp.isfinite(end) & (end > start))):
@@ -76,7 +76,7 @@ def _time_interval(
 
 
 def _query_times(values: ArrayLike, /, *, t0: Array, t1: Array) -> Array:
-    times = jnp.asarray(values, dtype=float)
+    times = jnp.asarray(values, dtype=jnp.float64)
     if times.ndim != 1 or times.shape[0] <= 0:
         raise ValueError("save_times must be a non-empty vector.")
     if bool(jnp.any(~jnp.isfinite(times))) or bool(jnp.any(jnp.diff(times) <= 0.0)):
@@ -116,10 +116,10 @@ def _empty_event_arrays(
     state_dtype: jnp.dtype,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     return (
-        jnp.full((capacity,), jnp.nan, dtype=float),
+        jnp.full((capacity,), jnp.nan, dtype=jnp.float64),
         jnp.full((capacity,), -1, dtype=jnp.int32),
         jnp.zeros((capacity,) + mark_shape, dtype=state_dtype),
-        jnp.zeros((capacity,), dtype=bool),
+        jnp.zeros((capacity,), dtype=jnp.bool_),
         jnp.zeros((capacity,) + state_shape, dtype=state_dtype),
         jnp.zeros((capacity,) + state_shape, dtype=state_dtype),
     )
@@ -136,7 +136,7 @@ def _next_reaction_one(
     max_events: int,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
     channels = process.num_channels
-    per_channel = int(thresholds.shape[-1])
+    per_channel = thresholds.shape[-1]
     times, event_channels, marks, valid, pre_states, post_states = _empty_event_arrays(
         max_events,
         process.state_shape,
@@ -146,7 +146,7 @@ def _next_reaction_one(
     initial = (
         start,
         initial_state,
-        jnp.zeros((channels,), dtype=float),
+        jnp.zeros((channels,), dtype=jnp.float64),
         jnp.zeros((channels,), dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(JUMP_SUCCESS, dtype=jnp.int32),
@@ -265,7 +265,7 @@ def _direct_ssa_one(
     args: Any,
     max_events: int,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
-    per_channel = int(mark_keys.shape[1])
+    per_channel = mark_keys.shape[1]
     times, event_channels, marks, valid, pre_states, post_states = _empty_event_arrays(
         max_events,
         process.state_shape,
@@ -547,7 +547,7 @@ def _solution_from_paths(
     sample_shape = realization.sample_shape
     path_count = prod(sample_shape) if sample_shape else 1
     state_shape = process.state_shape
-    capacity = int(arrays[2].shape[-1])
+    capacity = arrays[2].shape[-1]
     terminal, status, event_times, channels, marks, valid, before, after = arrays
     del terminal
     event_times = event_times.reshape(sample_shape + (capacity,))
@@ -785,7 +785,7 @@ def finite_state_generator(
         raise ValueError("states must have one leading enumeration axis.")
     if tuple(state_values.shape[1:]) != process.state_shape:
         raise ValueError("Enumerated states have incompatible state shape.")
-    count = int(state_values.shape[0])
+    count = state_values.shape[0]
     if count <= 0:
         raise ValueError("states must be non-empty.")
     host = np.asarray(jax.device_get(state_values)).reshape((count, -1))
@@ -929,7 +929,7 @@ class JumpDifferentialSolution(StrictModule):
                     "Deterministic event evidence must match the realization batch, "
                     "event capacity, and hybrid state shape."
                 )
-        terminal_values = jnp.asarray(terminal, dtype=bool)
+        terminal_values = jnp.asarray(terminal, dtype=jnp.bool_)
         if terminal_values.shape not in ((), sample_shape):
             raise ValueError(
                 f"terminal must be scalar or have sample shape {sample_shape}."
@@ -938,12 +938,11 @@ class JumpDifferentialSolution(StrictModule):
         numerical_values = (
             events.successful
             if numerical_successful is None
-            else jnp.asarray(numerical_successful, dtype=bool)
+            else jnp.asarray(numerical_successful, dtype=jnp.bool_)
         )
         if numerical_values.shape not in ((), sample_shape):
             raise ValueError(
-                "numerical_successful must be scalar or have realization sample "
-                f"shape {sample_shape}."
+                f"numerical_successful must be scalar or have realization sample shape {sample_shape}."
             )
         numerical_values = jnp.broadcast_to(numerical_values, sample_shape)
         if not isinstance(solver_name, str) or not solver_name:
@@ -1284,7 +1283,7 @@ def _hybrid_one(
 ):
     differential = problem.differential
     jumps = problem.jumps
-    per_channel = int(thresholds.shape[-1])
+    per_channel = thresholds.shape[-1]
     (
         event_times,
         event_channels,
@@ -1311,7 +1310,7 @@ def _hybrid_one(
     initial_carry = (
         save_times[0],
         initial_state,
-        jnp.zeros((jumps.num_channels,), dtype=float),
+        jnp.zeros((jumps.num_channels,), dtype=jnp.float64),
         jnp.zeros((jumps.num_channels,), dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(JUMP_SUCCESS, dtype=jnp.int32),
@@ -1483,15 +1482,18 @@ def _hybrid_one(
                 native_augmented = native.ys[0]
                 if prepared_schedule is None:
                     next_time = native_terminal_time
-                    jump_occurred = jnp.asarray(native.event_mask, dtype=bool)
+                    jump_occurred = jnp.asarray(native.event_mask, dtype=jnp.bool_)
                     deterministic_occurred = jnp.asarray(False)
                     deterministic_index = jnp.asarray(0, dtype=jnp.int32)
                     selection_ok = jnp.asarray(True)
                 else:
                     native_event = native.result == dfx.RESULTS.event_occurred
-                    native_jump_selected = jnp.asarray(native.event_mask[0], dtype=bool)
+                    native_jump_selected = jnp.asarray(
+                        native.event_mask[0], dtype=jnp.bool_
+                    )
                     native_guard_masks = tuple(
-                        jnp.asarray(value, dtype=bool) for value in native.event_mask[1:]
+                        jnp.asarray(value, dtype=jnp.bool_)
+                        for value in native.event_mask[1:]
                     )
 
                     def augmented_at_time(query_time):
@@ -1979,7 +1981,7 @@ def _hybrid_one(
         axis=0,
     )
     saved_valid = jnp.concatenate(
-        (jnp.ones((1,), dtype=bool), valid_tail),
+        (jnp.ones((1,), dtype=jnp.bool_), valid_tail),
         axis=0,
     )
     terminal = jnp.isfinite(final_carry[7])
@@ -2155,8 +2157,7 @@ def solve_jump_differential(
         ensemble_initials = jnp.asarray(initial_states)
         if tuple(ensemble_initials.shape) != expected_initial_shape:
             raise ValueError(
-                f"initial_states must have shape {expected_initial_shape}; "
-                f"got {ensemble_initials.shape}."
+                f"initial_states must have shape {expected_initial_shape}; got {ensemble_initials.shape}."
             )
         if ensemble_initials.dtype != differential.initial_state.dtype:
             raise TypeError(
@@ -2209,10 +2210,9 @@ def solve_jump_differential(
         )
         if dt0 is None and not isinstance(selected_controller, dfx.StepTo):
             raise ValueError(
-                "Stochastic hybrid integration requires dt0 unless every step "
-                "is declared with diffrax.StepTo."
+                "Stochastic hybrid integration requires dt0 unless every step is declared with diffrax.StepTo."
             )
-        resolved_dt0 = None if dt0 is None else jnp.asarray(dt0, dtype=float)
+        resolved_dt0 = None if dt0 is None else jnp.asarray(dt0, dtype=jnp.float64)
         if resolved_dt0 is not None and bool(
             jnp.abs(resolved_dt0) <= wiener_realization.tolerance
         ):
@@ -2258,7 +2258,7 @@ def solve_jump_differential(
             if stepsize_controller is None
             else stepsize_controller
         )
-        resolved_dt0 = None if dt0 is None else jnp.asarray(dt0, dtype=float)
+        resolved_dt0 = None if dt0 is None else jnp.asarray(dt0, dtype=jnp.float64)
         arrays = _hybrid_deterministic_paths(
             problem,
             poisson_realization,

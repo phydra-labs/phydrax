@@ -44,9 +44,7 @@ def _spatial_axes(
     selected = (
         tuple(range(rank))
         if axes is None
-        else (
-            (int(axes),) if isinstance(axes, int) else tuple(int(axis) for axis in axes)
-        )
+        else ((int(axes),) if isinstance(axes, int) else tuple(axes))
     )
     if not selected or len(set(selected)) != len(selected):
         raise ValueError("Spatial axes must be non-empty and distinct.")
@@ -217,7 +215,7 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
                 "points": plan.grid.size,
                 "operators": len(operators),
                 "maximum_stencil_width": max(
-                    int(stencil.stencil.indices.shape[1]) for stencil in stencils
+                    stencil.stencil.indices.shape[1] for stencil in stencils
                 ),
             },
         )
@@ -442,9 +440,9 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
         if np.max(np.abs(np.imag(spectrum))) > 1e-10 * scale:
             raise ValueError("Real FD eigenpairs require a symmetric periodic stencil.")
         point_count = spectrum.size
-        point_index = np.arange(point_count, dtype=float)
+        point_index = np.arange(point_count, dtype=np.float64)
         eigenvalues = [float(-np.real(spectrum[0]))]
-        columns = [np.ones((point_count,), dtype=float)]
+        columns = [np.ones((point_count,), dtype=np.float64)]
         for frequency in range(1, (point_count + 1) // 2):
             angle = 2.0 * np.pi * frequency * point_index / point_count
             eigenvalue = float(-np.real(spectrum[frequency]))
@@ -483,7 +481,7 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
         weights = np.asarray(self.grid.quadrature_weights).reshape((-1,))
         if not np.allclose(weights, weights[0], rtol=1e-10, atol=1e-12):
             raise ValueError("Fourier diagonalization requires a uniform measure.")
-        row_valid = np.asarray(stencil_set.stencil.valid[0], dtype=bool)
+        row_valid = np.asarray(stencil_set.stencil.valid[0], dtype=np.bool_)
         indices = np.asarray(stencil_set.stencil.indices[0], dtype=np.int32)[row_valid]
         coefficients = np.asarray(stencil_set.stencil.weights[0])[row_valid]
         relative = indices % count

@@ -11,7 +11,7 @@ import equinox as eqx
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._capabilities import VortexDiffusionCapabilities, VortexVelocityCapabilities
 from ._compatibility import VortexVelocityCompatibility
@@ -85,9 +85,9 @@ class VortexVelocityEvaluation(StrictModule):
 class AbstractVortexVelocityPlan(StrictModule, NonTrainableState):
     """Resource-bounded plan for a dimension-specific vortex field backend."""
 
-    dimension: AbstractAttribute[int]
-    plan_id: AbstractAttribute[str]
-    capabilities: AbstractAttribute[VortexVelocityCapabilities]
+    dimension: eqx.AbstractVar[int]
+    plan_id: eqx.AbstractVar[str]
+    capabilities: eqx.AbstractVar[VortexVelocityCapabilities]
 
     @abc.abstractmethod
     def prepare(
@@ -106,13 +106,13 @@ class AbstractVortexVelocityPlan(StrictModule, NonTrainableState):
 class AbstractPreparedVortexVelocity(StrictModule, NonTrainableState):
     """Fixed-shape, JAX-transformable vortex field evaluation."""
 
-    dimension: AbstractAttribute[int]
-    source_capacity: AbstractAttribute[int]
-    target_capacity: AbstractAttribute[int]
-    backend_id: AbstractAttribute[str]
-    prepared_id: AbstractAttribute[str]
-    capabilities: AbstractAttribute[VortexVelocityCapabilities]
-    compatibility: AbstractAttribute[VortexVelocityCompatibility]
+    dimension: eqx.AbstractVar[int]
+    source_capacity: eqx.AbstractVar[int]
+    target_capacity: eqx.AbstractVar[int]
+    backend_id: eqx.AbstractVar[str]
+    prepared_id: eqx.AbstractVar[str]
+    capabilities: eqx.AbstractVar[VortexVelocityCapabilities]
+    compatibility: eqx.AbstractVar[VortexVelocityCompatibility]
 
     @abc.abstractmethod
     def evaluate(
@@ -153,9 +153,9 @@ class VortexDiffusionEvaluation(StrictModule):
 class AbstractVortexDiffusionPlan(StrictModule, NonTrainableState):
     """Resource-bounded plan for a dimension-specific diffusion backend."""
 
-    dimension: AbstractAttribute[int]
-    plan_id: AbstractAttribute[str]
-    capabilities: AbstractAttribute[VortexDiffusionCapabilities]
+    dimension: eqx.AbstractVar[int]
+    plan_id: eqx.AbstractVar[str]
+    capabilities: eqx.AbstractVar[VortexDiffusionCapabilities]
 
     @abc.abstractmethod
     def prepare(
@@ -171,11 +171,11 @@ class AbstractVortexDiffusionPlan(StrictModule, NonTrainableState):
 class AbstractPreparedVortexDiffusion(StrictModule, NonTrainableState):
     """Fixed-shape, JAX-transformable particle diffusion evaluation."""
 
-    dimension: AbstractAttribute[int]
-    capacity: AbstractAttribute[int]
-    backend_id: AbstractAttribute[str]
-    prepared_id: AbstractAttribute[str]
-    capabilities: AbstractAttribute[VortexDiffusionCapabilities]
+    dimension: eqx.AbstractVar[int]
+    capacity: eqx.AbstractVar[int]
+    backend_id: eqx.AbstractVar[str]
+    prepared_id: eqx.AbstractVar[str]
+    capabilities: eqx.AbstractVar[VortexDiffusionCapabilities]
 
     @abc.abstractmethod
     def evaluate(

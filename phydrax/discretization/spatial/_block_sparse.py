@@ -93,7 +93,7 @@ class SparseBlockTopologyPlan(StrictModule, NonTrainableState):
             for candidate in index_space.entity_layouts
         ):
             raise ValueError("layout must belong to index_space.")
-        blocks = tuple(int(size) for size in block_shape)
+        blocks = tuple(block_shape)
         if len(blocks) != len(layout_.shape) or any(size <= 0 for size in blocks):
             raise ValueError("block_shape must contain one positive size per axis.")
         if any(
@@ -127,9 +127,7 @@ class SparseBlockTopologyPlan(StrictModule, NonTrainableState):
         offsets = (
             ((0,) * len(blocks),)
             if closure_offsets is None
-            else tuple(
-                tuple(int(value) for value in offset) for offset in closure_offsets
-            )
+            else tuple(tuple(offset) for offset in closure_offsets)
         )
         if not offsets or any(len(offset) != len(blocks) for offset in offsets):
             raise ValueError(
@@ -239,9 +237,9 @@ class SparseBlockTopologyPlan(StrictModule, NonTrainableState):
         if indices.ndim != 1 or not jnp.issubdtype(indices.dtype, jnp.integer):
             raise TypeError("logical_indices must be a rank-1 integer array.")
         requested = (
-            jnp.ones(indices.shape, dtype=bool)
+            jnp.ones(indices.shape, dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if requested.shape != indices.shape:
             raise ValueError("valid must match logical_indices.")
@@ -379,9 +377,9 @@ class SparseBlockTopologyState(NonTrainableState, StrictModule):
     ) -> SparseBlockLookup:
         indices = jnp.asarray(logical_indices)
         requested = (
-            jnp.ones(indices.shape, dtype=bool)
+            jnp.ones(indices.shape, dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if requested.shape != indices.shape:
             raise ValueError("valid must match logical_indices.")
@@ -402,7 +400,7 @@ class SparseBlockTopologyState(NonTrainableState, StrictModule):
         )
 
     def materialize_support(self, /) -> Array:
-        flat = jnp.zeros((self.plan.layout.size,), dtype=bool)
+        flat = jnp.zeros((self.plan.layout.size,), dtype=jnp.bool_)
         ids = self.logical_node_ids.reshape((-1,))
         valid = self.node_valid.reshape((-1,))
         flat = flat.at[jnp.where(valid, ids, 0)].max(valid)

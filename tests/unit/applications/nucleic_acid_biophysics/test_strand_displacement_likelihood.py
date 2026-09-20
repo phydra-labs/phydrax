@@ -125,9 +125,11 @@ def _campaign():
 
 
 def _trace(case_id, family, preparation, plate, intensity, *, saturated=None):
-    values = np.asarray(intensity, dtype=float)
+    values = np.asarray(intensity, dtype="float64")
     mask = (
-        np.zeros(values.shape, dtype=bool) if saturated is None else np.asarray(saturated)
+        np.zeros(values.shape, dtype="bool")
+        if saturated is None
+        else np.asarray(saturated)
     )
     return FluorescenceTimeTrace(
         case_id,

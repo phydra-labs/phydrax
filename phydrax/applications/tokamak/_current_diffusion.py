@@ -94,7 +94,7 @@ class PreparedCurrentDiffusion(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.geometry.cell_volume_m3.shape[0])
+        return self.geometry.cell_volume_m3.shape[0]
 
     def step(
         self,

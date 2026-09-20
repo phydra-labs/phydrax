@@ -442,9 +442,7 @@ class AbelianProgramInstruction(StrictModule):
         value = jnp.asarray(gate)
         if value.ndim != 4:
             raise ValueError("Abelian program gates must have four tensor axes.")
-        protected = tuple(
-            tuple(int(item) for item in charge) for charge in protected_charges
-        )
+        protected = tuple(tuple(charge) for charge in protected_charges)
         self.left_site = int(left_site)
         self.gate = value
         self.maximum_bond_dimension = capacity
@@ -531,7 +529,7 @@ def execute_abelian_program(
         jnp.stack(discarded) if discarded else jnp.zeros((0,), dtype=real_dtype)
     )
     drift_values = jnp.stack(drift) if drift else jnp.zeros((0,), dtype=real_dtype)
-    failure_values = jnp.stack(failures) if failures else jnp.zeros((0,), dtype=bool)
+    failure_values = jnp.stack(failures) if failures else jnp.zeros((0,), dtype=jnp.bool_)
     valid = (
         jnp.all(jnp.isfinite(discarded_values))
         & jnp.all(drift_values == 0)

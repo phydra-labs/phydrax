@@ -38,7 +38,7 @@ def test_enforcement_weight_fn_mesh_normals_jittable():
             [0.0, 0.0, -0.6],
             [0.2, 0.3, 0.4],
         ],
-        dtype=float,
+        dtype="float64",
     )
     values = jax.jit(jax.vmap(w_fn))(points)
     assert values.shape == (points.shape[0],)

@@ -27,10 +27,10 @@ def _hierarchy():
     )
     prepared = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
     initial = prepared.initial_topology()
-    coarse_tags = jnp.zeros((4, 4), dtype=bool).at[1:3].set(True)
-    empty_middle = jnp.zeros((16, 2), dtype=bool)
+    coarse_tags = jnp.zeros((4, 4), dtype="bool").at[1:3].set(True)
+    empty_middle = jnp.zeros((16, 2), dtype="bool")
     middle = prepared.compile_topology(initial, (coarse_tags, empty_middle)).topology
-    middle_tags = jnp.zeros((16, 2), dtype=bool).at[3, 1].set(True)
+    middle_tags = jnp.zeros((16, 2), dtype="bool").at[3, 1].set(True)
     compiled = prepared.compile_topology(middle, (coarse_tags, middle_tags))
     assert compiled.status.successful
     return prepared, compiled.topology

@@ -95,7 +95,7 @@ class SignFreeCTINTPlan(StrictModule, NonTrainableState):
     ):
         beta_ = float(beta)
         coupling = float(interaction)
-        signs = np.asarray(sublattice_signs, dtype=int)
+        signs = np.asarray(sublattice_signs, dtype=np.int64)
         draws = int(steps)
         order = int(maximum_order)
         tolerance = float(symmetry_tolerance)
@@ -368,15 +368,15 @@ class LowOrderFermionDiagramMonteCarloPlan(StrictModule, NonTrainableState):
         /,
     ) -> "PreparedLowOrderFermionDiagramMonteCarlo":
         items = tuple(diagrams)
-        weights = np.asarray(complex_weights, dtype=complex)
-        proposal = np.asarray(proposal_matrix, dtype=float)
+        weights = np.asarray(complex_weights, dtype=np.complex128)
+        proposal = np.asarray(proposal_matrix, dtype=np.float64)
         count = len(items)
         if (
             count < 2
             or count > self.maximum_diagrams
             or any(not isinstance(item, DiagramGraph) for item in items)
         ):
-            raise ValueError("Diagram catalogue violates fixed bounds.")
+            raise ValueError("Diagram catalog violates fixed bounds.")
         if any(
             not any(
                 field.statistics == "fermion"
@@ -385,7 +385,7 @@ class LowOrderFermionDiagramMonteCarloPlan(StrictModule, NonTrainableState):
             )
             for item in items
         ):
-            raise ValueError("Every low-order catalogue diagram must contain fermions.")
+            raise ValueError("Every low-order catalog diagram must contain fermions.")
         orders = np.asarray([item.order for item in items], dtype=np.int32)
         if (
             np.max(orders) > self.maximum_order
@@ -465,7 +465,7 @@ class PreparedLowOrderFermionDiagramMonteCarlo(StrictModule, NonTrainableState):
         self, key: Key[Array, ""], /, *, initial_index: int = 0
     ) -> LowOrderDiagramMonteCarloResult:
         if initial_index < 0 or initial_index >= self.orders.size:
-            raise ValueError("initial_index is outside the diagram catalogue.")
+            raise ValueError("initial_index is outside the diagram catalog.")
         keys = jr.split(key, self.plan.steps)
 
         def advance(index, step_key):

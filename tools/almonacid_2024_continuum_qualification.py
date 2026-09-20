@@ -302,7 +302,7 @@ def qualify(directory, inputs, *, maximum_step=100, rtol=2e-3, save_native=None)
         )
         force = np.loadtxt(force_file, delimiter=",", skiprows=1)
         row["source_boundary_force_N"] = measure(
-            source_force[force[:, 0].astype(int)], force[:, 1:4], rtol=rtol, atol=0.02
+            source_force[force[:, 0].astype("int64")], force[:, 1:4], rtol=rtol, atol=0.02
         )
         if diagnostics is not None:
             row["diagnostics"] = {

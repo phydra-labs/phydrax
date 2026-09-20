@@ -50,7 +50,7 @@ def _finite_vector(value: ArrayLike, owner: str, /) -> Array:
         raise ValueError(f"{owner} must be a nonempty rank-one vector.")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
-    array = array.astype(jnp.result_type(array, float))
+    array = array.astype(jnp.result_type(array, jnp.float64))
     if not bool(jnp.all(jnp.isfinite(array))):
         raise ValueError(f"{owner} must be finite.")
     return array
@@ -111,7 +111,7 @@ def solve_almgren_chriss_schedule(
     quantity = jnp.asarray(parent_quantity)
     if quantity.shape != () or jnp.issubdtype(quantity.dtype, jnp.complexfloating):
         raise ValueError("parent_quantity must be a real scalar.")
-    quantity = quantity.astype(jnp.result_type(quantity, float))
+    quantity = quantity.astype(jnp.result_type(quantity, jnp.float64))
     if not bool(jnp.isfinite(quantity)):
         raise ValueError("parent_quantity must be finite.")
     elapsed = time_grid.times - time_grid.times[0]
@@ -179,7 +179,7 @@ class TransientPropagatorModel(StrictModule):
 
     @property
     def num_components(self) -> int:
-        return int(self.weights.size)
+        return self.weights.size
 
     def kernel(self, lag: ArrayLike, /) -> Array:
         lag_array = jnp.asarray(lag)
@@ -217,14 +217,14 @@ def diagnose_transient_manipulation(
     if not isinstance(time_grid, TimeGrid):
         raise TypeError("time_grid must be a TimeGrid.")
     threshold = _nonnegative(tolerance, "tolerance")
-    times = np.asarray(time_grid.times[:-1], dtype=float)
+    times = np.asarray(time_grid.times[:-1], dtype=np.float64)
     lags = np.abs(times[:, None] - times[None, :])
     kernel = np.sum(
         np.asarray(model.weights)[None, None, :]
         * np.exp(-lags[:, :, None] * np.asarray(model.decay_rates)[None, None, :]),
         axis=-1,
     )
-    duration = np.asarray(time_grid.durations, dtype=float)
+    duration = np.asarray(time_grid.durations, dtype=np.float64)
     weighted = duration[:, None] * kernel * duration[None, :]
     symmetry = float(np.max(np.abs(weighted - weighted.T)))
     finite = bool(np.all(np.isfinite(weighted)))

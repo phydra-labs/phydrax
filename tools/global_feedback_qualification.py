@@ -81,7 +81,7 @@ def make_model(
         shortwave_absorption=(1e-5, 0.002, 0.01, 0.01),
         shortwave_scattering=(0.0, 0.0, 0.1, 0.1),
         longwave_absorption=(1e-4, 0.03, 0.1, 0.1),
-        reference_id="declared-synthetic-global-feedback-grey-coefficients-not-Earth-calibration",
+        reference_id="declared-synthetic-global-feedback-gray-coefficients-not-Earth-calibration",
     )
     boundary = GlobalSurfacePhysics(
         WetSlabPlan(thermo, dry_heat_capacity=2e7 * capacity),
@@ -506,7 +506,7 @@ def block_statistics(times_days, values, *, spinup_days, block_days):
         if np.any(mask):
             blocks.append(values[mask].mean(axis=0))
     block = np.asarray(blocks)
-    result = {"samples_after_spinup": int(times.size), "complete_blocks": len(blocks)}
+    result = {"samples_after_spinup": times.size, "complete_blocks": len(blocks)}
     if len(blocks) < 2:
         return {
             **result,
@@ -668,8 +668,7 @@ def qualify(
             "checkpoint": str(resume_checkpoint),
             "segment_initial_flux_residual_w_m2": np.asarray(resumed_residual).tolist(),
             "claim": (
-                "Exact continuation begins a new statistical segment; prior "
-                "samples are not silently reused."
+                "Exact continuation begins a new statistical segment; prior samples are not silently reused."
             ),
         }
     initial = current
@@ -996,8 +995,7 @@ def qualify(
             "maximum_lifetime_projection_impulse_fraction": 0.01,
             "maximum_projection_energy_w_m2": maximum_drift_w_m2,
             "torque_scale": (
-                "max(abs(atmospheric angular momentum)/day, "
-                "abs(terrain torque)+abs(process torque), 1 Nm)"
+                "max(abs(atmospheric angular momentum)/day, abs(terrain torque)+abs(process torque), 1 Nm)"
             ),
             "maximum_step_total_water_redistribution_fraction": (
                 2 * model.plan.water_projection_tolerance
@@ -1086,7 +1084,7 @@ def qualify(
         "statistics": statistics,
         "limitations": [
             (
-                "Synthetic grey coefficients and P2 solar forcing are declared "
+                "Synthetic gray coefficients and P2 solar forcing are declared "
                 "experiment parameters, not Earth calibration."
             ),
             (
@@ -1373,15 +1371,13 @@ def main():
         len(args.scenarios) != 1 or args.sensitivity or args.checkpoint_dir is None
     ):
         parser.error(
-            "Sequential equilibration requires one scenario, no sensitivity "
-            "campaign, and a checkpoint directory."
+            "Sequential equilibration requires one scenario, no sensitivity campaign, and a checkpoint directory."
         )
     if args.resume_checkpoint is not None and (
         len(args.scenarios) != 1 or args.sensitivity
     ):
         parser.error(
-            "A native checkpoint resumes exactly one scenario without a parallel "
-            "sensitivity campaign."
+            "A native checkpoint resumes exactly one scenario without a parallel sensitivity campaign."
         )
     if args.smoke:
         args.dt, args.days, args.spinup_days = 20.0, 40.0 / DAY, 0.0

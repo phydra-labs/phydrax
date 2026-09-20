@@ -133,8 +133,7 @@ def lower_to_passive_ray_attenuation(
         )
     if not bool(evaluation.accepted):
         raise ValueError(
-            "Cannot lower a rejected refractive-index evaluation to "
-            "passive ray attenuation."
+            "Cannot lower a rejected refractive-index evaluation to passive ray attenuation."
         )
     if bool(evaluation.extrapolated) and not allow_extrapolation:
         raise ValueError(

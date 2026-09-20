@@ -91,8 +91,7 @@ def test_kernel_metadata_precision_resources_and_complex_helmholtz_actions():
     report = laplace.assembly_report
     assert report.pde == "-Delta(u)=0"
     assert report.geometry == (
-        "closed-oriented-watertight-piecewise-planar-triangle-mesh-with-"
-        "strictly-separated-component-bounding-boxes"
+        "closed-oriented-watertight-piecewise-planar-triangle-mesh-with-strictly-separated-component-bounding-boxes"
     )
     assert report.formulation == (
         "DP0-Galerkin-V-K-Kprime-with-diagonal-mass-strong-form"

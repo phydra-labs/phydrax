@@ -46,7 +46,7 @@ class BathCorrelationExpansion(StrictModule):
 
     @property
     def rank(self) -> int:
-        return int(self.coefficients.shape[0])
+        return self.coefficients.shape[0]
 
     def __call__(self, time: ArrayLike, /) -> Array:
         value = jnp.asarray(time)
@@ -127,8 +127,8 @@ def lorentzian_pseudomode(
     coefficient = float(coupling) ** 2
     exponent = 0.5 * float(linewidth) + 1j * float(center_frequency)
     expansion = BathCorrelationExpansion(
-        jnp.asarray([coefficient], dtype=complex),
-        jnp.asarray([exponent], dtype=complex),
+        jnp.asarray([coefficient], dtype=jnp.complex128),
+        jnp.asarray([exponent], dtype=jnp.complex128),
         expansion_id="lorentzian-one-pole",
     )
     mode = Pseudomode(

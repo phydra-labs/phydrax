@@ -119,7 +119,7 @@ class PDEProblem(StrictModule):
         if pricing_law is not None and not isinstance(pricing_law, PricingLaw):
             raise TypeError("pricing_law must be PricingLaw or None.")
         spot_, maturity_, rate_, dividend = tuple(
-            jnp.asarray(value, dtype=float)
+            jnp.asarray(value, dtype=jnp.float64)
             for value in (spot, maturity, rate, dividend_yield)
         )
         if any(value.shape != () for value in (spot_, maturity_, rate_, dividend)):

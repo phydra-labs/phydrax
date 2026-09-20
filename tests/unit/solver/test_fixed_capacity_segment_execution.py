@@ -17,8 +17,8 @@ def test_fixed_capacity_segments_jit_runtime_count_and_neutral_tail():
             next_carry = carry + 1
             return FixedCapacitySegmentStep(
                 next_carry,
-                carry.astype(float),
-                next_carry.astype(float),
+                carry.astype("float64"),
+                next_carry.astype("float64"),
                 1,
                 0,
                 next_carry >= 2,
@@ -55,8 +55,8 @@ def test_fixed_capacity_segments_enforce_cumulative_event_capacity():
         next_carry = carry + 1
         return FixedCapacitySegmentStep(
             next_carry,
-            carry.astype(float),
-            next_carry.astype(float),
+            carry.astype("float64"),
+            next_carry.astype("float64"),
             1,
             1,
             next_carry >= 2,

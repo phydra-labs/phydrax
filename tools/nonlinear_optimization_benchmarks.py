@@ -77,7 +77,7 @@ def _matrix_free_newton(size: int) -> dict[str, Any]:
         "linear_iterations": int(result.diagnostics.linear_iterations),
         "setup_refreshes": int(result.diagnostics.setup_refreshes),
         "numeric_refreshes": int(result.diagnostics.numeric_refreshes),
-        "parameter_bytes": int(initial.nbytes),
+        "parameter_bytes": initial.nbytes,
         "dense_hessian_bytes": int(size * size * initial.dtype.itemsize),
     }
 
@@ -155,7 +155,7 @@ def _dense_newton_reference(size: int) -> dict[str, Any]:
         "initial_objective": float(objective(initial)),
         "final_objective": float(objective(parameters)),
         "iterations": 12,
-        "parameter_bytes": int(initial.nbytes),
+        "parameter_bytes": initial.nbytes,
         "dense_hessian_bytes": int(size * size * initial.dtype.itemsize),
     }
 
@@ -295,7 +295,7 @@ def _matrix_free_constraints(size: int) -> dict[str, Any]:
         "vjp_evaluations": int(result.diagnostics.vjp_evaluations),
         "setup_refreshes": int(result.diagnostics.setup_refreshes),
         "numeric_refreshes": int(result.diagnostics.numeric_refreshes),
-        "parameter_bytes": int(initial.nbytes),
+        "parameter_bytes": initial.nbytes,
         "estimated_dense_kkt_bytes": int(
             (2 * size) * (2 * size) * initial.dtype.itemsize
         ),
@@ -334,7 +334,7 @@ def _reduced_state_design(size: int) -> dict[str, Any]:
         "linear_solves": int(result.diagnostics.linear_solves),
         "setup_refreshes": int(result.diagnostics.setup_refreshes),
         "numeric_refreshes": int(result.diagnostics.numeric_refreshes),
-        "state_design_bytes": int(initial_state.nbytes + initial_design.nbytes),
+        "state_design_bytes": initial_state.nbytes + initial_design.nbytes,
         "dense_reduced_hessian_bytes": int(size * size * initial_design.dtype.itemsize),
     }
 
@@ -377,7 +377,7 @@ def main() -> None:
     parser.add_argument("--sampling-repeats", type=int, default=32)
     parser.add_argument("--smoke", action="store_true")
     arguments = parser.parse_args()
-    size = 16 if arguments.smoke else int(arguments.size)
+    size = 16 if arguments.smoke else arguments.size
     sample_size = 32 if arguments.smoke else int(arguments.sample_size)
     repeats = 4 if arguments.smoke else int(arguments.sampling_repeats)
     if size < 1 or sample_size < 1 or repeats < 2:

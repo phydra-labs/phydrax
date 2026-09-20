@@ -233,7 +233,7 @@ class PeriodicStationaryDerivativeEvidence(StrictModule, NonTrainableState):
         ):
             raise ValueError("Stationary derivative evidence tolerances are invalid.")
         admitted = (
-            jnp.asarray(successful, dtype=bool).reshape(())
+            jnp.asarray(successful, dtype=jnp.bool_).reshape(())
             & jnp.all(jnp.isfinite(values))
             & jnp.all(values >= 0.0)
             & (values[0] <= stationarity)

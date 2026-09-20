@@ -91,7 +91,7 @@ def _trace_matrices_3d(
     weights = panelization.weights[None, :]
     single = single * weights
     double = double * weights
-    zero_density = jnp.zeros((panelization.node_count,), dtype=complex)
+    zero_density = jnp.zeros((panelization.node_count,), dtype=jnp.complex128)
     single_base = HelmholtzLayerPotential3D(
         panelization,
         kernel.wavenumber,
@@ -195,7 +195,7 @@ def solve_exterior_helmholtz_dirichlet_3d(
         raise TypeError("panelization must be SurfacePanelization3D.")
     if not isinstance(quadrature, AdaptiveQuadraturePlan):
         raise TypeError("quadrature must be an AdaptiveQuadraturePlan.")
-    values = jnp.asarray(boundary_values, dtype=complex)
+    values = jnp.asarray(boundary_values, dtype=jnp.complex128)
     if values.shape != (panelization.node_count,):
         raise ValueError("boundary_values must match surface node count.")
     kernel = HelmholtzLayerKernel3D(wavenumber)

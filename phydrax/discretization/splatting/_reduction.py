@@ -62,7 +62,7 @@ def deposit_routes(
 ) -> Array:
     """Apply the masked source-to-target transpose under one accumulation policy."""
     values = jnp.asarray(source_values)
-    if values.ndim < 1 or int(values.shape[0]) != stencil.relation.targets_per_case:
+    if values.ndim < 1 or values.shape[0] != stencil.relation.targets_per_case:
         raise ValueError("Splat source values must begin with the stencil source count.")
     order = jnp.asarray(stable_source_order, dtype=jnp.int32)
     if order.shape != (values.shape[0],):
@@ -84,7 +84,7 @@ def _scatter_route_payload(
     """Reduce preweighted per-route payloads onto the stencil source layout."""
     values = jnp.asarray(route_values)
     route_shape = stencil.indices.shape
-    if values.ndim < 2 or tuple(int(size) for size in values.shape[:2]) != route_shape:
+    if values.ndim < 2 or tuple(values.shape[:2]) != route_shape:
         raise ValueError(
             f"Route payload must begin with route shape {route_shape}; got {values.shape}."
         )

@@ -19,9 +19,7 @@ from phydrax._trainable import partition_trainable
 
 
 def _state_bytes(state) -> int:
-    return sum(
-        int(entry.value.size * entry.value.dtype.itemsize) for entry in state.entries
-    )
+    return sum(entry.value.size * entry.value.dtype.itemsize for entry in state.entries)
 
 
 def _complex_trainable_leaves(value) -> int:

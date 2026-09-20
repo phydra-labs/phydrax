@@ -65,7 +65,7 @@ For this runnable example, we choose a simple analytic “operator” that maps 
     # Supervised target u_true(data, x): analytic mapping from coefficients to a function of x
     @domain.Function("data", "x")
     def u_true(c, x):
-        ks = jnp.arange(1, K + 1, dtype=float)
+        ks = jnp.arange(1, K + 1, dtype="float64")
         return jnp.sum(c * jnp.sin(jnp.pi * ks * x[0]))
 
 
@@ -536,7 +536,7 @@ grid_axis = phx.nn.operator.OperatorAxis(
 grid_samples = phx.nn.operator.FunctionSamples(
     values=jnp.sin(2.0 * jnp.pi * grid_nodes),
     axes=(grid_axis,),
-    mask=jnp.ones((8,), dtype=bool),
+    mask=jnp.ones((8,), dtype="bool"),
 )
 grid_batch = phx.nn.operator.OperatorBatch(
     inputs={"state": grid_samples},
@@ -544,7 +544,7 @@ grid_batch = phx.nn.operator.OperatorBatch(
         "query": phx.nn.operator.FunctionSamples(
             values=None,
             axes=(grid_axis,),
-            mask=jnp.ones((8,), dtype=bool),
+            mask=jnp.ones((8,), dtype="bool"),
         )
     },
 )
@@ -705,7 +705,7 @@ corrupted_history = phx.nn.operator.architectures.dpot_corrupt_history(
     history,
     noise_scale=1e-3,
     key=jr.key(46),
-    mask=jnp.ones_like(history, dtype=bool),
+    mask=jnp.ones_like(history, dtype="bool"),
     channel_axis=None,
 )
 assert corrupted_history.shape == history.shape
@@ -1124,7 +1124,7 @@ cochain_operator = phx.nn.operator.architectures.CochainNeuralOperator(
     depth=1,
     key=jr.key(25),
 )
-cochain_prediction = cochain_operator.predict(cochain_batch)
+cochain_prediction = cochain_operator.evaluate(cochain_batch)
 assert cochain_prediction.field("pressure").values.shape == (2, 4)
 assert cochain_prediction.field("flux").values.shape == (2, 5)
 ```
@@ -1179,7 +1179,7 @@ darcy_program = phx.graph.CochainResidualProgram(
         "mass": zero_form,
     },
     residual_fn=mixed_darcy_residual,
-    identity="cookbook.operator.mixed_darcy.v1",
+    identity="cookbook.operator.mixed_darcy",
 )
 residual_inputs = {
     "pressure": phx.nn.operator.training.CochainResidualInput("prediction", "pressure"),
@@ -1876,13 +1876,13 @@ output_pipeline = phx.nn.operator.training.OperatorOutputPipeline(
     phx.nn.operator.training.HardConstraintTransform(
         "output",
         envelope_fn=boundary_envelope,
-        identity="homogeneous-dirichlet-v1",
+        identity="homogeneous-dirichlet",
     ),
     phx.nn.operator.training.ConservationProjection(
         "output",
         source_name="forcing",
         correction_fn=boundary_envelope,
-        identity="dirichlet-compatible-integral-v1",
+        identity="dirichlet-compatible-integral",
     ),
 )
 physics_task = phx.nn.operator.OperatorTask(
@@ -1985,7 +1985,7 @@ re-encoding the source:
 query_source = phx.nn.operator.training.ArrayOperatorQuerySource(
     measured_batch.query("query"),
     case_shape=measured_batch.case_shape,
-    fingerprint="cookbook-query-v1",
+    fingerprint="cookbook-query",
 )
 prediction_sink = phx.nn.operator.training.ArrayPredictionSink()
 streamed_prediction = phx.nn.operator.training.decode_query_chunks(
@@ -1997,7 +1997,7 @@ streamed_prediction = phx.nn.operator.training.decode_query_chunks(
     compile=True,
 )
 assert streamed_prediction.shape == predictions[-1].shape
-assert prediction_sink.metadata.query_fingerprint == "cookbook-query-v1"
+assert prediction_sink.metadata.query_fingerprint == "cookbook-query"
 ```
 
 The final chunk is padded and masked internally, so padding contributes neither
@@ -2122,7 +2122,7 @@ model weights remain frozen.
 
 ## Audited operator benchmarks
 
-Use Operator Benchmark v2 artifacts for architecture decisions.
+Use canonical Operator Benchmark artifacts for architecture decisions.
 The three profiles have different contracts:
 
 | Profile | Purpose | Promotion eligible |
@@ -2187,7 +2187,7 @@ Run a broad shortlist with Pareto reporting before committing decision-profile
 compute:
 
 ```console
-uv run python -m tools.operator_benchmarks --v2 \
+uv run python -m tools.operator_benchmarks - \
   --benchmark-profile shortlist \
   --ladders smooth_periodic --difficulty hard \
   --architectures constant,nearest_neighbor,fno,tfno,cno,uno \
@@ -2207,7 +2207,7 @@ provenance, independent source/query clouds, physical population splits, and
 isolated geometry, sensor, and boundary-condition shifts:
 
 ```console
-uv run python -m tools.operator_benchmarks --v2 \
+uv run python -m tools.operator_benchmarks - \
   --benchmark-profile shortlist \
   --ladders irregular_geometry --difficulty hard \
   --architectures constant,nearest_neighbor,gino,rigno,gaot \
@@ -2231,7 +2231,7 @@ is the locality-free control; `cochain_no_harmonic` is included only on the
 annulus ladder; the full model enables exact harmonic projection there:
 
 ```console
-uv run python -m tools.operator_benchmarks --v2 \
+uv run python -m tools.operator_benchmarks - \
   --benchmark-profile shortlist \
   --ladders cochain_mixed_darcy,cochain_annulus_harmonic \
   --difficulty all \
@@ -2252,7 +2252,7 @@ final step. Resume the exact model, optimizer, PRNG key, elapsed time, and
 learning/validation curves with:
 
 ```console
-uv run python -m tools.operator_benchmarks --v2 \
+uv run python -m tools.operator_benchmarks - \
   --benchmark-profile decision \
   --ladders independent_query --difficulty hard \
   --architectures constant,nearest_neighbor,deeponet,local_integral \
@@ -2297,7 +2297,7 @@ Compare ordinary FNO with the same architecture trained using post-split `p4`
 augmentation:
 
 ```console
-uv run python -m tools.operator_benchmarks --v2 \
+uv run python -m tools.operator_benchmarks - \
   --benchmark-profile decision \
   --ladders square_symmetry --difficulty all \
   --architectures fno,fno_p4_augmented \

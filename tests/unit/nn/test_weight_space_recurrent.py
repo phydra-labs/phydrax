@@ -90,7 +90,7 @@ def test_weight_space_recurrence_matches_serial_execution_and_streaming_continua
         key=jr.key(2),
     )
     values = jr.normal(jr.key(3), (7, 2), dtype=jnp.float64)
-    valid = jnp.ones((7,), dtype=bool)
+    valid = jnp.ones((7,), dtype="bool")
     queries = jnp.linspace(-1.0, 1.0, 5)
     batch = RecurrentBatch(values, valid)
 
@@ -102,10 +102,10 @@ def test_weight_space_recurrence_matches_serial_execution_and_streaming_continua
         rtol=2e-10,
     )
     first = associative.parameter_trajectory(
-        RecurrentBatch(values[:3], jnp.ones((3,), dtype=bool))
+        RecurrentBatch(values[:3], jnp.ones((3,), dtype="bool"))
     )
     second = associative.parameter_trajectory(
-        RecurrentBatch(values[3:], jnp.ones((4,), dtype=bool)),
+        RecurrentBatch(values[3:], jnp.ones((4,), dtype="bool")),
         initial_state=first.final_state,
     )
     assert jnp.allclose(
@@ -131,19 +131,19 @@ def test_weight_space_reset_isolates_parameter_and_observation_state():
     values = jr.normal(jr.key(5), (8, 2), dtype=jnp.float64)
     reset = jnp.array([False, False, False, False, True, False, False, False])
     packed = model.parameter_trajectory(
-        RecurrentBatch(values, jnp.ones((8,), dtype=bool), reset=reset)
+        RecurrentBatch(values, jnp.ones((8,), dtype="bool"), reset=reset)
     ).states
     first_chunk = model.parameter_trajectory(
         RecurrentBatch(
             values[:2],
-            jnp.ones((2,), dtype=bool),
+            jnp.ones((2,), dtype="bool"),
             reset=reset[:2],
         )
     )
     second_chunk = model.parameter_trajectory(
         RecurrentBatch(
             values[2:],
-            jnp.ones((6,), dtype=bool),
+            jnp.ones((6,), dtype="bool"),
             reset=reset[2:],
         ),
         initial_state=first_chunk.final_state,
@@ -155,10 +155,10 @@ def test_weight_space_reset_isolates_parameter_and_observation_state():
         rtol=2e-10,
     )
     first = model.parameter_trajectory(
-        RecurrentBatch(values[:4], jnp.ones((4,), dtype=bool))
+        RecurrentBatch(values[:4], jnp.ones((4,), dtype="bool"))
     ).states
     second = model.parameter_trajectory(
-        RecurrentBatch(values[4:], jnp.ones((4,), dtype=bool))
+        RecurrentBatch(values[4:], jnp.ones((4,), dtype="bool"))
     ).states
     assert jnp.allclose(packed, jnp.concatenate((first, second)), atol=2e-10, rtol=2e-10)
 

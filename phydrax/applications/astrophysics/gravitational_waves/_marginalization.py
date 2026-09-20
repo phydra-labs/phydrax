@@ -129,7 +129,7 @@ class TimeMarginalizationPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Time marginalization support and node count are invalid.")
         spacing = (upper - lower) / count
-        self.nodes = lower + spacing * (0.5 + jnp.arange(count, dtype=float))
+        self.nodes = lower + spacing * (0.5 + jnp.arange(count, dtype=jnp.float64))
         self.log_weights = jnp.full((count,), -jnp.log(float(count)))
         self.parameter = name
         self.plan_id = canonical_fingerprint(
@@ -225,7 +225,7 @@ class CalibrationResponseEnsemble(StrictModule, NonTrainableState):
         log_weights: ArrayLike | None = None,
         ensemble_id: str = "calibration-response-ensemble",
     ):
-        frequencies = np.asarray(frequency, dtype=float)
+        frequencies = np.asarray(frequency, dtype=np.float64)
         curves = np.asarray(responses)
         identifiers = tuple(str(value).strip() for value in detector_ids)
         if (
@@ -254,7 +254,7 @@ class CalibrationResponseEnsemble(StrictModule, NonTrainableState):
         if log_weights is None:
             logs = np.full((curves.shape[0],), -np.log(float(curves.shape[0])))
         else:
-            logs = np.asarray(log_weights, dtype=float)
+            logs = np.asarray(log_weights, dtype=np.float64)
             if logs.shape != (curves.shape[0],) or np.any(np.isnan(logs)):
                 raise ValueError("Calibration log weights must match the curve axis.")
             normalizer = float(jsp.special.logsumexp(jnp.asarray(logs)))
@@ -285,7 +285,7 @@ class CalibrationResponseEnsemble(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.log_weights.shape[0])
+        return self.log_weights.shape[0]
 
     def response(self, index: ArrayLike, frequency: ArrayLike, /) -> Array:
         frequencies = jnp.asarray(frequency)
@@ -409,8 +409,8 @@ class GravitationalWaveMarginalizationPlan(StrictModule):
                     "Calibration frequency grid does not match likelihood data."
                 )
         count = (
-            (1 if time is None else int(time.nodes.size))
-            * (1 if distance is None else int(distance.nodes.size))
+            (1 if time is None else time.nodes.size)
+            * (1 if distance is None else distance.nodes.size)
             * (1 if calibration is None else calibration.ensemble.count)
         )
         limit = int(maximum_grid_points)
@@ -455,7 +455,7 @@ class GravitationalWaveMarginalizationPlan(StrictModule):
                     {self.distance.parameter: self.distance.nodes[index]},
                     self.distance.log_weights[index],
                 )
-                for index in range(int(self.distance.nodes.size))
+                for index in range(self.distance.nodes.size)
             )
         )
         time_choices = (
@@ -466,7 +466,7 @@ class GravitationalWaveMarginalizationPlan(StrictModule):
                     {self.time.parameter: self.time.nodes[index]},
                     self.time.log_weights[index],
                 )
-                for index in range(int(self.time.nodes.size))
+                for index in range(self.time.nodes.size)
             )
         )
         choices = []
@@ -587,7 +587,7 @@ def reconstruct_marginalized_parameters(
     leaves = tuple(jnp.asarray(value) for value in samples.values())
     if rank <= 0 or any(value.ndim < rank for value in leaves):
         raise ValueError("sample_ndim must select nonempty leading sample axes.")
-    sample_shape = tuple(int(size) for size in leaves[0].shape[:rank])
+    sample_shape = tuple(leaves[0].shape[:rank])
     if any(tuple(value.shape[:rank]) != sample_shape for value in leaves[1:]):
         raise ValueError("Every sample leaf must share the leading sample shape.")
     count = int(np.prod(sample_shape))

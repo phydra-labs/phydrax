@@ -124,7 +124,10 @@ def test_profiles_are_per_operation_and_never_claim_universal_differentiability(
         capability.operation
         for capability in MJX_JAX_PROFILE.operations
         if capability.supported
-    } == {"step", "sensors"}
+    } == {
+        "step",
+        "sensors",
+    }
     assert not any(capability.supported for capability in MJX_WARP_PROFILE.operations)
     with pytest.raises(BackendUnavailableError, match="automatic differentiation"):
         MJX_WARP_PROFILE.require((RoboticsOperationRequirement("vjp"),))

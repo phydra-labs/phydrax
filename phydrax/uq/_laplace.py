@@ -108,7 +108,7 @@ class LaplaceResult(StrictModule):
 
     @property
     def dimension(self) -> int:
-        return int(self.flat_map_position.size)
+        return self.flat_map_position.size
 
     def sample_unconstrained(
         self,
@@ -310,7 +310,7 @@ def fit_laplace(
     position = problem.initial_position if map_position is None else map_position
     problem.parameter_space.constrain(position)
     flat_position, unravel = ravel_pytree(position)
-    dimension = int(flat_position.size)
+    dimension = flat_position.size
     if dimension == 0:
         raise ValueError("Laplace position must contain at least one scalar.")
     if dimension > dimension_limit:

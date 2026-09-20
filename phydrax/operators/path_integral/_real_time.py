@@ -112,7 +112,7 @@ class RealTimeContinuationResult(StrictModule):
 
 
 def _regulator_volume(x0: Array, x1: Array, plan: RealTimePathIntegralPlan, /) -> Array:
-    dimension = int(x0.shape[-1])
+    dimension = x0.shape[-1]
     steps = plan.slicing.num_steps
     dt = plan.slicing.dt
     displacement = jnp.sum((x1 - x0) ** 2, axis=-1)
@@ -145,7 +145,7 @@ def real_time_kernel_from_noise(
     if start.ndim != 1 or end.ndim != 1:
         raise ValueError("real-time kernels currently require unbatched endpoints.")
     z = jnp.asarray(noise)
-    expected = (plan.num_paths, plan.slicing.num_steps, int(start.shape[-1]))
+    expected = (plan.num_paths, plan.slicing.num_steps, start.shape[-1])
     if z.shape != expected:
         raise ValueError(f"noise must have shape {expected}; got {z.shape}.")
     paths = brownian_bridge_from_noise(
@@ -160,7 +160,7 @@ def real_time_kernel_from_noise(
     action = kinetic - potential_values
     phase = jnp.exp(1j * action / plan.hbar)
     volume = _regulator_volume(start, end, plan)
-    prefactor = _real_time_prefactor(plan, int(start.shape[-1]))
+    prefactor = _real_time_prefactor(plan, start.shape[-1])
     samples = prefactor * volume * phase
     value = jnp.mean(samples)
     components = jnp.stack((jnp.real(samples), jnp.imag(samples)), axis=-1)
@@ -200,7 +200,7 @@ def real_time_kernel(
         raise ValueError("real-time kernels currently require unbatched endpoints.")
     noise = jr.normal(
         key,
-        (plan.num_paths, plan.slicing.num_steps, int(start.shape[-1])),
+        (plan.num_paths, plan.slicing.num_steps, start.shape[-1]),
         dtype=start.dtype,
     )
     return real_time_kernel_from_noise(noise, x0, x1, potential, plan=plan)

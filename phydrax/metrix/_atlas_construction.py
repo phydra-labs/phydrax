@@ -54,9 +54,9 @@ class CompactAtlasDomain(StrictModule):
         if not jnp.issubdtype(points.dtype, jnp.inexact):
             raise TypeError("CompactAtlasDomain coordinates must have an inexact dtype.")
         certified = (
-            jnp.zeros((points.shape[0],), dtype=bool)
+            jnp.zeros((points.shape[0],), dtype=jnp.bool_)
             if certified_cells is None
-            else jnp.asarray(certified_cells, dtype=bool)
+            else jnp.asarray(certified_cells, dtype=jnp.bool_)
         )
         if certified.shape != (points.shape[0],):
             raise ValueError(
@@ -123,7 +123,7 @@ class AtlasCandidate(StrictModule):
 
     def covers(self, ambient_points: ArrayLike, /) -> Array:
         coordinates = self.coordinates(ambient_points)
-        result = jnp.asarray(self.coordinate_support(coordinates), dtype=bool)
+        result = jnp.asarray(self.coordinate_support(coordinates), dtype=jnp.bool_)
         if result.shape != coordinates.shape[:-1]:
             raise ValueError("Atlas candidate support must preserve leading axes.")
         return result & jnp.all(jnp.isfinite(coordinates), axis=-1)
@@ -184,14 +184,14 @@ class AtlasConstructionCertificate(StrictModule):
         valid: ArrayLike,
         domain_id: str,
     ):
-        self.covered_cells = jnp.asarray(covered_cells, dtype=bool)
+        self.covered_cells = jnp.asarray(covered_cells, dtype=jnp.bool_)
         self.selected_candidates = jnp.asarray(selected_candidates, dtype=jnp.int32)
         self.maximum_inverse_residual = jnp.asarray(maximum_inverse_residual)
         self.maximum_cocycle_residual = jnp.asarray(maximum_cocycle_residual)
-        self.orientation_consistent = jnp.asarray(orientation_consistent, dtype=bool)
-        self.sampled = jnp.asarray(sampled, dtype=bool)
-        self.certified = jnp.asarray(certified, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.orientation_consistent = jnp.asarray(orientation_consistent, dtype=jnp.bool_)
+        self.sampled = jnp.asarray(sampled, dtype=jnp.bool_)
+        self.certified = jnp.asarray(certified, dtype=jnp.bool_)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.domain_id = str(domain_id)
 
 
@@ -214,9 +214,7 @@ class PreparedAtlasConstruction(StrictModule):
     ):
         self.cover = cover
         self.certificate = certificate
-        self.path_table = tuple(
-            tuple(int(value) for value in path) for path in path_table
-        )
+        self.path_table = tuple(tuple(path) for path in path_table)
         self.candidate_ids = tuple(str(value) for value in candidate_ids)
 
     @property
@@ -291,7 +289,9 @@ def prepare_atlas(
                     second,
                     transition,
                     lambda coordinates, candidate=chosen[first], other=chosen[second]: (
-                        jnp.asarray(candidate.coordinate_support(coordinates), dtype=bool)
+                        jnp.asarray(
+                            candidate.coordinate_support(coordinates), dtype=jnp.bool_
+                        )
                         & other.covers(candidate.parameterization(coordinates))
                     ),
                     overlap_id=f"{chosen[first].candidate_id}->{chosen[second].candidate_id}",
@@ -404,7 +404,7 @@ def level_set_graph_candidate(
 
     if not isinstance(manifold, RegularLevelSetManifold):
         raise TypeError("manifold must be a RegularLevelSetManifold.")
-    free = tuple(int(axis) for axis in free_axes)
+    free = tuple(free_axes)
     ambient = manifold.point_shape[0]
     expected = ambient - manifold.codimension
     if len(free) != expected or len(set(free)) != len(free):

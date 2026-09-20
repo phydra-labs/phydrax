@@ -26,7 +26,7 @@ def _timed(call):
 
 
 def _range(values) -> dict[str, float]:
-    samples = np.asarray(tuple(values), dtype=float)
+    samples = np.asarray(tuple(values), dtype="float64")
     if samples.ndim != 1 or not samples.size:
         raise ValueError("Benchmark ranges require one nonempty scalar sequence.")
     return {"minimum": float(np.min(samples)), "maximum": float(np.max(samples))}
@@ -410,8 +410,7 @@ def benchmark_planar_band(resolution: int) -> dict[str, object]:
     achieved = dict(mesh_result.compliance.achieved)
     residuals = tuple(
         achieved[
-            f"planar_band:{layer.control_id}:{layer.region_name}:"
-            f"front:{layer.layer_index + 1}:maximum_residual"
+            f"planar_band:{layer.control_id}:{layer.region_name}:front:{layer.layer_index + 1}:maximum_residual"
         ]
         for layer in band_result.layer_partitions
     )
@@ -493,7 +492,7 @@ def benchmark_hybrid_slab(resolution: int) -> dict[str, object]:
             ],
         },
         "counts": {
-            "vertices": int(result.mesh.coordinates.shape[0]),
+            "vertices": result.mesh.coordinates.shape[0],
             "cells": result.mesh.entity_set(3).count,
             "dofs": discretization.dof_maps[0].global_dof_count,
         },

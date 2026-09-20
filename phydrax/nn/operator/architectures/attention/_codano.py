@@ -48,7 +48,7 @@ def _named_key(key: Key[Array, ""], label: str, /) -> Key[Array, ""]:
 
 def _feature_norm(norm: eqx.nn.RMSNorm, values: Array, /) -> Array:
     array = jnp.asarray(values)
-    flattened = array.reshape((-1, int(array.shape[-1])))
+    flattened = array.reshape((-1, array.shape[-1]))
     return jax.vmap(norm)(flattened).reshape(array.shape)
 
 
@@ -68,10 +68,9 @@ def _field_values(
         normalized = field.nondimensionalize(values)
         return normalized.reshape(case_shape + (count, 1))
     expected = scalar_shape + (field.channel_count,)
-    if tuple(int(size) for size in values.shape) != expected:
+    if tuple(values.shape) != expected:
         raise ValueError(
-            f"CoDA-NO field {field.name!r} values must have shape {expected}; "
-            f"got {values.shape}."
+            f"CoDA-NO field {field.name!r} values must have shape {expected}; got {values.shape}."
         )
     normalized = field.nondimensionalize(values)
     return normalized.reshape(case_shape + (count, field.channel_count))
@@ -98,13 +97,13 @@ class CoDAOperatorState(StrictModule):
         layer_values: Sequence[Array] = (),
     ):
         values_ = jnp.asarray(values)
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         if values_.ndim < len(cases) + 3:
             raise ValueError(
                 "CoDA state values require case, spatial, field, and channel axes."
             )
-        field_mask_ = jnp.asarray(field_mask, dtype=bool)
-        if field_mask_.shape != cases + (int(values_.shape[-2]),):
+        field_mask_ = jnp.asarray(field_mask, dtype=jnp.bool_)
+        if field_mask_.shape != cases + (values_.shape[-2],):
             raise ValueError("CoDA state field_mask must have case_shape + (fields,).")
         coordinates_ = jnp.asarray(coordinates)
         if coordinates_.shape[: len(cases)] != cases:
@@ -217,7 +216,7 @@ class CoDABlock(StrictModule):
         mixed = jnp.moveaxis(mixed, case_ndim, field_axis)
         sample_mask = jnp.broadcast_to(
             field_mask,
-            hidden.shape[:case_ndim] + (int(hidden.shape[-2]),),
+            hidden.shape[:case_ndim] + (hidden.shape[-2],),
         )
         for _ in range(self.spatial_ndim):
             sample_mask = jnp.expand_dims(sample_mask, axis=case_ndim)
@@ -501,7 +500,7 @@ class CoDANO(AbstractEncodedOperatorModel):
             query_features = base_query + self.field_embeddings[field_index]
             if not field.is_source:
                 encoded_fields.append(query_features)
-                presence.append(jnp.ones((cases,), dtype=bool))
+                presence.append(jnp.ones((cases,), dtype=jnp.bool_))
                 continue
             assert field.source_name is not None
             if field.source_name not in batch.inputs:
@@ -509,14 +508,14 @@ class CoDANO(AbstractEncodedOperatorModel):
                     raise KeyError(
                         f"Missing required CoDA-NO field source {field.source_name!r}."
                     )
-                target_presence = jnp.ones((cases,), dtype=bool)
+                target_presence = jnp.ones((cases,), dtype=jnp.bool_)
                 encoded_fields.append(
                     query_features if field.is_target else jnp.zeros_like(query_features)
                 )
                 presence.append(
                     target_presence
                     if field.is_target
-                    else jnp.zeros((cases,), dtype=bool)
+                    else jnp.zeros((cases,), dtype=jnp.bool_)
                 )
                 continue
             source = batch.input(field.source_name)
@@ -524,12 +523,12 @@ class CoDANO(AbstractEncodedOperatorModel):
             coordinates = source.coordinates_array(
                 case_shape=batch.case_shape, flatten=True
             )
-            if int(coordinates.shape[-1]) != self.coord_dim:
+            if coordinates.shape[-1] != self.coord_dim:
                 raise ValueError(
                     f"CoDA-NO field {field.name!r} expected coordinate dimension "
                     f"{self.coord_dim}; got {coordinates.shape[-1]}."
                 )
-            source_count = int(values.shape[-2])
+            source_count = values.shape[-2]
             lifted = self.source_lifts[source_index[field.name]](
                 jnp.concatenate((values, coordinates), axis=-1)
             ).reshape((cases, source_count, self.width))
@@ -582,8 +581,7 @@ class CoDANO(AbstractEncodedOperatorModel):
     ) -> Array:
         if field_name not in self.target_names:
             raise KeyError(
-                f"Unknown CoDA-NO target field {field_name!r}; "
-                f"expected {self.target_names}."
+                f"Unknown CoDA-NO target field {field_name!r}; expected {self.target_names}."
             )
         target_index = self.target_names.index(field_name)
         field_index = tuple(field.name for field in self.fields).index(field_name)
@@ -591,10 +589,9 @@ class CoDANO(AbstractEncodedOperatorModel):
         query_coordinates = query.coordinates_array(
             case_shape=state.case_shape, flatten=True
         )
-        if int(query_coordinates.shape[-1]) != self.coord_dim:
+        if query_coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
-                f"CoDA-NO query expected coordinate dimension {self.coord_dim}; "
-                f"got {query_coordinates.shape[-1]}."
+                f"CoDA-NO query expected coordinate dimension {self.coord_dim}; got {query_coordinates.shape[-1]}."
             )
         cases = prod(state.case_shape) if state.case_shape else 1
         query_count = prod(query.sample_shape)

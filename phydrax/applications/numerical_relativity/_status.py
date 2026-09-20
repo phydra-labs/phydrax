@@ -90,11 +90,11 @@ class ScientificStatus(StrictModule):
         /,
     ):
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
-        self.converged = jnp.asarray(converged, dtype=bool).reshape(())
-        self.physically_valid = jnp.asarray(physically_valid, dtype=bool).reshape(())
-        self.qualified = jnp.asarray(qualified, dtype=bool).reshape(())
-        self.derivative_valid = jnp.asarray(derivative_valid, dtype=bool).reshape(())
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
+        self.physically_valid = jnp.asarray(physically_valid, dtype=jnp.bool_).reshape(())
+        self.qualified = jnp.asarray(qualified, dtype=jnp.bool_).reshape(())
+        self.derivative_valid = jnp.asarray(derivative_valid, dtype=jnp.bool_).reshape(())
 
     @property
     def successful(self) -> Array:

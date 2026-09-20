@@ -101,7 +101,7 @@ def solve_particle_fokker_planck(
     ensemble = solve_stochastic_path_ensemble(prepared)
     states = ensemble.states
     path_count = plan.ensemble_plan.path_count
-    time_count = int(states.shape[1])
+    time_count = states.shape[1]
     log_weights = -jnp.log(jnp.asarray(path_count, dtype=states.dtype)) * jnp.ones(
         (path_count,), dtype=states.dtype
     )

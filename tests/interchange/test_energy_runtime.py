@@ -138,8 +138,7 @@ def test_isolated_execution_uses_environment_allowlist_and_records_policy(
         python_executable,
         (
             "-c",
-            "import os,pathlib; pathlib.Path('value').write_text("
-            "os.environ.get('QUALIFICATION_TOKEN','missing'))",
+            "import os,pathlib; pathlib.Path('value').write_text(os.environ.get('QUALIFICATION_TOKEN','missing'))",
         ),
         inputs={},
         outputs=("value",),

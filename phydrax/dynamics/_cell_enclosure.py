@@ -38,14 +38,14 @@ class CellMapEnclosure(StrictModule, NonTrainableState):
             raise ValueError("Cell enclosure index pair must share one topology.")
         if degree_ < 0 or degree_ > neighborhood.max_degree:
             raise ValueError("Cell enclosure degree is outside the topology.")
-        neighborhood_mask = np.asarray(neighborhood.masks[degree_], dtype=bool)
-        exit_mask = np.asarray(exit_set.masks[degree_], dtype=bool)
+        neighborhood_mask = np.asarray(neighborhood.masks[degree_], dtype=np.bool_)
+        exit_mask = np.asarray(exit_set.masks[degree_], dtype=np.bool_)
         if np.any(exit_mask & ~neighborhood_mask):
             raise ValueError("Cell enclosure exit set must lie in the neighborhood.")
         count = neighborhood.topology.entity_sets[degree_].count
         if relation.source_size != count or relation.target_size != count:
             raise ValueError("Cell enclosure relation size does not match entity count.")
-        valid = np.asarray(relation.valid, dtype=bool)
+        valid = np.asarray(relation.valid, dtype=np.bool_)
         sources = np.asarray(relation.source_indices)[valid]
         targets = np.asarray(relation.target_indices)[valid]
         outgoing = [set() for _ in range(count)]

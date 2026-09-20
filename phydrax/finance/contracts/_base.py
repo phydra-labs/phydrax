@@ -7,7 +7,9 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
-from ..._strict import AbstractAttribute, StrictModule
+import equinox as eqx
+
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -20,14 +22,14 @@ class AbstractPayoff(StrictModule, NonTrainableState):
     """Immutable product-specific payoff marker without a universal payoff DSL."""
 
     __strict_abstract__ = True
-    payoff_id: AbstractAttribute[str]
+    payoff_id: eqx.AbstractVar[str]
 
 
 class AbstractContract(StrictModule, NonTrainableState):
     """Host-side financial contract definition before deterministic resolution."""
 
     __strict_abstract__ = True
-    contract_id: AbstractAttribute[str]
+    contract_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def resolve(self, context: ContractResolutionContext, /) -> AbstractResolvedContract:
@@ -40,8 +42,8 @@ class AbstractResolvedContract(StrictModule, NonTrainableState):
     """Host-resolved contract suitable for product-specific fixed-shape preparation."""
 
     __strict_abstract__ = True
-    contract_id: AbstractAttribute[str]
-    resolved_id: AbstractAttribute[str]
+    contract_id: eqx.AbstractVar[str]
+    resolved_id: eqx.AbstractVar[str]
 
     @property
     @abstractmethod

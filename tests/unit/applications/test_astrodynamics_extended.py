@@ -54,7 +54,7 @@ def test_typed_array_adapter_converts_values_without_changing_context_semantics(
     astro = phx.applications.astrodynamics
     assert astro.AstrodynamicsScaleContract is phx.DimensionalScaleContract
     context = _context("earth", "icrf")
-    centimetres_per_second = phx.units.derived_unit(
+    centimeters_per_second = phx.units.derived_unit(
         "cm/s",
         ((phx.units.CENTIMETER, 1), (phx.units.SECOND, -1)),
     )
@@ -63,7 +63,7 @@ def test_typed_array_adapter_converts_values_without_changing_context_semantics(
         jnp.asarray([200.0, 0.0, -100.0]),
         context,
         position_unit=phx.units.CENTIMETER,
-        velocity_unit=centimetres_per_second,
+        velocity_unit=centimeters_per_second,
     )
     np.testing.assert_allclose(state.position, [1.0, 2.0, 3.0])
     np.testing.assert_allclose(state.velocity, [2.0, 0.0, -1.0])
@@ -145,20 +145,20 @@ def test_time_frame_ephemeris_and_third_body_contracts():
     assert bool(evidence.valid)
     np.testing.assert_allclose(restored.position, state.position, atol=1.0e-12)
 
-    kilometre_scale = astro.AstrodynamicsScaleContract(
+    kilometer_scale = astro.AstrodynamicsScaleContract(
         phx.units.KILOMETER,
         phx.units.KILOGRAM,
         phx.units.SECOND,
     )
     mismatched_target = astro.AstrodynamicsContext(
-        kilometre_scale,
+        kilometer_scale,
         source_context.epoch,
         target_context.frame,
     )
     with pytest.raises(ValueError, match="matching scale contracts"):
         transform.apply(state, 0.0, mismatched_target)
     mismatched_source = astro.AstrodynamicsContext(
-        kilometre_scale,
+        kilometer_scale,
         source_context.epoch,
         source_context.frame,
     )

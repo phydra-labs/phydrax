@@ -13,11 +13,11 @@ cannot silently become a contact route.
 
 ## Units and signs
 
-The cardiovascular kernel uses millimetres, milliseconds, milligrams, millivolts,
-kilopascals, and cubic millimetres. Convert external data at the case boundary.
+The cardiovascular kernel uses millimeters, milliseconds, milligrams, millivolts,
+kilopascals, and cubic millimeters. Convert external data at the case boundary.
 Marker force passed to `PreparedSparseMarkerTransfer.spread` is the force **on the
 fluid**. Its negative is the load on the structural body. Positive contact gap is
-open; negative gap is penetration. Record the torque origin and body centres in the
+open; negative gap is penetration. Record the torque origin and body centers in the
 same physical coordinate frame as the marker positions.
 
 ## Sparse immersed transfer
@@ -80,7 +80,7 @@ evidence = transfer.diagnostics(
     marker_velocity=wall_velocity,
     torque_origin=torque_origin,
     body_indices=marker_body,
-    body_centers=body_centres,
+    body_centers=body_centers,
 )
 ```
 

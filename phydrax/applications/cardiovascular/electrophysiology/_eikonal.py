@@ -177,8 +177,8 @@ class AnisotropicEikonalPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "route must be GraphEikonalRoute or FiniteElementEikonalRoute."
             )
-        positions = np.asarray(node_positions_mm, dtype=float)
-        node_count = int(route.node_ids.shape[0])
+        positions = np.asarray(node_positions_mm, dtype=np.float64)
+        node_count = route.node_ids.shape[0]
         if positions.ndim != 2 or positions.shape[0] != node_count:
             raise ValueError("node_positions_mm must have shape [route node, dimension].")
         dimension = positions.shape[1]
@@ -186,7 +186,7 @@ class AnisotropicEikonalPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Eikonal positions must be finite and one-, two-, or three-dimensional."
             )
-        tensors = np.asarray(velocity_tensors_mm2_per_ms2, dtype=float)
+        tensors = np.asarray(velocity_tensors_mm2_per_ms2, dtype=np.float64)
         if tensors.shape == (dimension, dimension):
             tensors = np.broadcast_to(tensors, (node_count, dimension, dimension)).copy()
         if tensors.shape != (node_count, dimension, dimension):
@@ -245,7 +245,7 @@ class PreparedAnisotropicEikonal(StrictModule, NonTrainableState):
 
     @property
     def node_count(self) -> int:
-        return int(self.plan.route.node_ids.shape[0])
+        return self.plan.route.node_ids.shape[0]
 
 
 class EikonalSolveEvidence(StrictModule):
@@ -486,7 +486,7 @@ def solve_anisotropic_eikonal(
     fem_proposals, fem_parents = _fem_local_candidates(prepared, arrivals, infinity)
     all_proposals = jnp.concatenate((edge_proposals, fem_proposals))
     all_destinations = jnp.concatenate((destinations, prepared.fem_target_nodes))
-    all_parents = jnp.concatenate((origins, fem_parents))
+    jnp.concatenate((origins, fem_parents))
     relaxation_defect = arrivals[all_destinations] - all_proposals
     finite_defect = jnp.where(jnp.isfinite(relaxation_defect), relaxation_defect, 0.0)
     maximum_residual = jnp.maximum(jnp.max(finite_defect), 0.0)
@@ -516,7 +516,7 @@ def solve_anisotropic_eikonal(
     ].set(selected_proposals)
     selected_candidate = jnp.argmin(candidate_matrix, axis=0).astype(jnp.int32)
     predecessor = selected_parents[selected_candidate]
-    source_mask = jnp.zeros((prepared.node_count,), dtype=bool).at[sources].set(True)
+    source_mask = jnp.zeros((prepared.node_count,), dtype=jnp.bool_).at[sources].set(True)
     predecessor = jnp.where(reachable & (~source_mask), predecessor, -1)
     sorted_candidates = jnp.sort(candidate_matrix, axis=0)
     node_margin = sorted_candidates[1] - sorted_candidates[0]

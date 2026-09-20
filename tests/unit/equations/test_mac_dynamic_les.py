@@ -127,7 +127,7 @@ def test_mac_test_filter_is_fixed_normalized_distinct_and_reports_support():
     test_filter = prepared.test_filter
     constant = jnp.ones(discretization.cell_shape)
     alternating = (-1.0) ** jnp.indices(discretization.cell_shape)[0]
-    varying = jnp.arange(np.prod(discretization.cell_shape), dtype=float).reshape(
+    varying = jnp.arange(np.prod(discretization.cell_shape), dtype="float64").reshape(
         discretization.cell_shape
     )
 

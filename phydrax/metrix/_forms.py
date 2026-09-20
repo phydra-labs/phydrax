@@ -71,8 +71,7 @@ class DifferentialForm(StrictModule):
         expected = (self.coefficient_count,)
         if values.shape != expected:
             raise ValueError(
-                f"Degree-{self.degree} form coefficients must have shape {expected}; "
-                f"got {values.shape}."
+                f"Degree-{self.degree} form coefficients must have shape {expected}; got {values.shape}."
             )
         return values
 
@@ -246,8 +245,7 @@ class _InteriorProductCoefficient(StrictModule):
         expected = (self.form.chart.dimension,)
         if vector.shape != expected:
             raise ValueError(
-                f"Interior-product vector field must have shape {expected}; "
-                f"got {vector.shape}."
+                f"Interior-product vector field must have shape {expected}; got {vector.shape}."
             )
         coefficients = self.form._coefficients_point(coordinates)
         vector_terms = jnp.asarray(self.vector_terms, dtype=jnp.int32)

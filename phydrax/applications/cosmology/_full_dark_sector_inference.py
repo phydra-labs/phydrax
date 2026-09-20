@@ -78,7 +78,7 @@ def _positive_integer(value: int, name: str, /) -> int:
 
 
 def _scalar_flag(value: ArrayLike, name: str, /) -> Array:
-    result = jnp.asarray(value, dtype=bool)
+    result = jnp.asarray(value, dtype=jnp.bool_)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     return jax.lax.stop_gradient(result)
@@ -91,7 +91,7 @@ def _real_vector(value: ArrayLike, size: int, name: str, /, *, dtype=None) -> Ar
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
     if not eqx.is_inexact_array(result):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 
@@ -424,9 +424,9 @@ class FullPathProbabilityLaw(StrictModule):
                 "component_log_probabilities must have shape (draw, component)."
             )
         if not eqx.is_inexact_array(log_probability):
-            log_probability = log_probability.astype(float)
+            log_probability = log_probability.astype("float64")
         scores = jnp.asarray(component_scores, dtype=log_probability.dtype)
-        complete = jax.lax.stop_gradient(jnp.asarray(component_complete, dtype=bool))
+        complete = jax.lax.stop_gradient(jnp.asarray(component_complete, dtype=jnp.bool_))
         if scores.ndim != 3 or scores.shape[:2] != log_probability.shape:
             raise ValueError(
                 "component_scores must have shape (draw, component, parameter)."
@@ -505,7 +505,7 @@ class FullPathSampleBatch(StrictModule):
         ):
             raise ValueError("values must have shape (draw, output) and be real.")
         if not eqx.is_inexact_array(value):
-            value = value.astype(float)
+            value = value.astype("float64")
         draw_ids = jax.lax.stop_gradient(jnp.asarray(random_draw_ids, dtype=jnp.uint32))
         if draw_ids.shape != (law.draw_count, 8):
             raise ValueError("random_draw_ids must have shape (draw, 8).")
@@ -600,7 +600,7 @@ class FullPathScoreCRNPlan(StrictModule, NonTrainableState):
         if parameters != len(policy.differentiable_parameters):
             raise ValueError("parameter_count must cover every differentiable parameter.")
         outputs = _positive_integer(output_count, "output_count")
-        weights_host = np.asarray(draw_weights, dtype=float).reshape((-1,))
+        weights_host = np.asarray(draw_weights, dtype=np.float64).reshape((-1,))
         if (
             weights_host.size < 2
             or np.any(~np.isfinite(weights_host))
@@ -627,7 +627,7 @@ class FullPathScoreCRNPlan(StrictModule, NonTrainableState):
         self.draw_weights = jax.lax.stop_gradient(jnp.asarray(weights_host))
         self.parameter_count = parameters
         self.output_count = outputs
-        self.draw_count = int(weights_host.size)
+        self.draw_count = weights_host.size
         self.required_law_components = components
         self.minimum_effective_sample_size = minimum
         self.bias_absolute_tolerance = absolute

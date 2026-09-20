@@ -33,7 +33,7 @@ def _finite_vector(value: ArrayLike, owner: str, /) -> Array:
         raise ValueError(f"{owner} must be a nonempty rank-one vector.")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
-    array = array.astype(jnp.result_type(array, float))
+    array = array.astype(jnp.result_type(array, jnp.float64))
     if not bool(jnp.all(jnp.isfinite(array))):
         raise ValueError(f"{owner} must be finite.")
     return array
@@ -45,7 +45,7 @@ def _finite_matrix(value: ArrayLike, owner: str, /) -> Array:
         raise ValueError(f"{owner} must be a nonempty rank-two matrix.")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
-    array = array.astype(jnp.result_type(array, float))
+    array = array.astype(jnp.result_type(array, jnp.float64))
     if not bool(jnp.all(jnp.isfinite(array))):
         raise ValueError(f"{owner} must be finite.")
     return array
@@ -77,7 +77,7 @@ class QueueReactiveModel(StrictModule):
         queue_coefficients = _finite_matrix(queue_loading, "queue_loading")
         action_coefficients = _finite_matrix(action_loading, "action_loading")
         deltas = _finite_matrix(channel_queue_deltas, "channel_queue_deltas")
-        channels = int(baseline.size)
+        channels = baseline.size
         if bool(jnp.any(baseline < 0.0)):
             raise ValueError("baseline_intensity must be nonnegative.")
         if queue_coefficients.shape[0] != channels:
@@ -93,8 +93,8 @@ class QueueReactiveModel(StrictModule):
         self.action_loading = action_coefficients
         self.channel_queue_deltas = deltas
         self.num_channels = channels
-        self.num_queues = int(queue_coefficients.shape[1])
-        self.action_size = int(action_coefficients.shape[1])
+        self.num_queues = queue_coefficients.shape[1]
+        self.action_size = action_coefficients.shape[1]
         self.model_id = _identifier(model_id, "model_id")
 
     def intensities(self, queue_depth: ArrayLike, action: ArrayLike, /) -> Array:
@@ -232,7 +232,7 @@ class HawkesOrderFlowModel(StrictModule):
         baseline = _finite_vector(baseline_intensity, "baseline_intensity")
         excitation_matrix = _finite_matrix(excitation, "excitation")
         decay = _finite_vector(decay_rates, "decay_rates")
-        channels = int(baseline.size)
+        channels = baseline.size
         if excitation_matrix.shape != (channels, channels):
             raise ValueError(
                 "excitation must have shape (num_channels, num_channels), with "
@@ -311,7 +311,7 @@ def diagnose_hawkes_stability(
     threshold = float(tolerance)
     if not isfinite(threshold) or threshold < 0.0:
         raise ValueError("tolerance must be finite and nonnegative.")
-    branching = np.asarray(model.branching_matrix, dtype=float)
+    branching = np.asarray(model.branching_matrix, dtype=np.float64)
     eigenvalues = np.linalg.eigvals(branching)
     radius = float(np.max(np.abs(eigenvalues)))
     finite = bool(np.isfinite(radius))
@@ -361,7 +361,7 @@ def hawkes_intensity_path(
     times = jnp.asarray(event_times)
     if times.ndim != 1 or jnp.issubdtype(times.dtype, jnp.complexfloating):
         raise TypeError("event_times must be a real rank-one vector.")
-    times = times.astype(jnp.result_type(times, float))
+    times = times.astype(jnp.result_type(times, jnp.float64))
     if not bool(jnp.all(jnp.isfinite(times))):
         raise ValueError("event_times must be finite.")
     channels = jnp.asarray(event_channels)

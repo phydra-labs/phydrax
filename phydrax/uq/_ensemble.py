@@ -47,10 +47,9 @@ class HomogeneousFunctionEnsemble(StrictModule):
         if not isinstance(source_dim, str) or not source_dim:
             raise ValueError("source_dim must be a non-empty string.")
         for leaf in jax.tree_util.tree_leaves(model):
-            if eqx.is_array(leaf) and (leaf.ndim == 0 or int(leaf.shape[0]) != count):
+            if eqx.is_array(leaf) and (leaf.ndim == 0 or leaf.shape[0] != count):
                 raise ValueError(
-                    "Every homogeneous ensemble array leaf must have a leading "
-                    f"member axis of size {count}."
+                    f"Every homogeneous ensemble array leaf must have a leading member axis of size {count}."
                 )
         self.model = model
         self.num_members = count
@@ -150,8 +149,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         template_field = template_prediction.field(field_name)
         if template_field.query_name != query_name:
             raise ValueError(
-                f"Output field {field_name!r} is bound to query "
-                f"{template_field.query_name!r}, not {query_name!r}."
+                f"Output field {field_name!r} is bound to query {template_field.query_name!r}, not {query_name!r}."
             )
 
         def evaluate(member, member_key):
@@ -288,8 +286,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         first_field = first_prediction.field(field_name)
         if first_field.query_name != query_name:
             raise ValueError(
-                f"Output field {field_name!r} is bound to query "
-                f"{first_field.query_name!r}, not {query_name!r}."
+                f"Output field {field_name!r} is bound to query {first_field.query_name!r}, not {query_name!r}."
             )
         first_spec = first_field.spec
         predictions = tuple(
@@ -312,8 +309,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
                 or prediction.values.shape != predictions[0].values.shape
             ):
                 raise ValueError(
-                    "Heterogeneous operator predictions must have aligned output "
-                    "specifications and shapes."
+                    "Heterogeneous operator predictions must have aligned output specifications and shapes."
                 )
         data = jnp.stack(
             tuple(jnp.asarray(prediction.values) for prediction in predictions),

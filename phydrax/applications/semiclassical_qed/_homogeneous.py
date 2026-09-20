@@ -30,8 +30,8 @@ from ...solver._differential import DifferentialProblem, DifferentialSolution
 from ...solver._diffrax_backend import solve_diffrax
 
 
-_SIGMA_1 = jnp.asarray(((0.0, 1.0), (1.0, 0.0)), dtype=complex)
-_SIGMA_3 = jnp.asarray(((1.0, 0.0), (0.0, -1.0)), dtype=complex)
+_SIGMA_1 = jnp.asarray(((0.0, 1.0), (1.0, 0.0)), dtype=jnp.complex128)
+_SIGMA_3 = jnp.asarray(((1.0, 0.0), (0.0, -1.0)), dtype=jnp.complex128)
 
 
 def _qed_state_coordinates(state: Any, /) -> PreparedRealCoordinateTree:
@@ -71,7 +71,7 @@ class ZeroExternalCurrent(StrictModule, NonTrainableState):
         self.source_id = canonical_fingerprint({"kind": "zero-external-current"})
 
     def __call__(self, time: ArrayLike, /) -> Array:
-        return jnp.zeros_like(jnp.asarray(time, dtype=float))
+        return jnp.zeros_like(jnp.asarray(time, dtype=jnp.float64))
 
 
 class TabulatedExternalCurrent(StrictModule, NonTrainableState):
@@ -82,8 +82,8 @@ class TabulatedExternalCurrent(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
 
     def __init__(self, times: ArrayLike, values: ArrayLike, /):
-        time = np.asarray(times, dtype=float)
-        current = np.asarray(values, dtype=float)
+        time = np.asarray(times, dtype=np.float64)
+        current = np.asarray(values, dtype=np.float64)
         if (
             time.ndim != 1
             or time.size < 2
@@ -132,7 +132,7 @@ class HomogeneousSpinorQEDState(StrictModule):
             )
         if modes.ndim != 2 or modes.shape[-1] != 2:
             raise ValueError("Homogeneous spinor modes must have shape (modes, 2).")
-        dtype = jnp.result_type(modes.dtype, complex)
+        dtype = jnp.result_type(modes.dtype, jnp.complex128)
         self.vector_potential = potential.astype(
             jnp.real(jnp.zeros((), dtype=dtype)).dtype
         )
@@ -211,10 +211,10 @@ class HomogeneousSpinorQEDPlan(StrictModule, NonTrainableState):
         ward_tolerance: float = 1e-8,
         maximum_modes: int = 2**18,
     ):
-        momentum = np.asarray(momenta, dtype=float)
-        weights = np.asarray(quadrature_weights, dtype=float)
-        q = np.asarray(charge, dtype=float)
-        m = np.asarray(mass, dtype=float)
+        momentum = np.asarray(momenta, dtype=np.float64)
+        weights = np.asarray(quadrature_weights, dtype=np.float64)
+        q = np.asarray(charge, dtype=np.float64)
+        m = np.asarray(mass, dtype=np.float64)
         if momentum.ndim != 1 or momentum.size < 1 or not np.isfinite(momentum).all():
             raise ValueError("momenta must be one non-empty finite vector.")
         if weights.shape != momentum.shape or not np.all(
@@ -357,7 +357,7 @@ def negative_energy_spinor_modes(
     potential = jnp.asarray(vector_potential)
     kinetic = momentum - q * potential
     omega = jnp.sqrt(kinetic * kinetic + m * m)
-    candidate = jnp.stack((-kinetic, m + omega), axis=-1).astype(complex)
+    candidate = jnp.stack((-kinetic, m + omega), axis=-1).astype("complex128")
     degenerate = omega == 0.0
     convention = jnp.broadcast_to(
         jnp.asarray((1.0, 0.0), dtype=candidate.dtype), candidate.shape

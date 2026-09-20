@@ -163,7 +163,7 @@ class WandbTrainingSink:
 
         try:
             self._run.log(payload)
-        except Exception as error:  # noqa: BLE001 - outbound provider boundary
+        except Exception as error:
             self._failure_count += 1
             self._last_failure_type = type(error).__name__
             self._disabled = True

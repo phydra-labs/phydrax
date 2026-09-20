@@ -66,7 +66,7 @@ def _source_ledger(
 ):
     source_rate = jnp.asarray(rate)
     if active_cell_mask is None:
-        active_cell_mask = jnp.ones((source_rate.shape[0],), dtype=bool)
+        active_cell_mask = jnp.ones((source_rate.shape[0],), dtype="bool")
     return ConservationStageLedger(
         (),
         source_rate,

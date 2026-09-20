@@ -20,7 +20,7 @@ from ..transport._ordering import (
 
 
 def _positive_temperature(temperature: ArrayLike, /) -> Array:
-    value = jnp.asarray(temperature, dtype=float)
+    value = jnp.asarray(temperature, dtype=jnp.float64)
     return eqx.error_if(
         value,
         jnp.any(~jnp.isfinite(value) | (value <= 0.0)),
@@ -98,7 +98,7 @@ def relaxed_top_k(
     position = axis if axis >= 0 else logits_.ndim + axis
     if position < 0 or position >= logits_.ndim:
         raise ValueError("axis is out of range.")
-    count = int(logits_.shape[position])
+    count = logits_.shape[position]
     cardinality = int(k)
     if cardinality > count:
         raise ValueError("k cannot exceed the selected axis size.")
@@ -154,7 +154,7 @@ def masked_softmax(
     """Stable softmax that returns zeros for an entirely masked slice."""
     values = _real_values(logits, name="logits")
     if mask is not None:
-        values = jnp.where(jnp.asarray(mask, dtype=bool), values, -jnp.inf)
+        values = jnp.where(jnp.asarray(mask, dtype=jnp.bool_), values, -jnp.inf)
     probabilities = jax.nn.softmax(values, axis=axis)
     return jnp.where(jnp.isfinite(probabilities), probabilities, 0.0)
 

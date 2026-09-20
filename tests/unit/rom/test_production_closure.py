@@ -213,7 +213,7 @@ def test_quadratic_neural_atlas_sensor_and_assimilation_contracts():
     history = phx.rom.ObservationHistory(
         jnp.asarray([[1.0, 2.0], [2.0, 3.0]]),
         jnp.asarray([0.0, 1.0]),
-        jnp.ones((2, 2), dtype=bool),
+        jnp.ones((2, 2), dtype="bool"),
         jnp.asarray([True, False]),
         configuration,
     )

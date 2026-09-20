@@ -57,7 +57,7 @@ Production output, failure, and cancellation are committed records, not log mess
   accepted step/time, optional terminal checkpoint identity, and the
   `Z4cProductionState` dispositions.
 - `NumericalRelativityCancellationManifest` requires a verified
-  `CheckpointCommitReceipt` for the cancelled authoritative state and retains its
+  `CheckpointCommitReceipt` for the canceled authoritative state and retains its
   content digest, commit ID/locator, durable size and SHA-256.
 
 ## Neutral external artifacts

@@ -55,7 +55,7 @@ from ._contracts import (
 )
 
 
-_CONVERTER_SCHEMA = "phydrax.sklearn.fitted.v1"
+_CONVERTER_SCHEMA = "phydrax.sklearn.fitted.canonical"
 _LICENSE = "BSD-3-Clause"
 _NUMERIC_KINDS = frozenset("fiu")
 
@@ -91,9 +91,7 @@ class _Snapshot:
         self._hash.update(b"\0")
         self._hash.update(contiguous.dtype.str.encode("ascii"))
         self._hash.update(b"\0")
-        self._hash.update(
-            repr(tuple(int(size) for size in contiguous.shape)).encode("ascii")
-        )
+        self._hash.update(repr(tuple(contiguous.shape)).encode("ascii"))
         self._hash.update(b"\0")
         self._hash.update(contiguous.tobytes(order="C"))
 
@@ -115,7 +113,7 @@ class _Snapshot:
         if boolean and array.dtype.kind != "b":
             if array.dtype.kind not in "iu" or np.any((array != 0) & (array != 1)):
                 raise ConversionError(f"{name} must contain only boolean values.")
-            array = array.astype(bool, copy=False)
+            array = array.astype("bool", copy=False)
         if integer and array.dtype.kind not in "iu":
             raise ConversionError(f"{name} must be an integer array.")
         if ndim is not None and array.ndim != ndim:
@@ -506,7 +504,7 @@ def _convert_robust_scaler(
             raise ConversionError(
                 "RobustScaler with_centering=False must have center_=None."
             )
-        center = jnp.zeros((count,), dtype=float)
+        center = jnp.zeros((count,), dtype=jnp.float64)
     if with_scaling:
         if estimator.scale_ is None:
             raise ConversionError("RobustScaler with_scaling=True requires scale_.")
@@ -637,10 +635,10 @@ def _categorical_bank(
     capacity = max(array.shape[0] for array in arrays)
     assert dtype is not None
     bank = np.zeros((count, capacity), dtype=dtype)
-    valid = np.zeros((count, capacity), dtype=bool)
+    valid = np.zeros((count, capacity), dtype=np.bool_)
     offsets = [0]
     for feature, array in enumerate(arrays):
-        size = int(array.shape[0])
+        size = array.shape[0]
         bank[feature, :size] = array
         valid[feature, :size] = True
         offsets.append(offsets[-1] + size)
@@ -793,7 +791,7 @@ def _linear_state(
         bias = snapshot.array("intercept", intercept.reshape(1), shape=(1,))
         target_shape: tuple[int, ...] = ()
     elif coefficients.ndim == 2:
-        outputs = int(coefficients.shape[0])
+        outputs = coefficients.shape[0]
         if (
             outputs <= 0
             or coefficients.shape[1] != features
@@ -1072,7 +1070,7 @@ def _convert_pca(estimator: Any, snapshot: _Snapshot, api: _SklearnAPI) -> _Conv
     components = snapshot.array(
         "components", components_source, shape=components_source.shape
     )
-    count = int(components_source.shape[0])
+    count = components_source.shape[0]
     if int(estimator.n_components_) != count:
         raise ConversionError("PCA n_components_ does not match components_.")
     mean = _vector(snapshot, "mean", estimator.mean_, features)
@@ -1091,7 +1089,7 @@ def _convert_pca(estimator: Any, snapshot: _Snapshot, api: _SklearnAPI) -> _Conv
         mean,
         components,
         jnp.ones_like(mean),
-        jnp.ones((features,), dtype=bool),
+        jnp.ones((features,), dtype=jnp.bool_),
         singular,
         centered=True,
         weighting_provenance="sklearn-unweighted-euclidean",
@@ -1136,7 +1134,7 @@ def _convert_truncated_svd(
         or components_source.shape[0] <= 0
     ):
         raise ConversionError("TruncatedSVD components_ has an invalid shape.")
-    count = int(components_source.shape[0])
+    count = components_source.shape[0]
     components = snapshot.array("components", components_source, shape=(count, features))
     snapshot.audit("explained_variance", estimator.explained_variance_, shape=(count,))
     snapshot.audit(
@@ -1150,7 +1148,7 @@ def _convert_truncated_svd(
         offset,
         components,
         jnp.ones_like(offset),
-        jnp.ones((features,), dtype=bool),
+        jnp.ones((features,), dtype=jnp.bool_),
         singular,
         centered=False,
         weighting_provenance="sklearn-unweighted-euclidean",
@@ -1186,7 +1184,7 @@ def _convert_kmeans(estimator: Any, snapshot: _Snapshot, api: _SklearnAPI) -> _C
         or centers_source.shape[0] <= 0
     ):
         raise ConversionError("KMeans cluster_centers_ has an invalid shape.")
-    clusters = int(centers_source.shape[0])
+    clusters = centers_source.shape[0]
     if int(estimator.n_clusters) != clusters:
         raise ConversionError("KMeans n_clusters does not match cluster_centers_.")
     centers = snapshot.array(
@@ -1200,7 +1198,7 @@ def _convert_kmeans(estimator: Any, snapshot: _Snapshot, api: _SklearnAPI) -> _C
         raise ConversionError("KMeans inertia_ or n_iter_ is invalid.")
     model = HardClusterModel(
         centers,
-        jnp.ones((clusters,), dtype=bool),
+        jnp.ones((clusters,), dtype=jnp.bool_),
         metric="squared-euclidean",
         method="sklearn-k-means",
     )
@@ -1323,7 +1321,7 @@ def _convert_gaussian_mixture(
         or means_source.shape[0] <= 0
     ):
         raise ConversionError("GaussianMixture means_ has an invalid shape.")
-    components = int(means_source.shape[0])
+    components = means_source.shape[0]
     if int(estimator.n_components) != components:
         raise ConversionError("GaussianMixture n_components does not match means_.")
     weights_source = snapshot.audit(
@@ -1506,7 +1504,7 @@ def _convert_kernel_ridge(
         raise UnsupportedConversionError(
             "KernelRidge requires dense two-dimensional X_fit_."
         )
-    samples = int(support_source.shape[0])
+    samples = support_source.shape[0]
     dual_source = np.asarray(estimator.dual_coef_)
     if dual_source.ndim == 1:
         if dual_source.shape != (samples,):
@@ -1519,7 +1517,7 @@ def _convert_kernel_ridge(
         and dual_source.shape[1] > 0
     ):
         coefficients_source = dual_source
-        output_shape = (int(dual_source.shape[1]),)
+        output_shape = (dual_source.shape[1],)
     else:
         raise ConversionError("KernelRidge dual_coef_ has an invalid shape.")
     support = snapshot.array("support", support_source, shape=(samples, features))
@@ -1538,7 +1536,7 @@ def _convert_kernel_ridge(
         support=support,
         coefficients=coefficients,
         intercept=jnp.zeros((coefficients_source.shape[1],), dtype=coefficients.dtype),
-        support_mask=jnp.ones((samples,), dtype=bool),
+        support_mask=jnp.ones((samples,), dtype=jnp.bool_),
         kernel=kernel,
         feature_count=features,
         output_shape=output_shape,
@@ -1587,7 +1585,7 @@ def _svm_state(
         raise UnsupportedConversionError(
             "SVM conversion requires dense support_vectors_."
         )
-    supports = int(support_source.shape[0])
+    supports = support_source.shape[0]
     support_indices = snapshot.audit(
         "support_indices", estimator.support_, shape=(supports,), integer=True
     )
@@ -1643,7 +1641,7 @@ def _convert_svc(estimator: Any, snapshot: _Snapshot, api: _SklearnAPI) -> _Conv
         support=support,
         coefficients=coefficients,
         intercept=intercept,
-        support_mask=jnp.ones((support.shape[0],), dtype=bool),
+        support_mask=jnp.ones((support.shape[0],), dtype=jnp.bool_),
         kernel=kernel,
         feature_count=features,
         output_shape=(),
@@ -1681,7 +1679,7 @@ def _convert_svr(estimator: Any, snapshot: _Snapshot, api: _SklearnAPI) -> _Conv
         support=support,
         coefficients=coefficients,
         intercept=intercept,
-        support_mask=jnp.ones((support.shape[0],), dtype=bool),
+        support_mask=jnp.ones((support.shape[0],), dtype=jnp.bool_),
         kernel=kernel,
         feature_count=features,
         output_shape=(),
@@ -1780,7 +1778,7 @@ def _source_tree(estimator: Any, features: int, api: _SklearnAPI) -> _SourceTree
     if np.any(~np.isfinite(value[leaf])):
         raise ConversionError("Tree leaf values must be finite.")
     return _SourceTree(
-        feature, threshold, left, right, default_left.astype(bool), leaf, value
+        feature, threshold, left, right, default_left.astype("bool"), leaf, value
     )
 
 
@@ -1811,12 +1809,12 @@ def _assemble_tree_ensemble(
     threshold = np.zeros((count, capacity), dtype=np.float64)
     left = np.full((count, capacity), -1, dtype=np.int64)
     right = np.full((count, capacity), -1, dtype=np.int64)
-    default_left = np.zeros((count, capacity), dtype=bool)
+    default_left = np.zeros((count, capacity), dtype=np.bool_)
     leaf_value = np.zeros((count, capacity, output_count), dtype=np.float64)
-    node_mask = np.zeros((count, capacity), dtype=bool)
-    leaf_mask = np.zeros((count, capacity), dtype=bool)
+    node_mask = np.zeros((count, capacity), dtype=np.bool_)
+    leaf_mask = np.zeros((count, capacity), dtype=np.bool_)
     for tree_index, tree in enumerate(source_trees):
-        nodes = int(tree.feature.shape[0])
+        nodes = tree.feature.shape[0]
         values = np.asarray(value_builder(tree, tree_index))
         if (
             values.shape != (nodes, output_count)
@@ -1848,7 +1846,7 @@ def _assemble_tree_ensemble(
         node_mask=snapshot.array("tree_node_mask", node_mask, boolean=True),
         leaf_mask=snapshot.array("tree_leaf_mask", leaf_mask, boolean=True),
         tree_mask=snapshot.array(
-            "tree_mask", np.ones((count,), dtype=bool), boolean=True
+            "tree_mask", np.ones((count,), dtype=np.bool_), boolean=True
         ),
         tree_weight=snapshot.array("tree_weight", tree_weights),
         base_score=snapshot.array("tree_base_score", base_score),
@@ -1909,8 +1907,8 @@ def _convert_tree_regressor(
         features,
         outputs,
         lambda tree, _: _regression_tree_values(tree, outputs),
-        tree_weights=np.ones((1,), dtype=float),
-        base_score=np.zeros((outputs,), dtype=float),
+        tree_weights=np.ones((1,), dtype=np.float64),
+        base_score=np.zeros((outputs,), dtype=np.float64),
         feature_schema=schema,
         target_schema=target,
         objective_transform="identity",
@@ -1964,8 +1962,8 @@ def _convert_tree_classifier(
         features,
         classes,
         lambda tree, _: _classification_tree_values(tree, classes),
-        tree_weights=np.ones((1,), dtype=float),
-        base_score=np.zeros((classes,), dtype=float),
+        tree_weights=np.ones((1,), dtype=np.float64),
+        base_score=np.zeros((classes,), dtype=np.float64),
         feature_schema=schema,
         target_schema=target,
         objective_transform="identity",
@@ -2030,7 +2028,7 @@ def _convert_forest_regressor(
         outputs,
         lambda tree, _: _regression_tree_values(tree, outputs),
         tree_weights=np.full((len(trees),), 1.0 / len(trees)),
-        base_score=np.zeros((outputs,), dtype=float),
+        base_score=np.zeros((outputs,), dtype=np.float64),
         feature_schema=schema,
         target_schema=TargetSchema("continuous"),
         objective_transform="identity",
@@ -2083,7 +2081,7 @@ def _convert_forest_classifier(
         classes,
         lambda tree, _: _classification_tree_values(tree, classes),
         tree_weights=np.full((len(trees),), 1.0 / len(trees)),
-        base_score=np.zeros((classes,), dtype=float),
+        base_score=np.zeros((classes,), dtype=np.float64),
         feature_schema=schema,
         target_schema=target,
         objective_transform="identity",
@@ -2161,7 +2159,7 @@ def _convert_adaboost_regressor(
         1,
         lambda tree, _: _regression_tree_values(tree, 1),
         tree_weights=weights,
-        base_score=np.zeros((1,), dtype=float),
+        base_score=np.zeros((1,), dtype=np.float64),
         feature_schema=schema,
         target_schema=TargetSchema("continuous"),
         objective_transform="identity",
@@ -2222,7 +2220,7 @@ def _convert_adaboost_classifier(
     def values(tree: _SourceTree, _: int) -> np.ndarray:
         probabilities = _classification_tree_values(tree, classes)
         predictions = np.argmax(probabilities, axis=-1)
-        one_hot = np.eye(classes, dtype=float)[predictions]
+        one_hot = np.eye(classes, dtype=np.float64)[predictions]
         return (one_hot - (1.0 - one_hot) / (classes - 1.0)) / (classes - 1.0)
 
     target = TargetSchema(
@@ -2236,7 +2234,7 @@ def _convert_adaboost_classifier(
         classes,
         values,
         tree_weights=weights / total,
-        base_score=np.zeros((classes,), dtype=float),
+        base_score=np.zeros((classes,), dtype=np.float64),
         feature_schema=schema,
         target_schema=target,
         objective_transform="softmax",
@@ -2283,7 +2281,7 @@ def _gradient_regression_base(
             raise UnsupportedConversionError(
                 "Unknown GradientBoosting init string is unsupported."
             )
-        return np.zeros((1,), dtype=float)
+        return np.zeros((1,), dtype=np.float64)
     from sklearn.dummy import DummyRegressor
 
     if type(init) is not DummyRegressor:
@@ -2294,7 +2292,7 @@ def _gradient_regression_base(
     constant = snapshot.audit("gradient_init_constant", init.constant_)
     if constant.size != 1:
         raise ConversionError("GradientBoostingRegressor init constant must be scalar.")
-    return constant.reshape(1).astype(float, copy=False)
+    return constant.reshape(1).astype("float64", copy=False)
 
 
 def _gradient_classification_base(
@@ -2309,7 +2307,7 @@ def _gradient_classification_base(
             raise UnsupportedConversionError(
                 "Unknown GradientBoosting init string is unsupported."
             )
-        return np.zeros((1 if classes == 2 else classes,), dtype=float)
+        return np.zeros((1 if classes == 2 else classes,), dtype=np.float64)
     from sklearn.dummy import DummyClassifier
 
     if type(init) is not DummyClassifier or init.strategy != "prior":

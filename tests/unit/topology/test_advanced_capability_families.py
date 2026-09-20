@@ -116,7 +116,7 @@ def test_explicit_diagonal_cup_product_and_constant_cellular_sheaf():
     sheaf = phx.topology.CellularSheaf(
         interval.topology,
         (jnp.asarray([1, 1]), jnp.asarray([1])),
-        (jnp.ones((1, 1), dtype=int), jnp.ones((1, 1), dtype=int)),
+        (jnp.ones((1, 1), dtype="int64"), jnp.ones((1, 1), dtype="int64")),
         field=phx.topology.PrimeField(2),
     )
     assert jnp.array_equal(sheaf.cohomology_dimensions(), jnp.asarray([1, 0]))
@@ -129,12 +129,12 @@ def test_cellular_sheaf_rejects_incompatible_composed_restrictions():
         policy=phx.topology.PointCloudComplexPolicy(maximum_dimension=2),
     )
     dimensions = (
-        jnp.ones((3,), dtype=int),
-        jnp.ones((3,), dtype=int),
-        jnp.ones((1,), dtype=int),
+        jnp.ones((3,), dtype="int64"),
+        jnp.ones((3,), dtype="int64"),
+        jnp.ones((1,), dtype="int64"),
     )
-    restrictions = [jnp.ones((1, 1), dtype=int) for _ in range(9)]
-    restrictions[0] = jnp.zeros((1, 1), dtype=int)
+    restrictions = [jnp.ones((1, 1), dtype="int64") for _ in range(9)]
+    restrictions[0] = jnp.zeros((1, 1), dtype="int64")
 
     with pytest.raises(ValueError, match="incompatible restriction routes"):
         phx.topology.CellularSheaf(
@@ -147,7 +147,7 @@ def test_cellular_sheaf_rejects_incompatible_composed_restrictions():
     valid = phx.topology.CellularSheaf(
         triangle.topology,
         dimensions,
-        tuple(jnp.ones((1, 1), dtype=int) for _ in range(9)),
+        tuple(jnp.ones((1, 1), dtype="int64") for _ in range(9)),
         field=phx.topology.PrimeField(2),
     )
     assert jnp.array_equal(valid.cohomology_dimensions(), jnp.asarray([1, 0, 0]))
@@ -185,7 +185,7 @@ def test_cellular_sheaf_rejects_nonzero_assembled_coboundary():
         phx.topology.CellularSheaf(
             invalid_topology,
             tuple(jnp.asarray([1]) for _ in range(3)),
-            tuple(jnp.ones((1, 1), dtype=int) for _ in range(2)),
+            tuple(jnp.ones((1, 1), dtype="int64") for _ in range(2)),
             field=phx.topology.PrimeField(2),
         )
 
@@ -216,7 +216,7 @@ def test_filtered_chain_spectral_sequence_computes_an_induced_d2():
     assert jnp.array_equal(result.page_dimensions[0], jnp.asarray([[1, 0], [1, 2]]))
     assert jnp.array_equal(result.page_dimensions[1], jnp.asarray([[1, 0], [0, 1]]))
     assert jnp.array_equal(result.page_dimensions[2], result.page_dimensions[1])
-    assert jnp.array_equal(result.page_dimensions[3], jnp.zeros((2, 2), dtype=int))
+    assert jnp.array_equal(result.page_dimensions[3], jnp.zeros((2, 2), dtype="int64"))
     assert result.differential_ranks[0, 1, 1] == 1
     assert result.differential_ranks[2, 1, 1] == 1
     assert jnp.sum(result.differential_ranks[1]) == 0
@@ -230,7 +230,7 @@ def test_filtered_chain_spectral_sequence_computes_an_induced_d2():
 
 def test_zero_filtered_differential_is_certified_stable_at_e0():
     complex = phx.topology.FilteredChainComplex(
-        (jnp.zeros((1, 1), dtype=int),),
+        (jnp.zeros((1, 1), dtype="int64"),),
         (jnp.asarray([0]), jnp.asarray([3])),
         field=phx.topology.PrimeField(3),
     )

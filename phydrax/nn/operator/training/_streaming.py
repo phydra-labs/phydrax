@@ -39,7 +39,7 @@ class OperatorQuerySchema:
     fingerprint: str
 
     def __post_init__(self):
-        if int(self.size) <= 0:
+        if self.size <= 0:
             raise ValueError("Query source size must be positive.")
         if int(self.coordinate_dimension) <= 0:
             raise ValueError("Query coordinate dimension must be positive.")
@@ -106,11 +106,7 @@ class OperatorPredictionMetadata:
 
     @property
     def output_shape(self) -> tuple[int, ...]:
-        return (
-            self.case_shape
-            + (int(self.total_size),)
-            + tuple(int(size) for size in self.channel_shape)
-        )
+        return self.case_shape + (int(self.total_size),) + tuple(self.channel_shape)
 
 
 def _flatten_query_values(
@@ -142,9 +138,9 @@ class ArrayOperatorQuerySource(OperatorQuerySource):
         case_shape: Sequence[int] = (),
         fingerprint: str = "",
     ):
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         coordinates = query.coordinates_array(case_shape=cases, flatten=True)
-        coordinate_dimension = int(coordinates.shape[-1])
+        coordinate_dimension = coordinates.shape[-1]
         size = prod(query.sample_shape)
         self.query = query
         self.case_shape = cases
@@ -305,7 +301,7 @@ class ArrayPredictionSink(OperatorPredictionSink):
                 f"Prediction chunks must be contiguous; expected {self.next_index}."
             )
         array = np.asarray(values)
-        count = int(array.shape[self.metadata.query_axis])
+        count = array.shape[self.metadata.query_axis]
         selection = [slice(None)] * self.values.ndim
         selection[self.metadata.query_axis] = slice(start, start + count)
         expected = self.values[tuple(selection)].shape
@@ -321,8 +317,7 @@ class ArrayPredictionSink(OperatorPredictionSink):
             raise RuntimeError("Prediction sink has not begun.")
         if self.next_index != self.metadata.total_size:
             raise RuntimeError(
-                f"Prediction is incomplete: wrote {self.next_index} of "
-                f"{self.metadata.total_size} queries."
+                f"Prediction is incomplete: wrote {self.next_index} of {self.metadata.total_size} queries."
             )
         return self.values
 
@@ -400,7 +395,7 @@ class NpyPredictionSink(OperatorPredictionSink):
                 f"Prediction chunks must be contiguous; expected {self.next_index}."
             )
         array = np.asarray(values)
-        count = int(array.shape[self.metadata.query_axis])
+        count = array.shape[self.metadata.query_axis]
         selection = [slice(None)] * self.values.ndim
         selection[self.metadata.query_axis] = slice(start, start + count)
         expected = self.values[tuple(selection)].shape
@@ -418,8 +413,7 @@ class NpyPredictionSink(OperatorPredictionSink):
             raise RuntimeError("Prediction sink has not begun.")
         if self.next_index != self.metadata.total_size:
             raise RuntimeError(
-                f"Prediction is incomplete: wrote {self.next_index} of "
-                f"{self.metadata.total_size} queries."
+                f"Prediction is incomplete: wrote {self.next_index} of {self.metadata.total_size} queries."
             )
         self.values.flush()
         self._write_status(complete=True)
@@ -495,9 +489,7 @@ def decode_query_chunks(
         cropped = _crop_query_axis(values, chunk.valid_count, len(batch.case_shape))
         host = np.asarray(cropped)
         if not begun:
-            channel_shape = tuple(
-                int(value) for value in host.shape[len(batch.case_shape) + 1 :]
-            )
+            channel_shape = tuple(host.shape[len(batch.case_shape) + 1 :])
             metadata = OperatorPredictionMetadata(
                 total_size=query_source.schema.size,
                 case_shape=batch.case_shape,

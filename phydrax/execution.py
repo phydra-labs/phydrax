@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-# ruff: noqa: F822, I001
+# ruff: noqa: F822
 
 """Execution bootstrap, planning, worksets, observation, and checkpoints."""
 
@@ -41,7 +41,7 @@ _SYMBOL_MODULES = {
     "ExecutionPolicy": "._execution_resources",
     "ExecutionRequirements": "._execution_plan",
     "ExecutionResourceEvidence": "._execution_resources",
-    "ExecutionCancelledError": "._execution_control",
+    "ExecutionCanceledError": "._execution_control",
     "ExecutionFailureContext": "._execution_control",
     "FutureTaskHandle": "._execution_tasks",
     "ExecutionRuntime": "._execution_runtime",
@@ -155,7 +155,7 @@ __all__ = (
     "ExecutionRequirements",
     "ExecutionResourceEvidence",
     "ExecutionRuntime",
-    "ExecutionCancelledError",
+    "ExecutionCanceledError",
     "ExecutionFailureContext",
     "FutureTaskHandle",
     "ExecutionWorksetCheckpoint",

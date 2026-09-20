@@ -99,7 +99,7 @@ class AbelianLeg(StrictModule):
         if not isinstance(group, AbelianGroup):
             raise TypeError("group must be AbelianGroup.")
         charges_ = tuple(group.normalize(charge) for charge in charges)
-        capacities_ = tuple(int(value) for value in capacities)
+        capacities_ = tuple(capacities)
         if not charges_ or len(charges_) != len(capacities_):
             raise ValueError(
                 "Abelian leg charges and capacities must be nonempty and aligned."
@@ -227,7 +227,7 @@ class AbelianTensorLayout(StrictModule):
                         for leg, ordinal in zip(values, sector, strict=True)
                     )
                 )
-        # An empty sector catalogue is a valid, explicitly unreachable support.
+        # An empty sector catalog is a valid, explicitly unreachable support.
         # It is useful when static charge routes are prepared before dynamic support
         # is populated; numerical operations then carry an exact structural zero.
         self.legs = values

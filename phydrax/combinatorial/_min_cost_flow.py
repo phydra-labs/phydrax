@@ -128,7 +128,7 @@ class CapacitatedFlowSpace(AbstractCombinatorialSpace):
         return FlowDecision(jnp.where(self.relation.valid, flow, 0))
 
     def encode(self, decision: FlowDecision, /) -> Array:
-        return self.canonicalize(decision).flow.astype(float)
+        return self.canonicalize(decision).flow.astype("float64")
 
     def audit(self, decision: FlowDecision, /) -> CombinatorialFeasibility:
         canonical = self.canonicalize(decision)
@@ -152,7 +152,7 @@ class CapacitatedFlowSpace(AbstractCombinatorialSpace):
         )
         balance_residual = jnp.sum(jnp.abs(realized - self.balances), axis=-1)
         residual = invalid_residual + lower_residual + upper_residual + balance_residual
-        return CombinatorialFeasibility(residual == 0, residual.astype(float))
+        return CombinatorialFeasibility(residual == 0, residual.astype("float64"))
 
 
 def _residual_network(
@@ -212,7 +212,7 @@ def _augment_feasibility(
     source_candidates = excess > 0
     source = jnp.argmax(source_candidates.astype(jnp.int32))
     has_source = jnp.any(source_candidates)
-    reached = jnp.zeros((vertex_count,), dtype=bool).at[source].set(has_source)
+    reached = jnp.zeros((vertex_count,), dtype=jnp.bool_).at[source].set(has_source)
     predecessor = jnp.full((vertex_count,), -1, dtype=jnp.int32)
 
     def reach_round(_, reach_state):
@@ -731,7 +731,7 @@ class CycleCancelingMinCostFlow(AbstractLinearCombinatorialMethod):
             tie_margin=jnp.full(batch_shape, jnp.nan, dtype=raw_costs.dtype),
             dual_available=algorithm_optimal,
             gap_available=gap_available,
-            tie_available=jnp.zeros(batch_shape, dtype=bool),
+            tie_available=jnp.zeros(batch_shape, dtype=jnp.bool_),
         )
         provenance = CombinatorialProvenance(
             problem_id=problem.problem_id,

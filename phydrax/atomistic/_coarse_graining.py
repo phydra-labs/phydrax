@@ -129,7 +129,7 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
         membership = np.asarray(plan.particle_to_bead)
         if membership.shape != (system.capacity,):
             raise ValueError("particle_to_bead must match fine-system capacity.")
-        active = np.asarray(system.active_mask, dtype=bool)
+        active = np.asarray(system.active_mask, dtype=np.bool_)
         if np.any(membership[active] < 0) or np.any(
             membership[active] >= plan.bead_particle_ids.size
         ):
@@ -138,7 +138,7 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
             )
         if np.any(membership[~active] != -1):
             raise ValueError("Inactive fine padding must use bead assignment -1.")
-        bead_count = int(plan.bead_particle_ids.size)
+        bead_count = plan.bead_particle_ids.size
         member_mask = np.stack(
             tuple(active & (membership == index) for index in range(bead_count))
         )
@@ -173,7 +173,7 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
             bead_masses,
             system.plan.units,
             atom_type_ids=plan.bead_type_ids,
-            element_mask=np.zeros((bead_count,), dtype=bool),
+            element_mask=np.zeros((bead_count,), dtype=np.bool_),
             charges=bead_charges,
             molecule_ids=np.asarray(bead_molecules, dtype=np.int32),
             region_ids=np.asarray(bead_regions, dtype=np.int32),
@@ -187,7 +187,7 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
         self.coarse_system = coarse_plan.prepare(numeric_version=system.numeric_version)
         self.membership = jnp.asarray(membership, dtype=jnp.int32)
         self.center_weights = jnp.asarray(weights, dtype=system.plan.masses.dtype)
-        self.member_mask = jnp.asarray(member_mask, dtype=bool)
+        self.member_mask = jnp.asarray(member_mask, dtype=jnp.bool_)
         self.anchor_indices = jnp.asarray(anchors, dtype=jnp.int32)
         self.prepared_id = canonical_fingerprint(
             {
@@ -379,9 +379,11 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
                     coarse.atom_type_ids, (count, mapping.coarse_system.capacity)
                 ),
                 element_mask=jnp.zeros(
-                    (count, mapping.coarse_system.capacity), dtype=bool
+                    (count, mapping.coarse_system.capacity), dtype=jnp.bool_
                 ),
-                atom_mask=jnp.ones((count, mapping.coarse_system.capacity), dtype=bool),
+                atom_mask=jnp.ones(
+                    (count, mapping.coarse_system.capacity), dtype=jnp.bool_
+                ),
                 cells=cells,
                 periodic_axes=periodic_axes,
                 structure_ids=tuple(
@@ -542,7 +544,7 @@ def qualify_molecular_coarse_model(
     ):
         raise ValueError("Qualification tolerances must be finite and positive.")
     residual = jnp.asarray(equilibrium_residual).reshape(())
-    rollout = jnp.asarray(rollout_valid, dtype=bool).reshape(())
+    rollout = jnp.asarray(rollout_valid, dtype=jnp.bool_).reshape(())
     mapping_valid = (
         mapping.successful
         & (jnp.abs(mapping.mass_residual) <= conservation)

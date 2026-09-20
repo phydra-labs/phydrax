@@ -903,7 +903,7 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
             thermal,
             residual,
             correction,
-            jnp.asarray(successful, dtype=bool),
+            jnp.asarray(successful, dtype=jnp.bool_),
         )
 
     def _ledger_checked(self, prepared_model, native_solution, runtime_inputs, /):

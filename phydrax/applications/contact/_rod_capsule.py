@@ -83,9 +83,9 @@ def _segment_metric(
     raw = np.asarray(value)
     if not np.issubdtype(raw.dtype, np.number) or np.iscomplexobj(raw):
         raise TypeError(f"{name} values must be real numeric data.")
-    values = raw.astype(float, copy=False)
+    values = raw.astype("float64", copy=False)
     if values.shape == () and not positive:
-        values = np.full((count,), float(values), dtype=float)
+        values = np.full((count,), float(values), dtype=np.float64)
     if values.shape != (count,):
         qualifier = (
             "one constant circular value per segment"
@@ -155,7 +155,7 @@ class RodCapsuleGeometryPlan(StrictModule, NonTrainableState):
                 "segment_radii must provide one constant circular radius per segment; "
                 "tapered and noncircular data are unsupported."
             )
-        count = int(raw_radii.size)
+        count = raw_radii.size
         radii = _segment_metric(
             raw_radii,
             count,
@@ -225,7 +225,7 @@ class RodCapsuleGeometryPlan(StrictModule, NonTrainableState):
 
     @property
     def segment_count(self) -> int:
-        return int(self.segment_radii.size)
+        return self.segment_radii.size
 
     def prepare(self, rod: PreparedRod, /) -> PreparedRodCapsuleGeometry:
         if not isinstance(rod, PreparedRod):
@@ -570,8 +570,7 @@ class PreparedRodCapsuleGeometry(StrictModule, NonTrainableState):
         offsets = raw_offsets.astype(positions.dtype)
         if coordinates.shape != indices.shape or offsets.shape != (indices.size, 3):
             raise ValueError(
-                "axial_coordinates and surface_offsets must have shapes (contacts,) "
-                "and (contacts, 3)."
+                "axial_coordinates and surface_offsets must have shapes (contacts,) and (contacts, 3)."
             )
         safe = jnp.clip(indices, 0, self.rod.plan.segment_count - 1)
         nodes = self.rod.plan.segment_node_ids[safe]

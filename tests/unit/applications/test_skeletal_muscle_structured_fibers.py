@@ -55,7 +55,7 @@ def _runtime(*, theta=(0.0, 1.0), stimulus=None, diffusivity=0.3, **policy):
             jnp.zeros((0,)),
             jnp.zeros((0,)),
             jnp.zeros((0,)),
-            jnp.zeros((0, 1, 4), dtype=bool),
+            jnp.zeros((0, 1, 4), dtype="bool"),
         )
     return StructuredFiberResponsePlan(
         ("fiber",),
@@ -146,7 +146,7 @@ def test_event_aligned_substeps_integrate_pulse_without_endpoint_contamination()
         jnp.asarray([0.02]),
         jnp.asarray([0.02]),
         jnp.asarray([3.0]),
-        jnp.ones((1, 1, 4), dtype=bool),
+        jnp.ones((1, 1, 4), dtype="bool"),
     )
     runtime = _runtime(theta=(0.0, 0.5, 1.0), stimulus=stimulus, diffusivity=0.0)
     state = runtime.initialize()
@@ -234,7 +234,7 @@ def test_invalid_precision_geometry_and_unrepresentable_time_never_advance():
     runtime = _runtime()
     state = runtime.initialize()
     with pytest.raises(TypeError, match="real"):
-        runtime.geometry(state.node_positions_mm.astype(complex) + 1j)
+        runtime.geometry(state.node_positions_mm.astype("complex128") + 1j)
     with pytest.raises(ValueError, match="fixed substep"):
         runtime.candidate(state, 0.04, state.node_positions_mm)
     far_future = StructuredFiberResponseState(

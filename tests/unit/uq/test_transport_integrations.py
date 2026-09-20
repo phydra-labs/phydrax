@@ -13,7 +13,7 @@ import phydrax.axes as cx
 
 
 def _batch(weights, *, cases=2):
-    quadrature = jnp.asarray(weights, dtype=float)
+    quadrature = jnp.asarray(weights, dtype="float64")
     nodes = jnp.linspace(0.0, 1.0, quadrature.shape[0])
     coordinates = jnp.broadcast_to(
         nodes[None, :, None],
@@ -41,7 +41,7 @@ def _batch(weights, *, cases=2):
 
 def _predictive(samples, batch, *, sample_dim):
     return phx.uq.operator_predictive_from_samples(
-        jnp.asarray(samples, dtype=float),
+        jnp.asarray(samples, dtype="float64"),
         batch,
         phx.nn.operator.OperatorOutputSpec("scalar"),
         sample_axes=(phx.uq.SampleAxis(sample_dim, "process"),),
@@ -52,8 +52,8 @@ def _predictive(samples, batch, *, sample_dim):
 
 def _measure(points, weights, *, provenance):
     return phx.integration.discrete(
-        jnp.asarray(points, dtype=float),
-        cx.AxisArray(jnp.asarray(weights, dtype=float), dims=("atom",)),
+        jnp.asarray(points, dtype="float64"),
+        cx.AxisArray(jnp.asarray(weights, dtype="float64"), dims=("atom",)),
         axes="atom",
         normalized=True,
         provenance=provenance,

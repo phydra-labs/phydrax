@@ -24,7 +24,7 @@ def test_particle_level_set_capillarity_and_ghost_projection():
     grid, finite_volume, mac = _mac()
     position = jnp.asarray([[0.4, 0.4], [0.5, 0.4], [0.4, 0.5], [0.5, 0.5]])
     geometry = phx.discretization.flip.ParticleLevelSetPlan(grid, 0.15).evaluate(
-        position, jnp.ones((4,), dtype=bool)
+        position, jnp.ones((4,), dtype="bool")
     )
     assert geometry.successful
     capillary = phx.discretization.finite_volume.MACGhostFluidCapillaryPlan(
@@ -49,7 +49,7 @@ def test_cut_cell_and_variational_viscosity_are_finite_and_dissipative():
     grid, finite_volume, mac = _mac()
     position = jnp.asarray([[0.35, 0.35], [0.55, 0.35], [0.35, 0.55], [0.55, 0.55]])
     interface = phx.discretization.flip.ParticleLevelSetPlan(grid, 0.2).evaluate(
-        position, jnp.ones((4,), dtype=bool)
+        position, jnp.ones((4,), dtype="bool")
     )
 
     cell_fraction = jnp.ones(finite_volume.cell_shape).at[0, 0].set(0.5)

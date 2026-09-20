@@ -214,7 +214,7 @@ def test_stacked_sequence_model_keeps_physical_intervals():
     stacked = StackedRecurrentCell((cell,))
     batch = RecurrentBatch(
         jnp.array([[100.0], [4.0], [100.0], [0.0]]),
-        jnp.ones((4,), dtype=bool),
+        jnp.ones((4,), dtype="bool"),
         time=jnp.array([0.0, log(2.0), log(2.0), 2.0 * log(2.0)]),
     )
     np.testing.assert_array_equal(

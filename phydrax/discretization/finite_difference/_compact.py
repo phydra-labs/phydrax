@@ -94,7 +94,7 @@ class CompactOperatorReport(StrictModule, NonTrainableState):
         )
         self.report_id = canonical_fingerprint(
             {
-                "kind": "compact-operator-report-v1",
+                "kind": "compact-operator-report",
                 "subject": subject_id,
                 "operator_kind": kind,
                 "derivative_order": int(derivative_order),
@@ -106,9 +106,7 @@ class CompactOperatorReport(StrictModule, NonTrainableState):
                 "condition_estimate": float(condition_estimate),
                 "modified_symbol_error": float(modified_symbol_error),
                 "storage_bytes": int(storage_bytes),
-                "solve_workspace_bytes_per_rhs": int(
-                    solve_workspace_bytes_per_rhs
-                ),
+                "solve_workspace_bytes_per_rhs": int(solve_workspace_bytes_per_rhs),
             }
         )
 
@@ -155,10 +153,13 @@ def _prepare_right_weights(
     spacing: float,
     accuracy_order: int,
 ) -> tuple[np.ndarray, float]:
-    source_coordinates = (offsets.astype(float) - shift) * spacing
-    width = int(offsets.size)
+    source_coordinates = (offsets.astype("float64") - shift) * spacing
+    width = offsets.size
     matrix = np.asarray(
-        [[coordinate**degree for coordinate in source_coordinates] for degree in range(width)]
+        [
+            [coordinate**degree for coordinate in source_coordinates]
+            for degree in range(width)
+        ]
     )
     target = np.asarray(
         [
@@ -202,8 +203,7 @@ def _modified_symbol_error(
     exact = (
         np.exp(1j * angles * shift)
         if derivative == 0
-        else (1j * angles / spacing) ** derivative
-        * np.exp(1j * angles * shift)
+        else (1j * angles / spacing) ** derivative * np.exp(1j * angles * shift)
     )
     scale = np.maximum(np.abs(exact), 1.0)
     return float(np.max(np.abs(symbol - exact) / scale))
@@ -239,7 +239,7 @@ class PreparedCompactOperator(AbstractLinearOperator):
         alpha: float,
         moment_residual: float,
         component_shape: Sequence[int] = (),
-        dtype: object = float,
+        dtype: object = jnp.float64,
     ):
         axis_index = grid.axis_names.index(axis)
         source_field = grid.field_space(
@@ -310,11 +310,11 @@ class PreparedCompactOperator(AbstractLinearOperator):
             line_operator,
             LowRankSolvePolicy(base_nonsingularity="asserted"),
         )
-        offsets_ = tuple(int(value) for value in offsets)
+        offsets_ = tuple(offsets)
         weights_ = jnp.asarray(weights, dtype=coordinate_dtype)
         identifier = canonical_fingerprint(
             {
-                "kind": "prepared-compact-operator-v1",
+                "kind": "prepared-compact-operator",
                 "grid": grid.prepared_id,
                 "source_location": source_location.location_id,
                 "target_location": target_location.location_id,
@@ -332,9 +332,7 @@ class PreparedCompactOperator(AbstractLinearOperator):
         eigenvalues = 1.0 + 2.0 * alpha * np.cos(angles)
         condition = float(np.max(np.abs(eigenvalues)) / np.min(np.abs(eigenvalues)))
         itemsize = coordinate_dtype.itemsize
-        storage = int(
-            (3 * count - 2 + 4 * count + 4 + len(offsets_)) * itemsize
-        )
+        storage = int((3 * count - 2 + 4 * count + 4 + len(offsets_)) * itemsize)
         self.source = source_field.vector_space
         self.target = target_field.vector_space
         self.properties = OperatorProperties(evidence={})
@@ -382,7 +380,9 @@ class PreparedCompactOperator(AbstractLinearOperator):
         self.prepared_id = identifier
 
     def _right_action(self, value: Array, /, *, transpose: bool) -> Array:
-        result = jnp.zeros(self.target.shape if not transpose else self.source.shape, dtype=value.dtype)
+        result = jnp.zeros(
+            self.target.shape if not transpose else self.source.shape, dtype=value.dtype
+        )
         for offset, weight in zip(self.offsets, self.weights, strict=True):
             shift = offset if transpose else -offset
             result = result + weight * jnp.roll(value, shift, axis=self.axis)
@@ -444,8 +444,10 @@ def _validate_periodic_axis(
     source_layout = grid.layout_at(source_location)
     target_layout = grid.layout_at(target_location)
     if source_layout.shape != target_layout.shape:
-        raise ValueError("Periodic compact source and target layouts must have equal shape.")
-    widths = np.asarray(structured_axis.interval_widths, dtype=float)
+        raise ValueError(
+            "Periodic compact source and target layouts must have equal shape."
+        )
+    widths = np.asarray(structured_axis.interval_widths, dtype=np.float64)
     if not np.allclose(widths, widths[0], rtol=1e-10, atol=1e-12):
         raise ValueError("Periodic compact operators require uniform spacing.")
     shift = float(
@@ -470,7 +472,7 @@ class CompactDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-        dtype: object = float,
+        dtype: object = jnp.float64,
     ):
         if not isinstance(request, DerivativeRequest):
             raise TypeError("request must be a DerivativeRequest.")
@@ -486,7 +488,7 @@ class CompactDerivativePlan(StrictModule, NonTrainableState):
             request.source_location,
             request.target_location,
         )
-        components = tuple(int(value) for value in component_shape)
+        components = tuple(component_shape)
         if any(value <= 0 for value in components):
             raise ValueError("component_shape dimensions must be positive.")
         dtype_name = jnp.dtype(dtype).name
@@ -496,7 +498,7 @@ class CompactDerivativePlan(StrictModule, NonTrainableState):
         self.dtype = dtype_name
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "compact-derivative-plan-v1",
+                "kind": "compact-derivative-plan",
                 "grid": grid.prepared_id,
                 "request": request.request_id,
                 "component_shape": list(components),
@@ -526,7 +528,9 @@ class CompactDerivativePlan(StrictModule, NonTrainableState):
             self.grid.axis_names.index(self.request.axis)
         ]
         if count <= 2 * int(np.max(np.abs(offsets))):
-            raise ValueError("Compact derivative line is too short for its explicit support.")
+            raise ValueError(
+                "Compact derivative line is too short for its explicit support."
+            )
         weights, residual = _prepare_right_weights(
             offsets,
             shift=shift,
@@ -574,7 +578,7 @@ class CompactInterpolationPlan(StrictModule, NonTrainableState):
         *,
         accuracy_order: int = 4,
         component_shape: Sequence[int] = (),
-        dtype: object = float,
+        dtype: object = jnp.float64,
     ):
         order = int(accuracy_order)
         if order not in (4, 6):
@@ -582,7 +586,7 @@ class CompactInterpolationPlan(StrictModule, NonTrainableState):
         _validate_periodic_axis(grid, axis, source_location, target_location)
         if source_location.location_id == target_location.location_id:
             raise ValueError("Compact interpolation requires distinct grid locations.")
-        components = tuple(int(value) for value in component_shape)
+        components = tuple(component_shape)
         if any(value <= 0 for value in components):
             raise ValueError("component_shape dimensions must be positive.")
         dtype_name = jnp.dtype(dtype).name
@@ -595,7 +599,7 @@ class CompactInterpolationPlan(StrictModule, NonTrainableState):
         self.dtype = dtype_name
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "compact-interpolation-plan-v1",
+                "kind": "compact-interpolation-plan",
                 "grid": grid.prepared_id,
                 "axis": str(axis),
                 "source": source_location.location_id,
@@ -614,9 +618,7 @@ class CompactInterpolationPlan(StrictModule, NonTrainableState):
             self.target_location,
         )
         alpha = _implicit_alpha("interpolation", 0, self.accuracy_order)
-        offsets = _explicit_offsets(
-            "interpolation", 0, self.accuracy_order, shift
-        )
+        offsets = _explicit_offsets("interpolation", 0, self.accuracy_order, shift)
         count = self.grid.layout_at(self.target_location).shape[axis_index]
         if count <= 2 * int(np.max(np.abs(offsets))):
             raise ValueError(

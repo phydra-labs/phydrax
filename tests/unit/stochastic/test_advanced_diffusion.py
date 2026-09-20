@@ -68,9 +68,7 @@ def test_matrix_and_state_dependent_reverse_drift_include_correct_covariance_ter
     )
     marginal = matrix.marginal_transition(jnp.asarray([0.5, -0.2]), t0=0.0, t1=0.3)
     assert jnp.allclose(
-        matrix.conditional_score(
-            marginal.mean, jnp.asarray([0.5, -0.2]), t0=0.0, t1=0.3
-        ),
+        matrix.conditional_score(marginal.mean, jnp.asarray([0.5, -0.2]), t0=0.0, t1=0.3),
         0.0,
     )
 
@@ -164,7 +162,7 @@ def test_categorical_diffusion_exact_posterior_normalizes_and_respects_absorbing
     noisy = schedule.corrupt(clean, timestep, jr.key(4))
     posterior = schedule.posterior_probabilities(clean, noisy, timestep)
     clean_logits = jnp.where(
-        jax.nn.one_hot(clean, schedule.num_classes).astype(bool),
+        jax.nn.one_hot(clean, schedule.num_classes).astype("bool"),
         0.0,
         -jnp.inf,
     )

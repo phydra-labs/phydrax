@@ -368,8 +368,7 @@ class MatterPowerProcessEvidence(StrictModule, NonTrainableState):
         code = int(return_code)
         elapsed = float(elapsed_seconds)
         counts = tuple(
-            int(value)
-            for value in (
+            (
                 request_bytes,
                 result_bytes,
                 result_uncompressed_bytes,
@@ -988,8 +987,7 @@ class SubprocessMatterPowerBackend(AbstractExternalBackend, NonTrainableState):
         availability = self.availability()
         if not availability.available:
             raise RuntimeError(
-                f"Matter-power backend {self.backend_name!r} is unavailable: "
-                f"{availability.reason}."
+                f"Matter-power backend {self.backend_name!r} is unavailable: {availability.reason}."
             )
         self._verify_reference()
         request_payload = self._request_payload(request)
@@ -1034,8 +1032,7 @@ class SubprocessMatterPowerBackend(AbstractExternalBackend, NonTrainableState):
             if completed.returncode != 0:
                 raise MatterPowerProviderError(
                     "process-failure",
-                    f"Matter-power provider failed with code {completed.returncode}: "
-                    f"{stderr.strip()}",
+                    f"Matter-power provider failed with code {completed.returncode}: {stderr.strip()}",
                     adapter_status=AdapterStatus.INCONSISTENT_SOURCE,
                 )
             if not result_path.exists():

@@ -33,7 +33,7 @@ from phydrax.particle_physics._host_events import (
     HostParticleRecord,
 )
 from phydrax.particle_physics._identity import (
-    ParticleCatalogueReference,
+    ParticleCatalogReference,
     ParticleRole,
 )
 from phydrax.particle_physics._species import ParticleSpeciesTable
@@ -102,7 +102,7 @@ def _contracts(*, product_capacity=2, lifetime=1.0, prompt_cutoff=0.0):
         species_revision_id="7" * 64,
         topology_revision_id="8" * 64,
     )
-    catalogue = ParticleCatalogueReference(
+    catalog = ParticleCatalogReference(
         source_id="cascade-species",
         provider_release="test",
         checksum="checksum",
@@ -112,7 +112,7 @@ def _contracts(*, product_capacity=2, lifetime=1.0, prompt_cutoff=0.0):
         jnp.asarray((30, 32)),
         jnp.asarray((5.0, 0.0)),
         jnp.asarray((0.0, 0.0)),
-        catalogue=catalogue,
+        catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
     )

@@ -25,7 +25,7 @@ TensorGridRestriction: TypeAlias = Literal["injection", "weighted"]
 
 
 def _shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
-    resolved = tuple(int(size) for size in value)
+    resolved = tuple(value)
     if not resolved or any(size <= 0 for size in resolved):
         raise ValueError(f"{name} must contain positive dimensions.")
     return resolved
@@ -46,10 +46,10 @@ def _apply_axis_matrix(values: Array, matrix: Array, axis: int, /) -> Array:
 
 def _endpoint_prolongation(coarse: int, fine: int, /) -> np.ndarray:
     if coarse == 1:
-        return np.ones((fine, 1), dtype=float)
+        return np.ones((fine, 1), dtype=np.float64)
     coarse_points = np.linspace(0.0, 1.0, coarse)
     fine_points = np.linspace(0.0, 1.0, fine)
-    matrix = np.zeros((fine, coarse), dtype=float)
+    matrix = np.zeros((fine, coarse), dtype=np.float64)
     for row, point in enumerate(fine_points):
         upper = int(np.searchsorted(coarse_points, point, side="right"))
         if upper == 0:
@@ -67,8 +67,8 @@ def _endpoint_prolongation(coarse: int, fine: int, /) -> np.ndarray:
 
 def _periodic_prolongation(coarse: int, fine: int, /) -> np.ndarray:
     if coarse == 1:
-        return np.ones((fine, 1), dtype=float)
-    matrix = np.zeros((fine, coarse), dtype=float)
+        return np.ones((fine, 1), dtype=np.float64)
+    matrix = np.zeros((fine, coarse), dtype=np.float64)
     for row in range(fine):
         position = float(row) * float(coarse) / float(fine)
         lower_unwrapped = int(np.floor(position))
@@ -88,23 +88,22 @@ def _injection_restriction(
 ) -> np.ndarray:
     if coarse == 1:
         index = 0
-        matrix = np.zeros((1, fine), dtype=float)
+        matrix = np.zeros((1, fine), dtype=np.float64)
         matrix[0, index] = 1.0
         return matrix
     if boundary == "periodic":
         if fine % coarse != 0:
             raise ValueError(
-                "Periodic injection requires each fine axis size to be an integer "
-                "multiple of its coarse size."
+                "Periodic injection requires each fine axis size to be an integer multiple of its coarse size."
             )
-        indices = np.arange(coarse, dtype=int) * (fine // coarse)
+        indices = np.arange(coarse, dtype=np.int64) * (fine // coarse)
     else:
         if (fine - 1) % (coarse - 1) != 0:
             raise ValueError(
                 "Endpoint injection requires nested endpoint-inclusive axis sizes."
             )
-        indices = np.arange(coarse, dtype=int) * ((fine - 1) // (coarse - 1))
-    matrix = np.zeros((coarse, fine), dtype=float)
+        indices = np.arange(coarse, dtype=np.int64) * ((fine - 1) // (coarse - 1))
+    matrix = np.zeros((coarse, fine), dtype=np.float64)
     matrix[np.arange(coarse), indices] = 1.0
     return matrix
 

@@ -61,7 +61,7 @@ def _noise(
     )
     return phx.control.stochastic.PreparedControlledNoise(
         increments,
-        valid=jnp.ones((path_count,), dtype=bool),
+        valid=jnp.ones((path_count,), dtype="bool"),
         realization_ids=tuple(
             f"benchmark-policy-game:{role}:path-{index}" for index in range(path_count)
         ),
@@ -148,7 +148,7 @@ def _certificates(prepared, result) -> dict[str, Any]:
         prepared.problem.args["offset"]
         + prepared.problem.args["scale"] * training_signal_mean
     )
-    cluster_count = int(result.holdout_cluster_costs.shape[-2])
+    cluster_count = result.holdout_cluster_costs.shape[-2]
     centered_cluster_costs = result.holdout_cluster_costs - jnp.mean(
         result.holdout_cluster_costs, axis=-2, keepdims=True
     )

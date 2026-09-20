@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
 from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
@@ -24,7 +25,7 @@ from ._core import LayerDiscretizationReport
 from ._surface3d import SurfacePanelization3D, SurfaceTargetReport3D
 
 
-class LaplaceLayerKernel3D(eqx.Module):
+class LaplaceLayerKernel3D(StrictModule):
     """Three-dimensional Laplace fundamental solution."""
 
     _kernel_id: str = eqx.field(static=True)
@@ -32,7 +33,7 @@ class LaplaceLayerKernel3D(eqx.Module):
     def __init__(self):
         self._kernel_id = canonical_fingerprint(
             {
-                "kind": "laplace-layer-kernel-3d-v1",
+                "kind": "laplace-layer-kernel-3d",
                 "fundamental_solution": "1/(4*pi*r)",
                 "normal": "outward-source",
             }
@@ -91,16 +92,16 @@ class LaplaceLayerPotential3D(AbstractArrayModel):
         if kind not in ("single", "double"):
             raise ValueError("3D Laplace layer kind must be 'single' or 'double'.")
         density_ = (
-            jnp.zeros((panelization.node_count,), dtype=float)
+            jnp.zeros((panelization.node_count,), dtype=jnp.float64)
             if density is None
-            else jnp.asarray(density, dtype=float)
+            else jnp.asarray(density, dtype=jnp.float64)
         )
         if density_.shape != (panelization.node_count,):
             raise ValueError("Layer density must contain one value per surface node.")
         kernel = LaplaceLayerKernel3D()
         representation_id = canonical_fingerprint(
             {
-                "kind": "discrete-laplace-layer-potential-3d-v1",
+                "kind": "discrete-laplace-layer-potential-3d",
                 "kernel_id": kernel.kernel_id,
                 "panelization_id": panelization.panelization_id,
                 "layer_kind": kind,
@@ -145,7 +146,7 @@ class LaplaceLayerPotential3D(AbstractArrayModel):
 
     def __call__(self, target: Array, /, *, key=None) -> Array:
         del key
-        value = jnp.asarray(target, dtype=float)
+        value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (3,):
             raise ValueError(f"3D layer target must have shape (3,); got {value.shape}.")
         differences = value[None, :] - self.panelization.points
@@ -177,7 +178,7 @@ class LaplaceLayerPotential3D(AbstractArrayModel):
         )
 
     def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
             raise ValueError("3D layer targets must have shape (target_count, 3).")
         return jax.vmap(self)(values)
@@ -200,7 +201,7 @@ def evaluate_laplace_layer_3d(
     """Evaluate an off-surface 3D layer with continuous geometry evidence."""
     if not isinstance(potential, LaplaceLayerPotential3D):
         raise TypeError("potential must be LaplaceLayerPotential3D.")
-    values = jnp.asarray(targets, dtype=float)
+    values = jnp.asarray(targets, dtype=jnp.float64)
     single = values.ndim == 1
     if single:
         values = values[None, :]

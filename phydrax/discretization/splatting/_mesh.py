@@ -180,8 +180,8 @@ class SimplicialBarycentricSplatAssignment(StrictModule, NonTrainableState):
             raise ValueError("Barycentric splatting requires affine simplices.")
         positions = np.asarray(particle_positions)
         if not np.issubdtype(positions.dtype, np.inexact):
-            positions = positions.astype(float)
-        active_host = np.asarray(active, dtype=bool)
+            positions = positions.astype("float64")
+        active_host = np.asarray(active, dtype=np.bool_)
         source_ids = np.asarray(stable_source_ids, dtype=np.int64)
         expected = (positions.shape[0], target.mesh.ambient_dimension)
         if positions.ndim != 2 or positions.shape != expected:
@@ -339,8 +339,8 @@ class MeshCompactKernelSplatAssignment(StrictModule, NonTrainableState):
             raise ValueError("Compact-kernel splatting requires a cell target.")
         positions = np.asarray(particle_positions)
         if not np.issubdtype(positions.dtype, np.inexact):
-            positions = positions.astype(float)
-        active_host = np.asarray(active, dtype=bool)
+            positions = positions.astype("float64")
+        active_host = np.asarray(active, dtype=np.bool_)
         source_ids = np.asarray(stable_source_ids, dtype=np.int64)
         if positions.ndim != 2 or positions.shape[1] != target.mesh.ambient_dimension:
             raise ValueError("particle_positions have the wrong ambient dimension.")
@@ -365,7 +365,7 @@ class MeshCompactKernelSplatAssignment(StrictModule, NonTrainableState):
         cell_ids_host = np.concatenate(cell_ids, axis=0)
         width = self.maximum_entities_per_particle
         indices = np.zeros((positions.shape[0], width), dtype=np.int32)
-        supported = np.zeros((positions.shape[0],), dtype=bool)
+        supported = np.zeros((positions.shape[0],), dtype=np.bool_)
         query_count = np.zeros((positions.shape[0],), dtype=np.int32)
         for particle in range(positions.shape[0]):
             if not active_host[particle]:
@@ -466,22 +466,22 @@ class PreparedMeshParticleGridSplat(StrictModule, NonTrainableState):
                 "kind": "prepared-mesh-particle-grid-splat",
                 "target": target.target_id,
                 "assignment": assignment_id,
-                "source_capacity": int(stable_source_ids.size),
-                "route_width": int(route_indices.shape[1]),
+                "source_capacity": stable_source_ids.size,
+                "route_width": route_indices.shape[1],
             }
         )
 
     @property
     def particle_capacity(self) -> int:
-        return int(self.stable_source_ids.size)
+        return self.stable_source_ids.size
 
     @property
     def route_width(self) -> int:
-        return int(self.route_indices.shape[1])
+        return self.route_indices.shape[1]
 
     def routes(self, positions: ArrayLike, active: ArrayLike, /) -> MeshSplatRoutes:
         value = jnp.asarray(positions)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         expected = (self.particle_capacity, self.target.mesh.ambient_dimension)
         if value.shape != expected or active_.shape != (self.particle_capacity,):
             raise ValueError("Runtime mesh splat state has incompatible fixed shapes.")
@@ -590,7 +590,7 @@ class PreparedMeshParticleGridSplat(StrictModule, NonTrainableState):
         content = jnp.asarray(source_content)
         if content.ndim < 1 or content.shape[0] != self.particle_capacity:
             raise ValueError("source_content must begin with particle capacity.")
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         routes = self.routes(positions, active_)
         stencil = GatherStencil(
             indices=routes.indices,
@@ -642,7 +642,7 @@ class PreparedMeshParticleGridSplat(StrictModule, NonTrainableState):
         values = jnp.asarray(target_values)
         if values.ndim < 1 or values.shape[0] != self.target.entity_count:
             raise ValueError("target_values must begin with target entity count.")
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         routes = self.routes(positions, active_)
         stencil = GatherStencil(
             indices=routes.indices,

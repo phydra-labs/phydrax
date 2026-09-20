@@ -78,7 +78,7 @@ class SpinPeriodicSCFEvidence(StrictModule, NonTrainableState):
             raise ValueError("Spin SCF evidence tolerance must be finite and positive.")
         finite = jnp.all(jnp.isfinite(values)) & jnp.all(values >= 0.0)
         admitted = (
-            jnp.asarray(successful, dtype=bool).reshape(())
+            jnp.asarray(successful, dtype=jnp.bool_).reshape(())
             & finite
             & (values[0] <= tolerance_)
             & (values[1] <= tolerance_)
@@ -455,7 +455,7 @@ class SpinPeriodicSCFPlan(StrictModule, NonTrainableState):
         hamiltonian = evaluation.hamiltonians
         overlap = evaluation.overlaps
         weights = self.mesh.weights
-        k_count = int(weights.size)
+        k_count = weights.size
         orbital_count = self.pencil.plan.basis.orbital_count
         alpha_target = 0.5 * (self.sector.electron_count + self.sector.spin_magnetization)
         beta_target = 0.5 * (self.sector.electron_count - self.sector.spin_magnetization)

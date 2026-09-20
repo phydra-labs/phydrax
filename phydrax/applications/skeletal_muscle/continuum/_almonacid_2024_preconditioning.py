@@ -844,10 +844,7 @@ class _Almonacid2024PreconditionerBuilder(AbstractPreconditionerBuilder):
                 * itemsize
             )
             preparation_workspace_bytes = factor_storage_bytes
-            reason = (
-                "cell LU plus dynamic element Schwarz or quasistatic "
-                "sparse triangular mechanics"
-            )
+            reason = "cell LU plus dynamic element Schwarz or quasistatic sparse triangular mechanics"
         return PreconditionerCostEstimate(
             component=self.builder_id,
             storage_bytes=_array_tree_storage_bytes(source) + factor_storage_bytes,

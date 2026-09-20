@@ -35,7 +35,7 @@ class TravelTimeGraphPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, node_positions_m: ArrayLike, edge_nodes: ArrayLike, /):
-        positions = np.asarray(node_positions_m, dtype=float)
+        positions = np.asarray(node_positions_m, dtype=np.float64)
         edges = np.asarray(edge_nodes)
         if (
             positions.ndim != 2

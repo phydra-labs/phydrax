@@ -378,7 +378,7 @@ class AcquisitionPlan(StrictModule, NonTrainableState):
                 )
             )
             if descriptors is None
-            else np.asarray(descriptors, dtype=float)
+            else np.asarray(descriptors, dtype=np.float64)
         )
         if descriptor.ndim != 2 or descriptor.shape[0] != len(frame_values):
             raise ValueError("Acquisition descriptors must have one vector per frame.")

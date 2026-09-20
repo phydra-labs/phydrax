@@ -25,14 +25,14 @@ _SOLVER_RTOL = 1.0e-10
 
 
 def _basis_values(grid, points: np.ndarray, degree: int | None = None) -> np.ndarray:
-    knots = np.asarray(grid.knots, dtype=float)
+    knots = np.asarray(grid.knots, dtype="float64")
     p = grid.degree if degree is None else degree
-    x = np.asarray(points, dtype=float).reshape((-1,))
-    values = np.zeros((x.size, knots.size - 1), dtype=float)
+    x = np.asarray(points, dtype="float64").reshape((-1,))
+    values = np.zeros((x.size, knots.size - 1), dtype="float64")
     for index in range(knots.size - 1):
         values[:, index] = (knots[index] <= x) & (x < knots[index + 1])
     for order in range(1, p + 1):
-        next_values = np.zeros((x.size, values.shape[1] - 1), dtype=float)
+        next_values = np.zeros((x.size, values.shape[1] - 1), dtype="float64")
         for index in range(next_values.shape[1]):
             left_width = knots[index + order] - knots[index]
             right_width = knots[index + order + 1] - knots[index + 1]
@@ -55,7 +55,7 @@ def _basis_values(grid, points: np.ndarray, degree: int | None = None) -> np.nda
 def _basis_and_derivative(grid, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     values = _basis_values(grid, points)
     lower = _basis_values(grid, points, grid.degree - 1)
-    knots = np.asarray(grid.knots, dtype=float)
+    knots = np.asarray(grid.knots, dtype="float64")
     derivative = np.zeros_like(values)
     for index in range(values.shape[1]):
         left_width = knots[index + grid.degree] - knots[index]
@@ -71,7 +71,7 @@ def _quadrature(grid, points_per_axis: int):
     nodes, weights = np.polynomial.legendre.leggauss(points_per_axis)
     points = []
     scaled_weights = []
-    breakpoints = np.asarray(grid.breakpoints, dtype=float)
+    breakpoints = np.asarray(grid.breakpoints, dtype="float64")
     for lower, upper in zip(breakpoints[:-1], breakpoints[1:], strict=True):
         midpoint = 0.5 * (lower + upper)
         half_width = 0.5 * (upper - lower)
@@ -89,7 +89,7 @@ def _evaluate(grid, geometry, coefficients, points_per_axis: int):
     basis = (nx[:, :, None] * ny[:, None, :]).reshape((xi.size, -1))
     derivative_xi = (dnx[:, :, None] * ny[:, None, :]).reshape((xi.size, -1))
     derivative_eta = (nx[:, :, None] * dny[:, None, :]).reshape((xi.size, -1))
-    weights = np.asarray(geometry.weights, dtype=float).reshape((-1,))
+    weights = np.asarray(geometry.weights, dtype="float64").reshape((-1,))
     weighted_basis = basis * weights
     denominator = np.sum(weighted_basis, axis=1)
     denominator_xi = np.sum(derivative_xi * weights, axis=1)
@@ -105,7 +105,7 @@ def _evaluate(grid, geometry, coefficients, points_per_axis: int):
         * (derivative_eta * denominator[:, None] - basis * denominator_eta[:, None])
         / denominator[:, None] ** 2
     )
-    control_points = np.asarray(geometry.control_points, dtype=float).reshape((-1, 2))
+    control_points = np.asarray(geometry.control_points, dtype="float64").reshape((-1, 2))
     physical_points = rational @ control_points
     dx_dxi = rational_xi @ control_points
     dx_deta = rational_eta @ control_points
@@ -126,7 +126,7 @@ def _evaluate(grid, geometry, coefficients, points_per_axis: int):
         "eta": eta,
     }
     if coefficients is not None:
-        coefficients_ = np.asarray(coefficients, dtype=float).reshape((-1,))
+        coefficients_ = np.asarray(coefficients, dtype="float64").reshape((-1,))
         result["field"] = rational @ coefficients_
         result["field_gradient"] = np.stack(
             (gradient_x @ coefficients_, gradient_y @ coefficients_), axis=-1
@@ -135,14 +135,14 @@ def _evaluate(grid, geometry, coefficients, points_per_axis: int):
 
 
 def _polynomial_coefficients(grid, values) -> np.ndarray:
-    sites = np.asarray(grid.greville_abscissae, dtype=float)
+    sites = np.asarray(grid.greville_abscissae, dtype="float64")
     collocation = _basis_values(grid, sites)
-    return np.linalg.solve(collocation, np.asarray(values(sites), dtype=float))
+    return np.linalg.solve(collocation, np.asarray(values(sites), dtype="float64"))
 
 
 def _geometry(case: str, grid):
     if case == "affine-square":
-        sites = np.asarray(grid.greville_abscissae, dtype=float)
+        sites = np.asarray(grid.greville_abscissae, dtype="float64")
         xx, yy = np.meshgrid(sites, sites, indexing="ij")
         return phx.discretization.iga.NURBSGeometryState(
             jnp.asarray(np.stack((xx, yy), axis=-1)),
@@ -283,7 +283,7 @@ def _private_sparse_stiffness(grid, geometry, points_per_axis):
     count = grid.coefficient_count
     free = np.asarray(
         [i * count + j for i in range(1, count - 1) for j in range(1, count - 1)],
-        dtype=int,
+        dtype="int64",
     )
     reduced = dense[np.ix_(free, free)]
     rows, columns = np.nonzero(reduced)
@@ -291,7 +291,7 @@ def _private_sparse_stiffness(grid, geometry, points_per_axis):
 
 
 def _sparse_matvec(rows, columns, data, size, vector):
-    result = np.zeros((size,), dtype=float)
+    result = np.zeros((size,), dtype="float64")
     np.add.at(result, rows, data * np.asarray(vector)[columns])
     return result
 
@@ -475,7 +475,7 @@ def _level(case, span_count, policy):
 
 
 def _rate(errors):
-    widths = 1.0 / np.asarray(_SPAN_COUNTS, dtype=float)
+    widths = 1.0 / np.asarray(_SPAN_COUNTS, dtype="float64")
     return float(np.polyfit(np.log(widths), np.log(np.asarray(errors)), 1)[0])
 
 

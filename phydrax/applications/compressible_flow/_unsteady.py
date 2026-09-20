@@ -41,9 +41,9 @@ class CompressibleLoadHistory(StrictModule, NonTrainableState):
         moment = jnp.asarray(moment_coefficients, dtype=force.dtype)
         shock = jnp.asarray(shock_positions, dtype=force.dtype)
         valid_ = (
-            jnp.ones(times_.shape, dtype=bool)
+            jnp.ones(times_.shape, dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         source = str(source_id)
         if (
@@ -68,8 +68,8 @@ class CompressibleLoadHistory(StrictModule, NonTrainableState):
             {
                 "kind": "compressible-load-history",
                 "source": source,
-                "capacity": int(times_.size),
-                "force_dimension": int(force.shape[-1]),
+                "capacity": times_.size,
+                "force_dimension": force.shape[-1],
             }
         )
 
@@ -186,7 +186,7 @@ class CompressibleSnapshotMetricPlan(StrictModule, NonTrainableState):
         /,
     ):
         volumes = jnp.asarray(cell_volumes)
-        indices = tuple(int(index) for index in component_indices)
+        indices = tuple(component_indices)
         scales = tuple(float(scale) for scale in component_scales)
         if (
             volumes.ndim == 0

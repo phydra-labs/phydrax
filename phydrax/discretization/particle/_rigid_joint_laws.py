@@ -86,7 +86,7 @@ def _coordinate_values(
     *,
     positive: bool = False,
 ) -> np.ndarray:
-    values = np.asarray(value, dtype=float)
+    values = np.asarray(value, dtype=np.float64)
     shape = (count, dimension)
     if values.ndim == 0:
         values = np.full(shape, values, dtype=values.dtype)
@@ -112,7 +112,7 @@ def _scalar_values(
     nonnegative: bool = False,
     positive: bool = False,
 ) -> np.ndarray:
-    values = np.asarray(value, dtype=float)
+    values = np.asarray(value, dtype=np.float64)
     if values.ndim == 0:
         values = np.full((count,), values, dtype=values.dtype)
     elif values.shape != (count,):
@@ -133,7 +133,7 @@ def _positive_semidefinite_matrices(
     dimension: int,
     /,
 ) -> np.ndarray:
-    matrices = np.asarray(value, dtype=float)
+    matrices = np.asarray(value, dtype=np.float64)
     shape = (count, dimension, dimension)
     if matrices.ndim == 0:
         matrices = np.broadcast_to(
@@ -247,7 +247,7 @@ class CompliantRigidJointLawPlan(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
     def prepare(
         self, graph: PreparedRigidJointGraph, /
@@ -306,7 +306,7 @@ class DissipativeRigidJointLawPlan(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
     def prepare(
         self, graph: PreparedRigidJointGraph, /
@@ -355,7 +355,7 @@ class RigidJointEffortMotorPlan(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
     @property
     def coordinate(self) -> RigidJointCoordinate:
@@ -435,7 +435,7 @@ class RigidJointPDServoPlan(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
     @property
     def coordinate(self) -> RigidJointCoordinate:
@@ -490,7 +490,7 @@ def evaluate_rigid_joint_law_compatibility(
     identifiers = np.asarray(graph.row_layout.joint_ids)
     kinds = np.asarray(graph.row_layout.joint_kinds)
     if identifiers.size == 0:
-        found = np.zeros(requested.shape, dtype=bool)
+        found = np.zeros(requested.shape, dtype=np.bool_)
         selected_kinds = np.zeros(requested.shape, dtype=np.int32)
     else:
         order = np.argsort(identifiers)
@@ -503,10 +503,10 @@ def evaluate_rigid_joint_law_compatibility(
         selected_kinds = kinds[order[safe_ranks]]
     kind_matches = found & (selected_kinds == int(_COORDINATE_JOINT_KINDS[coordinate]))
     coordinate_is_free = np.full(
-        requested.shape, coordinate in _FREE_COORDINATES, dtype=bool
+        requested.shape, coordinate in _FREE_COORDINATES, dtype=np.bool_
     )
     dimension_supported = np.full(
-        requested.shape, graph.bodies.ambient_dimension == 3, dtype=bool
+        requested.shape, graph.bodies.ambient_dimension == 3, dtype=np.bool_
     )
     compatible = found & kind_matches & coordinate_is_free & dimension_supported
     return RigidJointLawCompatibility(
@@ -579,7 +579,7 @@ def accept_rigid_joint_hinge_coordinate(
         or state.chart_valid.shape != candidate.chart_valid.shape
     ):
         raise ValueError("state and candidate hinge-coordinate shapes must match.")
-    predicate = jnp.asarray(accepted, dtype=bool) & jnp.all(candidate.chart_valid)
+    predicate = jnp.asarray(accepted, dtype=jnp.bool_) & jnp.all(candidate.chart_valid)
     return jax.tree.map(lambda new, old: jnp.where(predicate, new, old), candidate, state)
 
 
@@ -600,7 +600,7 @@ def update_rigid_joint_hinge_coordinate(
     )
     successful = jnp.all(candidate.chart_valid)
     accepted_state = accept_rigid_joint_hinge_coordinate(
-        state, candidate, jnp.asarray(accepted, dtype=bool) & successful
+        state, candidate, jnp.asarray(accepted, dtype=jnp.bool_) & successful
     )
     return RigidJointHingeCoordinateUpdate(candidate, accepted_state, successful)
 
@@ -665,7 +665,7 @@ class _PreparedRigidJointCoordinate(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.indices.shape[0])
+        return self.indices.shape[0]
 
     def _relative_quaternion(
         self, kinematics: RigidBodyKinematics, left: Array, right: Array, /
@@ -1074,7 +1074,7 @@ class PreparedCompliantRigidJointLaw(StrictModule, NonTrainableState):
             zero,
             jnp.zeros_like(effort),
             margin,
-            jnp.zeros_like(effort, dtype=bool),
+            jnp.zeros_like(effort, dtype=jnp.bool_),
             candidate,
             current,
             self.compatibility,
@@ -1145,7 +1145,7 @@ class PreparedDissipativeRigidJointLaw(StrictModule, NonTrainableState):
             zero,
             jnp.zeros_like(effort),
             margin,
-            jnp.zeros_like(effort, dtype=bool),
+            jnp.zeros_like(effort, dtype=jnp.bool_),
             candidate,
             current,
             self.compatibility,

@@ -163,12 +163,12 @@ def meshio_reference_nodes(cell_type: str, /) -> np.ndarray:
     value = str(cell_type)
     if value not in _MESHIO_REFERENCE_NODES:
         raise ValueError(f"Unsupported high-order mesh cell type {value!r}.")
-    return np.asarray(_MESHIO_REFERENCE_NODES[value], dtype=float)
+    return np.asarray(_MESHIO_REFERENCE_NODES[value], dtype=np.float64)
 
 
 def reference_node_permutation(cell_type: str, target_nodes: ArrayLike, /) -> np.ndarray:
     source = meshio_reference_nodes(cell_type)
-    target = np.asarray(target_nodes, dtype=float)
+    target = np.asarray(target_nodes, dtype=np.float64)
     if source.shape != target.shape:
         raise ValueError("Imported and target geometry node counts differ.")
     permutation = []

@@ -14,15 +14,15 @@ import phydrax.ein as ein
 
 from ._fingerprint import canonical_fingerprint
 from ._geometry_precision import GeometryPrecisionPolicy
-from ._strict import AbstractAttribute, StrictModule
+from ._strict import StrictModule
 from .metrix import AbstractRiemannianManifold, RiemannianMetric
 
 
 class AbstractFlowMatchingMetric(StrictModule):
     """One scalar velocity error for an unbatched interpolant state."""
 
-    metric_id: AbstractAttribute[str]
-    precision: AbstractAttribute[GeometryPrecisionPolicy]
+    metric_id: eqx.AbstractVar[str]
+    precision: eqx.AbstractVar[GeometryPrecisionPolicy]
 
     @abstractmethod
     def __call__(
@@ -55,7 +55,7 @@ class EuclideanFlowMatchingMetric(AbstractFlowMatchingMetric):
         self.precision = precision_
         self.metric_id = canonical_fingerprint(
             {
-                "kind": "euclidean-flow-matching-metric-v2",
+                "kind": "euclidean-flow-matching-metric",
                 "normalize_event": self.normalize_event,
                 "precision_policy_id": precision_.policy_id,
             }
@@ -103,7 +103,7 @@ class RiemannianFlowMatchingMetric(AbstractFlowMatchingMetric):
         self.precision = precision_
         self.metric_id = canonical_fingerprint(
             {
-                "kind": "riemannian-flow-matching-metric-v2",
+                "kind": "riemannian-flow-matching-metric",
                 "chart": metric.chart.name,
                 "coordinates": metric.chart.coordinates,
                 "precision_policy_id": precision_.policy_id,
@@ -122,8 +122,7 @@ class RiemannianFlowMatchingMetric(AbstractFlowMatchingMetric):
             state.shape == predicted_velocity.shape == target_velocity.shape == expected
         ):
             raise ValueError(
-                "Riemannian flow matching requires one chart-sized state and "
-                "two chart-sized tangent vectors."
+                "Riemannian flow matching requires one chart-sized state and two chart-sized tangent vectors."
             )
         self.precision.validate_coordinates(state)
         coordinates = self.precision.compute(state)
@@ -166,7 +165,7 @@ class ManifoldFlowMatchingMetric(AbstractFlowMatchingMetric):
         self.precision = precision_
         self.metric_id = canonical_fingerprint(
             {
-                "kind": "manifold-flow-matching-metric-v2",
+                "kind": "manifold-flow-matching-metric",
                 "geometry": geometry.manifold_id,
                 "precision_policy_id": precision_.policy_id,
             }

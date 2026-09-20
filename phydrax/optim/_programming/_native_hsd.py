@@ -3,10 +3,11 @@
 #
 from __future__ import annotations
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array
+
+from phydrax._strict import StrictModule
 
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
 from ._barrier import ConeBarrierOracle
@@ -19,7 +20,7 @@ from ._problem import (
 )
 
 
-class HomogeneousConicState(eqx.Module):
+class HomogeneousConicState(StrictModule):
     primal: Array
     dual: Array
     slack: Array

@@ -72,8 +72,7 @@ class PfaffianPolicy(StrictModule):
         if not isinstance(verify_determinant, bool):
             raise TypeError("verify_determinant must be bool.")
         limits = tuple(
-            int(value)
-            for value in (
+            (
                 max_dimension,
                 max_batch_size,
                 max_storage_bytes,
@@ -82,8 +81,7 @@ class PfaffianPolicy(StrictModule):
         )
         if limits[0] < 0 or any(value < 1 for value in limits[1:]):
             raise ValueError(
-                "max_dimension must be non-negative and Pfaffian resource limits "
-                "must be positive."
+                "max_dimension must be non-negative and Pfaffian resource limits must be positive."
             )
         self.skew_mode = skew_mode
         self.antisymmetry_tolerance = antisymmetry
@@ -135,7 +133,7 @@ class PfaffianPlan(StrictModule):
         workspace_bytes: int,
     ):
         dtype_ = np.dtype(dtype)
-        batch = tuple(int(size) for size in batch_shape)
+        batch = tuple(batch_shape)
         dimension_ = int(dimension)
         self.policy = policy
         self.batch_shape = batch
@@ -206,11 +204,11 @@ class PreparedPfaffian(StrictModule):
         self.pivots = jnp.asarray(pivots)
         self.permutation = jnp.asarray(permutation, dtype=jnp.int32)
         self.swap_sign = jnp.asarray(swap_sign)
-        self.singular = jnp.asarray(singular, dtype=bool)
+        self.singular = jnp.asarray(singular, dtype=jnp.bool_)
         self.minimum_pivot = jnp.asarray(minimum_pivot)
-        self.input_finite = jnp.asarray(input_finite, dtype=bool)
+        self.input_finite = jnp.asarray(input_finite, dtype=jnp.bool_)
         self.antisymmetry_residual = jnp.asarray(antisymmetry_residual)
-        self.antisymmetric = jnp.asarray(antisymmetric, dtype=bool)
+        self.antisymmetric = jnp.asarray(antisymmetric, dtype=jnp.bool_)
         self.numeric_version = version
         self.prepared_id = canonical_fingerprint(
             {
@@ -266,22 +264,22 @@ class PfaffianResult(StrictModule):
         prepared_id: str,
     ):
         self.value = jnp.asarray(value)
-        self.value_finite = jnp.asarray(value_finite, dtype=bool)
+        self.value_finite = jnp.asarray(value_finite, dtype=jnp.bool_)
         self.sign = jnp.asarray(sign)
         self.log_abs = jnp.asarray(log_abs)
-        self.singular = jnp.asarray(singular, dtype=bool)
+        self.singular = jnp.asarray(singular, dtype=jnp.bool_)
         self.antisymmetry_residual = jnp.asarray(antisymmetry_residual)
         self.determinant_identity_residual = jnp.asarray(determinant_identity_residual)
         self.determinant_identity_verified = jnp.asarray(
             determinant_identity_verified,
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         self.pivot_magnitudes = jnp.asarray(pivot_magnitudes)
         self.minimum_pivot = jnp.asarray(minimum_pivot)
-        self.input_finite = jnp.asarray(input_finite, dtype=bool)
-        self.antisymmetric = jnp.asarray(antisymmetric, dtype=bool)
-        self.log_derivative_valid = jnp.asarray(log_derivative_valid, dtype=bool)
-        self.value_derivative_valid = jnp.asarray(value_derivative_valid, dtype=bool)
+        self.input_finite = jnp.asarray(input_finite, dtype=jnp.bool_)
+        self.antisymmetric = jnp.asarray(antisymmetric, dtype=jnp.bool_)
+        self.log_derivative_valid = jnp.asarray(log_derivative_valid, dtype=jnp.bool_)
+        self.value_derivative_valid = jnp.asarray(value_derivative_valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.numeric_version = jnp.asarray(numeric_version, dtype=jnp.int32)
         self.plan_id = plan_id
@@ -454,7 +452,7 @@ def evaluate_pfaffian(
         )
         determinant_verified = jnp.zeros(
             prepared.plan.batch_shape,
-            dtype=bool,
+            dtype=jnp.bool_,
         )
     minimum_pivot = jnp.where(valid_input, prepared.minimum_pivot, nan_log)
     log_derivative_valid = valid_input & ~prepared.singular & jnp.isfinite(raw_log_abs)
@@ -514,7 +512,7 @@ def _prepare_numeric(
     dimension = plan.dimension
     batch_shape = plan.batch_shape
     if dimension == 0:
-        input_finite = jnp.ones(batch_shape, dtype=bool)
+        input_finite = jnp.ones(batch_shape, dtype=jnp.bool_)
         matrix_scale = jnp.ones(batch_shape, dtype=matrix.real.dtype)
         factor_scale = matrix_scale
         residual = jnp.zeros(batch_shape, dtype=matrix.real.dtype)
@@ -562,7 +560,7 @@ def _prepare_numeric(
         pivots = jnp.empty((*batch_shape, 0), dtype=matrix.dtype)
         permutation = jnp.empty((*batch_shape, 0), dtype=jnp.int32)
         swap_sign = jnp.ones(batch_shape, dtype=matrix.dtype)
-        factor_singular = jnp.zeros(batch_shape, dtype=bool)
+        factor_singular = jnp.zeros(batch_shape, dtype=jnp.bool_)
         minimum_pivot = jnp.full(
             batch_shape,
             jnp.inf,

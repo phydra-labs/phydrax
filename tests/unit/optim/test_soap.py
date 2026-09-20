@@ -165,7 +165,6 @@ def test_soap_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         ),
     )
 
-
     solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
     plan = phx.solver.FunctionalTrainingPlan(
         checkpoint=phx.solver.FunctionalCheckpointPolicy(
@@ -201,6 +200,8 @@ def test_soap_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         resumed.training_state.current_functions["u"].func(),
         uninterrupted.training_state.current_functions["u"].func(),
     )
+
+
 @pytest.mark.parametrize(
     "parameters",
     (

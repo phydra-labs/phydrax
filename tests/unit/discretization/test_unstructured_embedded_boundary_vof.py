@@ -466,9 +466,9 @@ def test_plic_reconstructs_planar_interface_and_vof_transport_is_bounded():
     alpha = jnp.asarray((1.0, 0.0, 0.0, 1.0, 0.0, 0.0))
     volume_flux = jnp.zeros((discretization.face_measures.size,))
     owner = np.asarray(discretization.owner_cells)
-    neighbour = np.asarray(discretization.neighbour_cells)
-    first_faces = np.where((owner == 0) & (neighbour == 1))[0]
-    second_faces = np.where((owner == 3) & (neighbour == 4))[0]
+    neighbor = np.asarray(discretization.neighbor_cells)
+    first_faces = np.where((owner == 0) & (neighbor == 1))[0]
+    second_faces = np.where((owner == 3) & (neighbor == 4))[0]
     assert first_faces.size == second_faces.size == 1
     volume_flux = volume_flux.at[first_faces[0]].set(0.2)
     volume_flux = volume_flux.at[second_faces[0]].set(0.2)

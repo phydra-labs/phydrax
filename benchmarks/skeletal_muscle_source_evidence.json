@@ -118,7 +118,7 @@
       "acquisition_observations": [
         {
           "anatomy": "Rectus femoris, one 42-year-old male, MRI and DTI",
-          "outcome": "Open article read. Methods describe MRI/DTI acquisition and MTA construction, but Data availability says: No datasets were generated or analysed during the current study. No associated raw files are linked. This is not proof the data never existed; no reproducible released bundle acquired.",
+          "outcome": "Open article read. Methods describe MRI/DTI acquisition and MTA construction, but Data availability says: No datasets were generated or analyzed during the current study. No associated raw files are linked. This is not proof the data never existed; no reproducible released bundle acquired.",
           "source_id": "doi:10.1007/s10237-025-01989-w",
           "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12454537/"
         },
@@ -131,7 +131,7 @@
           "query": "\"Diniz\" \"aponeurotic\" \"Achilles\" dataset OR mesh OR supplementary"
         },
         {
-          "outcome": "Related fibre imaging and modeling papers found; no single acquired bundle supplies co-registered geometry, all tissue fields, preload, activation/force and held-out deformation.",
+          "outcome": "Related fiber imaging and modeling papers found; no single acquired bundle supplies co-registered geometry, all tissue fields, preload, activation/force and held-out deformation.",
           "query": "open dataset muscle aponeurosis tendon MRI DTI force ultrasound finite element mesh"
         }
       ],
@@ -140,7 +140,7 @@
       "gate": "Never mix rectus-femoris geometry, Achilles parameters and medial-gastrocnemius activation into a claimed source model.",
       "missing": [
         "One coherent same-subject muscle, aponeurosis and tendon geometry/mesh with domain and interface labels.",
-        "Co-registered muscle fibre, aponeurosis collagen and tendon orientation fields.",
+        "Co-registered muscle fiber, aponeurosis collagen and tendon orientation fields.",
         "Reference/preload or stress-free reconstruction, source-specific material calibration and unit conventions.",
         "Matched boundary/load/activation protocol, force or torque/moment-arm measurements and interface assumptions.",
         "Held-out muscle, aponeurosis and free-tendon deformation fields; identifiable rate/contact data for any viscoelastic/sliding claim.",
@@ -401,7 +401,7 @@
           "byte_count": 4812844,
           "media_type": "application/zip",
           "sha256": "aa9d96a53a1e4c0183536fd223b71e7a04f37f9f1dbae5a6d363b5dc92350c57",
-          "uri": "https://itis.swiss/assets/Downloads/TissueDb/Database-V4-2.zip"
+          "uri": "https://itis.swiss/assets/Downloads/TissueDb/Database-Canonical-2.zip"
         }
       ],
       "calibration": {
@@ -470,7 +470,7 @@
       "title": "Anatomically accurate model of EMG during index finger flexion and abduction derived from diffusion tensor imaging",
       "units": {
         "MRI_DWI_voxel_size": "mm",
-        "fiber_diameter": "micrometre",
+        "fiber_diameter": "micrometer",
         "fiber_trajectory_increment": "mm",
         "intracellular_conductivity": "S/m"
       }
@@ -550,7 +550,7 @@
       "units": {
         "continuum_Table_2_stresses": "kPa",
         "normalized_active_stress": "dimensionless",
-        "sarcomere_length": "micrometre"
+        "sarcomere_length": "micrometer"
       }
     },
     {
@@ -664,10 +664,10 @@
       "units": {
         "WSBM_crossbridge_concentration": "micromolar",
         "WSBM_distortion": "nm",
-        "WSBM_half_sarcomere_length": "micrometre",
+        "WSBM_half_sarcomere_length": "micrometer",
         "WSBM_time": "ms",
         "WSBM_velocity": "nm/ms",
-        "slow_TK_length_and_distortion": "micrometre"
+        "slow_TK_length_and_distortion": "micrometer"
       }
     },
     {
@@ -743,11 +743,11 @@
           "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/geometry_with_aponeurosis.png"
         },
         {
-          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/mg_fibres_active.png",
+          "archive_member": "flexodeal-0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/mg_fibers_active.png",
           "availability": "original-member-acquired-in-pinned-archive; not-vendored",
           "byte_count": 1664456,
           "sha256": "bceaac022ad2992de518604a4af9a0b27cf3533f6dd53e2d939284c285ecab6e",
-          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/mg_fibres_active.png"
+          "uri": "https://raw.githubusercontent.com/javieralmonacid/flexodeal/0698e3d87d7261c81437d410dda161fe3b8efcbf/other_resources/mg_fibers_active.png"
         },
         {
           "availability": "vendored-immutable-native-qualification-evidence",

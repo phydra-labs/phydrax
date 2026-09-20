@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import DenseLinearOperator, LinearSystem, solve
 
@@ -47,18 +47,18 @@ class ShadowingSolveCost(StrictModule, NonTrainableState):
 
 
 class AbstractShadowingSolvePlan(StrictModule, NonTrainableState):
-    method: AbstractAttribute[str]
-    state_dimension: AbstractAttribute[int]
-    unstable_dimension: AbstractAttribute[int]
-    basis_dimension: AbstractAttribute[int]
-    segment_steps: AbstractAttribute[int]
-    segment_count: AbstractAttribute[int]
-    regularization: AbstractAttribute[float]
-    rank_tolerance: AbstractAttribute[float]
-    memory_mode: AbstractAttribute[ShadowingMemoryMode]
-    maximum_retained_bytes: AbstractAttribute[int]
-    maximum_workspace_bytes: AbstractAttribute[int]
-    plan_id: AbstractAttribute[str]
+    method: eqx.AbstractVar[str]
+    state_dimension: eqx.AbstractVar[int]
+    unstable_dimension: eqx.AbstractVar[int]
+    basis_dimension: eqx.AbstractVar[int]
+    segment_steps: eqx.AbstractVar[int]
+    segment_count: eqx.AbstractVar[int]
+    regularization: eqx.AbstractVar[float]
+    rank_tolerance: eqx.AbstractVar[float]
+    memory_mode: eqx.AbstractVar[ShadowingMemoryMode]
+    maximum_retained_bytes: eqx.AbstractVar[int]
+    maximum_workspace_bytes: eqx.AbstractVar[int]
+    plan_id: eqx.AbstractVar[str]
 
     @property
     def horizon_steps(self) -> int:
@@ -149,7 +149,7 @@ def orthonormalize_shadowing_basis(
     *,
     rank_tolerance: float,
 ) -> tuple[Array, Array, Array, Array]:
-    columns = int(basis.shape[1])
+    columns = basis.shape[1]
     if columns == 0:
         zero = jnp.asarray(0.0, dtype=basis.real.dtype)
         return basis, jnp.zeros((0, 0), dtype=basis.dtype), zero, jnp.asarray(True)

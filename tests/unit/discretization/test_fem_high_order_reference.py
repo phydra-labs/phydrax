@@ -382,7 +382,7 @@ def test_prepared_reference_identity_binds_rules_actions_and_precision():
 def test_higher_order_simplex_integer_points_match_floating_tabulation():
     family = SimplexNodalFamily("triangle", 4)
     integer_points = jnp.asarray(((0, 0), (1, 0), (0, 1)), dtype=jnp.int32)
-    floating_points = integer_points.astype(float)
+    floating_points = integer_points.astype("float64")
 
     integer_values, integer_gradients = family.tabulate(integer_points)
     floating_values, floating_gradients = family.tabulate(floating_points)

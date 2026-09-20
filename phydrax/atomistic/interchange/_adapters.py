@@ -933,8 +933,7 @@ def from_openmm_system(
             if method == openmm.NonbondedForce.NoCutoff:
                 electrostatics = "direct"
                 warnings.append(
-                    "OpenMM NoCutoff Lennard-Jones interactions are bounded by the "
-                    "explicit adapter cutoff in PhydraX."
+                    "OpenMM NoCutoff Lennard-Jones interactions are bounded by the explicit adapter cutoff in PhydraX."
                 )
             elif method in (
                 openmm.NonbondedForce.CutoffNonPeriodic,
@@ -1084,7 +1083,7 @@ def from_openmm_system(
         )
     resolved_cell = None
     if cell_vectors is not None:
-        resolved_cell = np.asarray(cell_vectors, dtype=float) * length_factor
+        resolved_cell = np.asarray(cell_vectors, dtype=np.float64) * length_factor
     elif periodic_method:
         resolved_cell = (
             np.asarray(
@@ -1092,7 +1091,7 @@ def from_openmm_system(
                     vector.value_in_unit(openmm.unit.angstrom)
                     for vector in system.getDefaultPeriodicBoxVectors()
                 ],
-                dtype=float,
+                dtype=np.float64,
             )
             * length_factor
         )
@@ -1129,7 +1128,7 @@ def from_openmm_system(
         "charges": charges,
         "positions": None
         if positions is None
-        else np.asarray(positions, dtype=float) * length_factor,
+        else np.asarray(positions, dtype=np.float64) * length_factor,
         "cell": cell,
         "topology": {
             "bonds": np.asarray(bonds, dtype=np.int64).reshape((-1, 2)),

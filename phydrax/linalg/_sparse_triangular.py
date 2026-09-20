@@ -318,7 +318,7 @@ def solve_sparse_triangular(
     safe_diagonal = jnp.where(valid_pivot, diagonal, jnp.ones_like(diagonal))
     entry_positions = jnp.arange(values_.size, dtype=diagonal_positions.dtype)
     off_diagonal = (
-        jnp.ones(values_.shape, dtype=bool)
+        jnp.ones(values_.shape, dtype=jnp.bool_)
         if analysis.unit_diagonal
         else entry_positions != safe_diagonal_positions[rows]
     )

@@ -98,9 +98,7 @@ def test_single_hinge_has_analytic_mass_gravity_and_acceleration():
 
     mass = reduced_mass_matrix(articulation, q)
     bias = reduced_bias_terms(articulation, q, v, gravity)
-    forward = reduced_forward_dynamics(
-        articulation, q, v, jnp.asarray([0.0]), gravity
-    )
+    forward = reduced_forward_dynamics(articulation, q, v, jnp.asarray([0.0]), gravity)
 
     assert mass.successful
     assert mass.positive_definite
@@ -111,9 +109,7 @@ def test_single_hinge_has_analytic_mass_gravity_and_acceleration():
     assert jnp.allclose(bias.velocity, 0.0, atol=1.0e-7)
     assert jnp.allclose(bias.gravity, jnp.asarray([19.62]), rtol=2.0e-6)
     assert forward.successful
-    assert jnp.allclose(
-        forward.acceleration, jnp.asarray([-19.62 / 5.0]), rtol=2.0e-5
-    )
+    assert jnp.allclose(forward.acceleration, jnp.asarray([-19.62 / 5.0]), rtol=2.0e-5)
 
 
 def test_single_prismatic_has_analytic_mass_gravity_and_acceleration():
@@ -124,9 +120,7 @@ def test_single_prismatic_has_analytic_mass_gravity_and_acceleration():
 
     mass = reduced_mass_matrix(articulation, q)
     bias = reduced_bias_terms(articulation, q, v, gravity)
-    forward = reduced_forward_dynamics(
-        articulation, q, v, jnp.asarray([0.0]), gravity
-    )
+    forward = reduced_forward_dynamics(articulation, q, v, jnp.asarray([0.0]), gravity)
 
     assert mass.successful
     assert jnp.allclose(mass.matrix, jnp.asarray([[2.0]]), rtol=2.0e-6)
@@ -142,9 +136,7 @@ def test_inverse_then_forward_dynamics_round_trips_with_residual_evidence():
     acceleration = jnp.asarray([-0.73])
     gravity = jnp.asarray([0.0, -9.81, 0.0])
 
-    inverse = reduced_inverse_dynamics(
-        articulation, q, v, acceleration, gravity
-    )
+    inverse = reduced_inverse_dynamics(articulation, q, v, acceleration, gravity)
     forward = reduced_forward_dynamics(
         articulation, q, v, inverse.generalized_effort, gravity
     )
@@ -226,9 +218,7 @@ def test_failed_step_rolls_back_candidate_state():
     assert result.status == int(ReducedDynamicsStatus.STEP_SIZE_REJECTED)
     assert jnp.allclose(result.accepted_state.configuration, state.configuration)
     assert jnp.allclose(result.accepted_state.velocity, state.velocity)
-    assert not jnp.allclose(
-        result.candidate_state.configuration, state.configuration
-    )
+    assert not jnp.allclose(result.candidate_state.configuration, state.configuration)
 
     nonfinite = reduced_semi_implicit_velocity_euler_step(
         articulation,
@@ -239,9 +229,7 @@ def test_failed_step_rolls_back_candidate_state():
     )
     assert not nonfinite.successful
     assert nonfinite.status == int(ReducedDynamicsStatus.NONFINITE_INPUT)
-    assert jnp.allclose(
-        nonfinite.accepted_state.configuration, state.configuration
-    )
+    assert jnp.allclose(nonfinite.accepted_state.configuration, state.configuration)
     assert jnp.allclose(nonfinite.accepted_state.velocity, state.velocity)
 
 
@@ -281,27 +269,17 @@ def test_rebased_nonzero_com_energy_matches_maximal_com_evaluation():
     configuration = jnp.asarray([0.37])
     velocity = jnp.asarray([-0.61])
 
-    reduced = reduced_energy(
-        articulation, configuration, velocity, jnp.zeros((3,))
-    )
-    kinematics = articulation.forward_kinematics(
-        configuration, velocity
-    ).bodies
+    reduced = reduced_energy(articulation, configuration, velocity, jnp.zeros((3,)))
+    kinematics = articulation.forward_kinematics(configuration, velocity).bodies
     rotation = quaternion_rotation_matrix(kinematics.orientation)
     world_inertia = (
-        rotation
-        @ target.mass_properties.inertia_com
-        @ jnp.swapaxes(rotation, -1, -2)
+        rotation @ target.mass_properties.inertia_com @ jnp.swapaxes(rotation, -1, -2)
     )
-    angular_momentum = (
-        world_inertia @ kinematics.angular_velocity[..., None]
-    )[..., 0]
+    angular_momentum = (world_inertia @ kinematics.angular_velocity[..., None])[..., 0]
     maximal_kinetic = 0.5 * jnp.sum(
         target.mass_properties.masses
         * jnp.sum(kinematics.velocity * kinematics.velocity, axis=-1)
-    ) + 0.5 * jnp.sum(
-        kinematics.angular_velocity * angular_momentum
-    )
+    ) + 0.5 * jnp.sum(kinematics.angular_velocity * angular_momentum)
 
     assert reduced.successful
     assert jnp.allclose(reduced.kinetic, maximal_kinetic, rtol=2.0e-6)

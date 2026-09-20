@@ -65,7 +65,7 @@ def test_asymmetric_workset_accepts_independent_side_widths_and_mortar_data():
         precision_id="precision",
         ir_semantics_id="interior-action",
         local_kernel="mortar",
-        neighbour_local_widths={"u": 2},
+        neighbor_local_widths={"u": 2},
     )
     workset = CompiledWorkset(
         signature,
@@ -74,13 +74,13 @@ def test_asymmetric_workset_accepts_independent_side_widths_and_mortar_data():
         jnp.asarray((0,), dtype=jnp.int32),
         jnp.asarray((1,), dtype=jnp.int32),
         {"u": jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32)},
-        neighbour_gathers={"u": jnp.asarray(((4, 5),), dtype=jnp.int32)},
+        neighbor_gathers={"u": jnp.asarray(((4, 5),), dtype=jnp.int32)},
         mortar=mortar,
         mortar_metric=metric,
     )
 
     assert dict(workset.gathers)["u"].shape == (1, 4)
-    assert dict(workset.neighbour_gathers)["u"].shape == (1, 2)
+    assert dict(workset.neighbor_gathers)["u"].shape == (1, 2)
     assert workset.mortar_metric.opposite_normal_error == 0.0
 
 

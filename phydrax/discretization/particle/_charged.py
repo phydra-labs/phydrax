@@ -39,7 +39,7 @@ class ChargedParticlePlan(StrictModule, NonTrainableState):
         if values.ndim != 1 or values.size == 0:
             raise ValueError("charges must be a nonempty rank-one array.")
         if not np.issubdtype(values.dtype, np.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         if not identifier:
             raise ValueError("species_id must be nonempty.")
         if not np.isfinite(tolerance_) or tolerance_ < 0.0:

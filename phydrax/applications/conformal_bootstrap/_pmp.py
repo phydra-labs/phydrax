@@ -338,8 +338,8 @@ def audit_pmp_samples(
     """Evaluate finite sample PSD constraints; this is not continuum positivity."""
     if not isinstance(program, ConformalPolynomialMatrixProgram):
         raise TypeError("program must be ConformalPolynomialMatrixProgram.")
-    alpha = np.asarray(functional, dtype=float)
-    points = np.asarray(sample_points, dtype=float)
+    alpha = np.asarray(functional, dtype=np.float64)
+    points = np.asarray(sample_points, dtype=np.float64)
     tolerance_value = float(tolerance)
     if alpha.shape != (program.functional_count,) or not np.all(np.isfinite(alpha)):
         raise ValueError("functional must be one finite PMP functional vector.")
@@ -349,11 +349,11 @@ def audit_pmp_samples(
         raise ValueError("PMP sample points must lie in x >= 0.")
     if not np.isfinite(tolerance_value) or tolerance_value < 0.0:
         raise ValueError("tolerance must be finite and non-negative.")
-    minimum = np.empty((len(program.blocks), points.size), dtype=float)
+    minimum = np.empty((len(program.blocks), points.size), dtype=np.float64)
     for block_index, block in enumerate(program.blocks):
         for point_index, point in enumerate(points):
             matrix = np.empty(
-                (block.matrix_dimension, block.matrix_dimension), dtype=float
+                (block.matrix_dimension, block.matrix_dimension), dtype=np.float64
             )
             for row in range(block.matrix_dimension):
                 for column in range(block.matrix_dimension):

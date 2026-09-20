@@ -58,7 +58,7 @@ class SpectralResponseEvidence(StrictModule, NonTrainableState):
                 detailed_balance_residual,
                 selection_rule_residual,
             ],
-            dtype=float,
+            dtype=jnp.float64,
         ).reshape((4,))
         if bool(jnp.any(~jnp.isfinite(residuals))) or bool(jnp.any(residuals < 0.0)):
             raise ValueError(
@@ -68,7 +68,7 @@ class SpectralResponseEvidence(StrictModule, NonTrainableState):
         self.sum_rule_residual = residuals[1]
         self.detailed_balance_residual = residuals[2]
         self.selection_rule_residual = residuals[3]
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "spectral-response-evidence",
@@ -117,7 +117,7 @@ class SpectralResponseProduct(StrictModule, NonTrainableState):
     ):
         coordinate = jnp.asarray(coordinates)
         response = jnp.asarray(values)
-        mask = jnp.asarray(active, dtype=bool)
+        mask = jnp.asarray(active, dtype=jnp.bool_)
         labels = tuple(str(label).strip() for label in channels)
         profile_id = str(source_profile_id).strip()
         parent_id = str(source_product_id).strip()

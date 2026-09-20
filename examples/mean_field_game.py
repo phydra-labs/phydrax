@@ -127,8 +127,7 @@ result = phx.control.games.solve_mean_field_game_fixed_point(problem, plan)
 
 if not bool(result.valid):
     raise RuntimeError(
-        "fixed-point candidate evaluation failed: "
-        f"status={int(result.status)}, distance={float(result.final_distance)}"
+        f"fixed-point candidate evaluation failed: status={int(result.status)}, distance={float(result.final_distance)}"
     )
 if result.best_response_result is None or not bool(result.best_response_result.valid):
     raise RuntimeError("the accepted result does not retain a valid frozen-law response")

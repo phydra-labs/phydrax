@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import phydrax.axes as cx
 
 from .._frozendict import frozendict
-from .._sampling import get_sampler
+from .._sampling import materialize_design
 from .._strict import StrictModule
 from ._distributions import AbstractDistribution
 from ._predictive import PredictiveField, SampleAxis
@@ -45,8 +45,8 @@ class RandomSampleBatch(StrictModule):
             raise ValueError("sample_dim must be a non-empty string.")
         if sample_dim in names:
             raise ValueError("sample_dim must not collide with a random-variable label.")
-        arrays = {name: jnp.asarray(values[name], dtype=float) for name in names}
-        sizes = {int(array.shape[0]) for array in arrays.values() if array.ndim == 1}
+        arrays = {name: jnp.asarray(values[name], dtype=jnp.float64) for name in names}
+        sizes = {array.shape[0] for array in arrays.values() if array.ndim == 1}
         if any(array.ndim != 1 for array in arrays.values()) or len(sizes) != 1:
             raise ValueError("Every random-variable sample must be an aligned 1D array.")
         if next(iter(sizes)) <= 0:
@@ -57,7 +57,7 @@ class RandomSampleBatch(StrictModule):
 
     @property
     def num_samples(self) -> int:
-        return int(next(iter(self.values.values())).shape[0])
+        return next(iter(self.values.values())).shape[0]
 
 
 def sample_joint(
@@ -81,7 +81,12 @@ def sample_joint(
             raise ValueError("Distribution labels must be non-empty strings.")
         if not isinstance(distribution, AbstractDistribution):
             raise TypeError(f"Distribution {name!r} must implement AbstractDistribution.")
-    unit_design = get_sampler(sampler)(count, len(names), key)
+    unit_design = materialize_design(
+        sampler,
+        count=count,
+        dimension=len(names),
+        key=key,
+    )
     values = {
         name: distribution.icdf(unit_design[:, index])
         for index, (name, distribution) in enumerate(distributions.items())
@@ -155,7 +160,7 @@ def propagate(
         stop = min(start + chunk, count)
         columns = tuple(samples.values[name][start:stop] for name in names)
         data = jnp.asarray(jax.vmap(evaluate_data)(*columns))
-        if int(data.shape[0]) != stop - start:
+        if data.shape[0] != stop - start:
             raise ValueError("Propagated output did not retain the leading sample axis.")
         if data.shape[1:] != template_data.shape:
             raise ValueError("Propagated chunks produced inconsistent output structure.")
@@ -166,7 +171,7 @@ def propagate(
         raise RuntimeError("Propagation produced no output chunks.")
     valid_data = jnp.all(jnp.isfinite(data).reshape((count, -1)), axis=1)
     if valid_policy == "raise" and not bool(jnp.all(valid_data)):
-        failed = tuple(int(index) for index in jnp.where(~valid_data)[0])
+        failed = tuple(jnp.where(~valid_data)[0])
         raise FloatingPointError(f"Propagation produced invalid samples at {failed!r}.")
     sample_field = cx.AxisArray(data, dims=(samples.sample_dim, *template_dims))
     valid = cx.AxisArray(valid_data, dims=(samples.sample_dim,))

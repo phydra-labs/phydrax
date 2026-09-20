@@ -187,7 +187,7 @@ def prepare_point_process(
         raise TypeError("market point-process inference requires a PhysicalLaw.")
     if hawkes_definition.baseline.shape[0] != len(stream.quote_key_ids):
         raise ValueError("Hawkes channel count must match market stream channels.")
-    active = np.asarray(stream.valid_mask, dtype=bool)
+    active = np.asarray(stream.valid_mask, dtype=np.bool_)
     admissible = (
         active
         & (np.asarray(stream.event_times_ns) >= market_definition.start_time_ns)
@@ -204,9 +204,9 @@ def prepare_point_process(
     )
     capacity = stream.capacity
     scale = 1.0e9
-    times = np.zeros((capacity,), dtype=float)
+    times = np.zeros((capacity,), dtype=np.float64)
     channels = np.zeros((capacity,), dtype=np.int32)
-    valid = np.zeros((capacity,), dtype=bool)
+    valid = np.zeros((capacity,), dtype=np.bool_)
     for output, index in enumerate(order):
         times[output] = (
             int(np.asarray(stream.event_times_ns)[index])

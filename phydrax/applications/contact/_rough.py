@@ -99,7 +99,7 @@ class PeriodicRoughContactPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         relaxation: float = 0.9,
     ):
-        spectrum = np.asarray(compliance_spectrum, dtype=float)
+        spectrum = np.asarray(compliance_spectrum, dtype=np.float64)
         if spectrum.ndim != 2 or np.any(~np.isfinite(spectrum)) or np.any(spectrum < 0.0):
             raise ValueError(
                 "Rough-contact compliance spectrum must be a nonnegative matrix."

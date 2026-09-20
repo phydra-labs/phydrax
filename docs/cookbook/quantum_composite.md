@@ -14,10 +14,10 @@ import jax.numpy as jnp
 import phydrax as phx
 
 time = phx.domain.TimeInterval(0.0, 1.0)
-zero = time.Function()(jnp.asarray([1.0, 0.0], dtype=complex))
-one = time.Function()(jnp.asarray([0.0, 1.0], dtype=complex))
-sigma_x = time.Function()(jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex))
-sigma_z = time.Function()(jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex))
+zero = time.Function()(jnp.asarray([1.0, 0.0], dtype="complex128"))
+one = time.Function()(jnp.asarray([0.0, 1.0], dtype="complex128"))
+sigma_x = time.Function()(jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128"))
+sigma_z = time.Function()(jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128"))
 
 zero_zero = phx.operators.tensor_product(zero, zero)
 one_one = phx.operators.tensor_product(one, one)

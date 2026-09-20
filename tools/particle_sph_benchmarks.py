@@ -48,7 +48,6 @@ class ParticleParityBenchmark:
 
 @dataclass(frozen=True)
 class ParticleSPHBenchmarkRecord:
-    schema_version: int
     particle_count: int
     state_bytes: int
     density_spread: float
@@ -96,7 +95,7 @@ def _problem_components(count: int):
         "particle-sph-benchmark",
         phx.equations.TaitBarotropicMaterial(1.0, 1.0),
     )
-    lattice = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    lattice = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     position = lattice + 0.001 * jnp.sin(2.0 * jnp.pi * lattice)
     return particles, box, method, problem, position
 
@@ -140,7 +139,7 @@ def _relation_bytes(state: phx.discretization.ParticleNeighborhoodState) -> int:
         state.cell_counts,
         state.cell_offsets,
     )
-    return sum(int(value.nbytes) for value in arrays)
+    return sum(value.nbytes for value in arrays)
 
 
 def _solve(compiled, position, final_time):
@@ -194,7 +193,7 @@ def _backend_benchmark(compiled, position) -> tuple[ParticleBackendBenchmark, ob
         final_momentum,
         None,
     )
-    energy_scale = jnp.maximum(jnp.abs(initial.total_energy), jnp.finfo(float).tiny)
+    energy_scale = jnp.maximum(jnp.abs(initial.total_energy), jnp.finfo(jnp.float64).tiny)
     trajectory_energy_defect = (
         jnp.abs(final.total_energy - initial.total_energy) / energy_scale
     )
@@ -278,9 +277,8 @@ def run_particle_sph_benchmark(count: int = 32, /) -> ParticleSPHBenchmarkRecord
         )
     )
     return ParticleSPHBenchmarkRecord(
-        schema_version=2,
         particle_count=int(count),
-        state_bytes=int(2 * position.nbytes),
+        state_bytes=2 * position.nbytes,
         density_spread=float(jnp.max(dense_density) - jnp.min(dense_density)),
         dense=dense_record,
         cell=cell_record,

@@ -38,8 +38,8 @@ class VarianceConstrainedSemiGrandPlan(StrictModule, NonTrainableState):
         realization_id: int = 0,
     ):
         thermal = float(temperature)
-        chemical = np.asarray(chemical_potentials, dtype=float)
-        target = np.asarray(target_fractions, dtype=float)
+        chemical = np.asarray(chemical_potentials, dtype=np.float64)
+        target = np.asarray(target_fractions, dtype=np.float64)
         strength = float(kappa)
         realization = int(realization_id)
         if (
@@ -118,7 +118,7 @@ def variance_constrained_semigrand_step(
     selected_rank = jr.randint(site_key, (), 0, active_count)
     particle_index = active_indices[selected_rank]
     previous_species = current[particle_index]
-    species_count = int(plan.chemical_potentials.size)
+    species_count = plan.chemical_potentials.size
     offset = jr.randint(species_key, (), 1, species_count, dtype=jnp.int32)
     proposed_species = (
         (previous_species + offset) % jnp.asarray(species_count, dtype=jnp.int32)

@@ -102,8 +102,8 @@ def streaming_shifted_lanczos(
         recurrence_weights=jnp.zeros((count,), dtype=real_dtype),
         active=active,
         iterations=jnp.zeros((count,), dtype=jnp.int32),
-        curvature_failure=jnp.zeros((count,), dtype=bool),
-        finite=jnp.full((count,), jnp.all(jnp.isfinite(rhs)), dtype=bool),
+        curvature_failure=jnp.zeros((count,), dtype=jnp.bool_),
+        finite=jnp.full((count,), jnp.all(jnp.isfinite(rhs)), dtype=jnp.bool_),
         breakdown_status=jnp.asarray(int(KrylovBreakdownStatus.NONE), dtype=jnp.int32),
         matvec_count=jnp.asarray(0, dtype=jnp.int32),
     )

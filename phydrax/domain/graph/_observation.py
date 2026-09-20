@@ -59,7 +59,7 @@ def _classification_array(
         raise TypeError(f"{name} must be real.")
     if require_boolean:
         if arr.size == 0:
-            return arr.astype(bool)
+            return arr.astype("bool")
         if arr.dtype != jnp.bool_:
             raise TypeError(f"{name} must contain Boolean values.")
         return arr
@@ -116,10 +116,9 @@ def _classification_case_arrays(
     )
     if arr.ndim == 0:
         raise ValueError("Graph classification values must have a case leading axis.")
-    if int(arr.shape[0]) != n:
+    if arr.shape[0] != n:
         raise ValueError(
-            "Graph classification values case axis must have length "
-            f"{n}, got {arr.shape[0]}."
+            f"Graph classification values case axis must have length {n}, got {arr.shape[0]}."
         )
     return tuple(arr[i] for i in range(n))
 
@@ -140,12 +139,12 @@ def _case_arrays(values: ArrayLike | Sequence[ArrayLike], n: int, /) -> tuple[Ar
     ):
         if len(values) != n:
             raise ValueError(f"Graph target values must contain {n} case arrays.")
-        return tuple(jnp.asarray(value, dtype=float) for value in values)
+        return tuple(jnp.asarray(value, dtype=jnp.float64) for value in values)
 
-    arr = jnp.asarray(values, dtype=float)
+    arr = jnp.asarray(values, dtype=jnp.float64)
     if arr.ndim == 0:
         raise ValueError("Graph target values must have a case leading axis.")
-    if int(arr.shape[0]) != n:
+    if arr.shape[0] != n:
         raise ValueError(
             f"Graph target values case axis must have length {n}, got {arr.shape[0]}."
         )
@@ -165,13 +164,12 @@ def _validate_graph_case_arrays(
     trailing_shape = None
     for graph, value in zip(domain.graphs, cases, strict=True):
         expected = _size_for_kind(graph, kind)
-        arr = jnp.asarray(value, dtype=float)
+        arr = jnp.asarray(value, dtype=jnp.float64)
         if arr.ndim == 0:
             raise ValueError("Graph target case arrays must have an entity axis.")
-        if int(arr.shape[0]) != expected:
+        if arr.shape[0] != expected:
             raise ValueError(
-                f"Graph target case leading axis must match {kind} count {expected}; "
-                f"got {arr.shape[0]}."
+                f"Graph target case leading axis must match {kind} count {expected}; got {arr.shape[0]}."
             )
         if trailing_shape is None:
             trailing_shape = arr.shape[1:]
@@ -201,20 +199,19 @@ def _validate_graph_trajectory_case_arrays(
     ):
         expected_entities = _size_for_kind(graph, kind)
         expected_length = int(length)
-        arr = jnp.asarray(value, dtype=float)
+        arr = jnp.asarray(value, dtype=jnp.float64)
         if arr.ndim < 2:
             raise ValueError(
                 "Graph trajectory target case arrays must have shape (time, entity, ...)."
             )
-        if int(arr.shape[0]) != expected_length:
+        if arr.shape[0] != expected_length:
             raise ValueError(
                 "Graph trajectory target time axis must match the case length; "
                 f"expected {expected_length}, got {arr.shape[0]}."
             )
-        if int(arr.shape[1]) != expected_entities:
+        if arr.shape[1] != expected_entities:
             raise ValueError(
-                f"Graph trajectory target entity axis must match {kind} count "
-                f"{expected_entities}; got {arr.shape[1]}."
+                f"Graph trajectory target entity axis must match {kind} count {expected_entities}; got {arr.shape[1]}."
             )
         if trailing_shape is None:
             trailing_shape = arr.shape[2:]
@@ -224,7 +221,7 @@ def _validate_graph_trajectory_case_arrays(
         lengths.append(expected_length)
         entity_sizes.append(expected_entities)
         flattened = arr.reshape((expected_length * expected_entities,) + arr.shape[2:])
-        running += int(flattened.shape[0])
+        running += flattened.shape[0]
         parts.append(flattened)
     return (
         jnp.concatenate(parts, axis=0),
@@ -264,10 +261,9 @@ def _validate_graph_classification_case_arrays(
                     "Scalar graph classification cases require exactly one entity."
                 )
             arr = arr.reshape((1,))
-        if int(arr.shape[0]) != expected:
+        if arr.shape[0] != expected:
             raise ValueError(
-                "Graph classification case leading axis must match "
-                f"{kind} count {expected}; got {arr.shape[0]}."
+                f"Graph classification case leading axis must match {kind} count {expected}; got {arr.shape[0]}."
             )
         if trailing_shape is None:
             trailing_shape = arr.shape[1:]
@@ -314,15 +310,14 @@ def _validate_graph_trajectory_classification_case_arrays(
             arr = arr[:, None]
         if arr.ndim < 2:
             raise ValueError(
-                "Graph trajectory classification case arrays must have shape "
-                "(time, entity, ...)."
+                "Graph trajectory classification case arrays must have shape (time, entity, ...)."
             )
-        if int(arr.shape[0]) != expected_length:
+        if arr.shape[0] != expected_length:
             raise ValueError(
                 "Graph trajectory classification target time axis must match the "
                 f"case length; expected {expected_length}, got {arr.shape[0]}."
             )
-        if int(arr.shape[1]) != expected_entities:
+        if arr.shape[1] != expected_entities:
             raise ValueError(
                 "Graph trajectory classification target entity axis must match "
                 f"{kind} count {expected_entities}; got {arr.shape[1]}."
@@ -337,7 +332,7 @@ def _validate_graph_trajectory_classification_case_arrays(
         lengths.append(expected_length)
         entity_sizes.append(expected_entities)
         flattened = arr.reshape((expected_length * expected_entities,) + arr.shape[2:])
-        running += int(flattened.shape[0])
+        running += flattened.shape[0]
         parts.append(flattened)
     return (
         jnp.concatenate(parts, axis=0),
@@ -389,7 +384,7 @@ class _GraphTargetCallable(StrictModule, BatchEvaluator, NonTrainableState):
     kind: GraphComponentKind
 
     def __init__(self, *, values: Array, offsets: Array, kind: GraphComponentKind):
-        self.values = jax.lax.stop_gradient(jnp.asarray(values, dtype=float))
+        self.values = jax.lax.stop_gradient(jnp.asarray(values, dtype=jnp.float64))
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
         self.kind = kind
 
@@ -439,7 +434,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
         interpolation: GraphTargetInterpolation,
     ):
         self.domain = domain
-        self.values = jax.lax.stop_gradient(jnp.asarray(values, dtype=float))
+        self.values = jax.lax.stop_gradient(jnp.asarray(values, dtype=jnp.float64))
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
         self.lengths = jnp.asarray(lengths, dtype=jnp.int32)
         self.entity_sizes = jnp.asarray(entity_sizes, dtype=jnp.int32)
@@ -466,8 +461,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
             raise TypeError("GraphTrajectorySignal requires GraphBatch evaluation.")
         if batch.component_kind != self.kind:
             raise ValueError(
-                "GraphTrajectorySignal was built for "
-                f"{self.kind}, got {batch.component_kind}."
+                f"GraphTrajectorySignal was built for {self.kind}, got {batch.component_kind}."
             )
         case_idx = _dataset_indices(batch)
         local_idx = _local_entity_indices(batch)
@@ -480,7 +474,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
             else:
                 t = jnp.asarray(
                     _required_field(batch, self.domain.time_label).data,
-                    dtype=float,
+                    dtype=jnp.float64,
                 )
                 time_idx = jnp.rint((t - self.domain.start) / self.domain.dt).astype(
                     jnp.int32
@@ -488,7 +482,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
             time_idx = jnp.clip(time_idx, 0, lengths - 1)
             stencil = nearest_stencil_from_indices(
                 self._flat_index(case_idx, time_idx, local_idx),
-                source_size=int(self.values.shape[0]),
+                source_size=self.values.shape[0],
             )
             return _field_from_target(
                 batch,
@@ -502,18 +496,18 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
 
         t = jnp.asarray(
             _required_field(batch, self.domain.time_label).data,
-            dtype=float,
+            dtype=jnp.float64,
         )
         tau = (t - self.domain.start) / self.domain.dt
         lo = jnp.floor(tau).astype(jnp.int32)
         lo = jnp.clip(lo, 0, lengths - 1)
         hi = jnp.clip(lo + 1, 0, lengths - 1)
-        fraction = jnp.clip(tau - lo.astype(float), 0.0, 1.0)
+        fraction = jnp.clip(tau - lo.astype("float64"), 0.0, 1.0)
         stencil = linear_stencil_from_indices(
             self._flat_index(case_idx, lo, local_idx),
             self._flat_index(case_idx, hi, local_idx),
             fraction,
-            source_size=int(self.values.shape[0]),
+            source_size=self.values.shape[0],
         )
         return _field_from_target(
             batch,
@@ -621,8 +615,7 @@ class _GraphClassificationTargetCallable(StrictModule, BatchEvaluator, NonTraina
             raise TypeError("GraphClassificationTarget requires GraphBatch evaluation.")
         if batch.component_kind != self.kind:
             raise ValueError(
-                "GraphClassificationTarget was built for "
-                f"{self.kind}, got {batch.component_kind}."
+                f"GraphClassificationTarget was built for {self.kind}, got {batch.component_kind}."
             )
         dataset_idx = _dataset_indices(batch)
         local_idx = _local_entity_indices(batch)
@@ -687,8 +680,7 @@ class _GraphTrajectoryClassificationSignalCallable(
             )
         if batch.component_kind != self.kind:
             raise ValueError(
-                "GraphTrajectoryClassificationSignal was built for "
-                f"{self.kind}, got {batch.component_kind}."
+                f"GraphTrajectoryClassificationSignal was built for {self.kind}, got {batch.component_kind}."
             )
         case_idx = _dataset_indices(batch)
         local_idx = _local_entity_indices(batch)
@@ -701,7 +693,7 @@ class _GraphTrajectoryClassificationSignalCallable(
             else:
                 t = jnp.asarray(
                     _required_field(batch, self.domain.time_label).data,
-                    dtype=float,
+                    dtype=jnp.float64,
                 )
                 time_idx = jnp.rint((t - self.domain.start) / self.domain.dt).astype(
                     jnp.int32
@@ -714,13 +706,13 @@ class _GraphTrajectoryClassificationSignalCallable(
 
         t = jnp.asarray(
             _required_field(batch, self.domain.time_label).data,
-            dtype=float,
+            dtype=jnp.float64,
         )
         tau = (t - self.domain.start) / self.domain.dt
         lo = jnp.floor(tau).astype(jnp.int32)
         lo = jnp.clip(lo, 0, lengths - 1)
         hi = jnp.clip(lo + 1, 0, lengths - 1)
-        fraction = jnp.clip(tau - lo.astype(float), 0.0, 1.0)
+        fraction = jnp.clip(tau - lo.astype("float64"), 0.0, 1.0)
         lower_index = self._flat_index(case_idx, lo, local_idx)
         upper_index = self._flat_index(case_idx, hi, local_idx)
         if self.logical_interpolation:
@@ -736,7 +728,7 @@ class _GraphTrajectoryClassificationSignalCallable(
             lower_index,
             upper_index,
             fraction,
-            source_size=int(self.values.shape[0]),
+            source_size=self.values.shape[0],
         )
         return _field_from_target(
             batch,

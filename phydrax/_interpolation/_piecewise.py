@@ -54,10 +54,10 @@ def _nodes_and_query(nodes: ArrayLike, query: ArrayLike, /) -> tuple[Array, Arra
         jnp.complexfloating,
     ):
         raise TypeError("Piecewise interpolation coordinates must be real-valued.")
-    dtype = jnp.result_type(nodes_raw, query_raw, float)
+    dtype = jnp.result_type(nodes_raw, query_raw, jnp.float64)
     nodes_ = nodes_raw.astype(dtype)
     query_ = query_raw.astype(dtype)
-    if nodes_.ndim != 1 or int(nodes_.shape[0]) <= 0:
+    if nodes_.ndim != 1 or nodes_.shape[0] <= 0:
         raise ValueError(
             "Piecewise interpolation nodes must be a non-empty rank-one array."
         )
@@ -95,9 +95,9 @@ def _piecewise_geometry(
     query_eval = (
         jnp.clip(query_, nodes_[0], nodes_[-1]) if bounds in ("clip", "fill") else query_
     )
-    support = ~outside if bounds == "fill" else jnp.ones(query_.shape, dtype=bool)
+    support = ~outside if bounds == "fill" else jnp.ones(query_.shape, dtype=jnp.bool_)
 
-    count = int(nodes_.shape[0])
+    count = nodes_.shape[0]
     if count == 1:
         index = jnp.zeros(query_.shape, dtype=jnp.int32)
         return nodes_, query_, index, index, jnp.zeros_like(query_), support
@@ -122,7 +122,7 @@ def nearest_stencil_from_indices(
     index = jnp.asarray(indices)
     return GatherStencil(
         indices=index[..., None],
-        weights=jnp.ones(index.shape + (1,), dtype=float),
+        weights=jnp.ones(index.shape + (1,), dtype=jnp.float64),
         source_size=source_size,
         valid=None if valid is None else jnp.asarray(valid)[..., None],
         support=support,
@@ -143,7 +143,7 @@ def linear_stencil_from_indices(
 ) -> GatherStencil:
     lower_ = jnp.asarray(lower)
     upper_ = jnp.asarray(upper)
-    fraction_ = jnp.asarray(fraction, dtype=float)
+    fraction_ = jnp.asarray(fraction, dtype=jnp.float64)
     if lower_.shape != upper_.shape or fraction_.shape != lower_.shape:
         raise ValueError("Linear indices and fractions must have matching shapes.")
     order = int(derivative_order)
@@ -152,7 +152,7 @@ def linear_stencil_from_indices(
     elif order == 1:
         if interval_width is None:
             raise ValueError("Linear derivative stencils require interval_width.")
-        width = jnp.asarray(interval_width, dtype=float)
+        width = jnp.asarray(interval_width, dtype=jnp.float64)
         if width.shape != lower_.shape:
             width = jnp.broadcast_to(width, lower_.shape)
         width = eqx.error_if(
@@ -187,7 +187,7 @@ def nearest_stencil(
     nodes_, query_, lower, upper, _fraction, support = _piecewise_geometry(
         nodes, query, bounds=bounds
     )
-    if int(nodes_.shape[0]) == 1:
+    if nodes_.shape[0] == 1:
         selected = lower
     else:
         lower_distance = jnp.abs(query_ - nodes_[lower])
@@ -204,7 +204,7 @@ def nearest_stencil(
         selected = jnp.where(use_upper, upper, lower)
     return nearest_stencil_from_indices(
         selected,
-        source_size=int(nodes_.shape[0]),
+        source_size=nodes_.shape[0],
         support=support,
     )
 
@@ -229,7 +229,7 @@ def linear_stencil(
         lower,
         upper,
         fraction,
-        source_size=int(nodes_.shape[0]),
+        source_size=nodes_.shape[0],
         derivative_order=derivative_order,
         interval_width=width,
         support=support,
@@ -241,10 +241,10 @@ def _source_axis(values: ArrayLike, nodes: Array, axis: int, /) -> tuple[Array, 
     if array.ndim < 1:
         raise ValueError("Piecewise values must contain a source-node axis.")
     axis_ = int(axis) % array.ndim
-    if int(array.shape[axis_]) != int(nodes.shape[0]):
+    if array.shape[axis_] != nodes.shape[0]:
         raise ValueError("Piecewise values source axis must match the node count.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return jnp.moveaxis(array, axis_, 0), axis_
 
 
@@ -350,7 +350,7 @@ def local_cubic_slopes(
     """Return local cubic slopes using endpoint and secant-average rules."""
     nodes_, _ = _nodes_and_query(nodes, jnp.asarray(0.0))
     source, axis_ = _source_axis(values, nodes_, axis)
-    count = int(nodes_.shape[0])
+    count = nodes_.shape[0]
     if count == 1:
         slopes = jnp.zeros_like(source)
     else:
@@ -496,7 +496,7 @@ def cubic_hermite_interpolate(
     )
     slopes_source, _ = _source_axis(slope_values, nodes_, axis_)
 
-    if int(nodes_.shape[0]) == 1:
+    if nodes_.shape[0] == 1:
         output = jnp.broadcast_to(source[0], query_.shape + source.shape[1:])
         if int(derivative_order) > 0:
             output = jnp.zeros_like(output)

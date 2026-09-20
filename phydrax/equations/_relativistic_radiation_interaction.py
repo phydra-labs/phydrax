@@ -17,11 +17,11 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry
-from ._relativistic_radiation import GRGreyM1RadiationSystem
+from ._relativistic_radiation import GRGrayM1RadiationSystem
 
 
-class GRGreyOpacityEvaluation(StrictModule):
-    """Grey interaction coefficients in inverse code length units."""
+class GRGrayOpacityEvaluation(StrictModule):
+    """Gray interaction coefficients in inverse code length units."""
 
     planck_emission: Array
     planck_absorption: Array
@@ -37,8 +37,8 @@ class GRGreyOpacityEvaluation(StrictModule):
     opacity_id: str = eqx.field(static=True)
 
 
-class AbstractGRGreyOpacityPlan(StrictModule, NonTrainableState):
-    """State-dependent grey opacity contract for relativistic radiation."""
+class AbstractGRGrayOpacityPlan(StrictModule, NonTrainableState):
+    """State-dependent gray opacity contract for relativistic radiation."""
 
     opacity_id: str = eqx.field(static=True)
 
@@ -51,11 +51,11 @@ class AbstractGRGreyOpacityPlan(StrictModule, NonTrainableState):
         magnetic_squared: ArrayLike,
         composition: ArrayLike | None = None,
         /,
-    ) -> GRGreyOpacityEvaluation:
+    ) -> GRGrayOpacityEvaluation:
         raise NotImplementedError
 
 
-class ConstantGRGreyOpacityPlan(AbstractGRGreyOpacityPlan):
+class ConstantGRGrayOpacityPlan(AbstractGRGrayOpacityPlan):
     """Constant emission, absorption, transport, and scattering extinctions."""
 
     planck_emission: float = eqx.field(static=True)
@@ -93,7 +93,7 @@ class ConstantGRGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         )
         if any(not np.isfinite(value) or value < 0.0 for value in values):
             raise ValueError(
-                "Constant GR grey coefficients must be finite and nonnegative."
+                "Constant GR gray coefficients must be finite and nonnegative."
             )
         (
             self.planck_emission,
@@ -106,7 +106,7 @@ class ConstantGRGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         ) = values
         self.opacity_id = canonical_fingerprint(
             {
-                "kind": "constant-gr-grey-opacity",
+                "kind": "constant-gr-gray-opacity",
                 "planck_emission": emission,
                 "planck_absorption": absorption,
                 "rosseland_transport": transport,
@@ -125,7 +125,7 @@ class ConstantGRGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         magnetic_squared: ArrayLike,
         composition: ArrayLike | None = None,
         /,
-    ) -> GRGreyOpacityEvaluation:
+    ) -> GRGrayOpacityEvaluation:
         density, matter, radiation, magnetic = jnp.broadcast_arrays(
             jnp.asarray(rest_mass_density),
             jnp.asarray(matter_temperature),
@@ -136,7 +136,7 @@ class ConstantGRGreyOpacityPlan(AbstractGRGreyOpacityPlan):
             composition_ = jnp.broadcast_to(jnp.asarray(composition), density.shape)
             composition_finite = jnp.isfinite(composition_)
         else:
-            composition_finite = jnp.ones_like(density, dtype=bool)
+            composition_finite = jnp.ones_like(density, dtype=jnp.bool_)
         dtype = jnp.result_type(density, matter, radiation, magnetic)
         coefficient = lambda value: jnp.full(density.shape, value, dtype=dtype)
         finite = (
@@ -153,7 +153,7 @@ class ConstantGRGreyOpacityPlan(AbstractGRGreyOpacityPlan):
             & (radiation >= 0.0)
             & (magnetic >= 0.0)
         )
-        return GRGreyOpacityEvaluation(
+        return GRGrayOpacityEvaluation(
             coefficient(self.planck_emission),
             coefficient(self.planck_absorption),
             coefficient(self.rosseland_transport),
@@ -169,21 +169,21 @@ class ConstantGRGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         )
 
 
-class CompositeGRGreyOpacityPlan(AbstractGRGreyOpacityPlan):
-    """Add independent grey processes without merging their provenance."""
+class CompositeGRGrayOpacityPlan(AbstractGRGrayOpacityPlan):
+    """Add independent gray processes without merging their provenance."""
 
-    processes: tuple[AbstractGRGreyOpacityPlan, ...]
+    processes: tuple[AbstractGRGrayOpacityPlan, ...]
 
-    def __init__(self, processes: tuple[AbstractGRGreyOpacityPlan, ...], /) -> None:
+    def __init__(self, processes: tuple[AbstractGRGrayOpacityPlan, ...], /) -> None:
         values = tuple(processes)
         if not values or any(
-            not isinstance(value, AbstractGRGreyOpacityPlan) for value in values
+            not isinstance(value, AbstractGRGrayOpacityPlan) for value in values
         ):
-            raise TypeError("processes must contain GR grey opacity plans.")
+            raise TypeError("processes must contain GR gray opacity plans.")
         self.processes = values
         self.opacity_id = canonical_fingerprint(
             {
-                "kind": "composite-gr-grey-opacity",
+                "kind": "composite-gr-gray-opacity",
                 "processes": [value.opacity_id for value in values],
             }
         )
@@ -196,7 +196,7 @@ class CompositeGRGreyOpacityPlan(AbstractGRGreyOpacityPlan):
         magnetic_squared: ArrayLike,
         composition: ArrayLike | None = None,
         /,
-    ) -> GRGreyOpacityEvaluation:
+    ) -> GRGrayOpacityEvaluation:
         values = tuple(
             process.evaluate(
                 rest_mass_density,
@@ -231,7 +231,7 @@ class CompositeGRGreyOpacityPlan(AbstractGRGreyOpacityPlan):
             physical = physical & value.physically_valid
             qualified = qualified & value.qualified
             derivative = derivative & value.derivative_valid
-        return GRGreyOpacityEvaluation(
+        return GRGrayOpacityEvaluation(
             emission,
             absorption,
             transport,
@@ -259,7 +259,7 @@ class GRRadiationMatterExchange(StrictModule):
     comoving_flux_four_vector: Array
     interaction_four_force: Array
     radiation_temperature: Array
-    opacity: GRGreyOpacityEvaluation
+    opacity: GRGrayOpacityEvaluation
     energy_balance_residual: Array
     momentum_balance_residual: Array
     finite: Array
@@ -270,26 +270,26 @@ class GRRadiationMatterExchange(StrictModule):
     interaction_id: str = eqx.field(static=True)
 
 
-class GRGreyRadiationInteractionPlan(StrictModule, NonTrainableState):
-    """Grey M1 matter interaction separated from radiation transport."""
+class GRGrayRadiationInteractionPlan(StrictModule, NonTrainableState):
+    """Gray M1 matter interaction separated from radiation transport."""
 
-    radiation: GRGreyM1RadiationSystem
-    opacity: AbstractGRGreyOpacityPlan
+    radiation: GRGrayM1RadiationSystem
+    opacity: AbstractGRGrayOpacityPlan
     radiation_constant: float = eqx.field(static=True)
     interaction_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        radiation: GRGreyM1RadiationSystem,
-        opacity: AbstractGRGreyOpacityPlan,
+        radiation: GRGrayM1RadiationSystem,
+        opacity: AbstractGRGrayOpacityPlan,
         /,
         *,
         radiation_constant: float = 1.0,
     ) -> None:
-        if not isinstance(radiation, GRGreyM1RadiationSystem):
-            raise TypeError("radiation must be GRGreyM1RadiationSystem.")
-        if not isinstance(opacity, AbstractGRGreyOpacityPlan):
-            raise TypeError("opacity must implement AbstractGRGreyOpacityPlan.")
+        if not isinstance(radiation, GRGrayM1RadiationSystem):
+            raise TypeError("radiation must be GRGrayM1RadiationSystem.")
+        if not isinstance(opacity, AbstractGRGrayOpacityPlan):
+            raise TypeError("opacity must implement AbstractGRGrayOpacityPlan.")
         constant = float(radiation_constant)
         if not np.isfinite(constant) or constant <= 0.0:
             raise ValueError("radiation_constant must be finite and positive.")
@@ -298,7 +298,7 @@ class GRGreyRadiationInteractionPlan(StrictModule, NonTrainableState):
         self.radiation_constant = constant
         self.interaction_id = canonical_fingerprint(
             {
-                "kind": "gr-grey-radiation-interaction",
+                "kind": "gr-gray-radiation-interaction",
                 "radiation": radiation.system_id,
                 "opacity": opacity.opacity_id,
                 "radiation_constant": constant,
@@ -485,10 +485,10 @@ class GRGreyRadiationInteractionPlan(StrictModule, NonTrainableState):
 
 
 __all__ = [
-    "AbstractGRGreyOpacityPlan",
-    "CompositeGRGreyOpacityPlan",
-    "ConstantGRGreyOpacityPlan",
-    "GRGreyOpacityEvaluation",
-    "GRGreyRadiationInteractionPlan",
+    "AbstractGRGrayOpacityPlan",
+    "CompositeGRGrayOpacityPlan",
+    "ConstantGRGrayOpacityPlan",
+    "GRGrayOpacityEvaluation",
+    "GRGrayRadiationInteractionPlan",
     "GRRadiationMatterExchange",
 ]

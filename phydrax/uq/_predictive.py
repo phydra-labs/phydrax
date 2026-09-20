@@ -110,8 +110,7 @@ class PredictiveField(StrictModule):
         missing = tuple(dim for dim in dims if dim not in samples.named_shape)
         if missing:
             raise ValueError(
-                f"Predictive sample dimensions {missing!r} are absent from field dims "
-                f"{samples.dims!r}."
+                f"Predictive sample dimensions {missing!r} are absent from field dims {samples.dims!r}."
             )
         if any(int(samples.named_shape[dim]) <= 0 for dim in dims):
             raise ValueError("Predictive sample dimensions must be non-empty.")
@@ -119,8 +118,7 @@ class PredictiveField(StrictModule):
             axis.source == "observation" for axis in axes
         ):
             raise ValueError(
-                "conditional_variance and an explicit observation sample axis are "
-                "mutually exclusive."
+                "conditional_variance and an explicit observation sample axis are mutually exclusive."
             )
         if conditional_variance is not None:
             if not isinstance(conditional_variance, cx.AxisArray):
@@ -138,8 +136,7 @@ class PredictiveField(StrictModule):
             )
             if unknown:
                 raise ValueError(
-                    "Predictive validity masks may use only sample dimensions; "
-                    f"got {unknown!r}."
+                    f"Predictive validity masks may use only sample dimensions; got {unknown!r}."
                 )
             if any(dim is None for dim in valid.dims):
                 raise ValueError(
@@ -249,7 +246,7 @@ class PredictiveField(StrictModule):
         positions = tuple(self.samples.dims.index(dim) for dim in dims)
         data = self.precision.summary(self.samples.data)
         if self.valid is not None:
-            valid = _broadcast_field_data(self.valid, self.samples).astype(bool)
+            valid = _broadcast_field_data(self.valid, self.samples).astype("bool")
             data = jnp.where(valid, data, jnp.nan)
             reduced = jnp.nanquantile(data, q_value, axis=positions)
         else:
@@ -343,10 +340,10 @@ def _sample_validity(
     if valid_policy not in ("record", "raise"):
         raise ValueError("valid_policy must be 'record' or 'raise'.")
     sample_data = jnp.asarray(data)
-    count = int(sample_data.shape[0])
+    count = sample_data.shape[0]
     valid_data = jnp.all(jnp.isfinite(sample_data).reshape((count, -1)), axis=1)
     if valid_policy == "raise" and not bool(jnp.all(valid_data)):
-        failed = tuple(int(index) for index in jnp.where(~valid_data)[0])
+        failed = tuple(jnp.where(~valid_data)[0])
         raise FloatingPointError(f"{owner} produced invalid realizations at {failed!r}.")
     return cx.AxisArray(valid_data, dims=(sample_dim,))
 
@@ -374,7 +371,7 @@ def _masked_moment(
     else:
         mask = _broadcast_field_data(valid, field).astype(values.dtype)
         count = jnp.sum(mask, axis=positions)
-        total = jnp.sum(jnp.where(mask.astype(bool), values, 0.0), axis=positions)
+        total = jnp.sum(jnp.where(mask.astype("bool"), values, 0.0), axis=positions)
         reduced = total / jnp.maximum(count, 1.0)
         reduced = jnp.where(count > 0, reduced, jnp.nan)
     out_dims = tuple(dim for dim in field.dims if dim not in dims)
@@ -387,8 +384,7 @@ def _broadcast_field_data(source: cx.AxisArray, target: cx.AxisArray) -> Array:
     unknown = tuple(dim for dim in source_named if dim not in target_named)
     if unknown:
         raise ValueError(
-            f"Cannot broadcast field dims {source.dims!r} to {target.dims!r}; "
-            f"unknown dimensions {unknown!r}."
+            f"Cannot broadcast field dims {source.dims!r} to {target.dims!r}; unknown dimensions {unknown!r}."
         )
     if any(dim is None for dim in source.dims):
         if source.dims != target.dims or source.data.shape != target.data.shape:
@@ -405,7 +401,7 @@ def _broadcast_field_data(source: cx.AxisArray, target: cx.AxisArray) -> Array:
     ordered_i = 0
     for dim in target.dims:
         if dim in source_named:
-            shape.append(int(data.shape[ordered_i]))
+            shape.append(data.shape[ordered_i])
             ordered_i += 1
         else:
             shape.append(1)

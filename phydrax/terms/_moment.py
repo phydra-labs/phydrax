@@ -73,7 +73,7 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
                 "IntegrationRealization."
             )
         validate_condition_source(condition.on, source)
-        coefficient = jnp.asarray(scale, dtype=float)
+        coefficient = jnp.asarray(scale, dtype=jnp.float64)
         if coefficient.shape != ():
             raise ValueError("Term scale must be a scalar.")
         if not bool(jnp.isfinite(coefficient)) or float(coefficient) < 0.0:
@@ -119,12 +119,11 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
         target = jnp.asarray(self.condition.target)
         if jnp.broadcast_shapes(integrated.shape, target.shape) != integrated.shape:
             raise ValueError(
-                f"Moment target shape {target.shape} cannot broadcast to "
-                f"integrated shape {integrated.shape}."
+                f"Moment target shape {target.shape} cannot broadcast to integrated shape {integrated.shape}."
             )
         difference = integrated - target
         mismatch = jnp.sum(jnp.real(jnp.conj(difference) * difference))
-        value = self.scale * jnp.asarray(mismatch, dtype=float).reshape(())
+        value = self.scale * jnp.asarray(mismatch, dtype=jnp.float64).reshape(())
         return TermEvaluation(value, diagnostics=estimate)
 
     def loss(

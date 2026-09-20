@@ -14,7 +14,7 @@ from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import normalize_least_squares_design
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from .._layout import InputLayout, StateLayout
 from .._trajectory import TrajectoryData
 from ._features import AbstractFeatureLibrary
@@ -62,22 +62,22 @@ class SINDyDesign(StrictModule):
 
     @property
     def num_rows(self) -> int:
-        return int(self.matrix.shape[0])
+        return self.matrix.shape[0]
 
     @property
     def num_features(self) -> int:
-        return int(self.matrix.shape[1])
+        return self.matrix.shape[1]
 
     @property
     def output_size(self) -> int:
-        return int(self.target.shape[1])
+        return self.target.shape[1]
 
 
 class AbstractSINDyFormulation(StrictModule):
     """Static policy lowering trajectory data and a library into equations."""
 
-    formulation: AbstractAttribute[SINDyFormulationKind]
-    formulation_id: AbstractAttribute[str]
+    formulation: eqx.AbstractVar[SINDyFormulationKind]
+    formulation_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def build(
@@ -265,7 +265,7 @@ def _required_input_valid(data: TrajectoryData, /) -> Array:
 
 def _sample_inputs(data: TrajectoryData, count: int, /):
     if data.inputs is None:
-        return None, jnp.ones(data.case_shape + (count,), dtype=bool)
+        return None, jnp.ones(data.case_shape + (count,), dtype=jnp.bool_)
     return (
         _time_values(data, data.inputs, slice(0, count)),
         _required_input_valid(data)[..., :count],
@@ -412,7 +412,7 @@ def _interval_features(
     if data.inputs is None:
         source_input = None
         target_input = None
-        input_valid = jnp.ones(data.case_shape, dtype=bool)
+        input_valid = jnp.ones(data.case_shape, dtype=jnp.bool_)
     elif data.input_alignment == "samples":
         source_input = _time_values(data, data.inputs, interval)
         target_input = _time_values(data, data.inputs, interval + 1)
@@ -446,7 +446,7 @@ def _window_feature_integral(
     safe_duration = jnp.where(duration > 0.0, duration, 1.0)
     integral = jnp.zeros(data.case_shape + (library.num_features,))
     target_integral = jnp.zeros(data.case_shape + (data.state_layout.size,))
-    valid = jnp.ones(data.case_shape, dtype=bool)
+    valid = jnp.ones(data.case_shape, dtype=jnp.bool_)
     equation_weight = jnp.zeros(data.case_shape, dtype=data.coordinates.dtype)
     for interval in range(start, end):
         left, right, interval_valid = _interval_features(data, library, interval)
@@ -540,10 +540,7 @@ class IntegralSINDyFormulation(AbstractSINDyFormulation):
         self.stride = int(stride)
         self.quadrature = quadrature
         self.boundary = boundary
-        self.formulation_id = (
-            f"integral:window={self.window_size}:stride={self.stride}:"
-            f"quadrature={quadrature}:boundary={boundary}"
-        )
+        self.formulation_id = f"integral:window={self.window_size}:stride={self.stride}:quadrature={quadrature}:boundary={boundary}"
 
     def build(
         self, data: TrajectoryData, library: AbstractFeatureLibrary, /
@@ -629,7 +626,7 @@ class WeakSINDyFormulation(AbstractSINDyFormulation):
         quadrature: WindowQuadrature = "trapezoid",
         boundary: WindowBoundary = "drop",
     ):
-        orders = tuple(int(order) for order in test_orders)
+        orders = tuple(test_orders)
         if (
             not orders
             or any(order < 1 for order in orders)

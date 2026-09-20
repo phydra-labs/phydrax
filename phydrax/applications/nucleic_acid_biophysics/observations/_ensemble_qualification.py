@@ -315,8 +315,8 @@ class EnsemblePosteriorUncertainty(StrictModule, NonTrainableState):
         self.model_id = model.model_id
         self.fit_id = fit_id
         self.calibration_case_ids = cases
-        self.parameter_count = int(fitted.size)
-        self.approximation_id = "laplace-spherical-radial-equal-weight-v1"
+        self.parameter_count = fitted.size
+        self.approximation_id = "laplace-spherical-radial-equal-weight"
         self.uncertainty_id = canonical_fingerprint(
             {
                 "kind": "conditional-ensemble-laplace-uncertainty",
@@ -442,8 +442,7 @@ def _group_resolved_profile_log_scores(
         )
         if raw_scores.shape != expected:
             raise ValueError(
-                "Posterior predictive log scores require one profile score per "
-                "parameter draw."
+                "Posterior predictive log scores require one profile score per parameter draw."
             )
         maximum = jnp.max(raw_scores, axis=0)
         fit_id = posterior_uncertainty.fit_id
@@ -564,15 +563,13 @@ def group_posterior_predictive_log_scores(
     """Evaluate every frozen parameter draw and group its log predictive density."""
     if role not in ("interval_calibration", "locked_evaluation"):
         raise ValueError(
-            "Posterior predictive scores require interval_calibration or "
-            "locked_evaluation role."
+            "Posterior predictive scores require interval_calibration or locked_evaluation role."
         )
     if not isinstance(
         model, (ConditionalMutationLaw, FiniteStructuralEnsembleModel)
     ) or not isinstance(posterior_uncertainty, EnsemblePosteriorUncertainty):
         raise TypeError(
-            "Posterior predictive grouping requires a frozen ensemble model and "
-            "EnsemblePosteriorUncertainty."
+            "Posterior predictive grouping requires a frozen ensemble model and EnsemblePosteriorUncertainty."
         )
     if (
         model.batch.batch_fingerprint != batch.batch_fingerprint
@@ -678,8 +675,7 @@ class ModelLadderEvaluation(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Ladder scores must come from model_selection, interval_calibration, "
-                "and locked_evaluation roles."
+                "Ladder scores must come from model_selection, interval_calibration, and locked_evaluation roles."
             )
         if len({score.campaign_id for score in scores}) != 1:
             raise ValueError("Ladder scores must belong to one campaign.")
@@ -921,8 +917,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
             or not isinstance(locked_ensemble_diagnostics, EnsembleDiagnostics)
         ):
             raise TypeError(
-                "Support comparison plus calibration and locked finite-ensemble "
-                "diagnostics are required."
+                "Support comparison plus calibration and locked finite-ensemble diagnostics are required."
             )
         finite_evaluation = values[3]
         if (
@@ -930,8 +925,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
             or locked_ensemble_diagnostics.model_id != finite_evaluation.model_id
         ):
             raise ValueError(
-                "Calibration and locked diagnostics must belong to the evaluated "
-                "finite-mixture model."
+                "Calibration and locked diagnostics must belong to the evaluated finite-mixture model."
             )
         if not np.array_equal(
             np.asarray(ensemble_diagnostics.profile_mask),
@@ -953,8 +947,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
             parents = set(value.derivation_parent_case_ids)
             if not sources.issubset(permitted_derivations):
                 raise ValueError(
-                    "Model derivation sources must be frozen calibration/model-selection "
-                    "preprocessing cases."
+                    "Model derivation sources must be frozen calibration/model-selection preprocessing cases."
                 )
             expected_parents = {
                 parent
@@ -1146,8 +1139,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
             mixture_advantage_criterion, EnsembleMixtureAdvantageCriterion
         ):
             raise TypeError(
-                "mixture_advantage_criterion must be an "
-                "EnsembleMixtureAdvantageCriterion."
+                "mixture_advantage_criterion must be an EnsembleMixtureAdvantageCriterion."
             )
         if mixture_advantage_criterion is not None and stage_id != "locked-prediction":
             raise ValueError(
@@ -1192,8 +1184,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
             if source_evidence is None or synthetic_sources:
                 outcome = "inconclusive"
                 reason = (
-                    "source admission requires separately reviewed experimental "
-                    "provenance and rights"
+                    "source admission requires separately reviewed experimental provenance and rights"
                     if not synthetic_sources
                     else "synthetic source manifests cannot support scientific admission"
                 )
@@ -1286,8 +1277,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
             ):
                 outcome, reason = (
                     "failed",
-                    "locked preparations violate finite-mixture support or "
-                    "residual-assumption diagnostics",
+                    "locked preparations violate finite-mixture support or residual-assumption diagnostics",
                 )
             elif predictive_criterion is None:
                 outcome, reason = (
@@ -1325,14 +1315,12 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
                         if mixture_advantage_criterion is None:
                             outcome, reason = (
                                 "inconclusive",
-                                "selected finite mixture has no content-addressed "
-                                "locked mixture-advantage threshold",
+                                "selected finite mixture has no content-addressed locked mixture-advantage threshold",
                             )
                         elif not bool(jnp.isfinite(assessment.mixture_advantage)):
                             outcome, reason = (
                                 "inconclusive",
-                                "selected finite mixture has no finite locked "
-                                "independent-unit advantage",
+                                "selected finite mixture has no finite locked independent-unit advantage",
                             )
                         else:
                             advantage = float(assessment.mixture_advantage)
@@ -1425,8 +1413,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
             )
         if set(profile.required_stage_ids) != _ENSEMBLE_REQUIRED_STAGES:
             raise ValueError(
-                "Scientific claim must require the exact conditional-ensemble "
-                "qualification stage set."
+                "Scientific claim must require the exact conditional-ensemble qualification stage set."
             )
         if len(self.batch.construct_ids) != 1 or len(self.batch.protocol_ids) != 1:
             raise ValueError(
@@ -1518,13 +1505,11 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
                     and _MIXTURE_ADVANTAGE_METRIC_ID not in evidence.criteria_ids
                 ):
                     raise ValueError(
-                        "Passed finite-mixture locked evidence requires its frozen "
-                        "mixture-advantage criterion."
+                        "Passed finite-mixture locked evidence requires its frozen mixture-advantage criterion."
                     )
             if not required_subjects.issubset(evidence.subject_ids):
                 raise ValueError(
-                    "Passed workflow stage evidence has mismatched campaign, model, "
-                    "assessment, or score identity."
+                    "Passed workflow stage evidence has mismatched campaign, model, assessment, or score identity."
                 )
         return profile.evaluate(
             metric_values,

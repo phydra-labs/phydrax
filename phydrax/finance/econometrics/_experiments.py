@@ -49,8 +49,7 @@ class WalkForwardDefinition(StrictModule):
         expanding: bool = True,
     ):
         spans = tuple(
-            int(value)
-            for value in (
+            (
                 training_span_ns,
                 validation_span_ns,
                 test_span_ns,
@@ -212,12 +211,12 @@ def prepare_walk_forward(
         jnp.any(dataset.row_valid), first_time, jnp.asarray(0, dtype=jnp.int64)
     )
     fold_shape = (definition.fold_capacity, dataset.row_capacity)
-    train_masks = jnp.zeros(fold_shape, dtype=bool)
-    validation_masks = jnp.zeros(fold_shape, dtype=bool)
-    test_masks = jnp.zeros(fold_shape, dtype=bool)
-    purged_masks = jnp.zeros(fold_shape, dtype=bool)
-    embargoed_masks = jnp.zeros(fold_shape, dtype=bool)
-    fold_valid = jnp.zeros((definition.fold_capacity,), dtype=bool)
+    train_masks = jnp.zeros(fold_shape, dtype=jnp.bool_)
+    validation_masks = jnp.zeros(fold_shape, dtype=jnp.bool_)
+    test_masks = jnp.zeros(fold_shape, dtype=jnp.bool_)
+    purged_masks = jnp.zeros(fold_shape, dtype=jnp.bool_)
+    embargoed_masks = jnp.zeros(fold_shape, dtype=jnp.bool_)
+    fold_valid = jnp.zeros((definition.fold_capacity,), dtype=jnp.bool_)
     bounds = jnp.zeros((definition.fold_capacity, 6), dtype=jnp.int64)
     train_counts = jnp.zeros((definition.fold_capacity,), dtype=jnp.int32)
     validation_counts = jnp.zeros((definition.fold_capacity,), dtype=jnp.int32)
@@ -485,7 +484,7 @@ def evaluate_walk_forward(
                 canonical_fingerprint(
                     {
                         "kind": "walk-forward-numerical-evidence",
-                        "statuses": tuple(int(value) for value in statuses.tolist()),
+                        "statuses": tuple(statuses.tolist()),
                     }
                 ),
             ),

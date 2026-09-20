@@ -88,8 +88,8 @@ class InteractingParticleProblem(StrictModule):
             raise ValueError(
                 "initial_particles must have particle axis followed by a state shape."
             )
-        count = int(particles.shape[0])
-        state_shape = tuple(int(size) for size in particles.shape[1:])
+        count = particles.shape[0]
+        state_shape = tuple(particles.shape[1:])
         if count < 2 or any(size <= 0 for size in state_shape):
             raise ValueError(
                 "At least two particles with a positive state shape are required."
@@ -97,7 +97,7 @@ class InteractingParticleProblem(StrictModule):
         if weights is None:
             weight_values = jnp.full((count,), 1.0 / count, dtype=particles.real.dtype)
         else:
-            raw_weights = jnp.asarray(weights, dtype=float)
+            raw_weights = jnp.asarray(weights, dtype=jnp.float64)
             if raw_weights.shape != (count,):
                 raise ValueError("weights must have exact shape (num_particles,).")
             if bool(jnp.any(~jnp.isfinite(raw_weights)) | jnp.any(raw_weights < 0.0)):
@@ -106,8 +106,8 @@ class InteractingParticleProblem(StrictModule):
             if not bool(mass > 0.0):
                 raise ValueError("weights must have positive total mass.")
             weight_values = raw_weights / mass
-        start = jnp.asarray(t0, dtype=float)
-        end = jnp.asarray(t1, dtype=float)
+        start = jnp.asarray(t0, dtype=jnp.float64)
+        end = jnp.asarray(t1, dtype=jnp.float64)
         if (
             start.shape != ()
             or end.shape != ()
@@ -218,16 +218,16 @@ class InteractingParticleSolution(StrictModule):
         mean_field_id: str,
         metadata: Mapping[str, Any] | None = None,
     ):
-        grid = jnp.asarray(times, dtype=float)
+        grid = jnp.asarray(times, dtype=jnp.float64)
         values = jnp.asarray(particles)
-        validity = jnp.asarray(valid, dtype=bool)
-        weight_values = jnp.asarray(weights, dtype=float)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
+        weight_values = jnp.asarray(weights, dtype=jnp.float64)
         mean_values = jnp.asarray(means)
         covariance_values = jnp.asarray(covariances)
-        samples = tuple(int(size) for size in sample_shape)
-        state = tuple(int(size) for size in state_shape)
+        samples = tuple(sample_shape)
+        state = tuple(state_shape)
         count = int(num_particles)
-        num_times = int(grid.size)
+        num_times = grid.size
         flat_state = prod(state)
         if values.shape != samples + (num_times, count) + state:
             raise ValueError(
@@ -272,7 +272,7 @@ class InteractingParticleSolution(StrictModule):
         /,
     ) -> EmpiricalMeanField:
         """Select one independently driven system as an empirical measure flow."""
-        index = tuple(int(value) for value in system_index)
+        index = tuple(system_index)
         if len(index) != len(self.sample_shape):
             raise ValueError("system_index must select every sample_shape axis.")
         if any(
@@ -285,7 +285,7 @@ class InteractingParticleSolution(StrictModule):
         valid_major = jnp.moveaxis(valid, 1, 0)
         weight_history = jnp.broadcast_to(
             self.weights[:, None],
-            (self.num_particles, int(self.times.size)),
+            (self.num_particles, self.times.size),
         )
         source = (
             self.realization if self.realization is not None else self.common_realization
@@ -373,7 +373,7 @@ def _noise_contract(
         return ()
     if noise_shape is None:
         raise ValueError(f"{owner}_noise_shape is required with its diffusion field.")
-    shape = tuple(int(size) for size in noise_shape)
+    shape = tuple(noise_shape)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner}_noise_shape must contain positive dimensions.")
     if noise_id is not None and (not isinstance(noise_id, str) or not noise_id):
@@ -466,7 +466,7 @@ def solve_interacting_particles(
         raise ValueError("Common realization sample_shape does not align.")
     diffusion_fn = problem.diffusion
     common_diffusion_fn = problem.common_diffusion
-    num_times = int(grid.size)
+    num_times = grid.size
     num_steps = num_times - 1
     step_sizes = jnp.diff(grid)
 

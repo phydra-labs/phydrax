@@ -73,7 +73,7 @@ def solve_interior_laplace_dirichlet_2d(
 
     if not isinstance(panelization, BoundaryPanelization2D):
         raise TypeError("panelization must be BoundaryPanelization2D.")
-    values = jnp.asarray(boundary_values, dtype=float)
+    values = jnp.asarray(boundary_values, dtype=jnp.float64)
     if values.shape != (panelization.node_count,):
         raise ValueError("boundary_values must contain one value per source node.")
     if not bool(jnp.all(jnp.isfinite(values))):

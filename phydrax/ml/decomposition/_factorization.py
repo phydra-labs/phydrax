@@ -103,7 +103,7 @@ def _ista_codes(
     *,
     mask: Array | None = None,
 ) -> Array:
-    rank = int(dictionary.shape[-2])
+    rank = dictionary.shape[-2]
     codes = jnp.zeros(values.shape[:-1] + (rank,), dtype=values.dtype)
     lipschitz = jnp.sum(jnp.real(dictionary * jnp.conj(dictionary)), axis=(-2, -1))
     step = 1.0 / jnp.maximum(lipschitz, jnp.finfo(values.real.dtype).tiny)
@@ -149,9 +149,9 @@ class SparseCodingModel(AbstractArrayModel):
         self.dictionary = dictionary_
         self.regularization = float(regularization)
         self.transform_iterations = int(transform_iterations)
-        self.in_size = int(dictionary_.shape[-1])
-        self.out_size = int(dictionary_.shape[-2])
-        self.case_shape = tuple(int(size) for size in dictionary_.shape[:-2])
+        self.in_size = dictionary_.shape[-1]
+        self.out_size = dictionary_.shape[-2]
+        self.case_shape = tuple(dictionary_.shape[:-2])
         if self.regularization < 0.0 or self.transform_iterations <= 0:
             raise ValueError("Sparse coding regularization and iterations are invalid.")
 
@@ -209,9 +209,9 @@ class NMFModel(AbstractArrayModel):
         self.components = components_
         self.transform_iterations = int(transform_iterations)
         self.epsilon = float(epsilon)
-        self.in_size = int(self.components.shape[-1])
-        self.out_size = int(self.components.shape[-2])
-        self.case_shape = tuple(int(size) for size in self.components.shape[:-2])
+        self.in_size = self.components.shape[-1]
+        self.out_size = self.components.shape[-2]
+        self.case_shape = tuple(self.components.shape[:-2])
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -290,7 +290,7 @@ class NMF(AbstractRecipe):
             values, jnp.any(values < 0.0), "NMF inputs must be nonnegative."
         )
         key_codes, key_components = jax.random.split(key)
-        case_shape = tuple(int(size) for size in batch.case_shape)
+        case_shape = tuple(batch.case_shape)
         codes = jax.random.uniform(
             key_codes,
             values.shape[:-1] + (self.n_components,),
@@ -537,7 +537,7 @@ class SparseCoding(AbstractRecipe):
             iterations=jnp.full(
                 objective.shape, self.transform_iterations, dtype=jnp.int32
             ),
-            converged=jnp.ones(objective.shape, dtype=bool),
+            converged=jnp.ones(objective.shape, dtype=jnp.bool_),
             numerical_rank=numerical_rank,
             atom_norm_error=atom_error,
             valid=valid,
@@ -620,7 +620,7 @@ class DictionaryLearning(AbstractRecipe):
         if not jnp.issubdtype(values.dtype, jnp.inexact):
             values = values.astype(jnp.float32)
         weights = weights.astype(values.real.dtype)
-        case_shape = tuple(int(size) for size in batch.case_shape)
+        case_shape = tuple(batch.case_shape)
         dictionary = jax.random.normal(
             key,
             case_shape + (self.n_components, batch.feature_count),

@@ -74,9 +74,9 @@ class MatrixMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         if max(electric.shape[0], magnetic.shape[0]) > maximum:
             raise ValueError("Constitutive matrix exceeds maximum_dense_dofs.")
         if not jnp.issubdtype(electric.dtype, jnp.inexact):
-            electric = electric.astype(float)
+            electric = electric.astype("float64")
         if not jnp.issubdtype(magnetic.dtype, jnp.inexact):
-            magnetic = magnetic.astype(float)
+            magnetic = magnetic.astype("float64")
         identifier = (
             canonical_fingerprint(
                 {
@@ -402,7 +402,7 @@ def _nonnegative_material(name: str, value: ArrayLike, count: int, /) -> Array:
     if jnp.iscomplexobj(array):
         raise TypeError(f"{name} must be real.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     if array.shape not in ((), (1,), (count,)):
         raise ValueError(f"{name} must be scalar or have shape ({count},).")
     array = jnp.broadcast_to(array, (count,))
@@ -608,9 +608,9 @@ class LorentzDrudeMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         permittivity_infinity: ArrayLike = 1.0,
         permeability: ArrayLike = 1.0,
     ):
-        frequency = jnp.asarray(resonance_frequency, dtype=float)
-        damping_ = jnp.asarray(damping, dtype=float)
-        strength = jnp.asarray(oscillator_strength, dtype=float)
+        frequency = jnp.asarray(resonance_frequency, dtype=jnp.float64)
+        damping_ = jnp.asarray(damping, dtype=jnp.float64)
+        strength = jnp.asarray(oscillator_strength, dtype=jnp.float64)
         if frequency.ndim != 1 or frequency.size == 0:
             raise ValueError("Lorentz/Drude poles require nonempty frequency vectors.")
         if damping_.shape != frequency.shape or strength.shape != frequency.shape:
@@ -860,7 +860,7 @@ def drude_maxwell_constitutive(
     permittivity_infinity: ArrayLike = 1.0,
     permeability: ArrayLike = 1.0,
 ) -> LorentzDrudeMaxwellConstitutivePlan:
-    strength = jnp.asarray(plasma_frequency, dtype=float) ** 2
+    strength = jnp.asarray(plasma_frequency, dtype=jnp.float64) ** 2
     return LorentzDrudeMaxwellConstitutivePlan(
         jnp.zeros_like(strength),
         damping,

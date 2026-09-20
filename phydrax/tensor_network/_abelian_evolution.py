@@ -243,7 +243,7 @@ def apply_abelian_two_site_gate(
             precision.factorization(sector_matrix), full_matrices=False
         )
         sector_capacity = middle.capacities[middle_sector]
-        stored = min(int(singular_values.shape[0]), sector_capacity)
+        stored = min(singular_values.shape[0], sector_capacity)
         u_pad = jnp.zeros((row_count, sector_capacity), dtype=u.dtype)
         vh_pad = jnp.zeros((sector_capacity, column_count), dtype=vh.dtype)
         s_pad = jnp.zeros((sector_capacity,), dtype=singular_values.dtype)
@@ -255,10 +255,10 @@ def apply_abelian_two_site_gate(
         )
         decompositions.append((row_routes, column_routes, u_pad, s_pad, vh_pad))
         retained_spectra.append(s_pad)
-        total_available += int(singular_values.shape[0])
+        total_available += singular_values.shape[0]
     spectrum = jnp.concatenate(retained_spectra)
-    retained_limit = min(capacity, int(spectrum.shape[0]))
-    selected = jnp.zeros(spectrum.shape, dtype=bool)
+    retained_limit = min(capacity, spectrum.shape[0])
+    selected = jnp.zeros(spectrum.shape, dtype=jnp.bool_)
     sector_starts = []
     cursor = 0
     protected_selected = 0
@@ -505,7 +505,7 @@ def abelian_product_mps(
 ) -> AbelianMatrixProductState:
     values = tuple(jnp.asarray(value) for value in local_states)
     legs = tuple(physical_legs)
-    ordinals = tuple(int(value) for value in local_charge_ordinals)
+    ordinals = tuple(local_charge_ordinals)
     if not values or len(values) != len(legs) or len(values) != len(ordinals):
         raise ValueError(
             "Product-state values, physical legs, and charge ordinals must align."

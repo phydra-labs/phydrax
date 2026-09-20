@@ -65,7 +65,7 @@ def verify_dense_properties(
     if value.ndim < 2 or value.shape[-1] != value.shape[-2]:
         raise ValueError("Dense property verification requires square matrices.")
     if not jnp.issubdtype(value.dtype, jnp.inexact):
-        value = value.astype(float)
+        value = value.astype("float64")
     policy_ = DensePropertyVerificationPolicy() if policy is None else policy
     if not isinstance(policy_, DensePropertyVerificationPolicy):
         raise TypeError("policy must be DensePropertyVerificationPolicy or None.")

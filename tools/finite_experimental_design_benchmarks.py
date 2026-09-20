@@ -122,7 +122,10 @@ def _photon_problem(arguments):
         outcomes,
         channel,
         likelihood_id="binomial-photon-counter",
-        context={"shots": jnp.asarray(arguments.shots, dtype=float), "dark_rate": 0.01},
+        context={
+            "shots": jnp.asarray(arguments.shots, dtype="float64"),
+            "dark_rate": 0.01,
+        },
     )
     rates = parameters.take(jnp.arange(parameters.size))
     log_masses = -0.5 * ((jnp.log(rates) - jnp.log(0.4)) / 0.7) ** 2

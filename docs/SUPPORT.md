@@ -2,13 +2,13 @@
 
 ## What support means
 
-Support for PhydraX means reproducible engineering assistance within an exact released capability profile. It is not a warranty, service-level agreement, commercial licence, scientific endorsement, medical opinion, clinical service, safety assurance, regulatory submission, or certification. Implemented, research, candidate, qualified, and released are distinct states governed by [`CAPABILITY_LIFECYCLE.md`](CAPABILITY_LIFECYCLE.md).
+Support for PhydraX means reproducible engineering assistance within an exact released capability profile. It is not a warranty, service-level agreement, commercial license, scientific endorsement, medical opinion, clinical service, safety assurance, regulatory submission, or certification. Implemented, research, candidate, qualified, and released are distinct states governed by [`CAPABILITY_LIFECYCLE.md`](CAPABILITY_LIFECYCLE.md).
 
-The governing licence remains the `LICENSE` file in the distribution. A capability declaration, technical qualification record, or release record does not expand its grant. Contact the project's published commercial contact for a separate agreement where required.
+The governing license remains the `LICENSE` file in the distribution. A capability declaration, technical qualification record, or release record does not expand its grant. Contact the project's published commercial contact for a separate agreement where required.
 
 ## Repository-wide support boundary
 
-Only an exact tuple admitted by the trusted signed release index is supported. A similar tuple, a passing test, a generated benchmark, an unsigned candidate profile, or documentation labelled “production” does not inherit support. Every dependency, provider, build, resource envelope, evidence record, and validity interval is conjunctive.
+Only an exact tuple admitted by the trusted signed release index is supported. A similar tuple, a passing test, a generated benchmark, an unsigned candidate profile, or documentation labeled “production” does not inherit support. Every dependency, provider, build, resource envelope, evidence record, and validity interval is conjunctive.
 
 Research and candidate declarations remain useful, public engineering surfaces, but they are not released support profiles. Their permanent nonclaims and named evidence gaps remain controlling.
 
@@ -31,7 +31,7 @@ The following uses are categorically outside support:
 - regulated medical-device use or a device safety/effectiveness claim;
 - autonomous patient-care decisions;
 - hosted, managed-service, telemetry-enabled, networked, or externally transferring operation;
-- use beyond the limits in the applicable licence or agreement;
+- use beyond the limits in the applicable license or agreement;
 - a tuple, dependency profile, artifact, backend, or optional component not named by the released profile.
 
 A signed non-claim records each medical-use exclusion. These records document the boundary; they do not make an excluded workflow acceptable.
@@ -67,11 +67,11 @@ Do not send PHI, patient data, proprietary clinical data, production credentials
 
 The released tuple's `CardiovascularResourcePolicy` is a hard admission boundary, not a planning estimate. Runs beyond wall-time, resident-memory, artifact-size, or concurrency ceilings are unsupported and should fail before or at the controlled boundary. Operators remain responsible for host capacity, backups, access control, key custody, and retention.
 
-A completed run is required where a gate cites lifecycle evidence. Planned, queued, running, failed, or cancelled records do not become verification evidence. Checkpoints and results must retain their plan, numeric revision, execution, unit, axis, sign, reference-configuration, and content identities.
+A completed run is required where a gate cites lifecycle evidence. Planned, queued, running, failed, or canceled records do not become verification evidence. Checkpoints and results must retain their plan, numeric revision, execution, unit, axis, sign, reference-configuration, and content identities.
 
 ## Versions and evidence lifetime
 
-Support follows an explicitly released profile version, not the latest branch. Any change to a tuple coordinate, dependency, build, SBOM, licence determination, notice audit, data rights, validation domain, security posture, or evidence validity may require a new profile and release decision.
+Support follows an explicitly released profile version, not the latest branch. Any change to a tuple coordinate, dependency, build, SBOM, license determination, notice audit, data rights, validation domain, security posture, or evidence validity may require a new profile and release decision.
 
 Evidence is accepted only within its issued and expiry times and any stricter trust-policy age. When the earliest gate, artifact reference, signed non-claim, or dependency profile expires, create a new candidate and repeat independent review. Do not extend dates in place or reinterpret an expired record.
 

@@ -150,7 +150,7 @@ def test_ambiguous_runtime_broadcasting_is_rejected():
             storage_measure=jnp.ones((2, 3)),
             cell_diffusivity=jnp.ones((2, 2)),
             outer_molar_flux=jnp.zeros((2, 2)),
-            active_mask=jnp.ones((2,), dtype=bool),
+            active_mask=jnp.ones((2,), dtype="bool"),
         )
 
 

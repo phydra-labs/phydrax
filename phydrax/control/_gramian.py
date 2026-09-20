@@ -116,7 +116,7 @@ class GramianActionResult(StrictModule):
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _system_matrix(matrix: ArrayLike, /, *, max_dimension: int) -> tuple[Array, int]:
@@ -126,13 +126,12 @@ def _system_matrix(matrix: ArrayLike, /, *, max_dimension: int) -> tuple[Array, 
     matrix_array = _inexact(matrix)
     if matrix_array.ndim != 2 or matrix_array.shape[0] != matrix_array.shape[1]:
         raise ValueError(f"matrix must be square; got shape {matrix_array.shape}.")
-    dimension = int(matrix_array.shape[0])
+    dimension = matrix_array.shape[0]
     if dimension == 0:
         raise ValueError("matrix must have positive dimension.")
     if dimension > dimension_limit:
         raise ValueError(
-            f"Dense Gramian dimension {dimension} exceeds "
-            f"max_dimension={dimension_limit}."
+            f"Dense Gramian dimension {dimension} exceeds max_dimension={dimension_limit}."
         )
     return matrix_array, dimension
 
@@ -148,8 +147,7 @@ def _controllability_source(
     input_array = _inexact(input_matrix)
     if input_array.ndim != 2 or input_array.shape[0] != dimension:
         raise ValueError(
-            "input_matrix must have shape (state_dimension, input_dimension); "
-            f"got {input_array.shape}."
+            f"input_matrix must have shape (state_dimension, input_dimension); got {input_array.shape}."
         )
     dtype = jnp.result_type(matrix_array.dtype, input_array.dtype)
     matrix_array = matrix_array.astype(dtype)
@@ -168,8 +166,7 @@ def _observability_source(
     output_array = _inexact(output_matrix)
     if output_array.ndim != 2 or output_array.shape[1] != dimension:
         raise ValueError(
-            "output_matrix must have shape (output_dimension, state_dimension); "
-            f"got {output_array.shape}."
+            f"output_matrix must have shape (output_dimension, state_dimension); got {output_array.shape}."
         )
     dtype = jnp.result_type(matrix_array.dtype, output_array.dtype)
     matrix_array = matrix_array.astype(dtype)

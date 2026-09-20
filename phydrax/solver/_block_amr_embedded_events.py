@@ -154,12 +154,14 @@ class MovingEmbeddedBoundaryEventPlan(StrictModule, NonTrainableState):
         ):
             for vertices, active in zip(level_vertices, level_masks, strict=True):
                 flat = vertices.reshape((-1, vertices.shape[-1]))
-                values = np.asarray(level_set(flat, geometry.time, args), dtype=float)
+                values = np.asarray(
+                    level_set(flat, geometry.time, args), dtype=np.float64
+                )
                 if values.shape != (flat.shape[0],):
                     raise ValueError(
                         "Moving EB level set must return one value per vertex."
                     )
-                mask = np.asarray(active, dtype=bool).reshape((-1,))
+                mask = np.asarray(active, dtype=np.bool_).reshape((-1,))
                 if np.any(~np.isfinite(values[mask])):
                     raise ValueError("Moving EB active vertex values must be finite.")
                 result.append(values[mask])

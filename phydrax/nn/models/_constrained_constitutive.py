@@ -64,7 +64,7 @@ class ReferenceConfiguration(StrictModule, NonTrainableState):
         gradient = jnp.asarray(deformation_gradient)
         if gradient.ndim != 2 or gradient.shape[0] != gradient.shape[1]:
             raise ValueError("Reference deformation gradient must be square.")
-        dimension = int(gradient.shape[0])
+        dimension = gradient.shape[0]
         if dimension not in (2, 3):
             raise ValueError("ReferenceConfiguration supports dimension two or three.")
         if not jnp.issubdtype(gradient.dtype, jnp.floating):
@@ -76,8 +76,7 @@ class ReferenceConfiguration(StrictModule, NonTrainableState):
         )
         if not bool(solve.successful) or not bool(solve.determinant > 0.0):
             raise ValueError(
-                "Reference deformation gradient must be finite, full rank, and "
-                "positive orientation."
+                "Reference deformation gradient must be finite, full rank, and positive orientation."
             )
         self._deformation_gradient = tuple(
             tuple(float(value) for value in row) for row in gradient.tolist()
@@ -133,13 +132,15 @@ class CoercivePolyconvexEnvelope(StrictModule):
     ):
         if not isinstance(constraints, PolyconvexMaterialConstraints):
             raise TypeError("constraints must be PolyconvexMaterialConstraints.")
-        gradient = jnp.asarray(gradient_coefficients, dtype=float)
-        cofactor = jnp.asarray(cofactor_coefficients, dtype=float)
+        gradient = jnp.asarray(gradient_coefficients, dtype=jnp.float64)
+        cofactor = jnp.asarray(cofactor_coefficients, dtype=jnp.float64)
         if gradient.shape != (len(constraints.gradient_exponents),) or cofactor.shape != (
             len(constraints.cofactor_exponents),
         ):
             raise ValueError("Envelope coefficient counts must match the exponent lists.")
-        scalars = jnp.asarray((determinant_coefficient, barrier_coefficient), dtype=float)
+        scalars = jnp.asarray(
+            (determinant_coefficient, barrier_coefficient), dtype=jnp.float64
+        )
         if bool(jnp.any(~jnp.isfinite(gradient))) or bool(jnp.any(gradient <= 0.0)):
             raise ValueError("Gradient coefficients must be finite and positive.")
         if bool(jnp.any(~jnp.isfinite(cofactor))) or bool(jnp.any(cofactor <= 0.0)):
@@ -174,7 +175,7 @@ class CoercivePolyconvexEnvelope(StrictModule):
         cofactor_norm = jnp.sum(cofactor * cofactor, axis=(-2, -1))
         energy = jnp.zeros_like(determinant)
         derivative_at_reference = jnp.zeros_like(determinant)
-        dimension = int(gradient.shape[-1])
+        dimension = gradient.shape[-1]
         for coefficient, exponent in zip(
             self.gradient_coefficients,
             self.constraints.gradient_exponents,

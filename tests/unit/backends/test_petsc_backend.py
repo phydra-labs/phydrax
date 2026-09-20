@@ -101,7 +101,9 @@ class _FakeMat:
         self.dense = np.zeros(self.shape, dtype=np.asarray(values).dtype)
         for row in range(self.shape[0]):
             begin, end = int(indptr[row]), int(indptr[row + 1])
-            self.dense[row, np.asarray(indices[begin:end], dtype=int)] = values[begin:end]
+            self.dense[row, np.asarray(indices[begin:end], dtype="int64")] = values[
+                begin:end
+            ]
 
     def assemble(self):
         pass

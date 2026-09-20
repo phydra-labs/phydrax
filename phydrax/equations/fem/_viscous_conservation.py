@@ -360,7 +360,7 @@ class PreparedViscousDGOperator(StrictModule):
                 local, pair.owner_cell, pair.owner_axis, pair.owner_side
             )
             minus = self.dynamics._face_value(
-                local, pair.neighbour_cell, pair.neighbour_axis, pair.neighbour_side
+                local, pair.neighbor_cell, pair.neighbor_axis, pair.neighbor_side
             )[permutation]
             scaled_normal = self.dynamics.metrics.face_scaled_normals[pair.owner_axis][
                 pair.owner_cell, pair.owner_side
@@ -384,9 +384,9 @@ class PreparedViscousDGOperator(StrictModule):
             gradient = self._add_gradient_face(
                 gradient,
                 local_mass,
-                pair.neighbour_cell,
-                pair.neighbour_axis,
-                pair.neighbour_side,
+                pair.neighbor_cell,
+                pair.neighbor_axis,
+                pair.neighbor_side,
                 (common - minus)[inverse],
                 (-normal)[inverse],
                 measure[inverse],
@@ -471,13 +471,13 @@ class PreparedViscousDGOperator(StrictModule):
                 local, pair.owner_cell, pair.owner_axis, pair.owner_side
             )
             minus = self.dynamics._face_value(
-                local, pair.neighbour_cell, pair.neighbour_axis, pair.neighbour_side
+                local, pair.neighbor_cell, pair.neighbor_axis, pair.neighbor_side
             )[permutation]
             plus_flux = self._face_tensor(
                 flux, pair.owner_cell, pair.owner_axis, pair.owner_side
             )
             minus_flux = self._face_tensor(
-                flux, pair.neighbour_cell, pair.neighbour_axis, pair.neighbour_side
+                flux, pair.neighbor_cell, pair.neighbor_axis, pair.neighbor_side
             )[permutation]
             scaled_normal = self.dynamics.metrics.face_scaled_normals[pair.owner_axis][
                 pair.owner_cell, pair.owner_side
@@ -506,9 +506,9 @@ class PreparedViscousDGOperator(StrictModule):
             rate = self._add_flux_face(
                 rate,
                 local_mass,
-                pair.neighbour_cell,
-                pair.neighbour_axis,
-                pair.neighbour_side,
+                pair.neighbor_cell,
+                pair.neighbor_axis,
+                pair.neighbor_side,
                 (-common + minus_normal)[inverse],
                 measure[inverse],
             )

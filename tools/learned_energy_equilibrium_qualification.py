@@ -339,7 +339,7 @@ def _train(
     updates_completed = 0
     stop_reason = "maximum_updates"
     training_key = jr.key(TRAINING_SEED)
-    batch_size = min(TRAINING_BATCH_SIZE, int(train_state.shape[0]))
+    batch_size = min(TRAINING_BATCH_SIZE, train_state.shape[0])
 
     for update_index in range(1, MAXIMUM_UPDATES + 1):
         batch_indices = jr.choice(
@@ -426,7 +426,7 @@ def _evaluate_test(
     scaled_flux_error = learned.evidence.flux_error_norm / total_energy
     relative_energy_error = jnp.abs(learned.evidence.total_energy_residual) / total_energy
     result = {
-        "sample_count": int(states.shape[0]),
+        "sample_count": states.shape[0],
         "all_finite": bool(jnp.all(learned.evidence.finite)),
         "all_status_success": bool(jnp.all(learned.evidence.successful)),
         "mean_relative_population_error": float(jnp.mean(population_error)),
@@ -708,8 +708,7 @@ def _runtime_benchmarks(
             "performance_claim": {
                 "made": performance_claim,
                 "statement": (
-                    "bound learned evaluation is at least 1.25x faster than the oracle "
-                    "at batch size 256"
+                    "bound learned evaluation is at least 1.25x faster than the oracle at batch size 256"
                     if performance_claim
                     else "no performance claim"
                 ),
@@ -863,7 +862,7 @@ def _qualification() -> tuple[
     )
     oracle_record = {
         "generation_wall_seconds_including_first_jit": oracle_generation_seconds,
-        "sample_count": int(conserved.shape[0]),
+        "sample_count": conserved.shape[0],
         "status_counts": _status_counts(oracle.status),
         "all_successful": bool(jnp.all(oracle.successful)),
         "all_converged": bool(jnp.all(oracle.evidence.converged)),
@@ -908,8 +907,7 @@ def _qualification() -> tuple[
         "samples_per_case": 25,
         "partition_level": dataset.partition.plan.level,
         "assignment_rule": (
-            "case-stratified Latin classes over density and temperature; no case "
-            "crosses a split"
+            "case-stratified Latin classes over density and temperature; no case crosses a split"
         ),
         "split_sample_counts": {
             "train": len(dataset.train_pairs),

@@ -12,6 +12,13 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
+from .._tree_math import (
+    tree_allfinite as _tree_allfinite,
+    tree_inner as _tree_inner,
+    tree_negative as _tree_negative,
+    tree_norm as _tree_norm,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ..linalg import (
     bind_numeric,
     DifferentiationPolicy,
@@ -30,11 +37,6 @@ from ..linalg import (
 from ._bounds import _projected_displacement
 from ._iterative._globalization import ArmijoLineSearch
 from ._iterative._types import (
-    _tree_allfinite,
-    _tree_inner,
-    _tree_negative,
-    _tree_norm,
-    _validate_real_inexact_tree,
     OptimizationDiagnostics,
     OptimizationProvenance,
     OptimizationStatus,

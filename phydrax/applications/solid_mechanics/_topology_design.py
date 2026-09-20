@@ -74,7 +74,7 @@ class DensityTransform(StrictModule, NonTrainableState):
         if not isfinite(beta_value) or beta_value <= 0.0:
             raise ValueError("beta must be finite and strictly positive.")
         self.prepared = prepared
-        self.beta = jnp.asarray(beta_value, dtype=float)
+        self.beta = jnp.asarray(beta_value, dtype=jnp.float64)
         plan = prepared.plan.filter
         self.transform_id = canonical_fingerprint(
             {
@@ -149,8 +149,8 @@ class MaterialInterpolation(StrictModule, NonTrainableState):
             and not np.issubdtype(penalty_.dtype, np.complexfloating)
         ):
             raise TypeError("Material interpolation parameters must be real-valued.")
-        solid_value = np.asarray(solid_, dtype=float)
-        minimum_value = np.asarray(minimum_, dtype=float)
+        solid_value = np.asarray(solid_, dtype=np.float64)
+        minimum_value = np.asarray(minimum_, dtype=np.float64)
         exponent = float(penalty_)
         if (
             np.any(~np.isfinite(solid_value))
@@ -161,8 +161,7 @@ class MaterialInterpolation(StrictModule, NonTrainableState):
             or exponent <= 0.0
         ):
             raise ValueError(
-                "Material interpolation requires finite 0 < minimum < solid and "
-                "a finite positive penalty."
+                "Material interpolation requires finite 0 < minimum < solid and a finite positive penalty."
             )
         self.minimum = jnp.asarray(minimum_value)
         self.solid = jnp.asarray(solid_value)

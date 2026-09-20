@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -221,8 +221,7 @@ class RodConstitutiveControl(StrictModule):
             or stiffness_rate_.shape != expected_stiffness
         ):
             raise ValueError(
-                "Controlled stiffness and its rate must have shape "
-                "(sites, components, components)."
+                "Controlled stiffness and its rate must have shape (sites, components, components)."
             )
         dtype = np.dtype(intrinsic.dtype)
         values = (intrinsic, intrinsic_rate, stiffness_, stiffness_rate_)
@@ -312,11 +311,11 @@ class RodConstitutiveTrial(StrictModule):
 
     __strict_abstract__ = True
 
-    workset: AbstractAttribute[RodMaterialWorkset]
-    plan: AbstractAttribute[Any]
-    history_size: AbstractAttribute[int]
-    control_size: AbstractAttribute[int]
-    material_id: AbstractAttribute[str]
+    workset: eqx.AbstractVar[RodMaterialWorkset]
+    plan: eqx.AbstractVar[Any]
+    history_size: eqx.AbstractVar[int]
+    control_size: eqx.AbstractVar[int]
+    material_id: eqx.AbstractVar[str]
 
     def initialize_history(self, /) -> Array:
         return jnp.zeros(
@@ -575,8 +574,8 @@ class LinearElasticRodMaterialPlan(StrictModule, NonTrainableState):
         )
         identifier = generated if plan_id is None else _identifier(plan_id, "plan_id")
         self.stiffness = jnp.asarray(stiffness_)
-        self.site_count = int(stiffness_.shape[0])
-        self.component_count = int(stiffness_.shape[1])
+        self.site_count = stiffness_.shape[0]
+        self.component_count = stiffness_.shape[1]
         self.plan_id = identifier
 
     def prepare(self, workset: RodMaterialWorkset, /) -> PreparedLinearElasticRodMaterial:
@@ -752,8 +751,8 @@ class KelvinVoigtRodMaterialPlan(StrictModule, NonTrainableState):
         identifier = generated if plan_id is None else _identifier(plan_id, "plan_id")
         self.stiffness = jnp.asarray(stiffness_)
         self.viscosity = jnp.asarray(viscosity_)
-        self.site_count = int(stiffness_.shape[0])
-        self.component_count = int(stiffness_.shape[1])
+        self.site_count = stiffness_.shape[0]
+        self.component_count = stiffness_.shape[1]
         self.plan_id = identifier
 
     def prepare(self, workset: RodMaterialWorkset, /) -> PreparedKelvinVoigtRodMaterial:

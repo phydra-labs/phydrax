@@ -81,7 +81,6 @@ _PRECISION_ROLES = frozenset(
         "output",
     )
 )
-_CONTRACT_VERSION = 1
 
 _MX_ALIASES = {
     "mxfp8-e4m3": "float8_e4m3fn",
@@ -218,7 +217,7 @@ def precision_itemsize(value: Any, /) -> int:
         raise ValueError(
             "Microscaling formats have fractional payload widths; use storage_bytes."
         )
-    return int(jnp.dtype(precision_dtype_name(value)).itemsize)
+    return jnp.dtype(precision_dtype_name(value)).itemsize
 
 
 def _identifier(name: str, value: Any, /) -> str:
@@ -285,19 +284,17 @@ def _strict_fields(value: Mapping[str, Any], expected: set[str], owner: str, /) 
     unknown = set(value) - expected
     if missing or unknown:
         raise ValueError(
-            f"{owner} must use the current canonical fields; "
-            f"missing={sorted(missing)}, unknown={sorted(unknown)}."
+            f"{owner} must use the current canonical fields; missing={sorted(missing)}, unknown={sorted(unknown)}."
         )
 
 
 @dataclass(frozen=True, slots=True)
 class PrecisionRequest:
-    """Versioned domain request without execution or resource claims."""
+    """Canonical domain request without execution or resource claims."""
 
     domain: str
     requested: tuple[tuple[str, PrecisionFormat | None], ...]
     request_id: str
-    version: int = _CONTRACT_VERSION
 
     def __init__(
         self,
@@ -317,14 +314,12 @@ class PrecisionRequest:
                 )
         object.__setattr__(self, "domain", domain_)
         object.__setattr__(self, "requested", requested_)
-        object.__setattr__(self, "version", _CONTRACT_VERSION)
         object.__setattr__(
             self,
             "request_id",
             canonical_fingerprint(
                 {
                     "kind": "precision-request",
-                    "version": _CONTRACT_VERSION,
                     "domain": domain_,
                     "requested": _entries_payload(requested_),
                 }
@@ -333,7 +328,6 @@ class PrecisionRequest:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": self.version,
             "domain": self.domain,
             "requested": _entries_payload(self.requested),
             "request_id": self.request_id,
@@ -341,10 +335,8 @@ class PrecisionRequest:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any], /) -> PrecisionRequest:
-        expected = {"version", "domain", "requested", "request_id"}
+        expected = {"domain", "requested", "request_id"}
         _strict_fields(value, expected, "PrecisionRequest")
-        if int(value["version"]) != _CONTRACT_VERSION:
-            raise ValueError("Unsupported precision request version.")
         result = cls(
             str(value["domain"]),
             _mapping(value["requested"], "requested"),
@@ -363,7 +355,6 @@ class PrecisionResolution:
     provider: str
     effective: tuple[tuple[str, PrecisionFormat | None], ...]
     resolution_id: str
-    version: int = _CONTRACT_VERSION
 
     def __init__(
         self,
@@ -386,14 +377,12 @@ class PrecisionResolution:
         object.__setattr__(self, "domain", request.domain)
         object.__setattr__(self, "provider", provider_)
         object.__setattr__(self, "effective", effective_)
-        object.__setattr__(self, "version", _CONTRACT_VERSION)
         object.__setattr__(
             self,
             "resolution_id",
             canonical_fingerprint(
                 {
                     "kind": "precision-resolution",
-                    "version": _CONTRACT_VERSION,
                     "request": request.request_id,
                     "domain": request.domain,
                     "provider": provider_,
@@ -404,7 +393,6 @@ class PrecisionResolution:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": self.version,
             "request_id": self.request_id,
             "domain": self.domain,
             "provider": self.provider,
@@ -415,7 +403,6 @@ class PrecisionResolution:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any], /) -> PrecisionResolution:
         expected = {
-            "version",
             "request_id",
             "domain",
             "provider",
@@ -423,12 +410,9 @@ class PrecisionResolution:
             "resolution_id",
         }
         _strict_fields(value, expected, "PrecisionResolution")
-        if int(value["version"]) != _CONTRACT_VERSION:
-            raise ValueError("Unsupported precision resolution version.")
         effective = _canonical_entries(_mapping(value["effective"], "effective"))
         payload = {
             "kind": "precision-resolution",
-            "version": _CONTRACT_VERSION,
             "request": str(value["request_id"]),
             "domain": str(value["domain"]),
             "provider": str(value["provider"]),
@@ -443,7 +427,6 @@ class PrecisionResolution:
         object.__setattr__(result, "provider", _identifier("provider", value["provider"]))
         object.__setattr__(result, "effective", effective)
         object.__setattr__(result, "resolution_id", resolution_id)
-        object.__setattr__(result, "version", _CONTRACT_VERSION)
         return result
 
 
@@ -457,7 +440,6 @@ class PrecisionEvidenceEnvelope:
     observed: tuple[tuple[str, PrecisionFormat | None], ...]
     children: tuple[tuple[str, PrecisionEvidenceEnvelope], ...]
     evidence_id: str
-    version: int = _CONTRACT_VERSION
 
     def __init__(
         self,
@@ -491,7 +473,6 @@ class PrecisionEvidenceEnvelope:
         children_ = tuple(sorted(child_items, key=lambda item: str(item[0])))
         payload = {
             "kind": "precision-evidence",
-            "version": _CONTRACT_VERSION,
             "resolution": resolution.resolution_id,
             "domain": resolution.domain,
             "provider": resolution.provider,
@@ -507,12 +488,10 @@ class PrecisionEvidenceEnvelope:
             "children",
             tuple((str(name), child) for name, child in children_),
         )
-        object.__setattr__(self, "version", _CONTRACT_VERSION)
         object.__setattr__(self, "evidence_id", canonical_fingerprint(payload))
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": self.version,
             "resolution_id": self.resolution_id,
             "domain": self.domain,
             "provider": self.provider,
@@ -524,7 +503,6 @@ class PrecisionEvidenceEnvelope:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any], /) -> PrecisionEvidenceEnvelope:
         expected = {
-            "version",
             "resolution_id",
             "domain",
             "provider",
@@ -533,8 +511,6 @@ class PrecisionEvidenceEnvelope:
             "evidence_id",
         }
         _strict_fields(value, expected, "PrecisionEvidenceEnvelope")
-        if int(value["version"]) != _CONTRACT_VERSION:
-            raise ValueError("Unsupported precision evidence version.")
         observed = _canonical_entries(_mapping(value["observed"], "observed"))
         child_mapping = _mapping(value["children"], "children")
         children = tuple(
@@ -548,7 +524,6 @@ class PrecisionEvidenceEnvelope:
         )
         payload = {
             "kind": "precision-evidence",
-            "version": _CONTRACT_VERSION,
             "resolution": str(value["resolution_id"]),
             "domain": str(value["domain"]),
             "provider": str(value["provider"]),
@@ -565,7 +540,6 @@ class PrecisionEvidenceEnvelope:
         object.__setattr__(result, "observed", observed)
         object.__setattr__(result, "children", children)
         object.__setattr__(result, "evidence_id", evidence_id)
-        object.__setattr__(result, "version", _CONTRACT_VERSION)
         return result
 
 
@@ -577,7 +551,6 @@ class PrecisionResourceAssumptions:
     dtypes: tuple[tuple[str, PrecisionFormat | None], ...]
     item_sizes: tuple[tuple[str, int | None], ...]
     assumptions_id: str
-    version: int = _CONTRACT_VERSION
 
     def __init__(
         self,
@@ -599,14 +572,12 @@ class PrecisionResourceAssumptions:
         object.__setattr__(self, "domain", domain_)
         object.__setattr__(self, "dtypes", dtypes_)
         object.__setattr__(self, "item_sizes", item_sizes)
-        object.__setattr__(self, "version", _CONTRACT_VERSION)
         object.__setattr__(
             self,
             "assumptions_id",
             canonical_fingerprint(
                 {
                     "kind": "precision-resource-assumptions",
-                    "version": _CONTRACT_VERSION,
                     "domain": domain_,
                     "dtypes": _entries_payload(dtypes_),
                     "item_sizes": dict(item_sizes),
@@ -630,7 +601,7 @@ class PrecisionResourceAssumptions:
         /,
     ) -> int:
         role_ = str(role)
-        shape_ = tuple(int(size) for size in shape)
+        shape_ = tuple(shape)
         if any(size < 0 for size in shape_):
             raise ValueError("Storage shape dimensions must be non-negative.")
         format_: PrecisionFormat | None = None
@@ -663,7 +634,6 @@ class PrecisionResourceAssumptions:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": self.version,
             "domain": self.domain,
             "dtypes": _entries_payload(self.dtypes),
             "item_sizes": dict(self.item_sizes),
@@ -673,15 +643,12 @@ class PrecisionResourceAssumptions:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any], /) -> PrecisionResourceAssumptions:
         expected = {
-            "version",
             "domain",
             "dtypes",
             "item_sizes",
             "assumptions_id",
         }
         _strict_fields(value, expected, "PrecisionResourceAssumptions")
-        if int(value["version"]) != _CONTRACT_VERSION:
-            raise ValueError("Unsupported precision resource-assumptions version.")
         result = cls(str(value["domain"]), _mapping(value["dtypes"], "dtypes"))
         if (
             dict(result.item_sizes) != dict(_mapping(value["item_sizes"], "item_sizes"))
@@ -718,13 +685,13 @@ class MicroscaledArray(StrictModule):
             raise TypeError("format must be a MicroscalingFormat.")
         packed = jnp.asarray(packed_values, dtype=jnp.uint8)
         scale_codes = jnp.asarray(scales, dtype=jnp.uint8)
-        shape = tuple(int(size) for size in original_shape)
+        shape = tuple(original_shape)
         padded = int(padded_size)
         if any(size < 0 for size in shape) or padded < 0:
             raise ValueError("Microscaled array shapes must be non-negative.")
         self.packed_values = packed
         self.scales = scale_codes
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.saturation_count = jnp.asarray(saturation_count, dtype=jnp.int32)
         self.original_shape = shape
         self.padded_size = padded
@@ -742,7 +709,7 @@ class MicroscaledArray(StrictModule):
 
     @property
     def payload_bytes(self) -> int:
-        return int(self.packed_values.size + self.scales.size)
+        return self.packed_values.size + self.scales.size
 
 
 def _low_bit_parameters(element_format: str, /) -> tuple[int, int]:
@@ -864,7 +831,7 @@ def quantize_mx(
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.floating):
         raise TypeError("Microscaling quantization requires a real floating array.")
-    original_shape = tuple(int(size) for size in array.shape)
+    original_shape = tuple(array.shape)
     scalar_input = array.ndim == 0
     working = array.reshape((1,)) if scalar_input else array
     axis = 0 if scalar_input else format.axis

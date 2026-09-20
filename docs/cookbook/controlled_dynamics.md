@@ -20,8 +20,8 @@ import phydrax as phx
 
 sample_times = jnp.asarray([0.0, 0.25, 0.6, 1.0])
 control_values = jnp.stack((sample_times, sample_times**2), axis=-1)
-time_mask = jnp.ones(sample_times.shape, dtype=bool)
-value_mask = jnp.ones(control_values.shape, dtype=bool)
+time_mask = jnp.ones(sample_times.shape, dtype="bool")
+value_mask = jnp.ones(control_values.shape, dtype="bool")
 
 path, fit = phx.solver.PiecewiseLinearDrivingPath.fit(
     sample_times,

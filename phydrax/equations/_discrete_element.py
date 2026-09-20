@@ -190,8 +190,8 @@ def compile_discrete_element_problem(
     if problem.gravity.shape != (particles.ambient_dimension,):
         raise ValueError("Problem gravity does not match particle ambient dimension.")
     bodies = spheres.prepare(particles)
-    active_mask = np.asarray(particles.active_mask, dtype=bool)
-    body_radii = np.asarray(bodies.radii, dtype=float)
+    active_mask = np.asarray(particles.active_mask, dtype=np.bool_)
+    body_radii = np.asarray(bodies.radii, dtype=np.float64)
     body_materials = np.asarray(bodies.material_ids)
     active_materials = body_materials[active_mask]
     if np.any(active_materials >= problem.materials.material_count):
@@ -203,7 +203,7 @@ def compile_discrete_element_problem(
     )
     required = 2.0 * float(np.max(interaction_extents))
     if isinstance(neighborhood, HierarchicalRadiusParticleNeighborhoodPlan):
-        hierarchy_radii = np.asarray(neighborhood.interaction_radii, dtype=float)
+        hierarchy_radii = np.asarray(neighborhood.interaction_radii, dtype=np.float64)
         if hierarchy_radii.shape != body_radii.shape:
             raise ValueError(
                 "Hierarchical interaction radii must match rigid-sphere capacity."

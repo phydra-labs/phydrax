@@ -19,14 +19,14 @@ def _ifc3(units, strength):
             for second in range(2)
             for third in range(2)
         ],
-        dtype=int,
+        dtype="int64",
     )
     signs = np.asarray([1.0, -1.0])
     coefficients = (
         strength * signs[triplets[:, 0]] * signs[triplets[:, 1]] * signs[triplets[:, 2]]
     )
     values = coefficients[:, None, None, None] * np.ones((1, 3, 3, 3))
-    translations = np.zeros((8, 2, 1), dtype=int)
+    translations = np.zeros((8, 2, 1), dtype="int64")
     return ThirdOrderForceConstants(
         triplets,
         translations,

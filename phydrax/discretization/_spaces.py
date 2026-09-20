@@ -48,7 +48,7 @@ FieldConformity: TypeAlias = Literal[
 
 
 def _component_shape(value: Sequence[int], /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("component_shape dimensions must be positive.")
     return shape
@@ -73,7 +73,7 @@ class GlobalCoefficientId(StrictModule, NonTrainableState):
     ):
         space = nonempty_identifier("field_space_id", field_space_id)
         ordinal_ = int(ordinal)
-        component_ = tuple(int(index) for index in component)
+        component_ = tuple(component)
         if ordinal_ < 0 or any(index < 0 for index in component_):
             raise ValueError("Global coefficient indices must be nonnegative.")
         self.field_space_id = space
@@ -121,7 +121,7 @@ class TensorDofLayout(AbstractDofLayout):
         layout_id: str | None = None,
     ):
         names = tuple(str(name) for name in axis_names)
-        shape = tuple(int(size) for size in axis_shape)
+        shape = tuple(axis_shape)
         components = _component_shape(component_shape)
         if not names or any(not name for name in names):
             raise ValueError("Tensor DOF layouts require non-empty axis names.")
@@ -209,13 +209,13 @@ class EntityDofLayout(AbstractDofLayout):
                     raise ValueError(
                         "orientation must have the local_to_global route shape."
                     )
-                active = np.asarray(local_to_global.valid, dtype=bool)
+                active = np.asarray(local_to_global.valid, dtype=np.bool_)
                 active_orientation = orientation_host[active]
                 if np.any(~np.isfinite(active_orientation)) or np.any(
                     np.abs(active_orientation) != 1
                 ):
                     raise ValueError("Active local DOF orientations must be ±1.")
-                orientation_ = jnp.asarray(orientation_host, dtype=float)
+                orientation_ = jnp.asarray(orientation_host, dtype=jnp.float64)
         elif orientation is not None:
             raise ValueError("orientation requires local_to_global.")
         self.entity_set_id = entity_set_id_
@@ -274,11 +274,7 @@ class ModalDofLayout(AbstractDofLayout):
             raise ValueError("Modal DOF layouts require non-empty mode IDs.")
         if len(set(modes)) != len(modes):
             raise ValueError("Mode IDs must be unique.")
-        groups = (
-            tuple(range(len(modes)))
-            if group_ids is None
-            else tuple(int(value) for value in group_ids)
-        )
+        groups = tuple(range(len(modes))) if group_ids is None else tuple(group_ids)
         if len(groups) != len(modes) or any(value < 0 for value in groups):
             raise ValueError("group_ids must contain one non-negative value per mode.")
         components = _component_shape(component_shape)
@@ -387,8 +383,7 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
             raise TypeError("vector_space must be an AbstractVectorSpace.")
         if vector_space.size != layout.size:
             raise ValueError(
-                f"Vector-space size {vector_space.size} does not match "
-                f"DOF-layout size {layout.size}."
+                f"Vector-space size {vector_space.size} does not match DOF-layout size {layout.size}."
             )
         if representation not in (
             "point_value",

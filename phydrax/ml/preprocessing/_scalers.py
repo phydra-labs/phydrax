@@ -473,7 +473,9 @@ class FittedNormScaler(AbstractArrayModel):
         values = _check_features(x, self.in_size)
         if mask is not None:
             values = jnp.where(
-                jnp.broadcast_to(jnp.asarray(mask, dtype=bool), values.shape), values, 0
+                jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), values.shape),
+                values,
+                0,
             )
         return self(values, key=key)
 

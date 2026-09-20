@@ -52,7 +52,7 @@ class ActivationObservationPlan(StrictModule, NonTrainableState):
             raise TypeError("node_count must be an integer.")
         if node_count <= 0:
             raise ValueError("node_count must be positive.")
-        ids = tuple(int(value) for value in node_ids)
+        ids = tuple(node_ids)
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("node_ids must be nonempty and unique.")
         if any(value < 0 or value >= node_count for value in ids):
@@ -135,7 +135,7 @@ def initialize_activation_observation(
     if values.shape != (plan.node_count,):
         raise ValueError(f"activation must have shape ({plan.node_count},).")
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
     if not bool(np.all(np.isfinite(np.asarray(values)))):
         raise ValueError("Initial activation must be finite.")
     time = float(time_ms)
@@ -383,7 +383,7 @@ class ChordConductionVelocityPlan(StrictModule, NonTrainableState):
         target_node_id: int,
         /,
     ) -> ChordConductionVelocityPlan:
-        coordinates = np.asarray(coordinates_mm, dtype=float)
+        coordinates = np.asarray(coordinates_mm, dtype=np.float64)
         if coordinates.ndim != 2 or coordinates.shape[0] != activation_plan.node_count:
             raise ValueError("coordinates_mm must provide one point per mesh node.")
         if not np.all(np.isfinite(coordinates)):

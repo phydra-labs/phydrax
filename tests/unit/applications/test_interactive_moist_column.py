@@ -31,7 +31,7 @@ def _radiation():
         shortwave_scattering=(0.0, 0.0, 60.0, 30.0),
         longwave_absorption=(1e-4, 0.08, 50.0, 25.0),
         shortwave_asymmetry=(0.0, 0.0, 0.85, 0.7),
-        reference_id="illustrative-grey-test-not-observational-calibration",
+        reference_id="illustrative-gray-test-not-observational-calibration",
     )
     return ColumnRadiationPlan(optics)
 

@@ -76,7 +76,7 @@ class DEMContactHistory(StrictModule):
             raise ValueError("Contact history capacity/dimension is invalid.")
         angular_dimension = 1 if dimension == 2 else 3
         scalar = jnp.zeros((count,), dtype=dtype)
-        mask = jnp.zeros((count,), dtype=bool)
+        mask = jnp.zeros((count,), dtype=jnp.bool_)
         vector = jnp.zeros((count, dimension), dtype=dtype)
         angular = jnp.zeros((count, angular_dimension), dtype=dtype)
         return cls(
@@ -102,7 +102,7 @@ class DEMContactHistory(StrictModule):
     def with_routes(self, pair_keys: Array, valid: Array, /) -> DEMContactHistory:
         return DEMContactHistory(
             jnp.asarray(pair_keys, dtype=jnp.int64),
-            jnp.asarray(valid, dtype=bool),
+            jnp.asarray(valid, dtype=jnp.bool_),
             self.active,
             self.normal,
             self.cohesion,
@@ -127,12 +127,12 @@ def remap_dem_contact_history(
     )
     return DEMContactHistory(
         jnp.asarray(pair_keys, dtype=jnp.int64),
-        jnp.asarray(valid, dtype=bool),
-        active.astype(bool),
+        jnp.asarray(valid, dtype=jnp.bool_),
+        active.astype("bool"),
         normal,
         cohesion,
         DEMTangentialHistory(
-            tangential.sliding.astype(bool),
+            tangential.sliding.astype("bool"),
             tangential.previous_normal,
             tangential.displacement,
         ),
@@ -140,8 +140,8 @@ def remap_dem_contact_history(
             rotational.rolling_displacement,
             rotational.torsional_displacement,
             rotational.previous_normal,
-            rotational.rolling_yielded.astype(bool),
-            rotational.torsional_yielded.astype(bool),
+            rotational.rolling_yielded.astype("bool"),
+            rotational.torsional_yielded.astype("bool"),
         ),
     )
 

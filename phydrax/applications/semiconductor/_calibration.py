@@ -58,7 +58,7 @@ def _names(values: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _array(value, shape=None, *, positive=False):
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if (shape is not None and result.shape != shape) or not bool(
         jnp.all(jnp.isfinite(result) & ((result > 0) if positive else True))
     ):
@@ -520,7 +520,7 @@ class SemiconductorParameterBinding(StrictModule):
         value = jnp.asarray(physical)
         if value.shape != self.sensitivity_scale.shape:
             raise ValueError("Physical parameter shape changed.")
-        admitted = jnp.asarray(self.admissible(value), dtype=bool)
+        admitted = jnp.asarray(self.admissible(value), dtype=jnp.bool_)
         if admitted.shape:
             raise ValueError("Physical admissibility must return one scalar boolean.")
         return (

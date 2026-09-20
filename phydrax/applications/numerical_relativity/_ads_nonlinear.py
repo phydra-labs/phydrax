@@ -16,6 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ._generalized_wave_gauge import GeneralizedWaveGaugePlan
 
@@ -60,7 +61,7 @@ class SphericalConformalAdSPlan(StrictModule):
         horizon_threshold: float = 0.05,
         maximum_state_elements: int = 10_000_000,
     ):
-        points = np.asarray(radial_points, dtype=float)
+        points = np.asarray(radial_points, dtype=np.float64)
         step = float(time_step)
         count = int(steps)
         length = float(ads_length)
@@ -177,7 +178,7 @@ class SphericalConformalAdSState(StrictModule):
         step: ArrayLike,
         /,
     ):
-        count = int(plan.radial_points.shape[0])
+        count = plan.radial_points.shape[0]
         scalar_ = jnp.asarray(scalar, dtype=plan.radial_points.dtype)
         radial = jnp.asarray(radial_derivative, dtype=scalar_.dtype)
         momentum_ = jnp.asarray(momentum, dtype=scalar_.dtype)
@@ -279,7 +280,7 @@ def _constraint_metric(
 
 
 def _gauge_target(plan: SphericalConformalAdSPlan, time: Array, /) -> Array:
-    count = int(plan.radial_points.shape[0])
+    count = plan.radial_points.shape[0]
     if plan.gauge is None:
         return jnp.zeros((4, count), dtype=plan.radial_points.dtype)
     return plan.gauge.source(time, plan.radial_points / plan.ads_length)
@@ -665,13 +666,13 @@ def refine_spherical_ads_state(
     fine = np.asarray(fine_plan.radial_points)
     if fine[0] != coarse[0] or fine[-1] != coarse[-1] or fine.size <= coarse.size:
         raise ValueError("Fine radial grid must strictly refine the same interval.")
-    scalar = jnp.asarray(np.interp(fine, coarse, np.asarray(state.scalar)))
-    momentum = jnp.asarray(np.interp(fine, coarse, np.asarray(state.momentum)))
+    scalar = linear_interpolate(coarse, state.scalar, fine, bounds="clip").values
+    momentum = linear_interpolate(coarse, state.momentum, fine, bounds="clip").values
     radial = _first_derivative(scalar, fine_plan.spacing).at[0].set(0.0)
     metric_a, delta = _constraint_metric(fine_plan, radial, momentum)
     gauge = jnp.stack(
         tuple(
-            jnp.asarray(np.interp(fine, coarse, np.asarray(component)))
+            linear_interpolate(coarse, component, fine, bounds="clip").values
             for component in state.gauge_source
         )
     )
@@ -754,10 +755,10 @@ def partition_spherical_ads_state(
         raise ValueError("State and plan identities differ.")
     partitions = int(partition_count)
     halo = int(halo_width)
-    count = int(plan.radial_points.shape[0])
+    count = plan.radial_points.shape[0]
     if partitions < 1 or partitions > count or halo < 1:
         raise ValueError("Radial partition count or halo width is invalid.")
-    boundaries = np.linspace(0, count, partitions + 1, dtype=int)
+    boundaries = np.linspace(0, count, partitions + 1, dtype=np.int64)
     shards: list[SphericalAdSShard] = []
     for index in range(partitions):
         core_start = int(boundaries[index])
@@ -966,7 +967,7 @@ def extract_fefferman_graham_data(
     pressure = energy / (plan.boundary_dimension - 1)
     stress = np.zeros(
         (energy.size, plan.boundary_dimension, plan.boundary_dimension),
-        dtype=float,
+        dtype=np.float64,
     )
     stress[:, 0, 0] = energy
     for index in range(1, plan.boundary_dimension):

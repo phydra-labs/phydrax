@@ -47,7 +47,7 @@ from phydrax.units import ANGSTROM
 
 
 def _constant_family(matrix, *, hermitian):
-    value = np.asarray(matrix, dtype=complex)
+    value = np.asarray(matrix, dtype="complex128")
     count = value.shape[0]
     target = np.repeat(np.arange(count), count)
     source = np.tile(np.arange(count), count)
@@ -55,7 +55,7 @@ def _constant_family(matrix, *, hermitian):
     relation = EdgeRelation(source, target, source_size=count, target_size=count)
     plan = PeriodicTranslationFamilyPlan(
         relation,
-        np.zeros((count * count, 1), dtype=int),
+        np.zeros((count * count, 1), dtype="int64"),
         reverse,
         hermitian=hermitian,
     )

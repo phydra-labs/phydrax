@@ -30,9 +30,7 @@ def _chain_structure_id(
         {
             "kind": f"{kind}-structure",
             "boundary": "open",
-            "shapes": tuple(
-                tuple(int(size) for size in tensor.shape) for tensor in tensors
-            ),
+            "shapes": tuple(tuple(tensor.shape) for tensor in tensors),
             "dtype": str(tensors[0].dtype),
             "precision": precision.policy_id,
         }
@@ -71,8 +69,8 @@ class MatrixProductState(StrictModule):
         self.precision = precision_
         self.precision_evidence = precision_.evidence_for(values)
         self.site_count = len(values)
-        self.physical_dimensions = tuple(int(tensor.shape[1]) for tensor in values)
-        self.bond_dimensions = tuple(int(tensor.shape[-1]) for tensor in values[:-1])
+        self.physical_dimensions = tuple(tensor.shape[1] for tensor in values)
+        self.bond_dimensions = tuple(tensor.shape[-1] for tensor in values[:-1])
         self.structure_id = _chain_structure_id(
             "matrix-product-state", values, precision_
         )
@@ -90,8 +88,7 @@ class MatrixProductState(StrictModule):
             count *= dimension
         if int(maximum_elements) <= 0 or count > int(maximum_elements):
             raise ValueError(
-                f"Dense MPS materialization requires {count} elements; "
-                f"capacity is {int(maximum_elements)}."
+                f"Dense MPS materialization requires {count} elements; capacity is {int(maximum_elements)}."
             )
         return self.precision.output(self._contract())
 
@@ -149,9 +146,9 @@ class MatrixProductOperator(StrictModule):
         self.precision = precision_
         self.precision_evidence = precision_.evidence_for(values)
         self.site_count = len(values)
-        self.output_dimensions = tuple(int(tensor.shape[1]) for tensor in values)
-        self.input_dimensions = tuple(int(tensor.shape[2]) for tensor in values)
-        self.bond_dimensions = tuple(int(tensor.shape[-1]) for tensor in values[:-1])
+        self.output_dimensions = tuple(tensor.shape[1] for tensor in values)
+        self.input_dimensions = tuple(tensor.shape[2] for tensor in values)
+        self.bond_dimensions = tuple(tensor.shape[-1] for tensor in values[:-1])
         self.structure_id = _chain_structure_id(
             "matrix-product-operator", values, precision_
         )
@@ -160,8 +157,7 @@ class MatrixProductOperator(StrictModule):
         count = prod(self.output_dimensions) * prod(self.input_dimensions)
         if int(maximum_elements) <= 0 or count > int(maximum_elements):
             raise ValueError(
-                f"Dense MPO materialization requires {count} elements; "
-                f"capacity is {int(maximum_elements)}."
+                f"Dense MPO materialization requires {count} elements; capacity is {int(maximum_elements)}."
             )
         tensors = self.precision.contraction(self.tensors)
         operator = tensors[0][0]
@@ -211,9 +207,9 @@ class LocallyPurifiedDensity(StrictModule):
         self.precision = precision_
         self.precision_evidence = precision_.evidence_for(values)
         self.site_count = len(values)
-        self.physical_dimensions = tuple(int(tensor.shape[1]) for tensor in values)
-        self.purification_dimensions = tuple(int(tensor.shape[2]) for tensor in values)
-        self.bond_dimensions = tuple(int(tensor.shape[-1]) for tensor in values[:-1])
+        self.physical_dimensions = tuple(tensor.shape[1] for tensor in values)
+        self.purification_dimensions = tuple(tensor.shape[2] for tensor in values)
+        self.bond_dimensions = tuple(tensor.shape[-1] for tensor in values[:-1])
         self.structure_id = _chain_structure_id(
             "locally-purified-density", values, precision_
         )

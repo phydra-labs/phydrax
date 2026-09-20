@@ -53,10 +53,7 @@ class FactorSamplingState(StrictModule):
         probability_epoch: int = 0,
         geometry_epoch: int = 0,
     ):
-        values = tuple(
-            int(value)
-            for value in (epoch, batch_index, probability_epoch, geometry_epoch)
-        )
+        values = tuple((epoch, batch_index, probability_epoch, geometry_epoch))
         if any(value < 0 for value in values):
             raise ValueError("Factor sampling state indices must be nonnegative.")
         (
@@ -128,7 +125,7 @@ class LikelihoodBatch(StrictModule):
 
     @property
     def capacity(self) -> int:
-        return int(self.factor_mask.shape[0])
+        return self.factor_mask.shape[0]
 
     @property
     def factor_count(self) -> Array:
@@ -182,11 +179,11 @@ class ArrayMinibatchSource(StrictModule):
             raise ValueError("ArrayMinibatchSource data must contain array leaves.")
         arrays = jax.tree_util.tree_map(jnp.asarray, data)
         array_leaves = jax.tree_util.tree_leaves(arrays)
-        population = int(array_leaves[0].shape[0]) if array_leaves[0].ndim else 0
+        population = array_leaves[0].shape[0] if array_leaves[0].ndim else 0
         if population <= 0:
             raise ValueError("Every source data leaf needs a positive leading axis.")
         for leaf in array_leaves:
-            if leaf.ndim == 0 or int(leaf.shape[0]) != population:
+            if leaf.ndim == 0 or leaf.shape[0] != population:
                 raise ValueError(
                     "Every source data leaf must share the positive factor-leading axis."
                 )
@@ -287,7 +284,7 @@ class ArrayMinibatchSource(StrictModule):
         probabilities = jnp.full(
             (self._batch_capacity,),
             1.0 / self._num_factors,
-            dtype=jnp.result_type(float),
+            dtype=jnp.result_type(jnp.float64),
         )
         weights = jnp.full(
             (self._batch_capacity,),
@@ -332,12 +329,12 @@ class ImportanceMinibatchSource(StrictModule):
         leaves = jax.tree_util.tree_leaves(arrays)
         if not leaves:
             raise ValueError("Importance source data must contain array leaves.")
-        population = int(leaves[0].shape[0]) if leaves[0].ndim else 0
+        population = leaves[0].shape[0] if leaves[0].ndim else 0
         if population <= 0 or any(
-            leaf.ndim == 0 or int(leaf.shape[0]) != population for leaf in leaves
+            leaf.ndim == 0 or leaf.shape[0] != population for leaf in leaves
         ):
             raise ValueError("All source leaves must share a positive leading axis.")
-        probability_array = jnp.asarray(probabilities, dtype=float)
+        probability_array = jnp.asarray(probabilities, dtype=jnp.float64)
         if probability_array.shape != (population,):
             raise ValueError("probabilities must have one entry per source factor.")
         if bool(jnp.any(~jnp.isfinite(probability_array))) or bool(
@@ -440,7 +437,7 @@ class ImportanceMinibatchSource(StrictModule):
             selected_probabilities = self.probabilities[ids]
             yield LikelihoodBatch(
                 jax.tree_util.tree_map(lambda leaf: leaf[ids], self.data),
-                jnp.ones((self.batch_capacity,), dtype=bool),
+                jnp.ones((self.batch_capacity,), dtype=jnp.bool_),
                 factor_ids=ids,
                 sampling_probabilities=selected_probabilities,
                 estimator_weights=1.0 / (self.batch_capacity * selected_probabilities),
@@ -569,7 +566,7 @@ class MinibatchPosteriorProblem(StrictModule):
             raise ValueError(
                 "MinibatchPosteriorProblem has no full log-likelihood function."
             )
-        value = jnp.asarray(self.full_log_likelihood_fn(physical), dtype=float)
+        value = jnp.asarray(self.full_log_likelihood_fn(physical), dtype=jnp.float64)
         if value.ndim != 0:
             raise ValueError("full_log_likelihood must return a scalar.")
         return value
@@ -659,13 +656,13 @@ def prepare_importance_minibatch_source(
     if score not in ("absolute_log_likelihood", "gradient_norm"):
         raise ValueError("Unknown importance score.")
     physical = problem.parameter_space.constrain(anchor_position)
-    scores = jnp.zeros((base_source.num_factors,), dtype=float)
+    scores = jnp.zeros((base_source.num_factors,), dtype=jnp.float64)
     for batch in base_source.audit_epoch():
         if score == "absolute_log_likelihood":
             batch_scores = jnp.abs(problem.log_likelihood_factors(physical, batch))
         else:
             jacobian = jax.jacrev(problem.log_likelihood_factors)(physical, batch)
-            squared = jnp.zeros(batch.factor_mask.shape, dtype=float)
+            squared = jnp.zeros(batch.factor_mask.shape, dtype=jnp.float64)
             for leaf in jax.tree_util.tree_leaves(jacobian):
                 leaf_array = jnp.asarray(leaf)
                 squared = squared + jnp.sum(

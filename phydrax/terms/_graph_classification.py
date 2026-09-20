@@ -53,8 +53,7 @@ def _classification_configuration(
     kind = target_schema.kind
     if kind not in ("binary", "multiclass", "multilabel", "ordinal"):
         raise ValueError(
-            "Graph classification TargetSchema kind must be binary, multiclass, "
-            "multilabel, or ordinal."
+            "Graph classification TargetSchema kind must be binary, multiclass, multilabel, or ordinal."
         )
 
     class_count: int | None = None
@@ -71,8 +70,7 @@ def _classification_configuration(
     if kind == "ordinal":
         if objective.kind != "nll" or thresholds is None:
             raise ValueError(
-                "Ordinal graph classification requires ClassificationObjective.nll "
-                "with thresholds."
+                "Ordinal graph classification requires ClassificationObjective.nll with thresholds."
             )
         if class_count is None or len(thresholds) != class_count - 1:
             raise ValueError(
@@ -191,12 +189,11 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
         else:
             if logits_data.ndim != 2:
                 raise ValueError(
-                    f"{self.classification_kind} graph logits must have one terminal "
-                    "statistical axis."
+                    f"{self.classification_kind} graph logits must have one terminal statistical axis."
                 )
         if (
             self.classification_kind == "multilabel"
-            and int(logits_data.shape[-1]) != self.multilabel_count
+            and logits_data.shape[-1] != self.multilabel_count
         ):
             raise ValueError(
                 "Multilabel graph logits terminal axis must match TargetSchema.names."
@@ -328,8 +325,7 @@ def _validate_aligned_target_shapes(
             expected_target = (class_count,)
     if values.shape[1:] != expected_target:
         raise ValueError(
-            f"{kind} graph targets must have trailing shape "
-            f"{expected_target}, got {values.shape[1:]}."
+            f"{kind} graph targets must have trailing shape {expected_target}, got {values.shape[1:]}."
         )
     if target_mask is None:
         return
@@ -337,13 +333,12 @@ def _validate_aligned_target_shapes(
     expected_mask = (class_count,) if kind == "multilabel" else ()
     if mask.shape[1:] != expected_mask:
         raise ValueError(
-            f"{kind} graph target_mask must have trailing shape "
-            f"{expected_mask}, got {mask.shape[1:]}."
+            f"{kind} graph target_mask must have trailing shape {expected_mask}, got {mask.shape[1:]}."
         )
 
 
 def _checked_weight(weight: ArrayLike, /) -> Array:
-    value = jnp.asarray(weight, dtype=float)
+    value = jnp.asarray(weight, dtype=jnp.float64)
     if value.shape != ():
         raise ValueError("weight must be a scalar.")
     if not bool(jnp.isfinite(value)) or float(value) < 0.0:

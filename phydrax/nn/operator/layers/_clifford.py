@@ -70,7 +70,7 @@ class CliffordEquivarianceCertificate(StrictModule, NonTrainableState):
         self.group_scope = values[4]
         self.certificate_id = canonical_fingerprint(
             {
-                "kind": "clifford-equivariance-certificate-v1",
+                "kind": "clifford-equivariance-certificate",
                 "algebra": values[0],
                 "input": values[1],
                 "output": values[2],
@@ -80,7 +80,7 @@ class CliffordEquivarianceCertificate(StrictModule, NonTrainableState):
         )
 
 
-class CliffordGradeLinear(eqx.Module):
+class CliffordGradeLinear(StrictModule):
     """Equivariant scalar channel mixing independently within each complete grade."""
 
     __hash__ = object.__hash__
@@ -172,7 +172,7 @@ class CliffordGradeLinear(eqx.Module):
         return self.output_representation.join(CliffordGradeFeatures(tuple(output)))
 
 
-class CliffordGeometricProductLayer(eqx.Module):
+class CliffordGeometricProductLayer(StrictModule):
     """Elementwise channel interactions parameterized by product grade triples."""
 
     __hash__ = object.__hash__
@@ -335,7 +335,7 @@ class CliffordEquivarianceAuditReport(StrictModule, NonTrainableState):
         tolerance: ArrayLike,
         audit_set_id: str,
     ):
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.maximum_residual = jnp.asarray(maximum_residual).reshape(())
         self.root_mean_square_residual = jnp.asarray(root_mean_square_residual).reshape(
             ()
@@ -346,7 +346,7 @@ class CliffordEquivarianceAuditReport(StrictModule, NonTrainableState):
         self.audit_set_id = str(audit_set_id)
         self.report_id = canonical_fingerprint(
             {
-                "kind": "clifford-equivariance-audit-v1",
+                "kind": "clifford-equivariance-audit",
                 "audit_set": self.audit_set_id,
                 "maximum_residual": float(self.maximum_residual),
                 "rms_residual": float(self.root_mean_square_residual),

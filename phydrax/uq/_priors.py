@@ -21,9 +21,9 @@ class PowerLaw(AbstractDistribution):
     high: Array
 
     def __init__(self, alpha: ArrayLike, low: ArrayLike, high: ArrayLike):
-        exponent = jnp.asarray(alpha, dtype=float).reshape(())
-        lower = jnp.asarray(low, dtype=float).reshape(())
-        upper = jnp.asarray(high, dtype=float).reshape(())
+        exponent = jnp.asarray(alpha, dtype=jnp.float64).reshape(())
+        lower = jnp.asarray(low, dtype=jnp.float64).reshape(())
+        upper = jnp.asarray(high, dtype=jnp.float64).reshape(())
         if not bool(jnp.all(jnp.isfinite(jnp.stack((exponent, lower, upper))))):
             raise ValueError("Power-law parameters must be finite.")
         if not bool((lower > 0.0) & (lower < upper)):
@@ -61,7 +61,7 @@ class PowerLaw(AbstractDistribution):
         return jnp.where(is_logarithmic, logarithmic_value, ordinary)
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        values = jnp.asarray(value, dtype=float)
+        values = jnp.asarray(value, dtype=jnp.float64)
         density = self.alpha * jnp.log(jnp.where(values > 0.0, values, 1.0)) - jnp.log(
             self._normalizer
         )
@@ -102,10 +102,10 @@ class TruncatedNormal(AbstractDistribution):
         low: ArrayLike,
         high: ArrayLike,
     ):
-        location_ = jnp.asarray(location, dtype=float).reshape(())
-        scale_ = jnp.asarray(scale, dtype=float).reshape(())
-        low_ = jnp.asarray(low, dtype=float).reshape(())
-        high_ = jnp.asarray(high, dtype=float).reshape(())
+        location_ = jnp.asarray(location, dtype=jnp.float64).reshape(())
+        scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
+        low_ = jnp.asarray(low, dtype=jnp.float64).reshape(())
+        high_ = jnp.asarray(high, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(location_) & jnp.isfinite(scale_) & (scale_ > 0.0)):
             raise ValueError(
                 "Truncated-normal location and scale must be finite and positive."
@@ -135,7 +135,7 @@ class TruncatedNormal(AbstractDistribution):
         return self.location + self.scale * jsp.special.ndtri(normal_probability)
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        values = jnp.asarray(value, dtype=float)
+        values = jnp.asarray(value, dtype=jnp.float64)
         standardized = (values - self.location) / self.scale
         density = (
             -0.5 * standardized**2
@@ -186,7 +186,7 @@ class HalfNormal(AbstractDistribution):
     scale: Array
 
     def __init__(self, scale: ArrayLike):
-        scale_ = jnp.asarray(scale, dtype=float).reshape(())
+        scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(scale_) & (scale_ > 0.0)):
             raise ValueError("Half-normal scale must be finite and positive.")
         self.scale = scale_
@@ -202,7 +202,7 @@ class HalfNormal(AbstractDistribution):
         return self.scale * jnp.sqrt(2.0) * jsp.special.erfinv(probability)
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        values = jnp.asarray(value, dtype=float)
+        values = jnp.asarray(value, dtype=jnp.float64)
         density = (
             -0.5 * (values / self.scale) ** 2
             + 0.5 * jnp.log(2.0 / jnp.pi)
@@ -232,8 +232,8 @@ class Cauchy(AbstractDistribution):
     scale: Array
 
     def __init__(self, location: ArrayLike, scale: ArrayLike):
-        location_ = jnp.asarray(location, dtype=float).reshape(())
-        scale_ = jnp.asarray(scale, dtype=float).reshape(())
+        location_ = jnp.asarray(location, dtype=jnp.float64).reshape(())
+        scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(location_) & jnp.isfinite(scale_) & (scale_ > 0.0)):
             raise ValueError("Cauchy location and scale must be finite and positive.")
         self.location = location_
@@ -247,7 +247,7 @@ class Cauchy(AbstractDistribution):
         return self.location + self.scale * jnp.tan(jnp.pi * (probability - 0.5))
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        values = jnp.asarray(value, dtype=float)
+        values = jnp.asarray(value, dtype=jnp.float64)
         standardized = (values - self.location) / self.scale
         density = -jnp.log(jnp.pi * self.scale) - jnp.log1p(standardized**2)
         return jnp.where(self.contains(values), density, -jnp.inf)
@@ -279,9 +279,9 @@ class StudentT(AbstractDistribution):
         location: ArrayLike = 0.0,
         scale: ArrayLike = 1.0,
     ):
-        df = jnp.asarray(degrees_of_freedom, dtype=float).reshape(())
-        location_ = jnp.asarray(location, dtype=float).reshape(())
-        scale_ = jnp.asarray(scale, dtype=float).reshape(())
+        df = jnp.asarray(degrees_of_freedom, dtype=jnp.float64).reshape(())
+        location_ = jnp.asarray(location, dtype=jnp.float64).reshape(())
+        scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(
             jnp.all(jnp.isfinite(jnp.stack((df, location_, scale_))))
             & (df > 0.0)
@@ -327,7 +327,7 @@ class StudentT(AbstractDistribution):
         return self.location + self.scale * jnp.tan(0.5 * (lower + upper))
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        values = jnp.asarray(value, dtype=float)
+        values = jnp.asarray(value, dtype=jnp.float64)
         standardized = (values - self.location) / self.scale
         half = 0.5 * (self.degrees_of_freedom + 1.0)
         density = (
@@ -370,7 +370,7 @@ class SineAngle(AbstractDistribution):
         return jnp.arccos(1.0 - 2.0 * jnp.clip(jnp.asarray(value), 0.0, 1.0))
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        values = jnp.asarray(value, dtype=float)
+        values = jnp.asarray(value, dtype=jnp.float64)
         return jnp.where(
             self.contains(values), jnp.log(jnp.sin(values)) - jnp.log(2.0), -jnp.inf
         )
@@ -402,7 +402,7 @@ class CosineAngle(AbstractDistribution):
         return jnp.arcsin(2.0 * jnp.clip(jnp.asarray(value), 0.0, 1.0) - 1.0)
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        values = jnp.asarray(value, dtype=float)
+        values = jnp.asarray(value, dtype=jnp.float64)
         return jnp.where(
             self.contains(values), jnp.log(jnp.cos(values)) - jnp.log(2.0), -jnp.inf
         )

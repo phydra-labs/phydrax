@@ -34,7 +34,7 @@ class XRayFormFactorRequest(StrictModule, NonTrainableState):
     def __init__(
         self, cartesian_q: ArrayLike, atom_ids: tuple[str, ...], structure_id: str, /
     ):
-        q = jnp.asarray(cartesian_q, dtype=float)
+        q = jnp.asarray(cartesian_q, dtype=jnp.float64)
         atoms = tuple(str(atom).strip() for atom in atom_ids)
         structure = str(structure_id).strip()
         if (
@@ -78,7 +78,7 @@ class XRayFormFactorResult(StrictModule, NonTrainableState):
         converged: ArrayLike,
         /,
     ):
-        factors = jnp.asarray(form_factors, dtype=float)
+        factors = jnp.asarray(form_factors, dtype=jnp.float64)
         provider = str(provider_id).strip()
         hashes = tuple(str(value).strip() for value in source_hashes)
         if (
@@ -94,7 +94,7 @@ class XRayFormFactorResult(StrictModule, NonTrainableState):
         self.request = request
         self.provider_id = provider
         self.source_hashes = hashes
-        self.converged = jnp.asarray(converged, dtype=bool).reshape(())
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
         self.result_id = canonical_fingerprint(
             {
                 "kind": "nonresonant-xray-form-factors",
@@ -175,9 +175,9 @@ class _AbstractElasticScatteringPlan(StrictModule, NonTrainableState):
         atom_capacity: int,
         symmetry_tolerance: float = 1.0e-10,
     ):
-        coordinate = jnp.asarray(positions, dtype=float)
-        displacement = jnp.asarray(debye_waller_tensors, dtype=float)
-        reverse = jnp.asarray(reverse_q, dtype=int)
+        coordinate = jnp.asarray(positions, dtype=jnp.float64)
+        displacement = jnp.asarray(debye_waller_tensors, dtype=jnp.float64)
+        reverse = jnp.asarray(reverse_q, dtype=jnp.int64)
         structure = str(structure_id).strip()
         tolerance = float(symmetry_tolerance)
         atoms = coordinate.shape[0] if coordinate.ndim == 2 else 0
@@ -296,8 +296,8 @@ class ElasticNeutronScatteringPlan(_AbstractElasticScatteringPlan):
         source_hashes: tuple[str, ...],
         /,
     ) -> ElasticScatteringResult:
-        q = jnp.asarray(cartesian_q, dtype=float)
-        lengths = jnp.asarray(coherent_lengths, dtype=float)
+        q = jnp.asarray(cartesian_q, dtype=jnp.float64)
+        lengths = jnp.asarray(coherent_lengths, dtype=jnp.float64)
         source = str(source_id).strip()
         hashes = tuple(str(value).strip() for value in source_hashes)
         if (
@@ -423,10 +423,10 @@ class DynamicStructureFactorPlan(StrictModule, NonTrainableState):
         source_id: str,
         /,
     ) -> DynamicStructureFactorResult:
-        energy = jnp.asarray(energies, dtype=float)
-        probability = jnp.asarray(probabilities, dtype=float)
+        energy = jnp.asarray(energies, dtype=jnp.float64)
+        probability = jnp.asarray(probabilities, dtype=jnp.float64)
         operators = jnp.asarray(operators_q)
-        reverse = jnp.asarray(reverse_q, dtype=int)
+        reverse = jnp.asarray(reverse_q, dtype=jnp.int64)
         states = energy.size
         q_count = operators.shape[0] if operators.ndim == 3 else 0
         if (
@@ -482,7 +482,9 @@ class DynamicStructureFactorPlan(StrictModule, NonTrainableState):
         for q_index in range(q_count):
             np.add.at(coalesced[q_index], inverse, 2.0 * np.pi * flat_weights[q_index])
         coalesced_equal_time = np.sum(coalesced, axis=1) / (2.0 * np.pi)
-        denominator = np.maximum(np.abs(np.asarray(equal_time)), np.finfo(float).tiny)
+        denominator = np.maximum(
+            np.abs(np.asarray(equal_time)), np.finfo(np.float64).tiny
+        )
         equal_time_residual = float(
             np.max(np.abs(coalesced_equal_time - np.asarray(equal_time)) / denominator)
         )
@@ -508,7 +510,7 @@ class DynamicStructureFactorPlan(StrictModule, NonTrainableState):
         raw = SpectralResponseProduct(
             unique_energy,
             coalesced,
-            np.ones(unique_energy.shape, dtype=bool),
+            np.ones(unique_energy.shape, dtype=np.bool_),
             energy_unit,
             response_unit,
             tuple(f"q[{index}]" for index in range(q_count)),

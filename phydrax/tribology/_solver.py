@@ -66,9 +66,9 @@ class MassConservingEHLSolver:
         bulk_modulus_pa: float = 1.0e9,
         symmetry_tolerance: float = 1e-10,
     ) -> MassConservingEHLSolver:
-        widths = np.asarray(cell_widths_m, dtype=float)
-        gap = np.asarray(undeformed_gap_m, dtype=float)
-        compliance = np.asarray(elastic_compliance_m_pa, dtype=float)
+        widths = np.asarray(cell_widths_m, dtype=np.float64)
+        gap = np.asarray(undeformed_gap_m, dtype=np.float64)
+        compliance = np.asarray(elastic_compliance_m_pa, dtype=np.float64)
         if widths.ndim != 1 or widths.size < 2 or np.any(widths <= 0):
             raise ValueError("EHL cell widths must be a positive vector.")
         if gap.shape != widths.shape or np.any(gap <= 0):

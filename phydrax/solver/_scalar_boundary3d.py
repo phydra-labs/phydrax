@@ -137,8 +137,7 @@ def _check_compatibility(
     )
     if not bool(jnp.all(jnp.abs(residual) <= tolerance * scales)):
         raise ValueError(
-            "Pure interior Laplace Neumann data violates the per-component "
-            "zero-flux compatibility condition."
+            "Pure interior Laplace Neumann data violates the per-component zero-flux compatibility condition."
         )
     return residual
 

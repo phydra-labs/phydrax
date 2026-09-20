@@ -82,8 +82,8 @@ def test_internal_current_emits_to_both_ports_and_many_rhs_match() -> None:
 def test_periodic_directional_bases_emit_consistent_surface_jump() -> None:
     size = 2
     identity = jnp.eye(size, dtype=jnp.complex128)
-    active = jnp.ones((size,), dtype=bool)
-    inactive = jnp.zeros((size,), dtype=bool)
+    active = jnp.ones((size,), dtype="bool")
+    inactive = jnp.zeros((size,), dtype="bool")
 
     def modes(side: str) -> fm.PreparedPeriodicPortModes:
         outward_sign = -1.0 if side == "left" else 1.0

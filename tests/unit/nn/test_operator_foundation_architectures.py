@@ -38,9 +38,9 @@ def _point_batch(
     if query_coordinates is None:
         query_coordinates = jnp.array([[0.1], [0.5], [0.9]])
     if source_mask is None:
-        source_mask = jnp.ones((4,), dtype=bool)
+        source_mask = jnp.ones((4,), dtype="bool")
     if query_mask is None:
-        query_mask = jnp.ones((query_coordinates.shape[0],), dtype=bool)
+        query_mask = jnp.ones((query_coordinates.shape[0],), dtype="bool")
     return phx.nn.operator.OperatorBatch(
         inputs={
             source_name: phx.nn.operator.FunctionSamples(
@@ -85,7 +85,7 @@ def _case_point_batch(values):
 
 def _grid_batch(values, *, query_mask=None, source_name="state"):
     values = jnp.asarray(values)
-    size = int(values.shape[0])
+    size = values.shape[0]
     points = jnp.linspace(0.0, 1.0, size, endpoint=False)
     axis = phx.nn.operator.OperatorAxis(
         "x",
@@ -94,13 +94,13 @@ def _grid_batch(values, *, query_mask=None, source_name="state"):
         periodic=True,
     )
     if query_mask is None:
-        query_mask = jnp.ones((size,), dtype=bool)
+        query_mask = jnp.ones((size,), dtype="bool")
     return phx.nn.operator.OperatorBatch(
         inputs={
             source_name: phx.nn.operator.FunctionSamples(
                 values=values,
                 axes=(axis,),
-                mask=jnp.ones((size,), dtype=bool),
+                mask=jnp.ones((size,), dtype="bool"),
             )
         },
         queries={
@@ -155,7 +155,7 @@ def test_coordinate_conditioned_operator_film_decode_is_masked_jittable_and_fini
 
     eager = model(masked_point_batch)
     compiled = eqx.filter_jit(lambda item, batch: item(batch))(model, masked_point_batch)
-    prediction = model.predict(masked_point_batch)
+    prediction = model.evaluate(masked_point_batch)
 
     assert eager.shape == (3,)
     assert jnp.all(jnp.isfinite(eager))
@@ -239,7 +239,7 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
 def test_wavelet_operators_reuse_one_model_across_resolutions():
     sizes = (17, 29)
     batches = tuple(
-        _grid_batch(jnp.sin(2.0 * jnp.pi * jnp.arange(size, dtype=float) / size))
+        _grid_batch(jnp.sin(2.0 * jnp.pi * jnp.arange(size, dtype="float64") / size))
         for size in sizes
     )
     wno = phx.nn.operator.architectures.WaveletNeuralOperator(
@@ -390,7 +390,7 @@ def test_upt_and_abupt_preserve_case_and_source_query_masks():
 
     assert upt_state.case_shape == (2,)
     assert upt_state.values.shape == (2, 2, 4)
-    assert jnp.array_equal(upt_state.mask, jnp.ones((2, 2), dtype=bool))
+    assert jnp.array_equal(upt_state.mask, jnp.ones((2, 2), dtype="bool"))
     assert upt_output.shape == (2, 3)
     assert jnp.array_equal(upt_output[~expected_query_mask], jnp.zeros((3,)))
     assert jnp.allclose(upt_output, upt(changed_batch))
@@ -422,7 +422,7 @@ def test_upt_and_abupt_preserve_case_and_source_query_masks():
     branch_state = abupt_state.branch("field")
     abupt_output = abupt(batch)
     abupt_compiled = eqx.filter_jit(lambda item, data: item(data))(abupt, batch)
-    abupt_prediction = abupt.predict(batch)
+    abupt_prediction = abupt.evaluate(batch)
     selected = jnp.rint(jnp.linspace(0, 3, 3)).astype(jnp.int32)
     expected_anchor_mask = jnp.take(
         batch.input("u").mask_array(case_shape=(2,)), selected, axis=-1
@@ -495,7 +495,7 @@ def test_abupt_predicts_named_fields_on_distinct_queries():
         key=jr.key(61),
     )
 
-    prediction = model.predict(batch)
+    prediction = model.evaluate(batch)
 
     assert tuple(prediction.fields) == ("state", "flux")
     assert tuple(prediction.queries) == ("spatial", "sensors")
@@ -557,7 +557,7 @@ def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask():
     state = model.encode_inputs(batch)
     eager = model(batch)
     compiled = eqx.filter_jit(lambda item, data: item(data))(model, batch)
-    prediction = model.predict(batch)
+    prediction = model.evaluate(batch)
 
     assert model.in_size == (1, 2)
     assert model.out_size == 2

@@ -63,7 +63,7 @@ class JumpDelayProblem(StrictModule):
             raise ValueError(
                 "Jump-delay execution does not support derivative-valued delay terms."
             )
-        shape = tuple(int(size) for size in mark_shape)
+        shape = tuple(mark_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("mark_shape dimensions must be positive.")
         identifier = str(problem_id)
@@ -106,7 +106,7 @@ class JumpDelayBackendResult(StrictModule):
     events: JumpEventBatch
 
 
-class _RestartHistory(eqx.Module):
+class _RestartHistory(StrictModule):
     history: DelayHistoryView
     restart_time: Array
     restart_state: Array
@@ -116,7 +116,7 @@ class _RestartHistory(eqx.Module):
         del args
         tolerance = (
             100.0
-            * jnp.finfo(jnp.result_type(time, float)).eps
+            * jnp.finfo(jnp.result_type(time, jnp.float64)).eps
             * jnp.maximum(1.0, jnp.abs(self.restart_time))
         )
         return jax.lax.cond(
@@ -133,8 +133,8 @@ def _archive(
     starts: list[float], ends: list[float], interpolations: list[Any]
 ) -> DelaySegmentArchive:
     return DelaySegmentArchive(
-        starts=np.asarray(starts, dtype=float),
-        ends=np.asarray(ends, dtype=float),
+        starts=np.asarray(starts, dtype=np.float64),
+        ends=np.asarray(ends, dtype=np.float64),
         interpolations=tuple(interpolations),
     )
 
@@ -224,12 +224,12 @@ def _validated_schedule(
     status = int(np.asarray(jax.device_get(events.status)))
     if status != JUMP_SUCCESS:
         raise ValueError("Jump-delay execution requires a successful event schedule.")
-    valid = np.asarray(jax.device_get(events.valid), dtype=bool)
+    valid = np.asarray(jax.device_get(events.valid), dtype=np.bool_)
     count = int(np.sum(valid))
     if np.any(valid[count:]):
         raise ValueError("Jump event validity must form one leading prefix.")
-    times = np.asarray(jax.device_get(events.times[:count]), dtype=float)
-    channels = np.asarray(jax.device_get(events.channels[:count]), dtype=int)
+    times = np.asarray(jax.device_get(events.times[:count]), dtype=np.float64)
+    channels = np.asarray(jax.device_get(events.channels[:count]), dtype=np.int64)
     base = problem.delay_problem
     if (
         np.any(~np.isfinite(times))
@@ -238,8 +238,7 @@ def _validated_schedule(
         or np.any(times >= float(base.t1))
     ):
         raise ValueError(
-            "Valid jump times must be finite, strictly increasing, and lie inside "
-            "the open solve interval."
+            "Valid jump times must be finite, strictly increasing, and lie inside the open solve interval."
         )
     if np.any(channels < 0):
         raise ValueError("Valid jump channels must be nonnegative.")
@@ -278,7 +277,7 @@ def solve_jump_delay(
     base = problem.delay_problem
     requested_times = validate_save_times(base.t0, base.t1, save_times)
     event_times, event_channels = _validated_schedule(problem, events)
-    event_count = int(event_times.size)
+    event_count = event_times.size
     pre_states = jnp.zeros(
         (events.max_events,) + base.state_shape, dtype=base.initial_state.dtype
     )
@@ -364,7 +363,7 @@ def solve_jump_delay(
             )
             if base.state_geometry is not None:
                 membership = jnp.asarray(
-                    base.state_geometry.contains(post_state), dtype=bool
+                    base.state_geometry.contains(post_state), dtype=jnp.bool_
                 )
                 if membership.shape != ():
                     raise ValueError(
@@ -418,7 +417,7 @@ def solve_jump_delay(
         realization=realization,
         state_shape=base.state_shape,
         solver_name=f"{selected_name}JumpDelay",
-        solver_id=f"solver:diffrax-jump-delay:{selected_name}:host-hybrid-v1",
+        solver_id=f"solver:diffrax-jump-delay:{selected_name}:host-hybrid",
         resolved_method=f"{selected_name}:exact-jump-time-method-of-steps",
         metadata={
             "problem_id": problem.problem_id,

@@ -323,7 +323,7 @@ class ReducedLeg(StrictModule):
         if not isinstance(category, RepresentationCategory):
             raise TypeError("category must be RepresentationCategory.")
         labels = tuple(str(label) for label in irreps)
-        capacities_ = tuple(int(value) for value in capacities)
+        capacities_ = tuple(capacities)
         if (
             not labels
             or len(labels) != len(capacities_)

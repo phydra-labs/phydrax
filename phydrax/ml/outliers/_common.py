@@ -53,7 +53,7 @@ class OutlierDiagnostics(StrictModule):
         converged: Any = True,
         method: str,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
@@ -63,7 +63,7 @@ class OutlierDiagnostics(StrictModule):
         self.score_maximum = jnp.asarray(score_maximum)
         self.rank = jnp.asarray(rank, dtype=jnp.int32)
         self.condition = jnp.asarray(condition)
-        self.converged = jnp.asarray(converged, dtype=bool)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.method = str(method)
 
 
@@ -104,14 +104,14 @@ def _prepare_queries(
     feature_count: int,
 ) -> tuple[Array, tuple[int, ...]]:
     x = jnp.asarray(value)
-    if x.ndim == 0 or int(x.shape[-1]) != feature_count:
+    if x.ndim == 0 or x.shape[-1] != feature_count:
         raise ValueError(f"Input must end in feature axis of size {feature_count}.")
     if (
         case_shape
         and x.ndim > len(case_shape)
-        and tuple(int(s) for s in x.shape[: len(case_shape)]) == case_shape
+        and tuple(x.shape[: len(case_shape)]) == case_shape
     ):
-        query_shape = tuple(int(s) for s in x.shape[len(case_shape) : -1])
+        query_shape = tuple(x.shape[len(case_shape) : -1])
         shaped = x.reshape(
             (
                 _case_count(case_shape),
@@ -120,7 +120,7 @@ def _prepare_queries(
             )
         )
     else:
-        query_shape = tuple(int(s) for s in x.shape[:-1])
+        query_shape = tuple(x.shape[:-1])
         shaped = jnp.broadcast_to(x, case_shape + x.shape).reshape(
             (
                 _case_count(case_shape),
@@ -151,7 +151,7 @@ def _weighted_quantile_one(values: Array, weights: Array, quantile: float) -> Ar
 
 
 def _weighted_threshold(values: Array, weights: Array, contamination: float) -> Array:
-    case_shape = tuple(int(s) for s in values.shape[:-1])
+    case_shape = tuple(values.shape[:-1])
     cases = _case_count(case_shape)
     result = jax.vmap(
         lambda score_, weight_: _weighted_quantile_one(

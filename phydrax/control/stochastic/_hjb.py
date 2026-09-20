@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
@@ -62,14 +63,14 @@ class BoundedUniformGrid1D(StrictModule, NonTrainableState):
                 "A bounded 1D reference grid requires at least three points."
             )
         spacing = (upper - lower) / (count - 1)
-        self.points = jnp.asarray(np.linspace(lower, upper, count, dtype=float))
+        self.points = jnp.asarray(np.linspace(lower, upper, count, dtype=jnp.float64))
         self.lower_bound = lower
         self.upper_bound = upper
         self.spacing = spacing
 
     @property
     def num_points(self) -> int:
-        return int(self.points.shape[0])
+        return self.points.shape[0]
 
     @property
     def interior_points(self) -> Array:
@@ -138,26 +139,23 @@ class DiscreteHJBProblem(StrictModule, NonTrainableState):
         expected_terminal = (spatial_grid.num_points,)
         if terminal.shape != expected_terminal:
             raise ValueError(
-                "terminal_values must have shape "
-                f"{expected_terminal}; got {terminal.shape}."
+                f"terminal_values must have shape {expected_terminal}; got {terminal.shape}."
             )
         boundary = _finite_real_array(boundary_values, "boundary_values")
         expected_boundary = (time_grid.num_times, 2)
         if boundary.shape != expected_boundary:
             raise ValueError(
-                "boundary_values must have shape "
-                f"{expected_boundary}; got {boundary.shape}."
+                f"boundary_values must have shape {expected_boundary}; got {boundary.shape}."
             )
         corner_residual = float(
             np.max(np.abs(boundary[-1] - terminal[[0, terminal.size - 1]]))
         )
         if corner_residual > tolerance:
             raise ValueError(
-                "Terminal values and final-time boundary data are incompatible at "
-                "the interval corners."
+                "Terminal values and final-time boundary data are incompatible at the interval corners."
             )
 
-        dtype = jnp.result_type(action_array, terminal, boundary, float)
+        dtype = jnp.result_type(action_array, terminal, boundary, jnp.float64)
         self.spatial_grid = spatial_grid
         self.time_grid = time_grid
         self.actions = jnp.asarray(action_array, dtype=dtype)
@@ -240,7 +238,7 @@ def _finite_real_array(value: ArrayLike, name: str, /) -> np.ndarray:
     array = np.asarray(value)
     if np.issubdtype(array.dtype, np.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
-    array = np.asarray(array, dtype=float)
+    array = np.asarray(array, dtype=np.float64)
     if not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must be finite.")
     return array
@@ -284,13 +282,13 @@ def _hjb_coefficients(
     problem: DiscreteHJBProblem,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
-    times = np.asarray(problem.time_grid.times, dtype=float)
-    points = np.asarray(problem.spatial_grid.points, dtype=float)
-    actions = np.asarray(problem.actions, dtype=float)
+    times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    points = np.asarray(problem.spatial_grid.points, dtype=np.float64)
+    actions = np.asarray(problem.actions, dtype=np.float64)
     shape = (times.size - 1, points.size - 2, actions.size)
-    drift = np.empty(shape, dtype=float)
-    variance = np.empty(shape, dtype=float)
-    cost = np.empty(shape, dtype=float)
+    drift = np.empty(shape, dtype=np.float64)
+    variance = np.empty(shape, dtype=np.float64)
+    cost = np.empty(shape, dtype=np.float64)
     maximum_courant = 0.0
     minimum_margin = 1.0
     dx = problem.spatial_grid.spacing
@@ -331,10 +329,9 @@ def _hjb_coefficients(
                 courant = duration * (abs(drift_value) / dx + variance_value / (dx * dx))
                 maximum_courant = max(maximum_courant, courant)
                 minimum_margin = min(minimum_margin, 1.0 - courant)
-    if minimum_margin < -32.0 * np.finfo(float).eps:
+    if minimum_margin < -32.0 * np.finfo(np.float64).eps:
         raise ValueError(
-            "The declared time and spatial grids violate the explicit monotone "
-            "upwind-diffusion step condition."
+            "The declared time and spatial grids violate the explicit monotone upwind-diffusion step condition."
         )
     return drift, variance, cost, maximum_courant, minimum_margin
 
@@ -360,10 +357,10 @@ def _hjb_hamiltonian(
 
 def _solve_hjb_raw(problem: DiscreteHJBProblem, /) -> _RawHJBSolution:
     drift, variance, cost, maximum_courant, minimum_margin = _hjb_coefficients(problem)
-    times = np.asarray(problem.time_grid.times, dtype=float)
-    boundary = np.asarray(problem.boundary_values, dtype=float)
-    terminal = np.asarray(problem.terminal_values, dtype=float)
-    values = np.empty((times.size, problem.spatial_grid.num_points), dtype=float)
+    times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    boundary = np.asarray(problem.boundary_values, dtype=np.float64)
+    terminal = np.asarray(problem.terminal_values, dtype=np.float64)
+    values = np.empty((times.size, problem.spatial_grid.num_points), dtype=np.float64)
     selectors = np.empty((times.size - 1, values.shape[1] - 2), dtype=np.int32)
     values[-1] = terminal
     for step in range(times.size - 2, -1, -1):
@@ -428,8 +425,8 @@ def _solve_hjb_raw(problem: DiscreteHJBProblem, /) -> _RawHJBSolution:
 
 
 def _refined_hjb_problem(problem: DiscreteHJBProblem, /) -> DiscreteHJBProblem:
-    coarse_times = np.asarray(problem.time_grid.times, dtype=float)
-    fractions = np.arange(4, dtype=float) / 4.0
+    coarse_times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    fractions = np.arange(4, dtype=np.float64) / 4.0
     refined_times = np.concatenate(
         tuple(
             coarse_times[index]
@@ -443,17 +440,25 @@ def _refined_hjb_problem(problem: DiscreteHJBProblem, /) -> DiscreteHJBProblem:
         problem.spatial_grid.upper_bound,
         2 * (problem.spatial_grid.num_points - 1) + 1,
     )
-    coarse_points = np.asarray(problem.spatial_grid.points, dtype=float)
-    refined_points = np.asarray(refined_grid.points, dtype=float)
-    terminal = np.interp(
-        refined_points, coarse_points, np.asarray(problem.terminal_values, dtype=float)
+    coarse_points = np.asarray(problem.spatial_grid.points, dtype=np.float64)
+    refined_points = np.asarray(refined_grid.points, dtype=np.float64)
+    terminal = np.asarray(
+        linear_interpolate(
+            coarse_points,
+            np.asarray(problem.terminal_values, dtype=np.float64),
+            refined_points,
+            bounds="clip",
+        ).values
     )
     boundary = np.column_stack(
         tuple(
-            np.interp(
-                refined_times,
-                coarse_times,
-                np.asarray(problem.boundary_values, dtype=float)[:, side],
+            np.asarray(
+                linear_interpolate(
+                    coarse_times,
+                    np.asarray(problem.boundary_values, dtype=np.float64)[:, side],
+                    refined_times,
+                    bounds="clip",
+                ).values
             )
             for side in range(2)
         )

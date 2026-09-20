@@ -30,7 +30,7 @@ with zero kinetic energy at the exact dry state.
 1. Chen--Noelle subcell hydrostatic reconstruction;
 2. dry-safe shallow-water HLL signal estimates;
 3. one shared conservative transport flux;
-4. separate owner and neighbour hydrostatic momentum corrections;
+4. separate owner and neighbor hydrostatic momentum corrections;
 5. an exact dry/dry zero-mass-flux route.
 
 The corrections have zero depth component. They are face-owned contributions, not a

@@ -67,7 +67,7 @@ def _prepared_workflow(*, limits=None, lumen_mask=None):
         1.06,
         reference_velocity_mm_per_ms=0.02,
     )
-    mask = np.ones((6, 4, 4), dtype=bool) if lumen_mask is None else lumen_mask
+    mask = np.ones((6, 4, 4), dtype="bool") if lumen_mask is None else lumen_mask
     lumen = FixedWallLumenRegion(mask)
     component = Resistance("terminal_resistance", 1.0)
     terminals = (
@@ -94,7 +94,7 @@ def _prepared_workflow(*, limits=None, lumen_mask=None):
 
 
 def test_static_lumen_mask_compiles_stationary_halfway_wall_links():
-    mask = np.ones((6, 4, 4), dtype=bool)
+    mask = np.ones((6, 4, 4), dtype="bool")
     mask[:, 0, :] = False
     prepared = _prepared_workflow(lumen_mask=mask)
     owner = np.asarray(prepared.boundary.topology.owner)
@@ -193,7 +193,7 @@ def test_scaling_and_rheology_refuse_outside_validity_envelopes():
         FixedWallLBMPlan(
             discretization,
             too_fast_relaxation,
-            FixedWallLumenRegion(np.ones((6, 4, 4), dtype=bool)),
+            FixedWallLumenRegion(np.ones((6, 4, 4), dtype="bool")),
             terminals,
             NewtonianRheology(0.004),
         )
@@ -386,7 +386,7 @@ def test_pressure_controlled_inflow_is_rejected_during_planning():
         FixedWallLBMPlan(
             discretization,
             scaling,
-            FixedWallLumenRegion(np.ones((6, 4, 4), dtype=bool)),
+            FixedWallLumenRegion(np.ones((6, 4, 4), dtype="bool")),
             (terminal,),
             NewtonianRheology(0.004),
         )
@@ -412,7 +412,7 @@ def test_fixed_wall_plan_refuses_non_d3q19_lattice():
         FixedWallLBMPlan(
             discretization,
             scaling,
-            FixedWallLumenRegion(np.ones((6, 4, 2), dtype=bool)),
+            FixedWallLumenRegion(np.ones((6, 4, 2), dtype="bool")),
             terminals,
             NewtonianRheology(0.004),
         )

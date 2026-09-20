@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -82,7 +84,7 @@ class CrystalElasticityResult(StrictModule, NonTrainableState):
         ).reshape(())
         self.minimum_stability_eigenvalue = jnp.min(self.stability_eigenvalues)
         self.stable = self.minimum_stability_eigenvalue > float(stability_tolerance)
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(()) & jnp.all(
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(()) & jnp.all(
             jnp.isfinite(self.stability_eigenvalues)
         )
         self.energy_unit = energy_unit
@@ -213,7 +215,7 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
         def energy_of_strain(voigt: np.ndarray) -> float:
             nonlocal all_successful
             deformation = identity + strain_matrix(voigt)
-            vectors = np.einsum("ij,kj->ki", deformation, reference_vectors)
+            vectors = ein.contract("ij,kj->ki", deformation, reference_vectors)
             deformed_cell = PeriodicCell(
                 vectors,
                 origin=np.asarray(cell.origin),
@@ -236,11 +238,11 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
         origin = np.zeros((6,), dtype=reference_vectors.dtype)
         energy = energy_of_strain(origin)
         step = self.strain_step
-        stress_voigt = np.zeros((6,), dtype=float)
-        stiffness = np.zeros((6, 6), dtype=float)
+        stress_voigt = np.zeros((6,), dtype=np.float64)
+        stiffness = np.zeros((6, 6), dtype=np.float64)
         unit_vectors = np.eye(6)
-        plus_energy = np.zeros((6,), dtype=float)
-        minus_energy = np.zeros((6,), dtype=float)
+        plus_energy = np.zeros((6,), dtype=np.float64)
+        minus_energy = np.zeros((6,), dtype=np.float64)
         for index in range(6):
             plus_energy[index] = energy_of_strain(step * unit_vectors[index])
             minus_energy[index] = energy_of_strain(-step * unit_vectors[index])
@@ -353,9 +355,9 @@ class CrystalNVEEvidence(StrictModule, NonTrainableState):
         maximum_relative_energy_drift: float,
         maximum_momentum_drift: float,
     ):
-        time = np.asarray(times, dtype=float)
-        energy = np.asarray(total_energies, dtype=float)
-        momentum = np.asarray(linear_momenta, dtype=float)
+        time = np.asarray(times, dtype=np.float64)
+        energy = np.asarray(total_energies, dtype=np.float64)
+        momentum = np.asarray(linear_momenta, dtype=np.float64)
         if (
             time.ndim != 1
             or time.size < 3
@@ -372,7 +374,7 @@ class CrystalNVEEvidence(StrictModule, NonTrainableState):
             or np.any(np.diff(time) <= 0.0)
         ):
             raise ValueError("NVE samples must be finite and strictly time ordered.")
-        energy_scale = max(float(np.max(np.abs(energy))), np.finfo(float).tiny)
+        energy_scale = max(float(np.max(np.abs(energy))), np.finfo(np.float64).tiny)
         slope = float(np.polyfit(time - time[0], energy, 1)[0])
         relative_drift = abs(slope) * float(time[-1] - time[0]) / energy_scale
         excursion = float(np.max(np.abs(energy - energy[0])) / energy_scale)

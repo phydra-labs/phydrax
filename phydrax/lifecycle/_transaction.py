@@ -40,7 +40,7 @@ class TransactionalCandidate(StrictModule, NonTrainableState, Generic[State, Evi
         identifier = str(source_id).strip()
         if not identifier:
             raise ValueError("source_id must be non-empty.")
-        accepted_ = jnp.asarray(accepted, dtype=bool)
+        accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
         if accepted_.shape != ():
             raise ValueError("accepted must be scalar.")
         self.source = source

@@ -180,7 +180,7 @@ def read_variable_patch_checkpoint(
         value_arrays = []
         for bucket_index, bucket in enumerate(level_plan.buckets):
             prefix = f"levels/{level:04d}/buckets/{bucket_index:04d}"
-            active = np.asarray(arrays[f"{prefix}/active"], dtype=bool)
+            active = np.asarray(arrays[f"{prefix}/active"], dtype=np.bool_)
             lower = np.asarray(arrays[f"{prefix}/lower"], dtype=np.int32)
             extent = np.asarray(arrays[f"{prefix}/extent"], dtype=np.int32)
             routes = np.asarray(arrays[f"{prefix}/route_indices"], dtype=np.int32)

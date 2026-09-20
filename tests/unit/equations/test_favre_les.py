@@ -777,10 +777,7 @@ def test_nodal_dg_semidiscrete_rhs_includes_gradient_aware_sgs_energy_rate():
             component_shape=(system.component_count,),
         ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},

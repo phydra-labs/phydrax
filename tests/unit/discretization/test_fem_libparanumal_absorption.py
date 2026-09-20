@@ -46,13 +46,30 @@ def test_generic_p_transfer_preserves_pairing():
 def test_p_degree_coarsening_policies_are_deterministic():
     assert phx.discretization.fem.FiniteElementPMultigridPolicy(
         "all-degrees"
-    ).degree_sequence("hexahedron", 5) == (5, 4, 3, 2, 1)
+    ).degree_sequence("hexahedron", 5) == (
+        5,
+        4,
+        3,
+        2,
+        1,
+    )
     assert phx.discretization.fem.FiniteElementPMultigridPolicy(
         "half-degrees"
-    ).degree_sequence("hexahedron", 8) == (8, 4, 2, 1)
+    ).degree_sequence("hexahedron", 8) == (
+        8,
+        4,
+        2,
+        1,
+    )
     assert phx.discretization.fem.FiniteElementPMultigridPolicy(
         "half-dofs"
-    ).degree_sequence("hexahedron", 8) == (8, 6, 4, 2, 1)
+    ).degree_sequence("hexahedron", 8) == (
+        8,
+        6,
+        4,
+        2,
+        1,
+    )
 
 
 def test_collocated_tensor_mass_path_is_identity_for_unit_data():

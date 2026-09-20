@@ -250,8 +250,8 @@ def test_measurement_streams_and_segment_merge_exclude_thermalization():
 
 
 def _continuum_data(spacings, site_counts):
-    spacings = np.asarray(spacings, dtype=float)
-    sites = np.asarray(site_counts, dtype=int)
+    spacings = np.asarray(spacings, dtype="float64")
+    sites = np.asarray(site_counts, dtype="int64")
     extents = spacings * sites
     values = 1.25 + 0.7 * spacings**2 + 0.4 / extents
     count = spacings.size

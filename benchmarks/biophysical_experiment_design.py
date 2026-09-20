@@ -18,7 +18,7 @@ def _candidate_panel(count: int) -> tuple[phx.uq.ExperimentalDesignCandidate, ..
             f"condition-{index:02d}",
             0.75 + 0.25 * (index % 3),
             "synthetic-assay",
-            "synthetic-finite-model-predictive-v1",
+            "synthetic-finite-model-predictive",
             setup_id=f"setup-{index // 4}",
             setup_cost=0.5,
             diversity_group=f"condition-family-{index % 4}",
@@ -29,8 +29,8 @@ def _candidate_panel(count: int) -> tuple[phx.uq.ExperimentalDesignCandidate, ..
 
 
 def _finite_model_channel(count: int) -> jnp.ndarray:
-    candidate = jnp.arange(count, dtype=float)[:, None]
-    model = jnp.arange(3, dtype=float)[None, :]
+    candidate = jnp.arange(count, dtype="float64")[:, None]
+    model = jnp.arange(3, dtype="float64")[None, :]
     success = 0.5 + 0.32 * jnp.sin(0.71 * candidate + 1.37 * model)
     return jnp.stack((1.0 - success, success), axis=-1)
 
@@ -76,7 +76,7 @@ def main() -> None:
         minimum_diversity_groups=2,
         maximum_per_diversity_group=1,
     )
-    coordinate = jnp.arange(args.candidates, dtype=float)
+    coordinate = jnp.arange(args.candidates, dtype="float64")
     separation = jnp.abs(coordinate[:, None] - coordinate[None, :])
     redundancy = jnp.exp(-separation / 2.0) - jnp.eye(args.candidates)
     select = lambda: phx.uq.select_experimental_batch(
@@ -85,7 +85,7 @@ def main() -> None:
         constraints,
         objective_id="synthetic-finite-model-information",
         model_ids=("synthetic-model-a", "synthetic-model-b", "synthetic-model-c"),
-        analysis_id="biophysical-experiment-design-benchmark-v1",
+        analysis_id="biophysical-experiment-design-benchmark",
         pairwise_redundancy=redundancy,
         redundancy_weight=0.05,
     )
@@ -110,7 +110,7 @@ def main() -> None:
         ),
         metric_id="synthetic-realized-model-ambiguity-reduction",
         model_ids=("synthetic-model-a", "synthetic-model-b", "synthetic-model-c"),
-        analysis_id="biophysical-experiment-design-benchmark-v1",
+        analysis_id="biophysical-experiment-design-benchmark",
         objective_id="synthetic-retrospective-replay",
         proposed_pairwise_redundancy=redundancy,
         proposed_redundancy_weight=0.05,

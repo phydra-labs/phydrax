@@ -8,7 +8,7 @@ def _case():
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     target = np.asarray(
         [[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]],
-        dtype=float,
+        dtype="float64",
     )
     structure = phx.atomistic.AtomicStructure(
         [8, 1, 1],

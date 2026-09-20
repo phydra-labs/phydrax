@@ -188,7 +188,7 @@ def _basis_normalizers(
         "rational_chebyshev_line",
         "rational_chebyshev_half_line",
     ):
-        return np.ones((count,), dtype=float)
+        return np.ones((count,), dtype=np.float64)
     if prepared.family == "legendre":
         length = float(np.asarray(prepared.length))
         return np.sqrt((2.0 * np.arange(count) + 1.0) / length)
@@ -210,7 +210,7 @@ def _trace_row(
             jnp.asarray((point,)),
             count - 1,
         )[0]
-        row = np.zeros((count,), dtype=float)
+        row = np.zeros((count,), dtype=np.float64)
         for term in constraint.terms:
             derivative = standard_derivative_matrix(
                 prepared.family,
@@ -242,7 +242,7 @@ def _constraint_matrix(
 
 
 def _canonical_columns(values: np.ndarray, /) -> np.ndarray:
-    result = np.asarray(values, dtype=float).copy()
+    result = np.asarray(values, dtype=np.float64).copy()
     for column in range(result.shape[1]):
         pivot = int(np.argmax(np.abs(result[:, column])))
         if result[pivot, column] < 0.0:
@@ -427,7 +427,7 @@ class BoundaryLiftPlan(StrictModule, NonTrainableState):
         if values_.shape != (len(conditions.constraints),):
             raise ValueError("Boundary lift values must match endpoint constraints.")
         if not jnp.issubdtype(values_.dtype, jnp.inexact):
-            values_ = values_.astype(float)
+            values_ = values_.astype("float64")
         values_ = eqx.error_if(
             values_,
             jnp.any(~jnp.isfinite(values_)),

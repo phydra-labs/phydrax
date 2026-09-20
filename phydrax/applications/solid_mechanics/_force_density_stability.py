@@ -92,7 +92,7 @@ def force_density_rigidity_matrix(
     margin = float(minimum_length)
     if not isfinite(margin) or margin <= 0.0:
         raise ValueError("minimum_length must be finite and positive.")
-    active = np.flatnonzero(np.asarray(structure.member_valid, dtype=bool))
+    active = np.flatnonzero(np.asarray(structure.member_valid, dtype=np.bool_))
     senders = structure.senders[active]
     receivers = structure.receivers[active]
     vectors = xyz[receivers] - xyz[senders]
@@ -118,7 +118,7 @@ def force_density_rigidity_matrix(
 
 
 def _gram_eigensolve(matrix: Array, problem_id: str, /) -> EigenSolveResult:
-    dimension = int(matrix.shape[0])
+    dimension = matrix.shape[0]
     if dimension <= 0:
         raise ValueError("Spectral mechanism analysis requires a nonempty space.")
     operator = DenseLinearOperator(
@@ -257,7 +257,7 @@ def analyze_force_density_tangent_stability(
 ) -> ForceDensityTangentStabilityResult:
     """Certify tangent positivity only when constitutive axial rigidity is supplied."""
     tangent = force_density_tangent_matrix(structure, state, axial_rigidities)
-    dimension = int(tangent.shape[0])
+    dimension = tangent.shape[0]
     operator = DenseLinearOperator(
         tangent,
         properties=OperatorProperties(

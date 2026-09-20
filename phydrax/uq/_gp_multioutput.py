@@ -48,7 +48,7 @@ class MultiOutputDesign(StrictModule):
         point_array = _as_points(points)
         output_array = jnp.asarray(output_index, dtype=jnp.int32)
         names = _output_names(output_names)
-        count = int(point_array.shape[0])
+        count = point_array.shape[0]
         if count <= 0:
             raise ValueError("Multi-output designs must contain at least one row.")
         if output_array.shape != (count,):
@@ -83,12 +83,12 @@ class MultiOutputDesign(StrictModule):
         """Flatten a point-by-output layout, optionally omitting missing channels."""
         point_array = _as_points(points)
         names = _output_names(output_names)
-        point_count = int(point_array.shape[0])
+        point_count = point_array.shape[0]
         output_count = len(names)
         active = (
-            jnp.ones((point_count, output_count), dtype=bool)
+            jnp.ones((point_count, output_count), dtype=jnp.bool_)
             if mask is None
-            else jnp.asarray(mask, dtype=bool)
+            else jnp.asarray(mask, dtype=jnp.bool_)
         )
         if active.shape != (point_count, output_count):
             raise ValueError("mask must have shape (point, output).")
@@ -107,7 +107,7 @@ class MultiOutputDesign(StrictModule):
 
     @property
     def num_observations(self) -> int:
-        return int(self.points.shape[0])
+        return self.points.shape[0]
 
     @property
     def num_outputs(self) -> int:
@@ -119,19 +119,19 @@ class MultiOutputDesign(StrictModule):
 
     def flatten(self, values: ArrayLike, /, *, name: str = "values") -> Array:
         """Align flat or dense point-by-output values to this design."""
-        array = jnp.asarray(values, dtype=float)
+        array = jnp.asarray(values, dtype=jnp.float64)
         if array.ndim == 1:
             if array.shape != (self.num_observations,):
                 raise ValueError(f"{name} must align with multi-output design rows.")
             return array
-        if array.ndim != 2 or int(array.shape[1]) != self.num_outputs:
+        if array.ndim != 2 or array.shape[1] != self.num_outputs:
             raise ValueError(
                 f"{name} must be flat or have one column per output channel."
             )
-        if int(array.shape[0]) == self.num_observations:
+        if array.shape[0] == self.num_observations:
             row_index = jnp.arange(self.num_observations, dtype=jnp.int32)
             return array[row_index, self.output_index]
-        if int(array.shape[0]) == self.num_sources:
+        if array.shape[0] == self.num_sources:
             return array[self.source_index, self.output_index]
         raise ValueError(f"{name} must align with design rows or source points.")
 
@@ -162,8 +162,8 @@ class Coregionalization(StrictModule):
         output_names: tuple[str, ...],
     ):
         names = _output_names(output_names)
-        weight_array = jnp.asarray(weights, dtype=float)
-        diagonal_array = jnp.asarray(diagonal_scale, dtype=float)
+        weight_array = jnp.asarray(weights, dtype=jnp.float64)
+        diagonal_array = jnp.asarray(diagonal_scale, dtype=jnp.float64)
         if weight_array.ndim != 2 or weight_array.shape[0] != len(names):
             raise ValueError("weights must have shape (output, latent_rank).")
         if weight_array.shape[1] <= 0:
@@ -277,10 +277,7 @@ class IntrinsicCoregionalizationKernel(AbstractMultiOutputKernel):
 
     @property
     def kernel_id(self) -> str:
-        return (
-            "IntrinsicCoregionalizationKernel["
-            f"{self.spatial_kernel.kernel_id},{self.coregionalization.kernel_id}]"
-        )
+        return f"IntrinsicCoregionalizationKernel[{self.spatial_kernel.kernel_id},{self.coregionalization.kernel_id}]"
 
 
 class LinearModelCoregionalizationKernel(AbstractMultiOutputKernel):
@@ -397,7 +394,7 @@ class MultiOutputGaussianProcessLikelihoodState(StrictModule):
     ):
         if not isinstance(kernel, AbstractMultiOutputKernel):
             raise TypeError("kernel must be an AbstractMultiOutputKernel.")
-        noise = jnp.asarray(noise_scale, dtype=float)
+        noise = jnp.asarray(noise_scale, dtype=jnp.float64)
         if noise.ndim > 1 or (noise.ndim == 1 and noise.shape[0] == 0):
             raise ValueError("noise_scale must be scalar or a nonempty vector.")
         if noise_layout not in ("output", "observation"):
@@ -408,7 +405,7 @@ class MultiOutputGaussianProcessLikelihoodState(StrictModule):
             and noise.shape[0] != len(kernel.output_names)
         ):
             raise ValueError("Output noise must contain one scale per output.")
-        jitter_array = jnp.asarray(jitter, dtype=float)
+        jitter_array = jnp.asarray(jitter, dtype=jnp.float64)
         if jitter_array.ndim != 0:
             raise ValueError("jitter must be scalar.")
         self.kernel = kernel
@@ -454,7 +451,7 @@ class MultiOutputGaussianProcessCondition(StrictModule):
         _validate_design(design, output_names=design.output_names)
         mean_array = design.flatten(mean, name="conditioned GP mean")
         variance_array = design.flatten(variance, name="conditioned GP variance")
-        covariance_array = jnp.asarray(covariance, dtype=float)
+        covariance_array = jnp.asarray(covariance, dtype=jnp.float64)
         count = design.num_observations
         if covariance_array.shape != (count, count):
             raise ValueError("Conditioned covariance must be square over query rows.")
@@ -548,20 +545,20 @@ class MultiOutputGaussianProcessDiscrepancy(StrictModule):
         mask: ArrayLike | None = None,
     ) -> MultiOutputGaussianProcessDiscrepancy:
         """Flatten a dense observation table while omitting masked channels."""
-        values = jnp.asarray(observations, dtype=float)
-        if values.ndim != 2 or int(values.shape[1]) <= 0:
+        values = jnp.asarray(observations, dtype=jnp.float64)
+        if values.ndim != 2 or values.shape[1] <= 0:
             raise ValueError("observations must have shape (point, output).")
         names = (
             tuple(f"output_{index}" for index in range(values.shape[1]))
             if output_names is None
             else _output_names(output_names)
         )
-        if len(names) != int(values.shape[1]):
+        if len(names) != values.shape[1]:
             raise ValueError("output_names must align with observation columns.")
         active = (
-            jnp.ones(values.shape, dtype=bool)
+            jnp.ones(values.shape, dtype=jnp.bool_)
             if mask is None
-            else jnp.asarray(mask, dtype=bool)
+            else jnp.asarray(mask, dtype=jnp.bool_)
         )
         if active.shape != values.shape:
             raise ValueError("mask must have the same shape as observations.")
@@ -708,7 +705,7 @@ class MultiOutputGaussianProcessDiscrepancy(StrictModule):
 
 
 def _as_points(value: ArrayLike) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim == 1:
         return array[:, None]
     if array.ndim != 2:

@@ -333,7 +333,7 @@ def linear_prediction(
     target_shape: tuple[int, ...],
 ) -> Array:
     """Evaluate case-aware dense or fixed-width sparse linear predictions."""
-    features = int(coefficients.shape[len(case_shape)])
+    features = coefficients.shape[len(case_shape)]
     outputs = _product(target_shape)
     cases = _product(case_shape)
     beta = coefficients.reshape((cases, features, outputs))
@@ -367,11 +367,11 @@ def linear_prediction(
         return result.reshape(case_shape + (x.sample_count,) + target_shape)
 
     values = jnp.asarray(x)
-    if values.ndim < 1 or int(values.shape[-1]) != features:
+    if values.ndim < 1 or values.shape[-1] != features:
         raise ValueError(f"Expected final feature dimension {features}.")
-    if tuple(int(size) for size in values.shape[: len(case_shape)]) != case_shape:
+    if tuple(values.shape[: len(case_shape)]) != case_shape:
         raise ValueError("Prediction input must begin with the fitted case shape.")
-    sample_shape = tuple(int(size) for size in values.shape[len(case_shape) : -1])
+    sample_shape = tuple(values.shape[len(case_shape) : -1])
     values_cases = values.reshape((cases,) + sample_shape + (features,))
     result = jax.vmap(lambda a, b, c: ein.contract("...f,fo->...o", a, b) + c)(
         values_cases, beta, bias
@@ -406,7 +406,7 @@ class AbstractLinearModel(AbstractArrayModel):
         )
         self.case_shape = tuple(case_shape)
         self.target_shape = tuple(target_shape)
-        self.in_size = int(self.coefficients.shape[len(case_shape)])
+        self.in_size = self.coefficients.shape[len(case_shape)]
         self.out_size = target_shape if target_shape else "scalar"
 
     def linear_predictor(self, x: Any, /) -> Array:
@@ -518,8 +518,8 @@ class MultinomialLogisticModel(AbstractArrayModel):
         )
         self.labels = jnp.asarray(labels)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(coefficients.shape[-2])
-        self.out_size = int(coefficients.shape[-1])
+        self.in_size = coefficients.shape[-2]
+        self.out_size = coefficients.shape[-1]
 
     def decision_function(self, x: Any, /) -> Array:
         return linear_prediction(
@@ -654,7 +654,9 @@ def iterative_fit(
     parameter_finite = jnp.all(_finite(coefficients), axis=(1, 2)) & jnp.all(
         _finite(intercept), axis=1
     )
-    extra = jnp.broadcast_to(jnp.asarray(extra_valid, dtype=bool), parameter_finite.shape)
+    extra = jnp.broadcast_to(
+        jnp.asarray(extra_valid, dtype=jnp.bool_), parameter_finite.shape
+    )
     valid = (
         prepared.data_valid
         & extra

@@ -39,7 +39,7 @@ MalliavinWeight: TypeAlias = Callable[[Array, Array, Array, Array, Any], Array]
 
 
 def _positive_shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner} must contain positive dimensions.")
     return shape
@@ -183,19 +183,19 @@ class FeynmanKacPathBatch(StrictModule):
     ):
         state_event = _positive_shape(state_shape, owner="state_shape")
         noise_event = _positive_shape(noise_shape, owner="noise_shape")
-        q_times = jnp.asarray(query_times, dtype=float).reshape((-1,))
+        q_times = jnp.asarray(query_times, dtype=jnp.float64).reshape((-1,))
         q_states = jnp.asarray(query_states)
         if q_states.shape != (q_times.shape[0],) + state_event:
             raise ValueError("query_states must have shape (num_queries,) + state_shape.")
-        time_values = jnp.asarray(times, dtype=float)
+        time_values = jnp.asarray(times, dtype=jnp.float64)
         if time_values.ndim != 2 or time_values.shape[0] != q_times.shape[0]:
             raise ValueError("times must have shape (num_queries, num_steps + 1).")
         if time_values.shape[1] < 2:
             raise ValueError("Continuation paths require at least one time step.")
         state_values = jnp.asarray(states)
         increment_values = jnp.asarray(wiener_increments)
-        num_paths = int(state_values.shape[1]) if state_values.ndim >= 3 else 0
-        num_steps = int(time_values.shape[1]) - 1
+        num_paths = state_values.shape[1] if state_values.ndim >= 3 else 0
+        num_steps = time_values.shape[1] - 1
         expected_states = (q_times.shape[0], num_paths, num_steps + 1) + state_event
         expected_increments = (q_times.shape[0], num_paths, num_steps) + noise_event
         if state_values.shape != expected_states:
@@ -207,13 +207,13 @@ class FeynmanKacPathBatch(StrictModule):
         if valid is None:
             validity = _event_finite(state_values, state_event)
         else:
-            validity = jnp.asarray(valid, dtype=bool)
+            validity = jnp.asarray(valid, dtype=jnp.bool_)
             if validity.shape != expected_states[:3]:
                 raise ValueError("valid must have shape (query, path, time).")
         if query_weights is None:
-            weights = jnp.ones((q_times.shape[0],), dtype=float)
+            weights = jnp.ones((q_times.shape[0],), dtype=jnp.float64)
         else:
-            weights = jnp.asarray(query_weights, dtype=float).reshape((-1,))
+            weights = jnp.asarray(query_weights, dtype=jnp.float64).reshape((-1,))
             if weights.shape != q_times.shape:
                 raise ValueError("query_weights must align with query_times.")
         if bool(jnp.any(~jnp.isfinite(weights))) or bool(jnp.any(weights < 0.0)):
@@ -294,8 +294,8 @@ class FeynmanKacLabelBatch(StrictModule):
         state_event = _positive_shape(state_shape, owner="state_shape")
         noise_event = _positive_shape(noise_shape, owner="noise_shape")
         output_event = _positive_shape(output_shape, owner="output_shape")
-        times = jnp.asarray(query_times, dtype=float).reshape((-1,))
-        count = int(times.shape[0])
+        times = jnp.asarray(query_times, dtype=jnp.float64).reshape((-1,))
+        count = times.shape[0]
         states = jnp.asarray(query_states)
         targets = jnp.asarray(value_targets)
         if states.shape != (count,) + state_event:
@@ -303,16 +303,16 @@ class FeynmanKacLabelBatch(StrictModule):
         if targets.shape != (count,) + output_event:
             raise ValueError("value_targets must have shape (count,) + output_shape.")
         if value_standard_errors is None:
-            value_errors = jnp.full(targets.shape, jnp.nan, dtype=float)
+            value_errors = jnp.full(targets.shape, jnp.nan, dtype=jnp.float64)
         else:
-            value_errors = jnp.asarray(value_standard_errors, dtype=float)
+            value_errors = jnp.asarray(value_standard_errors, dtype=jnp.float64)
             if value_errors.shape != targets.shape:
                 raise ValueError("value_standard_errors must match value_targets.")
         controls = None if control_targets is None else jnp.asarray(control_targets)
         control_errors = (
             None
             if control_standard_errors is None
-            else jnp.asarray(control_standard_errors, dtype=float)
+            else jnp.asarray(control_standard_errors, dtype=jnp.float64)
         )
         control_shape = (count,) + output_event + noise_event
         if controls is not None and controls.shape != control_shape:
@@ -325,7 +325,7 @@ class FeynmanKacLabelBatch(StrictModule):
             validity = jnp.isfinite(times) & _event_finite(states, state_event)
             validity = validity & _event_finite(targets, output_event)
         else:
-            validity = jnp.asarray(valid, dtype=bool).reshape((-1,))
+            validity = jnp.asarray(valid, dtype=jnp.bool_).reshape((-1,))
             if validity.shape != times.shape:
                 raise ValueError("valid must align with query_times.")
         if control_valid is None:
@@ -333,7 +333,7 @@ class FeynmanKacLabelBatch(StrictModule):
                 validity if controls is not None else jnp.zeros_like(validity)
             )
         else:
-            control_validity = jnp.asarray(control_valid, dtype=bool).reshape((-1,))
+            control_validity = jnp.asarray(control_valid, dtype=jnp.bool_).reshape((-1,))
             if control_validity.shape != times.shape:
                 raise ValueError("control_valid must align with query_times.")
         if controls is not None:
@@ -341,9 +341,9 @@ class FeynmanKacLabelBatch(StrictModule):
                 controls, output_event + noise_event
             )
         if sample_weights is None:
-            weights = jnp.ones((count,), dtype=float)
+            weights = jnp.ones((count,), dtype=jnp.float64)
         else:
-            weights = jnp.asarray(sample_weights, dtype=float).reshape((-1,))
+            weights = jnp.asarray(sample_weights, dtype=jnp.float64).reshape((-1,))
             if weights.shape != times.shape:
                 raise ValueError("sample_weights must align with query_times.")
         if bool(jnp.any(~jnp.isfinite(weights))) or bool(jnp.any(weights < 0.0)):
@@ -381,7 +381,7 @@ class FeynmanKacLabelBatch(StrictModule):
 
     @property
     def num_queries(self) -> int:
-        return int(self.query_times.shape[0])
+        return self.query_times.shape[0]
 
 
 class FeynmanKacLabelDiagnostics(StrictModule):
@@ -629,7 +629,7 @@ def _reverse_targets(
 
 def _continuation_valid(valid: Array, /, *, time_axis: int) -> Array:
     return jnp.flip(
-        jnp.cumprod(jnp.flip(valid, axis=time_axis), axis=time_axis).astype(bool),
+        jnp.cumprod(jnp.flip(valid, axis=time_axis), axis=time_axis).astype("bool"),
         axis=time_axis,
     )
 
@@ -697,7 +697,7 @@ def trajectory_node_feynman_kac_labels(
         quadrature=plan.quadrature,
     )
     continuation_valid = _continuation_valid(paths.valid, time_axis=time_axis)
-    nodes = int(paths.times.shape[0])
+    nodes = paths.times.shape[0]
     path_count = paths.num_paths
     query_times = jnp.broadcast_to(paths.times, paths.sample_shape + (nodes,)).reshape(
         (-1,)
@@ -746,11 +746,11 @@ def trajectory_node_feynman_kac_labels(
         interval_valid = jnp.take(
             continuation_valid, jnp.arange(1, nodes), axis=time_axis
         )
-        terminal_invalid = jnp.zeros(paths.sample_shape + (1,), dtype=bool)
+        terminal_invalid = jnp.zeros(paths.sample_shape + (1,), dtype=jnp.bool_)
         control_valid = jnp.concatenate(
             (interval_valid, terminal_invalid), axis=time_axis
         ).reshape((-1,))
-        control_errors = jnp.full(control_targets.shape, jnp.nan, dtype=float)
+        control_errors = jnp.full(control_targets.shape, jnp.nan, dtype=jnp.float64)
     elif plan.control_target_mode == "malliavin":
         raise ValueError(
             "Trajectory-node Malliavin targets require query-conditioned continuations."
@@ -765,7 +765,7 @@ def trajectory_node_feynman_kac_labels(
         problem_id=problem.problem_id,
         process_id=problem.process_id,
         plan_id=plan.plan_id,
-        value_standard_errors=jnp.full(value_targets.shape, jnp.nan, dtype=float),
+        value_standard_errors=jnp.full(value_targets.shape, jnp.nan, dtype=jnp.float64),
         control_targets=control_targets,
         control_standard_errors=control_errors,
         valid=valid,
@@ -820,7 +820,7 @@ def _resolve_queries(
     if states.shape[-len(problem.state_shape) :] != problem.state_shape:
         raise ValueError("query_states trailing dimensions must equal state_shape.")
     query_shape = states.shape[: -len(problem.state_shape)]
-    times = jnp.asarray(query_times, dtype=float)
+    times = jnp.asarray(query_times, dtype=jnp.float64)
     if times.shape != query_shape:
         raise ValueError("query_times must match the query-state leading shape.")
     times = times.reshape((-1,))
@@ -830,9 +830,9 @@ def _resolve_queries(
     ):
         raise ValueError("Query times must lie inside the sampling-plan interval.")
     if query_weights is None:
-        weights = jnp.ones(times.shape, dtype=float)
+        weights = jnp.ones(times.shape, dtype=jnp.float64)
     else:
-        weights = jnp.asarray(query_weights, dtype=float)
+        weights = jnp.asarray(query_weights, dtype=jnp.float64)
         if weights.shape != query_shape:
             raise ValueError("query_weights must match the query shape.")
         weights = weights.reshape((-1,))
@@ -899,7 +899,7 @@ def sample_feynman_kac_paths(
         raise ValueError("num_paths must be positive.")
     if plan.antithetic and path_count % 2:
         raise ValueError("Antithetic path batches require an even path count.")
-    query_count = int(q_times.shape[0])
+    query_count = q_times.shape[0]
     steps = plan.num_time_steps
     normalized = jnp.linspace(0.0, 1.0, steps + 1)
     durations = plan.terminal_time - q_times
@@ -985,7 +985,7 @@ def _aggregate_samples(
     *,
     antithetic: bool,
 ) -> tuple[Array, Array, Array, int]:
-    path_count = int(samples.shape[1])
+    path_count = samples.shape[1]
     if antithetic:
         half = path_count // 2
         valid_clusters = valid[:, :half] & valid[:, half:]

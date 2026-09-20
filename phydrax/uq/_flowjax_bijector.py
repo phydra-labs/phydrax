@@ -32,7 +32,7 @@ class FlowJAXBijectionAdapter(AbstractBijector):
             raise TypeError("bijection must be a FlowJAX AbstractBijection.")
         if bijection.cond_shape is not None:
             raise ValueError("Targeted FlowJAX bijections must be unconditional.")
-        shape = tuple(int(size) for size in bijection.shape)
+        shape = tuple(bijection.shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("FlowJAX bijection requires a non-empty event shape.")
         identifier = str(architecture_id).strip()
@@ -51,7 +51,7 @@ class FlowJAXBijectionAdapter(AbstractBijector):
         )
 
     def forward_shape(self, raw_shape: tuple[int, ...], /) -> tuple[int, ...]:
-        shape = tuple(int(size) for size in raw_shape)
+        shape = tuple(raw_shape)
         if shape != self.event_shape:
             raise ValueError(
                 f"Expected FlowJAX event shape {self.event_shape}; got {shape}."

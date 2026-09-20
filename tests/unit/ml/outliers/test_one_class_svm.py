@@ -77,7 +77,7 @@ def test_one_class_svm_case_axes_masks_and_inactive_dual_capacity():
     targets = jnp.stack(
         (jnp.sum(features, axis=-1), jnp.prod(features, axis=-1)), axis=-1
     )
-    feature_mask = jnp.ones_like(features, dtype=bool).at[:, 2, 1].set(False)
+    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 2, 1].set(False)
     sample_mask = jnp.array([True, True, True, True, True, True, True, False])
     recipe = OneClassSVMRecipe(nu=0.3, iterations=4, learning_rate=0.1, tolerance=1e6)
     result = recipe.fit_batch(
@@ -85,7 +85,7 @@ def test_one_class_svm_case_axes_masks_and_inactive_dual_capacity():
             features,
             targets,
             feature_mask=feature_mask,
-            target_mask=jnp.ones_like(targets, dtype=bool).at[:, 0, 0].set(False),
+            target_mask=jnp.ones_like(targets, dtype="bool").at[:, 0, 0].set(False),
             sample_mask=sample_mask,
             sample_weight=jnp.array([1.0, 1.2, 8.0, 1.1, 0.9, 1.4, 1.0, 9.0]),
             measure_weight=20.0,

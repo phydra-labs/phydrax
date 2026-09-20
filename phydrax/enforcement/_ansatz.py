@@ -81,7 +81,7 @@ class _InitialPolynomialCallable(StrictModule):
         self.coeffs = coeffs
         self.target_pos = target_pos
         self.var_pos = var_pos
-        self.t0 = jnp.asarray(t0, dtype=float).reshape(())
+        self.t0 = jnp.asarray(t0, dtype=jnp.float64).reshape(())
 
     def __call__(self, *args, key=None, **kwargs):
         def _mul_aligned(a: Any, b: Any, /) -> Array:
@@ -90,37 +90,37 @@ class _InitialPolynomialCallable(StrictModule):
             try:
                 return a_arr * b_arr
             except (TypeError, ValueError):
-                if a_arr.ndim == 2 and int(a_arr.shape[0]) == 1 and b_arr.ndim == 1:
+                if a_arr.ndim == 2 and a_arr.shape[0] == 1 and b_arr.ndim == 1:
                     return b_arr[:, None] * a_arr
-                if b_arr.ndim == 2 and int(b_arr.shape[0]) == 1 and a_arr.ndim == 1:
+                if b_arr.ndim == 2 and b_arr.shape[0] == 1 and a_arr.ndim == 1:
                     return a_arr[:, None] * b_arr
                 if a_arr.ndim == 1 and b_arr.ndim == 1:
                     return a_arr[:, None] * b_arr[None, :]
                 if (
                     a_arr.ndim == 1
                     and b_arr.ndim >= 2
-                    and int(a_arr.shape[0]) == int(b_arr.shape[0])
+                    and a_arr.shape[0] == b_arr.shape[0]
                 ):
-                    shape = (int(a_arr.shape[0]),) + (1,) * (b_arr.ndim - 1)
+                    shape = (a_arr.shape[0],) + (1,) * (b_arr.ndim - 1)
                     return a_arr.reshape(shape) * b_arr
                 if (
                     b_arr.ndim == 1
                     and a_arr.ndim >= 2
-                    and int(b_arr.shape[0]) == int(a_arr.shape[0])
+                    and b_arr.shape[0] == a_arr.shape[0]
                 ):
-                    shape = (int(b_arr.shape[0]),) + (1,) * (a_arr.ndim - 1)
+                    shape = (b_arr.shape[0],) + (1,) * (a_arr.ndim - 1)
                     return a_arr * b_arr.reshape(shape)
                 raise
 
         dt = None
         if self.var_pos is not None:
-            dt = jnp.asarray(args[self.var_pos], dtype=float) - self.t0
+            dt = jnp.asarray(args[self.var_pos], dtype=jnp.float64) - self.t0
 
-        out = jnp.asarray(0.0, dtype=float)
+        out = jnp.asarray(0.0, dtype=jnp.float64)
         dt_pow = (
-            jnp.ones_like(dt, dtype=float)
+            jnp.ones_like(dt, dtype=jnp.float64)
             if dt is not None
-            else jnp.asarray(1.0, dtype=float)
+            else jnp.asarray(1.0, dtype=jnp.float64)
         )
         for target, coeff, pos in zip(
             self.targets,
@@ -139,7 +139,7 @@ class _InitialPolynomialCallable(StrictModule):
 def _constant_weight(value: float, /) -> Callable[[Array], Array]:
     def _w(x, *, key=None, **kwargs):
         del x, key, kwargs
-        return jnp.asarray(value, dtype=float)
+        return jnp.asarray(value, dtype=jnp.float64)
 
     return _w
 
@@ -183,7 +183,7 @@ def _safe_norms(values: Array, /, *, keepdims: bool = False) -> Array:
     if values.ndim == 1:
         values = jnp.expand_dims(values, axis=-1)
     value_norms_squared = jnp.sum(jnp.square(values), axis=-1, keepdims=keepdims)
-    value_norms = jnp.sqrt(value_norms_squared + jnp.finfo(float).eps)
+    value_norms = jnp.sqrt(value_norms_squared + jnp.finfo(jnp.float64).eps)
     return value_norms
 
 
@@ -208,13 +208,13 @@ def _enforcement_weight_fn(
 
     where_wrapped = _ensure_special_kwonly_args(where)
 
-    bounds = jnp.asarray(geom.mesh_bounds, dtype=float)
+    bounds = jnp.asarray(geom.mesh_bounds, dtype=jnp.float64)
     diameter = float(jnp.linalg.norm(bounds[1] - bounds[0]) + 1e-12)
 
     n_ref = int(num_reference)
     ref_points = jnp.asarray(
         geom.sample_boundary(n_ref, sampler=sampler, key=key),
-        dtype=float,
+        dtype=jnp.float64,
     )
     mask = jax.vmap(where_wrapped)(ref_points)
     if int(jnp.sum(mask)) == 0:
@@ -224,8 +224,8 @@ def _enforcement_weight_fn(
             )
         return _constant_weight(0.0)
 
-    P = jnp.asarray(ref_points[mask], dtype=float)
-    ref_normals = jnp.asarray(geom._boundary_normals(P), dtype=float)
+    P = jnp.asarray(ref_points[mask], dtype=jnp.float64)
+    ref_normals = jnp.asarray(geom._boundary_normals(P), dtype=jnp.float64)
     ref_normals = ref_normals / (_safe_norms(ref_normals, keepdims=True) + 1e-12)
     N = ref_normals
 
@@ -249,7 +249,7 @@ def _enforcement_weight_fn(
         )
 
     def _mls_distance(x: Array, /) -> Array:
-        x = jnp.asarray(x, dtype=float).reshape((-1,))
+        x = jnp.asarray(x, dtype=jnp.float64).reshape((-1,))
 
         q_sel = jax.lax.stop_gradient(x)
         idx, valid = _select_candidates(q_sel)
@@ -303,7 +303,7 @@ def _enforcement_weight_fn(
     ) -> Array:
         del key, kwargs
         if isinstance(x, tuple):
-            coords = tuple(jnp.asarray(c, dtype=float) for c in x)
+            coords = tuple(jnp.asarray(c, dtype=jnp.float64) for c in x)
             if not coords:
                 raise ValueError("Weight function received an empty coord tuple.")
             if not all(c.ndim == 1 for c in coords):
@@ -316,26 +316,26 @@ def _enforcement_weight_fn(
                 )
             if len(coords) == 1:
                 return jax.vmap(
-                    lambda xi: _weight_from_point(jnp.asarray([xi], dtype=float))
+                    lambda xi: _weight_from_point(jnp.asarray([xi], dtype=jnp.float64))
                 )(coords[0])
 
             mesh = jnp.meshgrid(*coords, indexing="ij")
             flat_points = jnp.stack([m.reshape(-1) for m in mesh], axis=1)
             flat_weights = jax.vmap(_weight_from_point)(flat_points)
-            out_shape = tuple(int(c.shape[0]) for c in coords)
+            out_shape = tuple(c.shape[0] for c in coords)
             return flat_weights.reshape(out_shape)
 
-        x_arr = jnp.asarray(x, dtype=float)
+        x_arr = jnp.asarray(x, dtype=jnp.float64)
         if x_arr.ndim == 0:
-            return _weight_from_point(jnp.asarray([x_arr], dtype=float))
+            return _weight_from_point(jnp.asarray([x_arr], dtype=jnp.float64))
         if x_arr.ndim == 1:
-            if int(x_arr.shape[0]) != int(geom.spatial_dim):
+            if x_arr.shape[0] != int(geom.spatial_dim):
                 raise ValueError(
                     f"Boundary weight expected point shape ({int(geom.spatial_dim)},), got {x_arr.shape}."
                 )
             return _weight_from_point(x_arr)
         if x_arr.ndim == 2:
-            if int(x_arr.shape[1]) != int(geom.spatial_dim):
+            if x_arr.shape[1] != int(geom.spatial_dim):
                 raise ValueError(
                     f"Boundary weight expected point batch shape (N,{int(geom.spatial_dim)}), got {x_arr.shape}."
                 )
@@ -474,7 +474,7 @@ def enforce_dirichlet(
         elif isinstance(comp, FixedEnd):
             phi = t - factor.fixed("end")
         elif isinstance(comp, Fixed):
-            phi = t - jnp.asarray(comp.value, dtype=float).reshape(())
+            phi = t - jnp.asarray(comp.value, dtype=jnp.float64).reshape(())
         elif isinstance(comp, Boundary):
             phi = (t - factor.fixed("start")) * (t - factor.fixed("end"))
         else:
@@ -706,7 +706,7 @@ def enforce_robin(
     if neumann_coeff is None:
         return enforce_dirichlet(u, component, var=var, target=g / a)
     if not isinstance(neumann_coeff, DomainFunction) and not callable(neumann_coeff):
-        b_val = jnp.asarray(neumann_coeff, dtype=float)
+        b_val = jnp.asarray(neumann_coeff, dtype=jnp.float64)
         if b_val.shape == () and float(b_val) == 0.0:
             return enforce_dirichlet(u, component, var=var, target=g / a)
 
@@ -863,7 +863,7 @@ def enforce_initial(
     elif isinstance(comp, FixedEnd):
         t0 = factor.fixed("end")
     elif isinstance(comp, Fixed):
-        t0 = jnp.asarray(comp.value, dtype=float).reshape(())
+        t0 = jnp.asarray(comp.value, dtype=jnp.float64).reshape(())
     else:
         raise ValueError(
             "enforce_initial requires FixedStart/FixedEnd/Fixed for the evolution var."
@@ -950,8 +950,8 @@ def enforce_initial(
     if gate_eps_f <= 0.0:
         raise ValueError("gate_eps must be > 0.")
 
-    t_start = jnp.asarray(factor.fixed("start"), dtype=float).reshape(())
-    t_end = jnp.asarray(factor.fixed("end"), dtype=float).reshape(())
+    t_start = jnp.asarray(factor.fixed("start"), dtype=jnp.float64).reshape(())
+    t_end = jnp.asarray(factor.fixed("end"), dtype=jnp.float64).reshape(())
     if isinstance(comp, Fixed):
         # Use a symmetric distance scale around t0 so the gate saturates on the
         # larger side of the interval.

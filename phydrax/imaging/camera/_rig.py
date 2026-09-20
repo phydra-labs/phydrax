@@ -37,9 +37,9 @@ class CameraRig(StrictModule):
             raise TypeError("Every rig entry must be a CameraModel.")
         capacity = len(cameras_)
         if camera_valid is None:
-            valid_host = np.ones((capacity,), dtype=bool)
+            valid_host = np.ones((capacity,), dtype=np.bool_)
         else:
-            valid_host = np.asarray(camera_valid, dtype=bool)
+            valid_host = np.asarray(camera_valid, dtype=np.bool_)
             if valid_host.shape != (capacity,):
                 raise ValueError("camera_valid must have shape (capacity,).")
         if not np.any(valid_host):

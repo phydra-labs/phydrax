@@ -257,7 +257,7 @@ def _continuation_initialization(
         system.state_shape
     )
     algebraic_equations = system.structure.algebraic_equation_mask(system.state_shape)
-    residual_norm = _masked_rms(scaled, jnp.ones(system.state_shape, dtype=bool))
+    residual_norm = _masked_rms(scaled, jnp.ones(system.state_shape, dtype=jnp.bool_))
     differential_norm = _masked_rms(scaled, differential_equations)
     constraint_norm = _masked_rms(scaled, algebraic_equations)
     finite = (
@@ -285,7 +285,7 @@ def _continuation_initialization(
         rate_correction=zero,
         fixed_state_mask=prepared.initialization.fixed_state_mask,
         fixed_rate_mask=prepared.initialization.fixed_rate_mask,
-        rate_valid=jnp.ones(system.state_shape, dtype=bool) & valid,
+        rate_valid=jnp.ones(system.state_shape, dtype=jnp.bool_) & valid,
         residual_norm=residual_norm,
         residual_threshold=jnp.asarray(
             adaptive.residual_tolerance, dtype=residual_norm.dtype
@@ -310,7 +310,7 @@ def _stage_regularity(
     /,
 ):
     policy = prepared.plan.policy.regularity
-    dimension = int(prepared.problem.initial_state.size)
+    dimension = prepared.problem.initial_state.size
     if policy.mode == "periodic":
         requested = candidate_solved & ((accepted_count % policy.interval) == 0)
 
@@ -402,8 +402,8 @@ def _initialize_archives(prepared, initialization, /):
     nodes = _NodeArchive(
         states=nan_state.at[0].set(initialization.state),
         rates=nan_state.at[0].set(initialization.state_rate),
-        valid=jnp.zeros((node_count,), dtype=bool).at[0].set(initialization.valid),
-        rate_valid=jnp.zeros((node_count,) + problem.system.state_shape, dtype=bool)
+        valid=jnp.zeros((node_count,), dtype=jnp.bool_).at[0].set(initialization.valid),
+        rate_valid=jnp.zeros((node_count,) + problem.system.state_shape, dtype=jnp.bool_)
         .at[0]
         .set(initialization.rate_valid),
         status=jnp.full((node_count,), int(DAEStatus.NOT_RUN), dtype=jnp.int32)
@@ -434,7 +434,7 @@ def _initialize_archives(prepared, initialization, /):
         orders=jnp.zeros((accepted_capacity,), dtype=jnp.int32),
         error_ratios=jnp.full((accepted_capacity,), jnp.inf, dtype=dtype),
         source_attempts=jnp.full((accepted_capacity,), -1, dtype=jnp.int32),
-        valid=jnp.zeros((accepted_capacity,), dtype=bool),
+        valid=jnp.zeros((accepted_capacity,), dtype=jnp.bool_),
         save_indices=jnp.full((node_count,), -2, dtype=jnp.int32).at[0].set(-1),
     )
     attempts = _AttemptArchive(
@@ -458,7 +458,7 @@ def _initialize_archives(prepared, initialization, /):
         stale_retries=jnp.zeros((attempt_capacity,), dtype=jnp.int32),
         linear_rejections=jnp.zeros((attempt_capacity,), dtype=jnp.int32),
         residual_certifications=jnp.zeros((attempt_capacity,), dtype=jnp.int32),
-        valid=jnp.zeros((attempt_capacity,), dtype=bool),
+        valid=jnp.zeros((attempt_capacity,), dtype=jnp.bool_),
     )
     regularity = _RegularityArchive(
         status=jnp.full(
@@ -466,7 +466,7 @@ def _initialize_archives(prepared, initialization, /):
         ),
         rank=jnp.full((accepted_capacity,), -1, dtype=jnp.int32),
         condition=jnp.full((accepted_capacity,), jnp.nan, dtype=dtype),
-        valid=jnp.zeros((accepted_capacity,), dtype=bool),
+        valid=jnp.zeros((accepted_capacity,), dtype=jnp.bool_),
     )
     return nodes, steps, attempts, regularity
 
@@ -659,7 +659,7 @@ def _adaptive_primal(
     else:
         consistency_status, consistency_rank, consistency_condition = _initial_regularity(
             initialization,
-            int(problem.initial_state.size),
+            problem.initial_state.size,
             policy.regularity.condition_limit,
         )
     consistency_failed = (policy.regularity.failure == "status") & (
@@ -843,8 +843,8 @@ def _adaptive_primal(
             state_rate,
             args,
         )
-        residual_norm = _masked_rms(scaled, jnp.ones(system.state_shape, dtype=bool))
-        differential_norm = _masked_rms(scaled, differential_equations)
+        residual_norm = _masked_rms(scaled, jnp.ones(system.state_shape, dtype=jnp.bool_))
+        _masked_rms(scaled, differential_equations)
         constraint_norm = _masked_rms(scaled, algebraic_equations)
         correction = increment - predictor_increment
         coefficient = _error_coefficient(
@@ -912,7 +912,7 @@ def _adaptive_primal(
                 target_time,
                 current.time + step_size,
             )
-            event_derivative_valid = jnp.asarray(True)
+            jnp.asarray(True)
         else:
             from ._dae_events import record_dae_event, resolve_dae_event
 
@@ -977,7 +977,7 @@ def _adaptive_primal(
                     current.time + step_size,
                 ),
             )
-            event_derivative_valid = jnp.where(
+            jnp.where(
                 event_seen,
                 transition.derivative_valid,
                 True,
@@ -993,7 +993,7 @@ def _adaptive_primal(
         )
         effective_residual = _masked_rms(
             effective_scaled,
-            jnp.ones(system.state_shape, dtype=bool),
+            jnp.ones(system.state_shape, dtype=jnp.bool_),
         )
         effective_differential = _masked_rms(
             effective_scaled,
@@ -1092,7 +1092,7 @@ def _adaptive_primal(
                     rates=archive.rates.at[current.save_index].set(accepted_rate),
                     valid=archive.valid.at[current.save_index].set(True),
                     rate_valid=archive.rate_valid.at[current.save_index].set(
-                        jnp.ones(system.state_shape, dtype=bool)
+                        jnp.ones(system.state_shape, dtype=jnp.bool_)
                     ),
                     status=archive.status.at[current.save_index].set(
                         int(DAEStatus.SUCCESS)
@@ -1761,7 +1761,7 @@ def _replay_solution(
             args,
         )
         return (
-            _masked_rms(scaled, jnp.ones(system.state_shape, dtype=bool)),
+            _masked_rms(scaled, jnp.ones(system.state_shape, dtype=jnp.bool_)),
             _masked_rms(scaled, differential_equations),
             _masked_rms(scaled, algebraic_equations),
         )

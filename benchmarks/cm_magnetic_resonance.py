@@ -17,7 +17,7 @@ from phydrax.applications import magnetic_resonance as mr
 
 
 def _density(state):
-    value = jnp.asarray(state, dtype=complex)
+    value = jnp.asarray(state, dtype="complex128")
     return jnp.outer(value, jnp.conj(value))
 
 
@@ -42,7 +42,7 @@ def _case(site_count: int, sample_count: int, repeats: int) -> dict[str, Any]:
         warmup=0,
         repeats=repeats,
     )
-    plus_x = jnp.asarray([1.0, 1.0], dtype=complex) / jnp.sqrt(2.0)
+    plus_x = jnp.asarray([1.0, 1.0], dtype="complex128") / jnp.sqrt(2.0)
     product = plus_x
     for _ in range(site_count - 1):
         product = jnp.kron(product, plus_x)

@@ -94,7 +94,7 @@ class PluriharmonicPotential(AbstractArrayModel):
         trainable, _ = partition_trainable(provider)
         parameter_count = max(
             sum(
-                int(leaf.size)
+                leaf.size
                 for leaf in jax.tree_util.tree_leaves(trainable)
                 if eqx.is_inexact_array(leaf)
             ),
@@ -132,8 +132,7 @@ class PluriharmonicPotential(AbstractArrayModel):
         values = jnp.asarray(coordinates)
         if values.shape != (self.in_size,):
             raise ValueError(
-                f"Pluriharmonic potential expected shape ({self.in_size},); "
-                f"got {values.shape}."
+                f"Pluriharmonic potential expected shape ({self.in_size},); got {values.shape}."
             )
         return values
 

@@ -112,7 +112,7 @@ def transform_fourier_modal_material(
         else jnp.asarray(plan.region_mask)
     )
     jacobian = jnp.asarray(jacobian)
-    mask = jnp.asarray(mask, dtype=bool)
+    mask = jnp.asarray(mask, dtype=jnp.bool_)
     shape = lattice.plan.sample_shape
     if jacobian.shape == (*shape, 3):
         jacobian = jacobian[..., :, None] * jnp.eye(3, dtype=jacobian.dtype)

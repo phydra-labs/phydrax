@@ -90,7 +90,7 @@ def build_packed_bvh(
         extent = bmax_n - bmin_n
         axis = int(np.argmax(extent))
         vals = ctr[indices, axis]
-        mid = int(indices.size // 2)
+        mid = indices.size // 2
         part = np.argpartition(vals, mid)
         left_idx = indices[part[:mid]]
         right_idx = indices[part[mid:]]
@@ -105,7 +105,7 @@ def build_packed_bvh(
         max_depth = max(max_depth, ldepth, rdepth)
         return node, max_depth
 
-    n_items = int(bmin.shape[0])
+    n_items = bmin.shape[0]
     root, max_depth = _build(np.arange(n_items, dtype=np.int32), 0)
     if root != 0:
         raise RuntimeError("BVH build invariant violated: root must be node 0.")
@@ -180,7 +180,7 @@ def refit_packed_bvh_bounds(
     infinity = jnp.asarray(jnp.inf, dtype=item_min.dtype)
     leaf_min = jnp.min(jnp.where(valid_item[..., None], gathered_min, infinity), axis=1)
     leaf_max = jnp.max(jnp.where(valid_item[..., None], gathered_max, -infinity), axis=1)
-    node_count = int(left.shape[0])
+    node_count = left.shape[0]
     bbox_min = jnp.full((node_count, item_min.shape[1]), infinity, dtype=item_min.dtype)
     bbox_max = jnp.full((node_count, item_min.shape[1]), -infinity, dtype=item_min.dtype)
     bbox_min = bbox_min.at[leaf_node].set(leaf_min)
@@ -312,7 +312,7 @@ def _bounded_leaf_candidates(
     capacity = int(maximum_candidates)
     if capacity <= 0:
         raise ValueError("maximum_candidates must be positive.")
-    node_count = int(bvh.left.shape[0])
+    node_count = bvh.left.shape[0]
     stack_capacity = min(node_count, max(1, int(bvh.max_depth) + 2))
     stack = jnp.full((stack_capacity,), -1, dtype=jnp.int32).at[0].set(0)
     candidates = jnp.full((capacity,), -1, dtype=jnp.int32)
@@ -400,7 +400,7 @@ def _bounded_leaf_candidates(
 
 
 def _map_bounded_queries(query, arguments, query_batch_capacity: int, /):
-    count = int(arguments[0].shape[0])
+    count = arguments[0].shape[0]
     capacity = int(query_batch_capacity)
     if capacity <= 0:
         raise ValueError("query_batch_capacity must be positive.")

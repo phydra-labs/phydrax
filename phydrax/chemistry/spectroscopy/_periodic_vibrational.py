@@ -97,8 +97,8 @@ class PeriodicSpectroscopyEvidence(StrictModule, NonTrainableState):
         converged: ArrayLike,
         /,
     ):
-        neutrality = jnp.asarray(born_neutrality_residual, dtype=float).reshape(())
-        symmetry = jnp.asarray(raman_symmetry_residual, dtype=float).reshape(())
+        neutrality = jnp.asarray(born_neutrality_residual, dtype=jnp.float64).reshape(())
+        symmetry = jnp.asarray(raman_symmetry_residual, dtype=jnp.float64).reshape(())
         if (
             bool(~jnp.isfinite(neutrality))
             or bool(~jnp.isfinite(symmetry))
@@ -108,7 +108,7 @@ class PeriodicSpectroscopyEvidence(StrictModule, NonTrainableState):
             raise ValueError("Provider tensor residuals must be finite and non-negative.")
         self.born_neutrality_residual = neutrality
         self.raman_symmetry_residual = symmetry
-        self.converged = jnp.asarray(converged, dtype=bool).reshape(())
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "periodic-spectroscopy-evidence",
@@ -205,9 +205,9 @@ class PeriodicVibrationalSpectroscopyPlan(StrictModule, NonTrainableState):
         gamma_tolerance: float = 1.0e-10,
         tensor_tolerance: float = 1.0e-8,
     ):
-        mass = jnp.asarray(masses, dtype=float)
-        incident = jnp.asarray(incident_polarizations, dtype=float)
-        scattered = jnp.asarray(scattered_polarizations, dtype=float)
+        mass = jnp.asarray(masses, dtype=jnp.float64)
+        incident = jnp.asarray(incident_polarizations, dtype=jnp.float64)
+        scattered = jnp.asarray(scattered_polarizations, dtype=jnp.float64)
         labels = tuple(str(label).strip() for label in polarization_labels)
         thermal = float(temperature)
         laser = float(laser_angular_frequency)
@@ -288,7 +288,7 @@ class PeriodicVibrationalSpectrumResult(StrictModule, NonTrainableState):
         self.detailed_balance_residual = jnp.asarray(detailed_balance_residual).reshape(
             ()
         )
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.provider_result_id = str(provider_result_id)
         self.result_id = canonical_fingerprint(
@@ -335,8 +335,8 @@ def periodic_vibrational_lines(
     if tensors.raman_tensors.shape != (mode_count, 3, 3):
         raise ValueError("Provider Raman tensors must follow the Γ mode order exactly.")
     active = (
-        ~jnp.asarray(phonons.acoustic_mask[gamma_index], dtype=bool)
-        & ~jnp.asarray(phonons.imaginary_mask[gamma_index], dtype=bool)
+        ~jnp.asarray(phonons.acoustic_mask[gamma_index], dtype=jnp.bool_)
+        & ~jnp.asarray(phonons.imaginary_mask[gamma_index], dtype=jnp.bool_)
         & (frequencies > 0.0)
     )
     maximum_active_frequency = jnp.max(jnp.where(active, frequencies, 0.0))

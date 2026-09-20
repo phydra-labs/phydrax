@@ -150,7 +150,7 @@ def analytic_cases(trajectory_count):
         )
     )
     dephasing = fixture(2, dephasing=0.4, coupling=False)
-    plus = jnp.ones(2, dtype=complex) / jnp.sqrt(2.0)
+    plus = jnp.ones(2, dtype="complex128") / jnp.sqrt(2.0)
     decoherence = evolve_electronics(
         dephasing,
         density(plus),
@@ -244,7 +244,7 @@ def scaling_case(size, repeats, steps):
     return {
         "sites": size,
         "basis_dimension": model.dimension,
-        "channel_capacity": int(model.rates.shape[0]),
+        "channel_capacity": model.rates.shape[0],
         "active_channels": int(jnp.sum(model.active_jumps)),
         "liouville_elements": model.dimension**4,
         "steps": steps,

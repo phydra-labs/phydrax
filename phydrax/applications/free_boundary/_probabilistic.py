@@ -55,14 +55,14 @@ class ProbabilisticStefanBatch(StrictModule, NonTrainableState):
         test_centers: ArrayLike,
         test_inverse_widths: ArrayLike,
     ):
-        times_ = jnp.asarray(times, dtype=float)
-        points = jnp.asarray(domain_points, dtype=float)
-        weights = jnp.asarray(domain_weights, dtype=float)
-        initial = jnp.asarray(initial_solid_fraction, dtype=float)
-        liquid = jnp.asarray(liquid_paths, dtype=float)
-        solid = jnp.asarray(solid_paths, dtype=float)
-        centers = jnp.asarray(test_centers, dtype=float)
-        inverse_widths = jnp.asarray(test_inverse_widths, dtype=float)
+        times_ = jnp.asarray(times, dtype=jnp.float64)
+        points = jnp.asarray(domain_points, dtype=jnp.float64)
+        weights = jnp.asarray(domain_weights, dtype=jnp.float64)
+        initial = jnp.asarray(initial_solid_fraction, dtype=jnp.float64)
+        liquid = jnp.asarray(liquid_paths, dtype=jnp.float64)
+        solid = jnp.asarray(solid_paths, dtype=jnp.float64)
+        centers = jnp.asarray(test_centers, dtype=jnp.float64)
+        inverse_widths = jnp.asarray(test_inverse_widths, dtype=jnp.float64)
         if times_.ndim != 1 or times_.size < 2 or bool(jnp.any(jnp.diff(times_) <= 0.0)):
             raise ValueError("times must be a strictly increasing non-empty vector.")
         if points.ndim != 2 or min(points.shape) <= 0:
@@ -401,7 +401,7 @@ def _positive_float(value: float, name: str, /) -> float:
 
 
 def _positive_scalar(value: ArrayLike, name: str, /) -> Array:
-    scalar = jnp.asarray(value, dtype=float)
+    scalar = jnp.asarray(value, dtype=jnp.float64)
     if scalar.shape != () or not bool(jnp.isfinite(scalar)) or float(scalar) <= 0.0:
         raise ValueError(f"{name} must be one finite positive scalar.")
     return scalar

@@ -101,15 +101,15 @@ def test_periodic_leray_removes_gradient_rhs_and_is_idempotent_in_three_dimensio
         )
     )
     projector = phx.discretization.PeriodicLerayProjector(space)
-    potential = jnp.ones(space.modal_shape, dtype=complex)
+    potential = jnp.ones(space.modal_shape, dtype="complex128")
     gradient = jnp.stack(
         tuple(1j * wave * potential for wave in projector.wavenumbers), axis=-1
     )
     projected_gradient = projector.project(gradient)
     candidate = (
-        jnp.arange(projector.state_size, dtype=float)
+        jnp.arange(projector.state_size, dtype="float64")
         .reshape(projector.state_shape)
-        .astype(complex)
+        .astype("complex128")
     )
     projected = projector.project(candidate)
 
@@ -256,11 +256,11 @@ def _manufactured_nonzero_channel_mode(space, prepared, ix, iz):
     velocity_u = (1j * kx * derivative_v - 1j * kz * vorticity) / wave_square
     velocity_w = (1j * kz * derivative_v + 1j * kx * vorticity) / wave_square
     pressure = analysis @ ((0.2 - 0.1j) * y)
-    velocity = jnp.zeros(space.modal_shape + (3,), dtype=complex)
+    velocity = jnp.zeros(space.modal_shape + (3,), dtype="complex128")
     velocity = velocity.at[ix, :, iz].set(
         jnp.stack((velocity_u, wall_normal, velocity_w), axis=-1)
     )
-    pressure_modes = jnp.zeros(space.modal_shape, dtype=complex)
+    pressure_modes = jnp.zeros(space.modal_shape, dtype="complex128")
     pressure_modes = pressure_modes.at[ix, :, iz].set(pressure)
     second_derivative = oe.contract(
         "ij,xjzc->xizc", derivative @ derivative, velocity, backend="jax"
@@ -378,11 +378,11 @@ def test_channel_zero_mode_recovers_pressure_and_preserves_all_wall_traces():
     zero_rhs = zero_rhs.at[0, 0].add(-scale * imposed_gradient[0])
     zero_rhs = zero_rhs.at[0, 2].add(-scale * imposed_gradient[1])
     zero_rhs = zero_rhs.at[:, 1].add(derivative @ zero_pressure)
-    rhs = jnp.zeros(space.modal_shape + (3,), dtype=complex)
+    rhs = jnp.zeros(space.modal_shape + (3,), dtype="complex128")
     rhs = rhs.at[0, :, 0].set(zero_rhs)
     expected_velocity = jnp.zeros_like(rhs).at[0, :, 0].set(zero_velocity)
     expected_pressure = (
-        jnp.zeros(space.modal_shape, dtype=complex).at[0, :, 0].set(zero_pressure)
+        jnp.zeros(space.modal_shape, dtype="complex128").at[0, :, 0].set(zero_pressure)
     )
     banded_result = banded.solve(rhs)
     dense_result = dense.solve(rhs)

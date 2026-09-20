@@ -48,7 +48,7 @@ class BDFMethod(StrictModule, NonTrainableState):
 
 
 def _derivative_coefficients(nodes: Array, /) -> Array:
-    count = int(nodes.shape[0])
+    count = nodes.shape[0]
     scale = nodes[0] - nodes[1]
     offsets = (nodes - nodes[0]) / scale
     rows = [jnp.ones_like(offsets)]
@@ -115,7 +115,7 @@ def bdf_rate(
 
 
 def _extrapolate(nodes: Array, values: Array, target: Array, /) -> Array:
-    count = int(nodes.shape[0])
+    count = nodes.shape[0]
     weights = []
     for index in range(count):
         numerator = jnp.asarray(1.0, dtype=nodes.dtype)

@@ -37,12 +37,12 @@ def _matrix_and_rhs(
         raise ValueError(f"{name} and its right-hand side must be supplied together.")
     matrix_ = jnp.asarray(matrix)
     rhs_ = jnp.asarray(rhs)
-    if matrix_.ndim < 2 or int(matrix_.shape[-1]) != variables:
+    if matrix_.ndim < 2 or matrix_.shape[-1] != variables:
         raise ValueError(
             f"{name} must end in shape (constraints, {variables}); got {matrix_.shape}."
         )
-    rows = int(matrix_.shape[-2])
-    if rhs_.ndim < 1 or int(rhs_.shape[-1]) != rows:
+    rows = matrix_.shape[-2]
+    if rhs_.ndim < 1 or rhs_.shape[-1] != rows:
         raise ValueError(f"The right-hand side for {name} must end in shape ({rows},).")
     if jnp.issubdtype(matrix_.dtype, jnp.complexfloating) or jnp.issubdtype(
         rhs_.dtype, jnp.complexfloating
@@ -52,7 +52,7 @@ def _matrix_and_rhs(
 
 
 def _broadcast_shape(shapes: Sequence[tuple[int, ...]], /) -> tuple[int, ...]:
-    return tuple(int(size) for size in np.broadcast_shapes(*shapes))
+    return tuple(np.broadcast_shapes(*shapes))
 
 
 def _conic_bound_indices(
@@ -161,7 +161,7 @@ class ConicProgram(StrictModule):
         rhs = jnp.asarray(constraint_rhs)
         if linear_.ndim < 1:
             raise ValueError("linear must have at least one dimension.")
-        variables = int(linear_.shape[-1])
+        variables = linear_.shape[-1]
         if variables < 1:
             raise ValueError("ConicProgram requires at least one decision variable.")
         matrix_sparse = isinstance(constraint_matrix, AbstractSparseLinearOperator)
@@ -178,21 +178,21 @@ class ConicProgram(StrictModule):
                     "Sparse constraint_matrix must map the variable vector to "
                     "one constraint vector and provide transpose action."
                 )
-            constraints = int(matrix.target.shape[0])
+            constraints = matrix.target.shape[0]
             matrix_dtype = matrix.source.dtype
             matrix_batch = matrix.batch_shape
             matrix_topology = matrix.operator_id
         else:
             matrix = jnp.asarray(constraint_matrix)
-            if matrix.ndim < 2 or int(matrix.shape[-1]) != variables:
+            if matrix.ndim < 2 or matrix.shape[-1] != variables:
                 raise ValueError(
                     "constraint_matrix must end in shape (constraints, variables)."
                 )
-            constraints = int(matrix.shape[-2])
+            constraints = matrix.shape[-2]
             matrix_dtype = matrix.dtype
             matrix_batch = matrix.shape[:-2]
             matrix_topology = "dense"
-        if rhs.ndim < 1 or int(rhs.shape[-1]) != constraints:
+        if rhs.ndim < 1 or rhs.shape[-1] != constraints:
             raise ValueError(
                 f"constraint_rhs must end in shape ({constraints},); got {rhs.shape}."
             )
@@ -288,9 +288,9 @@ class ConicProgram(StrictModule):
         self.num_constraints = constraints
         self.constraint_is_sparse = matrix_sparse
         self.quadratic_is_sparse = quadratic_sparse
-        self.fixed_bound_indices = tuple(int(index) for index in fixed_indices)
-        self.lower_bound_indices = tuple(int(index) for index in lower_indices)
-        self.upper_bound_indices = tuple(int(index) for index in upper_indices)
+        self.fixed_bound_indices = tuple(fixed_indices)
+        self.lower_bound_indices = tuple(lower_indices)
+        self.upper_bound_indices = tuple(upper_indices)
         self.problem_id = identifier
         self.convexity_evidence = evidence
         self.structure_id = canonical_fingerprint(
@@ -352,7 +352,7 @@ class LinearProgram(StrictModule):
         linear_ = jnp.asarray(linear)
         if linear_.ndim < 1:
             raise ValueError("linear must have at least one dimension.")
-        variables = int(linear_.shape[-1])
+        variables = linear_.shape[-1]
         if variables < 1:
             raise ValueError("LinearProgram requires at least one decision variable.")
         if jnp.issubdtype(linear_.dtype, jnp.complexfloating):
@@ -373,8 +373,8 @@ class LinearProgram(StrictModule):
             dtype=dtype,
             name="inequality_matrix",
         )
-        equalities = int(equality.shape[-2])
-        inequalities = int(inequality.shape[-2])
+        equalities = equality.shape[-2]
+        inequalities = inequality.shape[-2]
         batch = _broadcast_shape(
             (
                 linear_.shape[:-1],

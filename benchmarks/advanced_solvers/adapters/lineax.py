@@ -71,7 +71,7 @@ class LineaxAdapter(BenchmarkAdapter):
             spec=spec,
             matrix=jnp.asarray(dense_matrix),
             rhs=jnp.asarray(spec.problem.rhs),
-            host_to_device_bytes=int(dense_matrix.nbytes + spec.problem.rhs.nbytes),
+            host_to_device_bytes=dense_matrix.nbytes + spec.problem.rhs.nbytes,
         )
 
     def compilation_applicable(self, setup_state: _LineaxState, /) -> bool:
@@ -147,7 +147,7 @@ class LineaxAdapter(BenchmarkAdapter):
     ) -> dict[str, Any]:
         del result
         return {
-            "matrix_bytes": int(prepared_state.matrix.nbytes),
+            "matrix_bytes": prepared_state.matrix.nbytes,
             "setup_bytes": 0,
             "peak_estimate_bytes": None,
             "evidence": (

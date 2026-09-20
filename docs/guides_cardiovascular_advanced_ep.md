@@ -12,7 +12,7 @@ do not substitute either reduced route for ionic tissue electrophysiology.
 
 ## Units, signs, and supports
 
-The cardiovascular kernel uses millimetres and milliseconds. Eikonal squared-
+The cardiovascular kernel uses millimeters and milliseconds. Eikonal squared-
 velocity tensors therefore have units `mm2/ms2`. Conductivity tensors use
 `mS/mm`; voltage and potential use `mV`; nodal reaction and pacing data use
 `uA/mm3`. PMJ coupling conductance uses `mS`, so `mS * mV = uA` without a hidden
@@ -30,7 +30,7 @@ or fixed node-index array; inactive fixed-capacity slots use stable ID `-1`.
 The graph route preserves the supplied undirected edges. The FEM route derives a
 complete fallback edge stencil and causal affine-simplex roots on each line,
 triangle, or tetrahedron while retaining the simplex topology identity. A local
-root solves `grad(T)^T C grad(T) = 1`; a noncausal root is rejected in favour of
+root solves `grad(T)^T C grad(T) = 1`; a noncausal root is rejected in favor of
 the anisotropic edge update, as required on obtuse characteristics.
 
 For edge displacement `dx` and the endpoint-averaged squared-velocity tensor
@@ -40,7 +40,7 @@ For edge displacement `dx` and the endpoint-averaged squared-velocity tensor
 dt = sqrt(dx^T C^-1 dx).
 ```
 
-Thus, a fibre-axis eigenvalue of `4 mm2/ms2` corresponds to speed `2 mm/ms`.
+Thus, a fiber-axis eigenvalue of `4 mm2/ms2` corresponds to speed `2 mm/ms`.
 The solver runs a fixed number of synchronous graph/simplex sweeps. It reports
 reachability, the maximum update defect, deterministic diagnostic predecessors,
 and the smallest selected-update margin.
@@ -84,7 +84,7 @@ transaction:
 - an arrival before the target refractory deadline is recorded and rejected;
 - a blocked edge records an `EDGE_BLOCK` outcome and launches no wave;
 - antiparallel waves with overlapping edge transit collide at their analytic
-  meeting time and both node-arrival events are cancelled;
+  meeting time and both node-arrival events are canceled;
 - overflow leaves the accepted state unchanged and exposes the candidate state.
 
 ```python

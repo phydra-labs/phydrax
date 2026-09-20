@@ -81,7 +81,7 @@ def _problem():
 
 def _state_bytes(state) -> int:
     return sum(
-        int(np.asarray(jax.device_get(leaf)).nbytes)
+        np.asarray(jax.device_get(leaf)).nbytes
         for leaf in jax.tree.leaves(state)
         if eqx_is_array(leaf)
     )

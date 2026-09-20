@@ -98,8 +98,8 @@ class SparseReducedPotentialDataset(StrictModule, NonTrainableState):
                 "values must have shape (states, capacity) with at least two states."
             )
         state_count, capacity = potential.shape
-        covered = jnp.asarray(coverage, dtype=bool)
-        active = jnp.asarray(sample_active, dtype=bool)
+        covered = jnp.asarray(coverage, dtype=jnp.bool_)
+        active = jnp.asarray(sample_active, dtype=jnp.bool_)
         origin = _index_array(origin_state, "origin_state")
         chain = _index_array(chain_index, "chain_index")
         draw = _index_array(draw_index, "draw_index")
@@ -274,7 +274,7 @@ class SparsePairwiseFreeEnergyNetworkResult(StrictModule, NonTrainableState):
                 "kind": "sparse-pairwise-free-energy-network-result",
                 "dataset_id": identity,
                 "edges": edges,
-                "edge_analyses": tuple(value.analysis_id for value in results),
+                "edge_analyzes": tuple(value.analysis_id for value in results),
                 "network_analysis": network_result.analysis_id,
             }
         )

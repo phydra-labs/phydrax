@@ -23,6 +23,7 @@ from ...discretization._lattice_boundary import (
     LatticeBoundaryPhasePlan,
 )
 from ...graph._gauge_transport import GaugeCovariantShiftPlan
+from ...linalg import FactorizationPolicy, inverse as invert_matrix
 from ...linalg._operators import AbstractLinearOperator
 from ...linalg._properties import (
     LinearCapabilityError,
@@ -67,8 +68,7 @@ class LatticeFermionResourcePolicy(StrictModule):
         maximum_rational_poles: int = 256,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_sites,
                 maximum_spin_components,
                 maximum_color_components,
@@ -287,7 +287,7 @@ def _validated_gamma(
         chirality = jnp.asarray(gamma5, dtype=dtype)
     if gamma.ndim != 3 or gamma.shape[0] != dimension or gamma.shape[1] != gamma.shape[2]:
         raise ValueError("gamma_matrices must have shape (dimension, spin, spin).")
-    spin = int(gamma.shape[1])
+    spin = gamma.shape[1]
     if chirality.shape != (spin, spin):
         raise ValueError("gamma5 must have shape (spin, spin).")
     host_gamma = np.asarray(gamma)
@@ -517,7 +517,7 @@ def _initialize_lattice_operator(
     /,
 ) -> None:
     site_count = boundary.site_count
-    spin = int(gamma_matrices.shape[-1])
+    spin = gamma_matrices.shape[-1]
     dtype = np.dtype(gamma_matrices.dtype)
     space = canonical_site_spinor_space(
         site_count,
@@ -934,15 +934,14 @@ class CloverWilsonDiracOperator(AbstractLatticeDiracOperator):
             + wilson.dimension * wilson.wilson_parameter / wilson.lattice_spacing
         )
         local = matrices + diagonal * jnp.eye(block_size, dtype=clover.dtype)[None]
-        inverse = jnp.linalg.inv(local)
+        inverse_result = invert_matrix(local, FactorizationPolicy("lu"))
+        inverse = inverse_result.value
         identity = jnp.eye(block_size, dtype=clover.dtype)[None]
         left_residual = jnp.max(jnp.abs(local @ inverse - identity), axis=(-2, -1))
         right_residual = jnp.max(jnp.abs(inverse @ local - identity), axis=(-2, -1))
-        singular_values = jnp.linalg.svd(local, compute_uv=False)
-        condition = singular_values[:, 0] / singular_values[:, -1]
+        condition = inverse_result.diagnostics.condition_estimate
         finite = (
-            jnp.all(jnp.isfinite(inverse), axis=(-2, -1))
-            & jnp.isfinite(condition)
+            inverse_result.successful
             & (left_residual <= tolerance)
             & (right_residual <= tolerance)
         )
@@ -1945,8 +1944,8 @@ class RationalSignApproximation(StrictModule):
         spectral_upper_bound: float,
         maximum_error: float,
     ):
-        shifts_ = np.asarray(shifts, dtype=float)
-        weights_ = np.asarray(weights, dtype=float)
+        shifts_ = np.asarray(shifts, dtype=np.float64)
+        weights_ = np.asarray(weights, dtype=np.float64)
         if shifts_.ndim != 1 or shifts_.size < 1 or shifts_.shape != weights_.shape:
             raise ValueError("shifts and weights must be equal nonempty vectors.")
         if np.any(~np.isfinite(shifts_)) or np.any(shifts_ <= 0.0):
@@ -1979,7 +1978,7 @@ class RationalSignApproximation(StrictModule):
 
     @property
     def pole_count(self) -> int:
-        return int(self.shifts.size)
+        return self.shifts.size
 
     def inverse_square_root_function(
         self, dtype: Any, /

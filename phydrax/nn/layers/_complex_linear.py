@@ -98,7 +98,7 @@ class ComplexLinear(_AbstractBaseModel):
         out_shape = self._out_value_shape
         if out_shape:
             return output.reshape(leading + out_shape)
-        if int(output.shape[-1]) != 1:
+        if output.shape[-1] != 1:
             raise ValueError("Scalar ComplexLinear output requires one feature.")
         return jnp.squeeze(output, axis=-1)
 

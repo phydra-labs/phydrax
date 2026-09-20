@@ -52,7 +52,7 @@ class RaggedSeriesSupervisedBatch(StrictModule):
         indices: ArrayLike,
     ):
         self.points = points
-        self.target = jnp.asarray(target, dtype=float)
+        self.target = jnp.asarray(target, dtype=jnp.float64)
         self.indices = jnp.asarray(indices, dtype=jnp.int32)
 
 
@@ -123,8 +123,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         """
         if not isinstance(component.domain, RaggedSeriesDatasetDomain):
             raise TypeError(
-                "RaggedSeriesSupervisedTerm requires a "
-                "RaggedSeriesDatasetDomain component."
+                "RaggedSeriesSupervisedTerm requires a RaggedSeriesDatasetDomain component."
             )
         sampling_ = normalize_case_sampling(
             sampling,
@@ -148,8 +147,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
             "suffix",
         ):
             raise ValueError(
-                "series_sampling must be 'full', 'points_uniform', "
-                "'window_uniform', 'prefix', or 'suffix'."
+                "series_sampling must be 'full', 'points_uniform', 'window_uniform', 'prefix', or 'suffix'."
             )
         series_sampling_value: RaggedSeriesSampling
         if series_sampling_str == "full":
@@ -183,10 +181,10 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         self.num_series_points = n_series_points
         self.values = _validate_targets(domain, values)
         if isinstance(weight, DomainFunction):
-            self.weight = jnp.asarray(1.0, dtype=float)
+            self.weight = jnp.asarray(1.0, dtype=jnp.float64)
             self.pointwise_weight = weight
         else:
-            self.weight = jnp.asarray(weight, dtype=float)
+            self.weight = jnp.asarray(weight, dtype=jnp.float64)
             self.pointwise_weight = None
         self.indices = validate_case_indices(
             indices,
@@ -194,7 +192,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
             name="indices",
         )
         self.label = None if label is None else str(label)
-        self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=float)
+        self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=jnp.float64)
 
     @classmethod
     def bucketed(
@@ -225,8 +223,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         """
         if not isinstance(component.domain, RaggedSeriesDatasetDomain):
             raise TypeError(
-                "RaggedSeriesSupervisedTerm.bucketed requires a "
-                "RaggedSeriesDatasetDomain component."
+                "RaggedSeriesSupervisedTerm.bucketed requires a RaggedSeriesDatasetDomain component."
             )
         sampling_ = normalize_case_sampling(
             sampling,
@@ -385,7 +382,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         return supervised_data_metrics(
-            jnp.asarray(prediction.data, dtype=float),
+            jnp.asarray(prediction.data, dtype=jnp.float64),
             batch_.target,
             eps=self.data_accuracy_eps,
         )
@@ -405,7 +402,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         per_sample = supervised_per_sample_squared_error(
-            jnp.asarray(prediction.data, dtype=float),
+            jnp.asarray(prediction.data, dtype=jnp.float64),
             batch_.target,
         )
 
@@ -413,14 +410,14 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
             w = self.pointwise_weight(batch_.points, key=key, **kwargs)
             if not isinstance(w, cx.AxisArray):
                 raise TypeError("pointwise weight must return a phydrax.axes.AxisArray.")
-            w_arr = jnp.asarray(w.data, dtype=float)
+            w_arr = jnp.asarray(w.data, dtype=jnp.float64)
             if w_arr.ndim == 0:
                 per_sample = per_sample * w_arr
             else:
                 per_sample = per_sample * jnp.squeeze(w_arr).reshape((-1,))
 
         reduced = reduce_supervised_loss(per_sample, reduction=self.reduction)
-        return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
+        return self.weight * jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
 
 def _balanced_length_bucket_groups(
@@ -433,7 +430,7 @@ def _balanced_length_bucket_groups(
     n_buckets = int(num_buckets)
     if n_buckets <= 0:
         raise ValueError("num_buckets must be positive.")
-    n_buckets = min(n_buckets, int(case_indices.shape[0]))
+    n_buckets = min(n_buckets, case_indices.shape[0])
     order = np.argsort(lengths, kind="stable")
     groups: list[tuple[np.ndarray, int]] = []
     for order_group in np.array_split(order, n_buckets):
@@ -454,16 +451,16 @@ def _bucket_case_counts(
     sizes = np.asarray(bucket_sizes, dtype=np.int32)
     if sizes.ndim != 1:
         raise ValueError("bucket_sizes must have shape (B,).")
-    if int(sizes.shape[0]) <= 0:
+    if sizes.shape[0] <= 0:
         raise ValueError("bucket_sizes must be non-empty.")
     if np.any(sizes <= 0):
         raise ValueError("bucket_sizes must be positive.")
-    if n < int(sizes.shape[0]):
+    if n < sizes.shape[0]:
         raise ValueError(
             "num_cases must be at least the number of non-empty length buckets."
         )
 
-    probabilities = sizes.astype(float) / float(np.sum(sizes))
+    probabilities = sizes.astype("float64") / float(np.sum(sizes))
     raw = probabilities * float(n)
     counts = np.floor(raw).astype(np.int32)
     counts = np.maximum(counts, np.ones_like(counts))
@@ -478,7 +475,7 @@ def _bucket_case_counts(
         fractional = raw - np.floor(raw)
         order = np.argsort(-fractional, kind="stable")
         for i in range(remaining):
-            counts[int(order[i % int(order.shape[0])])] += 1
+            counts[int(order[i % order.shape[0]])] += 1
 
     return counts
 
@@ -493,13 +490,13 @@ def _edge_length_bucket_groups(
     edge_arr = np.asarray(length_bucket_edges)
     if edge_arr.ndim != 1:
         raise ValueError("length_bucket_edges must have shape (B,).")
-    if int(edge_arr.shape[0]) <= 0:
+    if edge_arr.shape[0] <= 0:
         raise ValueError("length_bucket_edges must be non-empty.")
-    edge_float = edge_arr.astype(float)
+    edge_float = edge_arr.astype("float64")
     edges = np.ceil(edge_float).astype(np.int32)
     if np.any(edge_float <= 0.0):
         raise ValueError("length_bucket_edges must be positive.")
-    if np.any(edges.astype(float) != edge_float):
+    if np.any(edges.astype("float64") != edge_float):
         raise ValueError("length_bucket_edges must contain integer lengths.")
     if np.any(edges[1:] <= edges[:-1]):
         raise ValueError("length_bucket_edges must be strictly increasing.")
@@ -527,7 +524,7 @@ def _bucket_weight(
 ) -> DomainFunction | Array:
     if isinstance(weight, DomainFunction):
         return weight * float(fraction)
-    return jnp.asarray(weight, dtype=float) * float(fraction)
+    return jnp.asarray(weight, dtype=jnp.float64) * float(fraction)
 
 
 __all__ = [

@@ -79,8 +79,8 @@ def test_discrete_initial_constraint_zero():
     def u(x, t):
         return t**2
 
-    points = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
-    values = jnp.array([0.0, 0.0], dtype=float)
+    points = {"x": jnp.array([[0.25], [0.75]], dtype="float64")}
+    values = jnp.array([0.0, 0.0], dtype="float64")
     source = _fixed_source(component, points)
     term = ResidualPenalty(
         Initial("u", component, target=values[0]),
@@ -88,7 +88,7 @@ def test_discrete_initial_constraint_zero():
     )
     assert _jit_loss(term, {"u": u}) < 1e-6
 
-    values2 = jnp.array([2.0, 2.0], dtype=float)
+    values2 = jnp.array([2.0, 2.0], dtype="float64")
     term2 = ResidualPenalty(
         Initial("u", component, target=values2[0], order=2, backend="jet"),
         source,
@@ -104,8 +104,8 @@ def test_discrete_interior_data_constraint_points_zero():
     def u(x):
         return x[0]
 
-    points = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
-    values = jnp.array([0.25, 0.75], dtype=float)
+    points = {"x": jnp.array([[0.25], [0.75]], dtype="float64")}
+    values = jnp.array([0.25, 0.75], dtype="float64")
 
     @geom.Function("x")
     def target(x):
@@ -127,9 +127,9 @@ def test_discrete_interior_data_constraint_sensor_tracks_zero():
     def u(x, t):
         return 1.0
 
-    sensors = jnp.array([[0.2], [0.8]], dtype=float)
-    times = jnp.array([0.25, 0.75], dtype=float)
-    sensor_values = jnp.ones((2, 2), dtype=float)
+    sensors = jnp.array([[0.2], [0.8]], dtype="float64")
+    times = jnp.array([0.25, 0.75], dtype="float64")
+    sensor_values = jnp.ones((2, 2), dtype="float64")
     assert sensors.shape == (2, 1)
     assert times.shape == (2,)
 

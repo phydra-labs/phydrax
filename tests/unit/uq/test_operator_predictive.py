@@ -15,7 +15,7 @@ def _tensor_batch(*, cases: int = 2) -> phx.nn.operator.OperatorBatch:
         quadrature_weights=jnp.asarray([0.25, 0.5, 0.25]),
     )
     source = phx.nn.operator.FunctionSamples(
-        values=jnp.arange(cases * 3, dtype=float).reshape(cases, 3),
+        values=jnp.arange(cases * 3, dtype="float64").reshape(cases, 3),
         axes=(axis,),
     )
     query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
@@ -317,7 +317,7 @@ def test_operator_predictive_rejects_complex_physical_outputs():
     batch = _tensor_batch()
     with pytest.raises(TypeError, match="real physical outputs"):
         phx.uq.operator_predictive_from_samples(
-            jnp.ones((2, 2, 3), dtype=complex),
+            jnp.ones((2, 2, 3), dtype="complex128"),
             batch,
             phx.nn.operator.OperatorOutputSpec("scalar"),
             sample_axes=(phx.uq.SampleAxis("draw", "epistemic"),),

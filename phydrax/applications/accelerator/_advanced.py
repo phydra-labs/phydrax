@@ -46,8 +46,8 @@ class SymplecticMapPlan(StrictModule, NonTrainableState):
         element_id: str,
         maximum_symplectic_residual: float = 1.0e-10,
     ):
-        matrix_ = np.asarray(matrix, dtype=float)
-        offset_ = np.asarray(offset, dtype=float)
+        matrix_ = np.asarray(matrix, dtype=np.float64)
+        offset_ = np.asarray(offset, dtype=np.float64)
         maximum = float(maximum_symplectic_residual)
         element = str(element_id).strip()
         if (
@@ -227,8 +227,8 @@ class LongitudinalWakePlan(StrictModule, NonTrainableState):
     def __init__(
         self, zeta_edges: ArrayLike, wake_values: ArrayLike, /, *, kick_scale: float
     ):
-        edges = np.asarray(zeta_edges, dtype=float)
-        wake = np.asarray(wake_values, dtype=float)
+        edges = np.asarray(zeta_edges, dtype=np.float64)
+        wake = np.asarray(wake_values, dtype=np.float64)
         scale = float(kick_scale)
         if (
             edges.ndim != 1

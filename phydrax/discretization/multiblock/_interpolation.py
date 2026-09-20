@@ -49,10 +49,10 @@ class NormCompatibleInterpolationPlan(StrictModule, NonTrainableState):
         *,
         interpolation_order: int = 4,
     ):
-        left_x = np.asarray(left_coordinates, dtype=float).reshape((-1,))
-        right_x = np.asarray(right_coordinates, dtype=float).reshape((-1,))
-        left_h = np.asarray(left_weights, dtype=float).reshape((-1,))
-        right_h = np.asarray(right_weights, dtype=float).reshape((-1,))
+        left_x = np.asarray(left_coordinates, dtype=np.float64).reshape((-1,))
+        right_x = np.asarray(right_coordinates, dtype=np.float64).reshape((-1,))
+        left_h = np.asarray(left_weights, dtype=np.float64).reshape((-1,))
+        right_h = np.asarray(right_weights, dtype=np.float64).reshape((-1,))
         order = int(interpolation_order)
         if (
             left_x.size < 2
@@ -184,7 +184,7 @@ def _local_interpolation(
     /,
 ) -> np.ndarray:
     width = min(int(order) + 1, source.size)
-    matrix = np.zeros((target.size, source.size), dtype=float)
+    matrix = np.zeros((target.size, source.size), dtype=np.float64)
     for row, coordinate in enumerate(target):
         insertion = int(np.searchsorted(source, coordinate))
         start = int(np.clip(insertion - width // 2, 0, source.size - width))

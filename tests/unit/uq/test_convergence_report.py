@@ -29,9 +29,9 @@ def _result(
     )
     problem = phx.uq.PosteriorProblem(space, lambda _: jnp.zeros(()))
     divergent_array = (
-        jnp.zeros((chains, draws), dtype=bool)
+        jnp.zeros((chains, draws), dtype="bool")
         if divergent is None
-        else jnp.asarray(divergent, dtype=bool)
+        else jnp.asarray(divergent, dtype="bool")
     )
     expansions = (
         jnp.zeros((chains, draws), dtype=jnp.int32)
@@ -107,7 +107,7 @@ def test_convergence_report_identifies_nested_rhat_and_ess_failures():
 
 
 def test_convergence_report_gates_divergences_and_tree_saturation_independently():
-    divergent = jnp.zeros((2, 12), dtype=bool).at[1, 3].set(True)
+    divergent = jnp.zeros((2, 12), dtype="bool").at[1, 3].set(True)
     expansions = jnp.zeros((2, 12), dtype=jnp.int32).at[0, 5].set(4)
     result = _result(divergent=divergent, trajectory_expansions=expansions)
 
@@ -158,18 +158,18 @@ def test_reports_detect_shifted_chains_and_autocorrelated_draws():
         diagnostics = mcmc_diagnostics(
             {"coefficient": samples},
             acceptance_rate=jnp.full((chains, draws), 0.8),
-            divergent=jnp.zeros((chains, draws), dtype=bool),
+            divergent=jnp.zeros((chains, draws), dtype="bool"),
         )
         return phx.uq.MCMCConvergenceReport(
             diagnostics=diagnostics,
             thresholds=thresholds,
-            divergent=jnp.zeros((chains, draws), dtype=bool),
+            divergent=jnp.zeros((chains, draws), dtype="bool"),
             num_integration_steps=jnp.ones((chains, draws), dtype=jnp.int32),
             num_trajectory_expansions=jnp.zeros((chains, draws), dtype=jnp.int32),
             max_num_doublings=10,
             num_chains=chains,
             num_draws=draws,
-            sample_memory_bytes=int(samples.nbytes),
+            sample_memory_bytes=samples.nbytes,
             duration_seconds=0.0,
             adaptation_duration_seconds=0.0,
             sampling_duration_seconds=0.0,

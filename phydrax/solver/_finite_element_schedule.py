@@ -130,8 +130,8 @@ class FiniteElementAttemptResult(StrictModule):
         diagnostics: object = None,
     ):
         fields_ = tuple(jnp.asarray(value) for value in fields)
-        accepted_ = jnp.asarray(accepted, dtype=bool)
-        retry = jnp.asarray(retry_requested, dtype=bool)
+        accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
+        retry = jnp.asarray(retry_requested, dtype=jnp.bool_)
         suggested = jnp.asarray(suggested_step)
         if not fields_:
             raise ValueError("Finite-element attempts require candidate fields.")
@@ -300,12 +300,11 @@ class FiniteElementAcceptedStepSchedule(StrictModule, NonTrainableState):
 
 
 class FiniteElementRestartManifest(StrictModule, NonTrainableState):
-    """Versioned fixed-topology accepted state plus named runtime histories."""
+    """Canonical fixed-topology accepted state plus named runtime histories."""
 
     state: FiniteElementAcceptedState
     auxiliary_state: tuple[tuple[str, Array], ...]
     integrator_state: tuple[tuple[str, Array], ...]
-    schema_version: int = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
     def __init__(
@@ -315,13 +314,9 @@ class FiniteElementRestartManifest(StrictModule, NonTrainableState):
         *,
         auxiliary_state: Sequence[tuple[str, ArrayLike]] = (),
         integrator_state: Sequence[tuple[str, ArrayLike]] = (),
-        schema_version: int = 1,
     ):
         if not isinstance(state, FiniteElementAcceptedState):
             raise TypeError("state must be FiniteElementAcceptedState.")
-        version = int(schema_version)
-        if version != 1:
-            raise ValueError("Unsupported finite-element restart schema version.")
 
         def named(values):
             result = tuple((str(name), jnp.asarray(value)) for name, value in values)
@@ -335,11 +330,9 @@ class FiniteElementRestartManifest(StrictModule, NonTrainableState):
         self.state = state
         self.auxiliary_state = auxiliary
         self.integrator_state = integrator
-        self.schema_version = version
         self.manifest_id = canonical_fingerprint(
             {
                 "kind": "finite-element-restart-manifest",
-                "schema_version": version,
                 "accepted": state.accepted_id,
                 "auxiliary": [
                     [name, list(value.shape), str(value.dtype)]
@@ -365,7 +358,6 @@ def write_finite_element_restart(
         () if manifest.state.materials is None else manifest.state.materials.states
     )
     metadata = {
-        "schema_version": manifest.schema_version,
         "manifest_id": manifest.manifest_id,
         "topology_id": manifest.state.topology_id,
         "prepared_id": manifest.state.prepared_id,
@@ -409,8 +401,6 @@ def read_finite_element_restart(
 ) -> FiniteElementRestartManifest:
     archive = np.load(Path(path), allow_pickle=False)
     metadata = json.loads(str(archive["metadata"]))
-    if int(metadata["schema_version"]) != 1:
-        raise ValueError("Unsupported finite-element restart schema version.")
     fields = tuple(
         archive[f"field_{index}"] for index in range(int(metadata["field_count"]))
     )
@@ -456,7 +446,6 @@ def read_finite_element_restart(
         state,
         auxiliary_state=auxiliary,
         integrator_state=integrator,
-        schema_version=1,
     )
     if manifest.manifest_id != metadata["manifest_id"]:
         raise ValueError("Finite-element restart manifest identity mismatch.")

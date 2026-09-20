@@ -111,7 +111,7 @@ class HermitianFunctionResult(StrictModule):
     ):
         self.value = jnp.asarray(value)
         self.spectrum = spectrum
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.function_id = str(function_id)
 
 
@@ -232,7 +232,7 @@ class SylvesterSolveResult(StrictModule):
         self.value = jnp.asarray(value)
         self.residual_norm = jnp.asarray(residual_norm)
         self.minimum_denominator = jnp.asarray(minimum_denominator)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.precision_evidence = precision_evidence

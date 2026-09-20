@@ -15,7 +15,7 @@ import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...units import (
     BOHR,
@@ -77,7 +77,7 @@ class CorrelatedManifoldPlan(StrictModule, NonTrainableState):
 
 
 class AbstractCorrelatedManifoldProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(self, plan: CorrelatedManifoldPlan, /) -> ElectronicManifoldResult:

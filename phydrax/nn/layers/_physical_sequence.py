@@ -59,18 +59,18 @@ def normalize_physical_schedule(
         raise ValueError("times must be shared or have shape case_shape + (length,).")
 
     if mask is None:
-        valid = jnp.ones(expected_shape, dtype=bool)
+        valid = jnp.ones(expected_shape, dtype=jnp.bool_)
     else:
-        valid = jnp.asarray(mask, dtype=bool)
+        valid = jnp.asarray(mask, dtype=jnp.bool_)
         if valid.shape == (length,):
             valid = jnp.broadcast_to(valid, expected_shape)
         elif valid.shape != expected_shape:
             raise ValueError("mask must be shared or have shape case_shape + (length,).")
 
     if reset is None:
-        resets = jnp.zeros(expected_shape, dtype=bool)
+        resets = jnp.zeros(expected_shape, dtype=jnp.bool_)
     else:
-        resets = jnp.asarray(reset, dtype=bool)
+        resets = jnp.asarray(reset, dtype=jnp.bool_)
         if resets.shape == (length,):
             resets = jnp.broadcast_to(resets, expected_shape)
         elif resets.shape != expected_shape:
@@ -88,7 +88,7 @@ def normalize_physical_schedule(
         "reset=True requires a valid physical sample.",
     )
     if length == 1:
-        continuation = jnp.zeros(expected_shape[:-1] + (0,), dtype=bool)
+        continuation = jnp.zeros(expected_shape[:-1] + (0,), dtype=jnp.bool_)
         return time_values, valid, resets, continuation
 
     valid_after_padding = valid[..., 1:] & ~valid[..., :-1]

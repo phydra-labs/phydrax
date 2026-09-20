@@ -303,7 +303,7 @@ class VariableSectorVMCResult(StrictModule):
 
     @property
     def acceptance_rate(self) -> Array:
-        return jnp.mean(self.accepted.astype(float))
+        return jnp.mean(self.accepted.astype("float64"))
 
 
 class _TransitionBatch(StrictModule):
@@ -462,12 +462,12 @@ def _tail_evidence(
         )
     species_histogram = jnp.stack(species_counts)
     cutoff_count = total_histogram[-1]
-    probability = cutoff_count.astype(float) / sample_count.astype(float)
+    probability = cutoff_count.astype("float64") / sample_count.astype("float64")
     standard_error = jnp.sqrt(
-        probability * (1.0 - probability) / sample_count.astype(float)
+        probability * (1.0 - probability) / sample_count.astype("float64")
     )
     zero_event_bound = prepared.plan.tail_standard_error_multiplier / (
-        sample_count.astype(float) + 1.0
+        sample_count.astype("float64") + 1.0
     )
     upper = jnp.minimum(
         1.0,
@@ -782,7 +782,9 @@ def evolve_variable_sector_tdvp(
     history = [initial]
     finite_steps = []
     enabled = tail_evidence.accepted
-    dt = jnp.asarray(plan.time_step, dtype=jnp.result_type(initial.real.dtype, float))
+    dt = jnp.asarray(
+        plan.time_step, dtype=jnp.result_type(initial.real.dtype, jnp.float64)
+    )
     for step in range(plan.step_count):
         time = jnp.asarray(step, dtype=dt.dtype) * dt
         k1 = jnp.asarray(vector_field(parameters, time))

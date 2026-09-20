@@ -333,7 +333,7 @@ def test_case_axes_jit_and_autodiff_preserve_coupled_noise_dependence():
         1,
     )
     assert result.values[0].matrices.shape == (cases, 2, 1, 1)
-    np.testing.assert_array_equal(result.valid, jnp.ones(cases, dtype=bool))
+    np.testing.assert_array_equal(result.valid, jnp.ones(cases, dtype="bool"))
     assert np.isfinite(gradient)
     assert not np.isclose(gradient, 0.0)
 

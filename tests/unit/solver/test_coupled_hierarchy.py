@@ -105,7 +105,7 @@ def test_coupled_hierarchy_tracks_failed_pairs_without_repairing_them():
         lambda output, level: output,
     )
 
-    assert jnp.array_equal(result.correction_valid[0], jnp.ones((4,), dtype=bool))
+    assert jnp.array_equal(result.correction_valid[0], jnp.ones((4,), dtype="bool"))
     assert jnp.array_equal(
         result.correction_valid[1],
         jnp.asarray([True, True, False, True]),

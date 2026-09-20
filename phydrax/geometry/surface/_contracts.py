@@ -151,7 +151,7 @@ class SurfaceSelection(StrictModule, NonTrainableState):
         self.cell_global_ids = jnp.asarray(identifiers, dtype=jnp.int64)
         self.selection_id = canonical_fingerprint(
             {
-                "kind": "surface-selection-v1",
+                "kind": "surface-selection",
                 "name": name_,
                 "role": role_,
                 "cell_entity_set_id": entity_set,
@@ -193,7 +193,7 @@ class SurfaceInterface(StrictModule, NonTrainableState):
         self.plus_region = plus
         self.interface_id = canonical_fingerprint(
             {
-                "kind": "surface-interface-v1",
+                "kind": "surface-interface",
                 "name": name_,
                 "support": support.selection_id,
                 "minus_region": minus,
@@ -226,7 +226,7 @@ class SurfaceAuditPolicy(StrictModule, NonTrainableState):
         self,
         *,
         minimum_face_area: float = 0.0,
-        relative_degeneracy_tolerance: float = 64.0 * np.finfo(float).eps,
+        relative_degeneracy_tolerance: float = 64.0 * np.finfo(np.float64).eps,
         minimum_closed_volume: float = 0.0,
         require_closed: bool = False,
         require_outward_orientation: bool = False,
@@ -272,7 +272,7 @@ class SurfaceAuditPolicy(StrictModule, NonTrainableState):
         ) = normalized
         self.policy_id = canonical_fingerprint(
             {
-                "kind": "surface-audit-policy-v1",
+                "kind": "surface-audit-policy",
                 "minimum_face_area": minimum_area,
                 "relative_degeneracy_tolerance": relative,
                 "minimum_closed_volume": minimum_volume,
@@ -328,7 +328,7 @@ class SurfaceOrientationRepair(StrictModule, NonTrainableState):
         self.repaired_topology_id = repaired_topology
         self.repair_id = canonical_fingerprint(
             {
-                "kind": "surface-orientation-repair-v1",
+                "kind": "surface-orientation-repair",
                 "source_topology_id": source_topology,
                 "repaired_topology_id": repaired_topology,
                 "source_face_indices": array_tree_fingerprint(source),
@@ -371,7 +371,7 @@ class SurfaceChartMappingEvidence(StrictModule, NonTrainableState):
         self.cell_entity_set_id = entity_set
         self.mapping_id = canonical_fingerprint(
             {
-                "kind": "surface-chart-mapping-v1",
+                "kind": "surface-chart-mapping",
                 "chart_ids": array_tree_fingerprint(charts),
                 "cell_global_ids": array_tree_fingerprint(cells),
                 "cell_entity_set_id": entity_set,
@@ -437,17 +437,17 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
         policy_id: str,
         policy_accepts_open: bool,
     ):
-        areas = np.asarray(face_areas, dtype=float)
+        areas = np.asarray(face_areas, dtype=np.float64)
         components = np.asarray(component_ids, dtype=np.int32)
-        closed = np.asarray(component_closed, dtype=bool)
-        volumes = np.asarray(component_signed_volumes, dtype=float)
+        closed = np.asarray(component_closed, dtype=np.bool_)
+        volumes = np.asarray(component_signed_volumes, dtype=np.float64)
         if areas.ndim != 1 or areas.size == 0:
             raise ValueError("Surface audit face areas must be a non-empty rank-1 array.")
         if components.shape != areas.shape:
             raise ValueError(
                 "Surface audit component IDs must contain one value per face."
             )
-        component_count = int(closed.size)
+        component_count = closed.size
         if component_count <= 0 or volumes.shape != closed.shape:
             raise ValueError("Surface audit component evidence is inconsistent.")
         if np.any(components < 0) or np.any(components >= component_count):
@@ -478,22 +478,22 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
             and (policy_accepts_open or bool(np.all(closed)))
         )
         component_kinds = tuple("closed" if value else "open" for value in closed)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.topology_valid = jnp.asarray(topology_valid, dtype=bool)
-        self.manifold = jnp.asarray(manifold, dtype=bool)
-        self.metric_valid = jnp.asarray(metric_valid, dtype=bool)
-        self.orientation_consistent = jnp.asarray(orientation_consistent, dtype=bool)
-        self.capacity_valid = jnp.asarray(capacity_valid, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.topology_valid = jnp.asarray(topology_valid, dtype=jnp.bool_)
+        self.manifold = jnp.asarray(manifold, dtype=jnp.bool_)
+        self.metric_valid = jnp.asarray(metric_valid, dtype=jnp.bool_)
+        self.orientation_consistent = jnp.asarray(orientation_consistent, dtype=jnp.bool_)
+        self.capacity_valid = jnp.asarray(capacity_valid, dtype=jnp.bool_)
         self.outward_orientation_valid = jnp.asarray(
-            outward_orientation_valid, dtype=bool
+            outward_orientation_valid, dtype=jnp.bool_
         )
-        self.valid = jnp.asarray(accepted, dtype=bool)
-        self.face_areas = jnp.asarray(areas, dtype=float)
+        self.valid = jnp.asarray(accepted, dtype=jnp.bool_)
+        self.face_areas = jnp.asarray(areas, dtype=jnp.float64)
         self.component_ids = jnp.asarray(components, dtype=jnp.int32)
-        self.component_closed = jnp.asarray(closed, dtype=bool)
-        self.component_signed_volumes = jnp.asarray(volumes, dtype=float)
+        self.component_closed = jnp.asarray(closed, dtype=jnp.bool_)
+        self.component_signed_volumes = jnp.asarray(volumes, dtype=jnp.float64)
         self.vertex_count = int(vertex_count)
-        self.cell_count = int(areas.size)
+        self.cell_count = areas.size
         self.edge_count = int(edge_count)
         self.component_count = component_count
         self.boundary_edge_count = int(boundary_edge_count)
@@ -510,7 +510,7 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
         ) = identifiers
         self.report_id = canonical_fingerprint(
             {
-                "kind": "surface-audit-report-v1",
+                "kind": "surface-audit-report",
                 "model_id": identifiers[0],
                 "metadata_id": identifiers[1],
                 "topology_id": identifiers[2],
@@ -532,7 +532,7 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
                 "component_signed_volumes": array_tree_fingerprint(volumes),
                 "counts": (
                     int(vertex_count),
-                    int(areas.size),
+                    areas.size,
                     int(edge_count),
                     component_count,
                     int(boundary_edge_count),
@@ -575,12 +575,12 @@ class SurfaceValidityCertificate(StrictModule, NonTrainableState):
         self.geometry_id = report.geometry_id
         self.policy_id = report.policy_id
         self.report_id = report.report_id
-        self.valid = jnp.asarray(True, dtype=bool)
+        self.valid = jnp.asarray(True, dtype=jnp.bool_)
         self.certificate_id = canonical_fingerprint(
             {
                 "model_id": report.model_id,
                 "metadata_id": report.metadata_id,
-                "kind": "surface-validity-certificate-v1",
+                "kind": "surface-validity-certificate",
                 "topology_id": report.topology_id,
                 "geometry_id": report.geometry_id,
                 "policy_id": report.policy_id,

@@ -322,8 +322,7 @@ def branch_and_bound(
             explored += 1
             if not isinstance(evaluation, BranchNodeEvaluation):
                 raise TypeError(
-                    "AbstractBranchAndBoundProblem.evaluate must return "
-                    "BranchNodeEvaluation."
+                    "AbstractBranchAndBoundProblem.evaluate must return BranchNodeEvaluation."
                 )
             if evaluation.candidate is not None:
                 candidate = evaluation.candidate
@@ -385,8 +384,7 @@ def branch_and_bound(
             child_evaluation = problem.evaluate(child)
             if not isinstance(child_evaluation, BranchNodeEvaluation):
                 raise TypeError(
-                    "AbstractBranchAndBoundProblem.evaluate must return "
-                    "BranchNodeEvaluation."
+                    "AbstractBranchAndBoundProblem.evaluate must return BranchNodeEvaluation."
                 )
             if child_evaluation.unbounded:
                 status = BranchAndBoundStatus.UNBOUNDED

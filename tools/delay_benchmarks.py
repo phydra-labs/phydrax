@@ -27,7 +27,7 @@ def _constant_delay_problem(drift, history, delays, /, **kwargs):
     delay_values = jnp.asarray(delays).reshape((-1,))
     delay_terms = tuple(
         phx.solver.ConstantDelay(f"delay_{index}", delay_values[index])
-        for index in range(int(delay_values.size))
+        for index in range(delay_values.size)
     )
     return phx.solver.DelayDifferentialProblem(
         drift,
@@ -348,7 +348,7 @@ def run_benchmarks(
         jnp.asarray([0.25, 0.75]),
         jnp.zeros((2,), dtype=jnp.int32),
         jnp.ones((2, 1)),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         jnp.asarray(0, dtype=jnp.int32),
         mark_shape=(1,),
     )
@@ -588,7 +588,7 @@ def run_benchmarks(
             "num_segments": int(solution.stats["num_segments"]),
             "num_accepted_steps": int(solution.stats["num_accepted_steps"]),
             "history_capacity": int(solution.stats["history_capacity"]),
-            "active_history_entries": int(solution.continuation.active_history.size),
+            "active_history_entries": solution.continuation.active_history.size,
             "active_history_bytes": int(solution.stats["active_history_bytes"]),
         }
 
@@ -627,7 +627,7 @@ def run_benchmarks(
             "backend": jax.default_backend(),
             "repeats": repeats,
             "state_dim": state_dim,
-            "num_delays": int(delays.size),
+            "num_delays": delays.size,
             "fixed_steps": fixed_steps,
             "family_steps": family_steps,
             "dtype": str(base.dtype),

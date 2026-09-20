@@ -27,7 +27,7 @@ def _target_reference_cell(
 ) -> tuple[Array, Array]:
     if panel_id < 0 or panel_id >= panelization.panel_count:
         raise ValueError("panel_id is outside the surface panelization.")
-    target = jnp.asarray(target_reference, dtype=float)
+    target = jnp.asarray(target_reference, dtype=jnp.float64)
     if target.shape != (2,) or not bool(jnp.all(jnp.isfinite(target))):
         raise ValueError("target_reference must be one finite reference point.")
     vertices = panelization.panel_reference_vertices[panel_id]

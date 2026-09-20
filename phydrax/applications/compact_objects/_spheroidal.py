@@ -101,8 +101,8 @@ class SpheroidalAngularPlan(StrictModule, NonTrainableState):
 
         ell_values_host = np.arange(minimum, maximum + 1, dtype=np.int32)
         extended_ells = np.arange(minimum, maximum + 2, dtype=np.int32)
-        extended_size = int(extended_ells.size)
-        cosine_extended = np.zeros((extended_size, extended_size), dtype=float)
+        extended_size = extended_ells.size
+        cosine_extended = np.zeros((extended_size, extended_size), dtype=np.float64)
         for index, ell in enumerate(extended_ells):
             cosine_extended[index, index] = _cosine_diagonal(
                 int(ell), mode.m, mode.spin_weight
@@ -115,7 +115,7 @@ class SpheroidalAngularPlan(StrictModule, NonTrainableState):
                 )
                 cosine_extended[index, index + 1] = coupling
                 cosine_extended[index + 1, index] = coupling
-        size = int(ell_values_host.size)
+        size = ell_values_host.size
         cosine_host = cosine_extended[:size, :size]
         cosine_squared_host = (cosine_extended @ cosine_extended)[:size, :size]
         spherical_host = ell_values_host * (ell_values_host + 1) - mode.spin_weight * (
@@ -124,7 +124,7 @@ class SpheroidalAngularPlan(StrictModule, NonTrainableState):
         target_index = mode.ell - minimum
         self.mode = mode
         self.ell_values = jnp.asarray(ell_values_host)
-        self.spherical_separation = jnp.asarray(spherical_host, dtype=float)
+        self.spherical_separation = jnp.asarray(spherical_host, dtype=jnp.float64)
         self.cosine_matrix = jnp.asarray(cosine_host)
         self.cosine_squared_matrix = jnp.asarray(cosine_squared_host)
         self.maximum_ell = maximum
@@ -159,7 +159,7 @@ class SpheroidalAngularPlan(StrictModule, NonTrainableState):
 
     @property
     def basis_size(self) -> int:
-        return int(self.ell_values.size)
+        return self.ell_values.size
 
     def matrix(self, spheroidicity: ArrayLike, /) -> Array:
         return spheroidal_angular_matrix(self, spheroidicity)
@@ -364,7 +364,7 @@ def solve_spheroidal_angular(
         & jnp.isfinite(residual)
         & jnp.isfinite(condition)
     )
-    converged = jnp.asarray(native_converged, dtype=bool)
+    converged = jnp.asarray(native_converged, dtype=jnp.bool_)
     physically_valid = target_overlap >= plan.minimum_target_overlap
     residual_valid = relative_residual <= plan.residual_tolerance
     isolated = condition <= plan.maximum_condition

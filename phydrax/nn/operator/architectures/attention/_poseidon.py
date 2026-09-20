@@ -28,7 +28,7 @@ def _image_shape(shape: int | Sequence[int], /) -> tuple[int, int]:
     if isinstance(shape, int):
         result = (int(shape), int(shape))
     else:
-        result = tuple(int(size) for size in shape)
+        result = tuple(shape)
     if len(result) != 2 or any(size <= 0 for size in result):
         raise ValueError("image_shape must contain two positive dimensions.")
     return result
@@ -38,7 +38,7 @@ def _patch_shape(shape: int | Sequence[int], /) -> tuple[int, int]:
     if isinstance(shape, int):
         result = (int(shape), int(shape))
     else:
-        result = tuple(int(size) for size in shape)
+        result = tuple(shape)
     if len(result) != 2 or any(size <= 0 for size in result):
         raise ValueError("patch_size must contain two positive dimensions.")
     return result
@@ -83,8 +83,7 @@ def _prepare_field(
         )
     if samples.sample_shape != image_shape:
         raise ValueError(
-            f"Poseidon was configured for source shape {image_shape}; "
-            f"got {samples.sample_shape}."
+            f"Poseidon was configured for source shape {image_shape}; got {samples.sample_shape}."
         )
     values = _single_array(samples, "Poseidon")
     scalar_shape = case_shape + image_shape
@@ -167,7 +166,7 @@ def _unpatchify(
 
 
 def _apply_layer_norm(norm: eqx.nn.LayerNorm, values: Array, /) -> Array:
-    flattened = values.reshape((-1, int(values.shape[-1])))
+    flattened = values.reshape((-1, values.shape[-1]))
     return jax.vmap(norm)(flattened).reshape(values.shape)
 
 
@@ -198,9 +197,9 @@ class _ConditionedLayerNorm(StrictModule):
         scale_key, shift_key = jr.split(key)
         modulation_scale = 1.0 / sqrt(float(width))
         self.scale_weight = modulation_scale * jr.normal(scale_key, (int(width),))
-        self.scale_bias = jnp.ones((int(width),), dtype=float)
+        self.scale_bias = jnp.ones((int(width),), dtype=jnp.float64)
         self.shift_weight = modulation_scale * jr.normal(shift_key, (int(width),))
-        self.shift_bias = jnp.zeros((int(width),), dtype=float)
+        self.shift_bias = jnp.zeros((int(width),), dtype=jnp.float64)
 
     def __call__(self, values: Array, time: Array | None, /) -> Array:
         normalized = _apply_layer_norm(self.norm, values)
@@ -208,12 +207,10 @@ class _ConditionedLayerNorm(StrictModule):
             return normalized
         if time is None:
             raise ValueError("This Poseidon model requires one time value per case.")
-        if values.ndim < 2 or int(values.shape[0]) != int(time.shape[0]):
+        if values.ndim < 2 or values.shape[0] != time.shape[0]:
             raise ValueError("Time conditioning and latent case dimensions differ.")
-        broadcast = (
-            (int(values.shape[0]),) + (1,) * (values.ndim - 2) + (int(values.shape[-1]),)
-        )
-        scalar_time = time.reshape((int(values.shape[0]),) + (1,) * (values.ndim - 1))
+        broadcast = (values.shape[0],) + (1,) * (values.ndim - 2) + (values.shape[-1],)
+        scalar_time = time.reshape((values.shape[0],) + (1,) * (values.ndim - 1))
         scale = scalar_time * self.scale_weight + self.scale_bias
         shift = scalar_time * self.shift_weight + self.shift_bias
         return normalized * scale.reshape(broadcast) + shift.reshape(broadcast)
@@ -288,7 +285,7 @@ class _WindowAttention2D(StrictModule):
         pad_width = (-width) % window
         padded = jnp.pad(values, ((0, 0), (0, pad_height), (0, pad_width), (0, 0)))
         valid = jnp.pad(
-            jnp.ones((batch, height, width), dtype=bool),
+            jnp.ones((batch, height, width), dtype=jnp.bool_),
             ((0, 0), (0, pad_height), (0, pad_width)),
         )
         rows, columns = jnp.meshgrid(jnp.arange(height), jnp.arange(width), indexing="ij")
@@ -383,7 +380,7 @@ class _WindowAttention2D(StrictModule):
         batch, height, width, _ = values.shape
         windows, valid, coordinates, padded_height, padded_width = self._partition(values)
         token_count = self.window_size * self.window_size
-        shape = (int(windows.shape[0]), token_count, self.num_heads, self.head_dim)
+        shape = (windows.shape[0], token_count, self.num_heads, self.head_dim)
         query = self.query(windows).reshape(shape)
         key = self.key(windows).reshape(shape)
         value = self.value(windows).reshape(shape)
@@ -709,8 +706,8 @@ class Poseidon(AbstractOperatorModel):
         self.source_key = source_key
         self.time_input_name = time_input_name
         self.learn_residual = bool(learn_residual)
-        depths_ = tuple(int(depth) for depth in depths)
-        heads_ = tuple(int(heads) for heads in num_heads)
+        depths_ = tuple(depths)
+        heads_ = tuple(num_heads)
         if not depths_ or len(depths_) != len(heads_):
             raise ValueError(
                 "depths and num_heads must be non-empty and have equal length."
@@ -742,7 +739,7 @@ class Poseidon(AbstractOperatorModel):
         if skip_depths is None:
             skip_depths_ = (1,) * (len(depths_) - 1)
         else:
-            skip_depths_ = tuple(int(depth) for depth in skip_depths)
+            skip_depths_ = tuple(skip_depths)
         if len(skip_depths_) != len(depths_) - 1 or any(
             depth < 0 for depth in skip_depths_
         ):
@@ -833,7 +830,7 @@ class Poseidon(AbstractOperatorModel):
         ) / sqrt(float(25 * output_channels_))
 
     def _evaluate(self, values: Array, time: Array | None, /) -> Array:
-        batch = int(values.shape[0])
+        batch = values.shape[0]
         hidden = self.patch_embedding(_patchify(values, self.patch_size))
         skips: list[Array] = []
         for level, stage in enumerate(self.encoder_stages):
@@ -864,7 +861,7 @@ class Poseidon(AbstractOperatorModel):
         )
         if self.learn_residual:
             output = output + values
-        if int(output.shape[0]) != batch:
+        if output.shape[0] != batch:
             raise RuntimeError("Poseidon changed the flattened operator case count.")
         return output
 

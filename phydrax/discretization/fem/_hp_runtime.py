@@ -95,7 +95,7 @@ def _child_bounds(
     midpoint = 0.5 * (lower + upper)
     bits = np.asarray(
         tuple((child_ordinal >> axis) & 1 for axis in range(lower.size)),
-        dtype=bool,
+        dtype=np.bool_,
     )
     return np.where(bits, midpoint, lower), np.where(bits, upper, midpoint)
 
@@ -225,14 +225,14 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
     """Canonical conforming, mortar, exterior, and periodic leaf-facet overlay."""
 
     owner_slots: Array
-    neighbour_slots: Array
+    neighbor_slots: Array
     owner_local_facets: Array
-    neighbour_local_facets: Array
+    neighbor_local_facets: Array
     relation_codes: Array
     child_indices: Array
     child_counts: Array
     owner_orientations: Array
-    neighbour_orientations: Array
+    neighbor_orientations: Array
     valid: Array
     interface_ids: tuple[str, ...] = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
@@ -243,27 +243,27 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
         self,
         topology: FiniteElementHPTopology,
         owner_slots: ArrayLike,
-        neighbour_slots: ArrayLike,
+        neighbor_slots: ArrayLike,
         owner_local_facets: ArrayLike,
-        neighbour_local_facets: ArrayLike,
+        neighbor_local_facets: ArrayLike,
         relations: Sequence[Literal["conforming", "mortar", "exterior", "periodic"]],
         /,
         *,
         child_indices: ArrayLike | None = None,
         child_counts: ArrayLike | None = None,
         owner_orientations: ArrayLike | None = None,
-        neighbour_orientations: ArrayLike | None = None,
+        neighbor_orientations: ArrayLike | None = None,
         valid: ArrayLike | None = None,
     ):
         owners = np.asarray(owner_slots, dtype=np.int32)
-        neighbours = np.asarray(neighbour_slots, dtype=np.int32)
+        neighbors = np.asarray(neighbor_slots, dtype=np.int32)
         owner_facets = np.asarray(owner_local_facets, dtype=np.int32)
-        neighbour_facets = np.asarray(neighbour_local_facets, dtype=np.int32)
+        neighbor_facets = np.asarray(neighbor_local_facets, dtype=np.int32)
         relation_names = tuple(str(value) for value in relations)
         valid_ = (
-            np.ones(owners.shape, dtype=bool)
+            np.ones(owners.shape, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         count = owners.size
         children = (
@@ -281,19 +281,19 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
             if owner_orientations is None
             else np.asarray(owner_orientations, dtype=np.int8)
         )
-        neighbour_orientation = (
+        neighbor_orientation = (
             np.zeros((count,), dtype=np.int8)
-            if neighbour_orientations is None
-            else np.asarray(neighbour_orientations, dtype=np.int8)
+            if neighbor_orientations is None
+            else np.asarray(neighbor_orientations, dtype=np.int8)
         )
         arrays = (
-            neighbours,
+            neighbors,
             owner_facets,
-            neighbour_facets,
+            neighbor_facets,
             children,
             child_count,
             owner_orientation,
-            neighbour_orientation,
+            neighbor_orientation,
             valid_,
         )
         if (
@@ -312,11 +312,11 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
             np.any(owners[valid_] < 0)
             or np.any(owners[valid_] >= topology.capacity)
             or np.any(~active[owners[valid_]])
-            or np.any(neighbours[valid_ & ~exterior] < 0)
-            or np.any(neighbours[valid_ & ~exterior] >= topology.capacity)
-            or np.any(neighbours[valid_ & exterior] != -1)
+            or np.any(neighbors[valid_ & ~exterior] < 0)
+            or np.any(neighbors[valid_ & ~exterior] >= topology.capacity)
+            or np.any(neighbors[valid_ & exterior] != -1)
             or np.any(owner_facets[valid_] < 0)
-            or np.any(neighbour_facets[valid_ & ~exterior] < 0)
+            or np.any(neighbor_facets[valid_ & ~exterior] < 0)
             or np.any(child_count[valid_] < 1)
             or np.any(children[valid_] < 0)
             or np.any(children[valid_] >= child_count[valid_])
@@ -333,14 +333,14 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
                         int(np.asarray(topology.root_cell_ids)[owner]),
                         int(np.asarray(topology.path_codes)[owner]),
                     ],
-                    "neighbour_tree": None
-                    if neighbour < 0
+                    "neighbor_tree": None
+                    if neighbor < 0
                     else [
-                        int(np.asarray(topology.root_cell_ids)[neighbour]),
-                        int(np.asarray(topology.path_codes)[neighbour]),
+                        int(np.asarray(topology.root_cell_ids)[neighbor]),
+                        int(np.asarray(topology.path_codes)[neighbor]),
                     ],
                     "owner_facet": int(owner_facet),
-                    "neighbour_facet": int(neighbour_facet),
+                    "neighbor_facet": int(neighbor_facet),
                     "relation": relation,
                     "child": int(child),
                     "child_count": int(children_),
@@ -348,11 +348,11 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
             )
             if active_
             else ""
-            for owner, neighbour, owner_facet, neighbour_facet, relation, child, children_, active_ in zip(
+            for owner, neighbor, owner_facet, neighbor_facet, relation, child, children_, active_ in zip(
                 owners,
-                neighbours,
+                neighbors,
                 owner_facets,
-                neighbour_facets,
+                neighbor_facets,
                 relation_names,
                 children,
                 child_count,
@@ -364,14 +364,14 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
         if len(set(active_ids)) != len(active_ids):
             raise ValueError("hp interfaces require unique stable identities.")
         self.owner_slots = jnp.asarray(np.where(valid_, owners, -1))
-        self.neighbour_slots = jnp.asarray(np.where(valid_, neighbours, -1))
+        self.neighbor_slots = jnp.asarray(np.where(valid_, neighbors, -1))
         self.owner_local_facets = jnp.asarray(np.where(valid_, owner_facets, -1))
-        self.neighbour_local_facets = jnp.asarray(np.where(valid_, neighbour_facets, -1))
+        self.neighbor_local_facets = jnp.asarray(np.where(valid_, neighbor_facets, -1))
         self.relation_codes = jnp.asarray(codes)
         self.child_indices = jnp.asarray(np.where(valid_, children, 0))
         self.child_counts = jnp.asarray(np.where(valid_, child_count, 1))
         self.owner_orientations = jnp.asarray(owner_orientation)
-        self.neighbour_orientations = jnp.asarray(neighbour_orientation)
+        self.neighbor_orientations = jnp.asarray(neighbor_orientation)
         self.valid = jnp.asarray(valid_)
         self.interface_ids = identifiers
         self.topology_id = topology.topology_id
@@ -381,9 +381,9 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
                 "kind": "finite-element-hp-interfaces",
                 "topology": topology.plan_id,
                 "owners": array_tree_fingerprint(owners),
-                "neighbours": array_tree_fingerprint(neighbours),
+                "neighbors": array_tree_fingerprint(neighbors),
                 "owner_facets": array_tree_fingerprint(owner_facets),
-                "neighbour_facets": array_tree_fingerprint(neighbour_facets),
+                "neighbor_facets": array_tree_fingerprint(neighbor_facets),
                 "relations": list(relation_names),
                 "children": array_tree_fingerprint(children),
                 "child_count": array_tree_fingerprint(child_count),
@@ -556,8 +556,8 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
                 raise ValueError("hp transaction transfer identities disagree.")
         diagnostics_ = tuple(str(value) for value in diagnostics)
         conservation = jnp.asarray(conservation_error)
-        admissible_ = jnp.asarray(admissible, dtype=bool)
-        geometry_valid_ = jnp.asarray(geometry_valid, dtype=bool)
+        admissible_ = jnp.asarray(admissible, dtype=jnp.bool_)
+        geometry_valid_ = jnp.asarray(geometry_valid, dtype=jnp.bool_)
         tolerance = float(conservation_tolerance)
         if (
             conservation.shape != ()
@@ -673,7 +673,7 @@ def initial_finite_element_hp_topology(
     degrees = (
         (int(degree),) * dimension
         if isinstance(degree, (int, np.integer))
-        else tuple(int(value) for value in degree)
+        else tuple(degree)
     )
     cell_vertices = np.concatenate(
         tuple(np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks), axis=0
@@ -688,7 +688,7 @@ def initial_finite_element_hp_topology(
         raise ValueError("Initial hp degree or capacity is invalid.")
     identifiers = np.full((capacity_,), -1, dtype=np.int64)
     identifiers[:count] = global_ids
-    allocated = np.zeros((capacity_,), dtype=bool)
+    allocated = np.zeros((capacity_,), dtype=np.bool_)
     allocated[:count] = True
     active = allocated.copy()
     cell_degrees = np.zeros((capacity_, dimension), dtype=np.int32)
@@ -706,8 +706,8 @@ def initial_finite_element_hp_topology(
         (capacity_, vertex_count, mesh.coordinates.shape[1]), dtype=mesh.coordinates.dtype
     )
     geometry_vertices[:count] = np.asarray(mesh.coordinates)[cell_vertices]
-    lower = np.zeros((capacity_, dimension), dtype=float)
-    upper = np.zeros((capacity_, dimension), dtype=float)
+    lower = np.zeros((capacity_, dimension), dtype=np.float64)
+    upper = np.zeros((capacity_, dimension), dtype=np.float64)
     upper[:count] = 1.0
     return topology, FiniteElementHPGeometry(topology, geometry_vertices, lower, upper)
 
@@ -998,7 +998,7 @@ def hp_active_cell_mesh(
                 point_map[key] = len(points)
                 points.append(point.copy())
             cell.append(point_map[key])
-        degree = tuple(int(value) for value in degrees[slot])
+        degree = tuple(degrees[slot])
         local_cells.setdefault(degree, []).append(tuple(cell))
         local_ids.setdefault(degree, []).append(int(identifiers[slot]))
         local_slots.setdefault(degree, []).append(slot)
@@ -1249,22 +1249,22 @@ def balanced_hp_refinement_ids(
     closure = set(requested)
     changed = True
     owners = np.asarray(interfaces.owner_slots)
-    neighbours = np.asarray(interfaces.neighbour_slots)
+    neighbors = np.asarray(interfaces.neighbor_slots)
     valid = np.asarray(interfaces.valid)
     while changed:
         changed = False
-        for owner, neighbour in zip(owners[valid], neighbours[valid], strict=True):
-            if neighbour < 0:
+        for owner, neighbor in zip(owners[valid], neighbors[valid], strict=True):
+            if neighbor < 0:
                 continue
             owner_target = levels[owner] + (1 if int(owner) in closure else 0)
-            neighbour_target = levels[neighbour] + (1 if int(neighbour) in closure else 0)
-            if owner_target > neighbour_target + 1 and int(neighbour) not in closure:
-                closure.add(int(neighbour))
+            neighbor_target = levels[neighbor] + (1 if int(neighbor) in closure else 0)
+            if owner_target > neighbor_target + 1 and int(neighbor) not in closure:
+                closure.add(int(neighbor))
                 changed = True
-            if neighbour_target > owner_target + 1 and int(owner) not in closure:
+            if neighbor_target > owner_target + 1 and int(owner) not in closure:
                 closure.add(int(owner))
                 changed = True
-    requested_slots = np.asarray(
+    np.asarray(
         sorted(
             requested,
             key=lambda slot: (
@@ -1327,8 +1327,8 @@ def certify_finite_element_hp_geometry(
         )
     interface_error = 0.0
     for row in np.flatnonzero(np.asarray(interfaces.valid)):
-        neighbour = int(np.asarray(interfaces.neighbour_slots)[row])
-        if neighbour < 0:
+        neighbor = int(np.asarray(interfaces.neighbor_slots)[row])
+        if neighbor < 0:
             continue
         owner = int(np.asarray(interfaces.owner_slots)[row])
         owner_points = _facet_vertices(
@@ -1337,22 +1337,22 @@ def certify_finite_element_hp_geometry(
             owner,
             int(np.asarray(interfaces.owner_local_facets)[row]),
         )
-        neighbour_points = _facet_vertices(
+        neighbor_points = _facet_vertices(
             topology,
             geometry,
-            neighbour,
-            int(np.asarray(interfaces.neighbour_local_facets)[row]),
+            neighbor,
+            int(np.asarray(interfaces.neighbor_local_facets)[row]),
         )
         relation = int(np.asarray(interfaces.relation_codes)[row])
         if relation == _HP_RELATIONS["conforming"]:
             first = np.asarray(sorted(tuple(point) for point in owner_points))
-            second = np.asarray(sorted(tuple(point) for point in neighbour_points))
+            second = np.asarray(sorted(tuple(point) for point in neighbor_points))
             interface_error = max(
                 interface_error,
                 float(np.max(np.abs(first - second), initial=0.0)),
             )
         elif relation == _HP_RELATIONS["mortar"] and not _facet_contains(
-            owner_points, neighbour_points, tolerance
+            owner_points, neighbor_points, tolerance
         ):
             interface_error = np.inf
     measures = []
@@ -1401,7 +1401,7 @@ class FiniteElementHPTraceConstraintPlan(StrictModule, NonTrainableState):
         width = int(np.max(np.count_nonzero(matrix, axis=1)))
         columns = np.zeros((matrix.shape[0], width), dtype=np.int32)
         weights = np.zeros((matrix.shape[0], width), dtype=matrix.dtype)
-        valid = np.zeros((matrix.shape[0], width), dtype=bool)
+        valid = np.zeros((matrix.shape[0], width), dtype=np.bool_)
         for row in range(matrix.shape[0]):
             local = np.flatnonzero(matrix[row])
             columns[row, : local.size] = local
@@ -1520,7 +1520,7 @@ def tensor_trace_interpolation(
         raise ValueError("Tensor trace nodes and evaluation points are incompatible.")
     axes = tuple(np.unique(nodes[:, axis]) for axis in range(nodes.shape[1]))
     shape = tuple(values.size for values in axes)
-    if int(np.prod(shape, dtype=int)) != nodes.shape[0]:
+    if int(np.prod(shape, dtype=np.int64)) != nodes.shape[0]:
         raise ValueError("Master trace nodes must form one complete tensor grid.")
     indices = np.stack(
         tuple(
@@ -1538,18 +1538,18 @@ def tensor_trace_interpolation(
         np.fill_diagonal(differences, 1.0)
         barycentric = 1.0 / np.prod(differences, axis=1)
         delta = coordinates[:, None] - axis_values[None, :]
-        exact = np.isclose(delta, 0.0, rtol=0.0, atol=32.0 * np.finfo(float).eps)
+        exact = np.isclose(delta, 0.0, rtol=0.0, atol=32.0 * np.finfo(np.float64).eps)
         safe = np.where(exact, 1.0, delta)
         raw = barycentric[None, :] / safe
         denominator = np.sum(raw, axis=1, keepdims=True)
         values = raw / np.where(
-            np.abs(denominator) > np.finfo(float).tiny, denominator, 1.0
+            np.abs(denominator) > np.finfo(np.float64).tiny, denominator, 1.0
         )
         for row in np.flatnonzero(np.any(exact, axis=1)):
             values[row] = 0.0
             values[row, int(np.argmax(exact[row]))] = 1.0
         values_by_axis.append(values)
-    tensor_values = np.ones((points.shape[0],) + shape, dtype=float)
+    tensor_values = np.ones((points.shape[0],) + shape, dtype=np.float64)
     for axis, values in enumerate(values_by_axis):
         reshape = (
             (points.shape[0],)
@@ -1622,7 +1622,7 @@ def finite_element_hp_transfer_plan(
     )
     source_width = int(np.max(source_count))
     target_width = int(np.max(target_count))
-    matrices = np.zeros((source_slots.size, target_width, source_width), dtype=float)
+    matrices = np.zeros((source_slots.size, target_width, source_width), dtype=np.float64)
     projection = np.zeros_like(matrices)
     if transfer_kind != "h-coarsening":
         for route, (source_slot, target_slot) in enumerate(
@@ -1783,11 +1783,11 @@ class FiniteElementHPResidualJumpLedger(StrictModule):
         contributions = jnp.where(valid_cells, cells * residual**2, 0.0)
         facet_contributions = jnp.where(valid_facets, facets * jumps**2, 0.0)
         owner = jnp.maximum(interfaces.owner_slots, 0)
-        neighbour = jnp.maximum(interfaces.neighbour_slots, 0)
+        neighbor = jnp.maximum(interfaces.neighbor_slots, 0)
         contributions = contributions.at[owner].add(0.5 * facet_contributions)
-        has_neighbour = valid_facets & (interfaces.neighbour_slots >= 0)
-        contributions = contributions.at[neighbour].add(
-            jnp.where(has_neighbour, 0.5 * facet_contributions, 0.0)
+        has_neighbor = valid_facets & (interfaces.neighbor_slots >= 0)
+        contributions = contributions.at[neighbor].add(
+            jnp.where(has_neighbor, 0.5 * facet_contributions, 0.0)
         )
         self.cell_residual = residual
         self.cell_measure = cells
@@ -1880,7 +1880,9 @@ def tensor_modal_decay_estimate(
     ratios = []
     for axis, order in enumerate(orders):
         tail = np.take(coefficients, indices=order, axis=axis)
-        ratios.append(float(np.sum(np.abs(tail) ** 2) / max(total, np.finfo(float).tiny)))
+        ratios.append(
+            float(np.sum(np.abs(tail) ** 2) / max(total, np.finfo(np.float64).tiny))
+        )
     return jnp.asarray(ratios)
 
 
@@ -1907,17 +1909,17 @@ class FiniteElementHPDecision(StrictModule, NonTrainableState):
         coarsen_history: ArrayLike | None = None,
     ):
         degrees = np.asarray(target_degrees, dtype=np.int32)
-        refine_ = np.asarray(refine, dtype=bool)
-        coarsen_ = np.asarray(coarsen, dtype=bool)
+        refine_ = np.asarray(refine, dtype=np.bool_)
+        coarsen_ = np.asarray(coarsen, dtype=np.bool_)
         requested = (
             refine_.copy()
             if requested_refine is None
-            else np.asarray(requested_refine, dtype=bool)
+            else np.asarray(requested_refine, dtype=np.bool_)
         )
         added = (
             refine_ & ~requested
             if balance_added is None
-            else np.asarray(balance_added, dtype=bool)
+            else np.asarray(balance_added, dtype=np.bool_)
         )
         shape = (topology.capacity,)
         history = (
@@ -1981,7 +1983,7 @@ def finite_element_hp_decision(
     indicators = np.asarray(estimate.cell_indicators)
     smoothness = np.asarray(estimate.smoothness)
     degrees = np.asarray(topology.cell_degrees).copy()
-    refine = np.zeros((topology.capacity,), dtype=bool)
+    refine = np.zeros((topology.capacity,), dtype=np.bool_)
     coarsen = np.zeros_like(refine)
     history = (
         np.zeros((topology.capacity,), dtype=np.int32)
@@ -2035,7 +2037,8 @@ def finite_element_hp_decision(
         def estimated_dofs() -> int:
             local = np.prod(degrees[active] + 1, axis=1)
             extra = sum(
-                (topology.child_capacity - 1) * int(np.prod(degrees[slot] + 1, dtype=int))
+                (topology.child_capacity - 1)
+                * int(np.prod(degrees[slot] + 1, dtype=np.int64))
                 for slot in np.flatnonzero(refine)
             )
             return int(np.sum(local)) + extra
@@ -2093,7 +2096,7 @@ def close_finite_element_hp_decision(
         int(identifiers[slot]): int(slot)
         for slot in np.flatnonzero(np.asarray(topology.active))
     }
-    refine = np.zeros((topology.capacity,), dtype=bool)
+    refine = np.zeros((topology.capacity,), dtype=np.bool_)
     refine[[slot_by_id[int(value)] for value in np.asarray(closed_ids)]] = True
     added = np.zeros_like(refine)
     added[np.asarray(added_slots, dtype=np.int32)] = True
@@ -2169,63 +2172,63 @@ def _hp_trace_constraint_for_field(
     valid = np.asarray(interfaces.valid)
     relation_codes = np.asarray(interfaces.relation_codes)
     for row in np.flatnonzero(valid):
-        neighbour_slot = int(np.asarray(interfaces.neighbour_slots)[row])
-        if neighbour_slot < 0:
+        neighbor_slot = int(np.asarray(interfaces.neighbor_slots)[row])
+        if neighbor_slot < 0:
             continue
         owner_slot = int(np.asarray(interfaces.owner_slots)[row])
         owner_facet = int(np.asarray(interfaces.owner_local_facets)[row])
-        neighbour_facet = int(np.asarray(interfaces.neighbour_local_facets)[row])
+        neighbor_facet = int(np.asarray(interfaces.neighbor_local_facets)[row])
         _, owner_dofs, owner_element = slot_data[owner_slot]
-        _, neighbour_dofs, neighbour_element = slot_data[neighbour_slot]
+        _, neighbor_dofs, neighbor_element = slot_data[neighbor_slot]
         owner_axis, owner_side, owner_tangent = _tensor_facet_axis_side(
             topology.cell_kind, owner_facet
         )
-        neighbour_axis, neighbour_side, neighbour_tangent = _tensor_facet_axis_side(
-            topology.cell_kind, neighbour_facet
+        neighbor_axis, neighbor_side, neighbor_tangent = _tensor_facet_axis_side(
+            topology.cell_kind, neighbor_facet
         )
         owner_nodes = np.asarray(owner_element.reference_nodes)
-        neighbour_nodes = np.asarray(neighbour_element.reference_nodes)
+        neighbor_nodes = np.asarray(neighbor_element.reference_nodes)
         owner_trace = np.flatnonzero(
             np.isclose(owner_nodes[:, owner_axis], float(owner_side))
         )
-        neighbour_trace = np.flatnonzero(
-            np.isclose(neighbour_nodes[:, neighbour_axis], float(neighbour_side))
+        neighbor_trace = np.flatnonzero(
+            np.isclose(neighbor_nodes[:, neighbor_axis], float(neighbor_side))
         )
         if (
-            owner_trace.size > neighbour_trace.size
+            owner_trace.size > neighbor_trace.size
             and relation_codes[row] == _HP_RELATIONS["conforming"]
         ):
             (
                 owner_slot,
-                neighbour_slot,
+                neighbor_slot,
                 owner_dofs,
-                neighbour_dofs,
+                neighbor_dofs,
                 owner_element,
-                neighbour_element,
+                neighbor_element,
                 owner_nodes,
-                neighbour_nodes,
+                neighbor_nodes,
                 owner_trace,
-                neighbour_trace,
+                neighbor_trace,
                 owner_tangent,
-                neighbour_tangent,
+                neighbor_tangent,
             ) = (
-                neighbour_slot,
+                neighbor_slot,
                 owner_slot,
-                neighbour_dofs,
+                neighbor_dofs,
                 owner_dofs,
-                neighbour_element,
+                neighbor_element,
                 owner_element,
-                neighbour_nodes,
+                neighbor_nodes,
                 owner_nodes,
-                neighbour_trace,
+                neighbor_trace,
                 owner_trace,
-                neighbour_tangent,
+                neighbor_tangent,
                 owner_tangent,
             )
         master_global = owner_dofs[owner_trace]
-        slave_global = neighbour_dofs[neighbour_trace]
+        slave_global = neighbor_dofs[neighbor_trace]
         master_nodes = owner_nodes[owner_trace][:, owner_tangent]
-        evaluation = neighbour_nodes[neighbour_trace][:, neighbour_tangent]
+        evaluation = neighbor_nodes[neighbor_trace][:, neighbor_tangent]
         if relation_codes[row] == _HP_RELATIONS["mortar"]:
             child = int(np.asarray(interfaces.child_indices)[row])
             child_count = int(np.asarray(interfaces.child_counts)[row])
@@ -2234,7 +2237,7 @@ def _hp_trace_constraint_for_field(
             else:
                 width = int(round(child_count**0.5))
                 child_coordinates = np.asarray(
-                    (child % width, child // width), dtype=float
+                    (child % width, child // width), dtype=np.float64
                 )
                 evaluation = (evaluation + child_coordinates) / width
         interpolation = np.asarray(tensor_trace_interpolation(master_nodes, evaluation))
@@ -2252,7 +2255,7 @@ def _hp_trace_constraint_for_field(
     max_width = max(masters.size for masters, _ in slave_rows.values())
     slaves = np.asarray(sorted(slave_rows), dtype=np.int32)
     masters = np.empty((slaves.size, max_width), dtype=np.int32)
-    weights = np.zeros((slaves.size, max_width), dtype=float)
+    weights = np.zeros((slaves.size, max_width), dtype=np.float64)
     for row, slave in enumerate(slaves):
         local_masters, local_weights = slave_rows[int(slave)]
         masters[row] = local_masters[0]
@@ -2356,7 +2359,7 @@ def prepare_multi_field_finite_element_hp_epoch(
     mesh, degree_tuples, _ = hp_active_cell_mesh(topology, geometry)
     field_specs = []
     for field_name, (conformity, component_shape, degree_offset) in fields.items():
-        offsets = tuple(int(value) for value in degree_offset)
+        offsets = tuple(degree_offset)
         if conformity not in ("H1", "L2") or len(offsets) != topology.dimension:
             raise ValueError("Multi-field hp conformity or degree offsets are invalid.")
         elements = {}
@@ -2446,9 +2449,9 @@ def finite_element_hp_domains(
     valid = np.asarray(epoch.interfaces.valid)
     relations = np.asarray(epoch.interfaces.relation_codes)
     owners = np.asarray(epoch.interfaces.owner_slots)
-    neighbours = np.asarray(epoch.interfaces.neighbour_slots)
+    neighbors = np.asarray(epoch.interfaces.neighbor_slots)
     owner_facets = np.asarray(epoch.interfaces.owner_local_facets)
-    neighbour_facets = np.asarray(epoch.interfaces.neighbour_local_facets)
+    neighbor_facets = np.asarray(epoch.interfaces.neighbor_local_facets)
     exterior_mask = valid & (relations == _HP_RELATIONS["exterior"])
     interior_mask = valid & ~exterior_mask
     interior_rows = np.flatnonzero(interior_mask)
@@ -2474,9 +2477,9 @@ def finite_element_hp_domains(
         support_id,
         interior_entity_set,
         owner_cells=slot_to_cell[owners[interior_rows]],
-        neighbour_cells=slot_to_cell[neighbours[interior_rows]],
+        neighbor_cells=slot_to_cell[neighbors[interior_rows]],
         owner_local_entities=owner_facets[interior_rows],
-        neighbour_local_entities=neighbour_facets[interior_rows],
+        neighbor_local_entities=neighbor_facets[interior_rows],
         periodic_face_mask=relations[interior_rows] == _HP_RELATIONS["periodic"],
     )
     exterior = IntegrationDomain(
@@ -2485,9 +2488,9 @@ def finite_element_hp_domains(
         support_id,
         exterior_entity_set,
         owner_cells=slot_to_cell[owners[exterior_rows]],
-        neighbour_cells=np.full((exterior_rows.size,), -1, dtype=np.int32),
+        neighbor_cells=np.full((exterior_rows.size,), -1, dtype=np.int32),
         owner_local_entities=owner_facets[exterior_rows],
-        neighbour_local_entities=np.full((exterior_rows.size,), -1, dtype=np.int32),
+        neighbor_local_entities=np.full((exterior_rows.size,), -1, dtype=np.int32),
     )
     return interior, exterior
 

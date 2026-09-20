@@ -38,7 +38,7 @@ def test_function_binding_does_not_infer_key_from_signature(sample_batch, interv
     @interval.Function("x")
     def function(x, *, key=None):
         del x
-        return jnp.asarray(key is None, dtype=float)
+        return jnp.asarray(key is None, dtype="float64")
 
     assert isinstance(function.func, phx.domain.PointwiseEvaluator)
     out = function(sample_batch, key=jr.key(1))
@@ -296,40 +296,40 @@ def test_constant_with_dependencies_works_on_coord_separable_batch():
 
 
 def test_rank1_leading_broadcast_op_mul():
-    w = jnp.array([1.0, 2.0, 3.0], dtype=float)
-    u = jnp.arange(12.0, dtype=float).reshape((3, 4))
+    w = jnp.array([1.0, 2.0, 3.0], dtype="float64")
+    u = jnp.arange(12.0, dtype="float64").reshape((3, 4))
     out = _rank1_leading_broadcast_op(operator.mul, w, u)
     expected = w[:, None] * u
     assert jnp.allclose(out, expected)
 
 
 def test_rank1_leading_broadcast_op_div():
-    w = jnp.array([1.0, 2.0, 4.0], dtype=float)
-    u = jnp.arange(12.0, dtype=float).reshape((3, 4)) + 1.0
+    w = jnp.array([1.0, 2.0, 4.0], dtype="float64")
+    u = jnp.arange(12.0, dtype="float64").reshape((3, 4)) + 1.0
     out = _rank1_leading_broadcast_op(operator.truediv, u, w)
     expected = u / w[:, None]
     assert jnp.allclose(out, expected)
 
 
 def test_rank1_leading_broadcast_op_add():
-    w = jnp.array([1.0, 2.0, 3.0], dtype=float)
-    u = jnp.arange(12.0, dtype=float).reshape((3, 4))
+    w = jnp.array([1.0, 2.0, 3.0], dtype="float64")
+    u = jnp.arange(12.0, dtype="float64").reshape((3, 4))
     out = _rank1_leading_broadcast_op(operator.add, u, w)
     expected = u + w[:, None]
     assert jnp.allclose(out, expected)
 
 
 def test_rank1_leading_broadcast_op_sub():
-    w = jnp.array([1.0, 2.0, 3.0], dtype=float)
-    u = jnp.arange(12.0, dtype=float).reshape((3, 4))
+    w = jnp.array([1.0, 2.0, 3.0], dtype="float64")
+    u = jnp.arange(12.0, dtype="float64").reshape((3, 4))
     out = _rank1_leading_broadcast_op(operator.sub, u, w)
     expected = u - w[:, None]
     assert jnp.allclose(out, expected)
 
 
 def test_rank1_leading_broadcast_op_mul_outer_for_mismatched_rank1():
-    x = jnp.array([1.0, 2.0, 3.0], dtype=float)
-    t = jnp.array([4.0, 5.0], dtype=float)
+    x = jnp.array([1.0, 2.0, 3.0], dtype="float64")
+    t = jnp.array([4.0, 5.0], dtype="float64")
     out = _rank1_leading_broadcast_op(operator.mul, x, t)
     expected = x[:, None] * t[None, :]
     assert jnp.allclose(out, expected)

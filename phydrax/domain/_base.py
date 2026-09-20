@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Bool, Float, Key
 
 from .._doc import DOC_KEY0
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -66,7 +66,7 @@ def _make_compact_boundary_factor(
     saturation_fraction: float,
     linear_fraction: float,
 ) -> Callable[[Array], Array]:
-    delta_value = jnp.asarray(scale, dtype=float) * saturation_fraction
+    delta_value = jnp.asarray(scale, dtype=jnp.float64) * saturation_fraction
     transition_width = 1.0 - linear_fraction
     plateau_shape = linear_fraction + 0.5 * transition_width
 
@@ -147,7 +147,7 @@ def _make_global_enforcement_gate(
     scale: Array | float,
 ) -> Callable[[Array], Array]:
     """Map a smooth signed distance source to a broad dimensionless gate."""
-    half_span = jnp.asarray(0.5 * scale, dtype=float)
+    half_span = jnp.asarray(0.5 * scale, dtype=jnp.float64)
 
     def gate(points: Array) -> Array:
         coordinate = -_GLOBAL_GATE_CALIBRATION * distance(points) / half_span
@@ -165,7 +165,7 @@ def _make_global_boundary_ansatz_factor(
 ) -> Callable[[Array], Array]:
     r"""Build a dimensional global gate with outward unit boundary derivative."""
     gate = _make_global_enforcement_gate(distance, scale=scale)
-    coefficient = -jnp.asarray(scale, dtype=float) / _GLOBAL_GATE_BOUNDARY_SLOPE
+    coefficient = -jnp.asarray(scale, dtype=jnp.float64) / _GLOBAL_GATE_BOUNDARY_SLOPE
 
     def factor(points: Array) -> Array:
         return coefficient * gate(points)
@@ -191,15 +191,15 @@ class GeometryTransitionResult(StrictModule):
         projection_distance: Array,
         reflection_count: Array,
     ):
-        pts = jnp.asarray(points, dtype=float)
+        pts = jnp.asarray(points, dtype=jnp.float64)
         if pts.ndim != 2:
             raise ValueError(
                 "GeometryTransitionResult.points must have shape (num_points, spatial_dim)."
             )
         n = pts.shape[0]
-        valid_arr = jnp.asarray(valid, dtype=bool).reshape((n,))
-        displacement_arr = jnp.asarray(displacement_norm, dtype=float).reshape((n,))
-        projection_arr = jnp.asarray(projection_distance, dtype=float).reshape((n,))
+        valid_arr = jnp.asarray(valid, dtype=jnp.bool_).reshape((n,))
+        displacement_arr = jnp.asarray(displacement_norm, dtype=jnp.float64).reshape((n,))
+        projection_arr = jnp.asarray(projection_distance, dtype=jnp.float64).reshape((n,))
         reflection_arr = jnp.asarray(reflection_count, dtype=jnp.int32).reshape((n,))
         self.points = pts
         self.valid = valid_arr
@@ -217,9 +217,9 @@ class AbstractGeometry(JointFactor):
     may give it a smoother global interior profile than ``adf``.
     """
 
-    _label: AbstractAttribute[str]
+    _label: eqx.AbstractVar[str]
 
-    adf: AbstractAttribute[Callable[[Array], Array]]
+    adf: eqx.AbstractVar[Callable[[Array], Array]]
 
     @property
     @abstractmethod
@@ -291,8 +291,7 @@ class AbstractGeometry(JointFactor):
                 )
         else:
             raise TypeError(
-                f"Geometry factor {self.labels} does not support selection "
-                f"{type(selection).__name__}."
+                f"Geometry factor {self.labels} does not support selection {type(selection).__name__}."
             )
         return FactorComponent(factor=self, selections=selections, measure=measure)
 
@@ -306,7 +305,7 @@ class AbstractGeometry(JointFactor):
     @property
     def enforcement_characteristic_length(self) -> Array:
         """Shortest bounding-box span used to scale a dimensionless solver gate."""
-        bounds = jnp.asarray(self.bounds, dtype=float)
+        bounds = jnp.asarray(self.bounds, dtype=jnp.float64)
         length = jnp.min(bounds[1] - bounds[0])
         return eqx.error_if(
             length,
@@ -347,8 +346,7 @@ class AbstractGeometry(JointFactor):
         )
         if method not in ("auto", "global_r_equivalence", "compact"):
             raise ValueError(
-                "method must be 'auto', 'global_r_equivalence', or 'compact', "
-                f"got {method!r}."
+                f"method must be 'auto', 'global_r_equivalence', or 'compact', got {method!r}."
             )
         builder = self._enforcement_gate_builder
         if builder is not None:
@@ -388,7 +386,7 @@ class AbstractGeometry(JointFactor):
     @ft.cached_property
     def mesh_bounds(self) -> Float[Array, "2 spatial_dim"]:
         """Axis-aligned bounding box as `[[mins...], [maxs...]]` (raw values)."""
-        bounds = jnp.asarray(self.bounds, dtype=float)
+        bounds = jnp.asarray(self.bounds, dtype=jnp.float64)
         sd = int(self.spatial_dim)
         if bounds.shape != (2, sd):
             raise ValueError(
@@ -399,7 +397,7 @@ class AbstractGeometry(JointFactor):
     @ft.cached_property
     def volume_proportion(self) -> Float[Array, ""]:
         """Fraction of the AABB volume occupied by the geometry (defaults to 1.0)."""
-        return jnp.array(1.0, dtype=float)
+        return jnp.array(1.0, dtype=jnp.float64)
 
     @property
     def boundary_measure_value(self) -> Array:
@@ -409,7 +407,7 @@ class AbstractGeometry(JointFactor):
         this defaults to counting measure on the two endpoints (value = 2).
         """
         if self.spatial_dim == 1:
-            return jnp.array(2.0, dtype=float)
+            return jnp.array(2.0, dtype=jnp.float64)
         raise NotImplementedError(
             f"{type(self).__name__} must implement `boundary_measure_value`."
         )
@@ -438,7 +436,7 @@ class AbstractGeometry(JointFactor):
     ) -> GeometryTransitionResult:
         """Move interior points while preserving geometry membership."""
         del key
-        pts = jnp.asarray(points, dtype=float).reshape((-1, self.spatial_dim))
+        pts = jnp.asarray(points, dtype=jnp.float64).reshape((-1, self.spatial_dim))
         delta = jnp.asarray(displacement, dtype=pts.dtype).reshape(pts.shape)
         if self.interior_transition_kind in (
             "interval_reflection",
@@ -543,7 +541,7 @@ class AbstractGeometry(JointFactor):
             raise NotImplementedError(
                 f"{type(self).__name__} does not support adaptive boundary movement."
             )
-        pts = jnp.asarray(points, dtype=float).reshape((-1, self.spatial_dim))
+        pts = jnp.asarray(points, dtype=jnp.float64).reshape((-1, self.spatial_dim))
         delta = jnp.asarray(displacement, dtype=pts.dtype).reshape(pts.shape)
 
         def values(x):

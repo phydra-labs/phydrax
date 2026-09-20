@@ -288,7 +288,7 @@ class ReducedRodState(StrictModule):
                 "Reduced rod coefficients and velocities must share one dtype."
             )
         self.values = jnp.concatenate((coefficients_, velocities_))
-        self.coordinate_count = int(coefficients_.shape[0])
+        self.coordinate_count = coefficients_.shape[0]
 
     @property
     def coefficients(self) -> Array:

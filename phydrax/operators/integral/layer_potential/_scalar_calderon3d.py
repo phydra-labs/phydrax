@@ -115,7 +115,7 @@ class ScalarKernelFamily3D(StrictModule, NonTrainableState):
         self.ambient_dimension = 3
         self.kernel_id = canonical_fingerprint(
             {
-                "kind": "scalar-layer-kernel-family-3d-v1",
+                "kind": "scalar-layer-kernel-family-3d",
                 "family": family,
                 "parameter": value,
                 "pde": pde,
@@ -214,8 +214,8 @@ class _BlockedScalarWeakOperator3D(_AbstractCostedLinearOperator):
         self.layer_kind = layer_kind
         self.target_block_size = int(target_block_size)
         self.source_block_size = int(source_block_size)
-        self.face_count = int(space.size)
-        quadrature_count = int(pair_data.regular_points.shape[1])
+        self.face_count = space.size
+        quadrature_count = pair_data.regular_points.shape[1]
         itemsize = np.dtype(values.dtype).itemsize
         self.action_workspace_bytes = int(
             itemsize
@@ -522,8 +522,7 @@ class ScalarCalderonDP0Galerkin3D(StrictModule, NonTrainableState):
                 density=density,
             )
         raise UnsupportedScalarBoundarySpaceError(
-            "Modified Helmholtz off-surface reconstruction is not provided by "
-            "the current layer-potential substrate."
+            "Modified Helmholtz off-surface reconstruction is not provided by the current layer-potential substrate."
         )
 
     def double_layer_potential(self, coefficients: ArrayLike, /):
@@ -541,8 +540,7 @@ class ScalarCalderonDP0Galerkin3D(StrictModule, NonTrainableState):
                 density=density,
             )
         raise UnsupportedScalarBoundarySpaceError(
-            "Modified Helmholtz off-surface reconstruction is not provided by "
-            "the current layer-potential substrate."
+            "Modified Helmholtz off-surface reconstruction is not provided by the current layer-potential substrate."
         )
 
     def combined_field_potential(
@@ -746,10 +744,10 @@ def _scalar_exception_values(
         int(target) * faces.shape[0] + int(source): index
         for index, (target, source) in enumerate(zip(targets, sources, strict=True))
     }
-    dtype = complex if kernel.scalar_dtype == "complex" else float
+    dtype = np.complex128 if kernel.scalar_dtype == "complex" else np.float64
     single_values = np.empty((targets.size,), dtype=dtype)
     double_values = np.empty((targets.size,), dtype=dtype)
-    maximum_errors = np.zeros((2,), dtype=float)
+    maximum_errors = np.zeros((2,), dtype=np.float64)
     evaluations = np.zeros((2,), dtype=np.int64)
     high_regular = policy.regular_order + 2
     high_singular = policy.singular_order + 2
@@ -876,7 +874,7 @@ def prepare_scalar_calderon_dp0_3d(
         quadrature_order=panel_order,
         numeric_version=numeric_version,
     )
-    vertices = np.asarray(region.triangle_mesh.vertices, dtype=float)
+    vertices = np.asarray(region.triangle_mesh.vertices, dtype=np.float64)
     faces = np.asarray(region.triangle_mesh.faces, dtype=np.int32)
     triangles = vertices[faces]
     max_panel_diameter = max(_diameter(triangle) for triangle in triangles)
@@ -936,7 +934,7 @@ def prepare_scalar_calderon_dp0_3d(
             dtype=scalar_dtype,
             space_id=canonical_fingerprint(
                 {
-                    "kind": "complex-surface-dp0-space-3d-v1",
+                    "kind": "complex-surface-dp0-space-3d",
                     "binding": binding.binding_id,
                     "dtype": np.dtype(scalar_dtype).str,
                 }
@@ -961,7 +959,7 @@ def prepare_scalar_calderon_dp0_3d(
         target_block_size=selected.target_block_size,
         source_block_size=selected.source_block_size,
         operator_id=canonical_fingerprint(
-            {"kind": "scalar-single-layer-weak-dp0-3d-v1", **common_id}
+            {"kind": "scalar-single-layer-weak-dp0-3d", **common_id}
         ),
     )
     double_weak_base = _BlockedScalarWeakOperator3D(
@@ -974,13 +972,13 @@ def prepare_scalar_calderon_dp0_3d(
         target_block_size=selected.target_block_size,
         source_block_size=selected.source_block_size,
         operator_id=canonical_fingerprint(
-            {"kind": "scalar-double-layer-weak-dp0-3d-v1", **common_id}
+            {"kind": "scalar-double-layer-weak-dp0-3d", **common_id}
         ),
     )
     adjoint_weak = _WeakTransposeScalarOperator3D(
         double_weak_base,
         operator_id=canonical_fingerprint(
-            {"kind": "scalar-adjoint-double-layer-weak-dp0-3d-v1", **common_id}
+            {"kind": "scalar-adjoint-double-layer-weak-dp0-3d", **common_id}
         ),
     )
     vector_bytes = binding.face_count * np.dtype(scalar_dtype).itemsize
@@ -993,7 +991,7 @@ def prepare_scalar_calderon_dp0_3d(
         transposed_weak_action=False,
         action_workspace_bytes=single_weak.action_workspace_bytes + vector_bytes,
         operator_id=canonical_fingerprint(
-            {"kind": "scalar-single-layer-strong-dp0-3d-v1", **common_id}
+            {"kind": "scalar-single-layer-strong-dp0-3d", **common_id}
         ),
     )
     double = _StrongScalarOperator3D(
@@ -1003,7 +1001,7 @@ def prepare_scalar_calderon_dp0_3d(
         transposed_weak_action=False,
         action_workspace_bytes=double_weak_base.action_workspace_bytes + vector_bytes,
         operator_id=canonical_fingerprint(
-            {"kind": "scalar-double-layer-strong-dp0-3d-v1", **common_id}
+            {"kind": "scalar-double-layer-strong-dp0-3d", **common_id}
         ),
     )
     adjoint_double = _StrongScalarOperator3D(
@@ -1013,7 +1011,7 @@ def prepare_scalar_calderon_dp0_3d(
         transposed_weak_action=True,
         action_workspace_bytes=double_weak_base.action_workspace_bytes + vector_bytes,
         operator_id=canonical_fingerprint(
-            {"kind": "scalar-adjoint-double-layer-strong-dp0-3d-v1", **common_id}
+            {"kind": "scalar-adjoint-double-layer-strong-dp0-3d", **common_id}
         ),
     )
     resident_bytes = int(
@@ -1044,7 +1042,7 @@ def prepare_scalar_calderon_dp0_3d(
     )
     report_id = canonical_fingerprint(
         {
-            "kind": "scalar-calderon-dp0-assembly-report-3d-v1",
+            "kind": "scalar-calderon-dp0-assembly-report-3d",
             **common_id,
             "pair_counts": counts,
             "errors": array_tree_fingerprint(errors),
@@ -1056,8 +1054,7 @@ def prepare_scalar_calderon_dp0_3d(
         boundary_dimension=2,
         pde=family.pde,
         geometry=(
-            "closed-oriented-watertight-piecewise-planar-triangle-mesh-with-"
-            "strictly-separated-component-bounding-boxes"
+            "closed-oriented-watertight-piecewise-planar-triangle-mesh-with-strictly-separated-component-bounding-boxes"
         ),
         formulation="DP0-Galerkin-V-K-Kprime-with-diagonal-mass-strong-form",
         trial_space=(
@@ -1073,7 +1070,7 @@ def prepare_scalar_calderon_dp0_3d(
         face_count=binding.face_count,
         component_count=binding.component_count,
         pair_counts=counts,
-        exception_count=int(pair_data.targets.shape[0]),
+        exception_count=pair_data.targets.shape[0],
         quadrature_maximum_errors=errors,
         quadrature_evaluations=jnp.asarray(evaluations, dtype=jnp.int64),
         dimensionless_panel_parameter=dimensionless_parameter,

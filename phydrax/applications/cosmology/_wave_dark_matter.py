@@ -227,7 +227,7 @@ class WaveDarkMatterPlan(StrictModule, NonTrainableState):
         hbar = float(reduced_planck_constant)
         if not all(isfinite(value) and value > 0.0 for value in (mass, gravity, hbar)):
             raise ValueError("Wave-dark-matter physical coefficients must be positive.")
-        schedule_host = np.asarray(scale_factors, dtype=float).reshape((-1,))
+        schedule_host = np.asarray(scale_factors, dtype=np.float64).reshape((-1,))
         if (
             schedule_host.size < 2
             or np.any(~np.isfinite(schedule_host))
@@ -446,8 +446,7 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
         psi = jnp.asarray(state.psi)
         if psi.shape != self.discretization.physical_shape:
             raise ValueError(
-                "Wavefunction must have physical grid shape "
-                f"{self.discretization.physical_shape}; got {psi.shape}."
+                f"Wavefunction must have physical grid shape {self.discretization.physical_shape}; got {psi.shape}."
             )
         if not jnp.issubdtype(psi.dtype, jnp.complexfloating):
             raise TypeError("Wavefunction psi must have a complex dtype.")
@@ -705,8 +704,7 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
             | (amount < 0.0)
             | (amount > 1.0)
             | ~at_endpoint,
-            "Potential kick requires finite data, a fraction in [0, 1], "
-            "and state at an interval endpoint.",
+            "Potential kick requires finite data, a fraction in [0, 1], and state at an interval endpoint.",
         )
         values = jax.lax.stop_gradient(values)
         kick = self.background.kick_factor(start, end).astype(checked.psi.real.dtype)

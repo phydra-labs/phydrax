@@ -65,8 +65,7 @@ def main() -> None:
     endpoints = final.state.spikes.endpoint[: final.state.spikes.count]
     if not bool(jnp.any(endpoints == 0)) or not bool(jnp.any(endpoints == 1)):
         raise RuntimeError(
-            "Expected both an endogenous HH spike and a postsynaptic spike; "
-            f"observed endpoints {endpoints.tolist()}."
+            f"Expected both an endogenous HH spike and a postsynaptic spike; observed endpoints {endpoints.tolist()}."
         )
     print("spike times (ms):", final.state.spikes.time_ms[: final.state.spikes.count])
     print("spike endpoints:", endpoints)

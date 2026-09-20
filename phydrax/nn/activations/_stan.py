@@ -37,7 +37,7 @@ class Stan(StrictModule):
         - `key`: PRNG key (unused; included for API compatibility).
         """
         shape = shape or ()
-        self.beta = jnp.ones(shape=shape, dtype=float)
+        self.beta = jnp.ones(shape=shape, dtype=jnp.float64)
 
     def __call__(self, x: Array, /) -> Array:
         r"""Apply $\text{Stan}_\beta$ to `x`.

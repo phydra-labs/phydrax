@@ -129,14 +129,14 @@ class CalabiYauMetricResult(StrictModule):
         self.objective_history = jnp.asarray(objective_history)
         self.residual_history = jnp.asarray(residual_history)
         self.positivity_history = jnp.asarray(positivity_history)
-        self.accepted_history = jnp.asarray(accepted_history, dtype=bool)
+        self.accepted_history = jnp.asarray(accepted_history, dtype=jnp.bool_)
         self.valid = (
             jnp.all(jnp.isfinite(self.objective_history))
             & jnp.all(jnp.isfinite(self.residual_history))
             & jnp.all(jnp.isfinite(self.positivity_history))
         )
-        self.converged = jnp.asarray(converged, dtype=bool)
-        self.iteration_count = int(self.objective_history.shape[0])
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
+        self.iteration_count = self.objective_history.shape[0]
         self.hypersurface_id = str(hypersurface_id)
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")

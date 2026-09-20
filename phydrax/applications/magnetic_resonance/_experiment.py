@@ -49,8 +49,8 @@ class FixedPulseSequence(StrictModule):
         *,
         sequence_id: str = "fixed-pulse-sequence",
     ):
-        times = np.asarray(time_grid_s, dtype=float)
-        field = np.asarray(field_t, dtype=float)
+        times = np.asarray(time_grid_s, dtype=np.float64)
+        field = np.asarray(field_t, dtype=np.float64)
         if times.ndim != 1 or times.size < 2 or np.any(~np.isfinite(times)):
             raise ValueError(
                 "time_grid_s must be a finite rank-one array of length >= 2."
@@ -102,7 +102,7 @@ def prepare_pulse_sequence(
         )
         for axis in range(3)
     )
-    transfer = np.zeros((3, len(prepared.drive_terms)), dtype=float)
+    transfer = np.zeros((3, len(prepared.drive_terms)), dtype=np.float64)
     for site_index in range(len(prepared.system.sites)):
         for axis in range(3):
             transfer[axis, 3 * site_index + axis] = 1.0
@@ -144,7 +144,7 @@ def _validated_density(
     density_matrix: ArrayLike,
     /,
 ) -> Array:
-    host = np.asarray(density_matrix, dtype=complex)
+    host = np.asarray(density_matrix, dtype=np.complex128)
     dimension = prepared.layout.dimension
     if host.shape != (dimension, dimension) or np.any(~np.isfinite(host)):
         raise ValueError(

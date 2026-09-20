@@ -121,9 +121,9 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         self.field_weights = weights
         self.field_weights_from_geometry = dynamic_weights
         self.entity_rows = rows
-        self.query_permutation = tuple(int(value) for value in query_permutation)
-        self.entity_shape = tuple(int(value) for value in entity_shape)
-        self.point_shape = tuple(int(value) for value in point_shape)
+        self.query_permutation = tuple(query_permutation)
+        self.entity_shape = tuple(entity_shape)
+        self.point_shape = tuple(point_shape)
         self.topology_id = str(topology_id)
         self.realization_id = "isogeometric-direct-tensor"
         self.geometry_layout_id = str(geometry_layout_id)
@@ -157,7 +157,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
                 "geometry_layout": self.geometry_layout_id,
                 "maximum_derivative_order": order,
                 "entity_count": entity_count,
-                "entity_rows": tuple(int(value) for value in rows.tolist()),
+                "entity_rows": tuple(rows.tolist()),
                 "trace": self.is_trace,
             }
         )
@@ -335,14 +335,14 @@ class IsogeometricGeometryActions(LocalGeometryActions):
         self.tensor_plan = tensor_plan
         self.entity_rows = rows
         self.reference_weights = weights
-        self.query_permutation = tuple(int(value) for value in query_permutation)
-        self.entity_shape = tuple(int(value) for value in entity_shape)
-        self.point_shape = tuple(int(value) for value in point_shape)
+        self.query_permutation = tuple(query_permutation)
+        self.entity_shape = tuple(entity_shape)
+        self.point_shape = tuple(point_shape)
         self.parameter_scales = jnp.asarray(parameter_scales)
         self.qualification_policy = qualification_policy
         self.topology_id = str(topology_id)
         self.runtime_layout_id = str(runtime_layout_id)
-        self.entity_count = int(rows.size)
+        self.entity_count = rows.size
         self.domain_kind = kind
         self.facet_axis = int(facet_axis)
         self.facet_side = int(facet_side)
@@ -361,7 +361,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
                 "facet_axis": self.facet_axis,
                 "facet_side": self.facet_side,
                 "qualification": qualification_policy.policy_id,
-                "entity_rows": tuple(int(value) for value in rows.tolist()),
+                "entity_rows": tuple(rows.tolist()),
             }
         )
 
@@ -491,8 +491,8 @@ class IsogeometricGeometryActions(LocalGeometryActions):
         minimum_rank_ratio = jnp.min(eigenvalues[..., 0]) / (safe_scale * safe_scale)
         maximum_weight = jnp.maximum(jnp.max(jnp.abs(weight_sum)), tiny)
         minimum_weight_ratio = jnp.min(weight_sum) / maximum_weight
-        ambient = int(metric.jacobian.shape[-2])
-        parametric = int(metric.jacobian.shape[-1])
+        ambient = metric.jacobian.shape[-2]
+        parametric = metric.jacobian.shape[-1]
         if ambient == parametric:
             determinant = jnp.linalg.det(scaled_jacobian)
             absolute = jnp.sqrt(jnp.maximum(jnp.linalg.det(gram), 0.0))

@@ -119,7 +119,7 @@ class ImportedBilbyResult(StrictModule):
 
     @property
     def num_samples(self) -> int:
-        return int(self.log_weights.shape[0])
+        return self.log_weights.shape[0]
 
     def posterior_measure(self) -> WeightedSampleTarget:
         from ..integration import WeightedSampleTarget
@@ -202,7 +202,7 @@ def read_bilby_result_json(
     if any(name not in content for name in names):
         raise ValueError("Bilby posterior is missing a sampled parameter column.")
     columns = {name: _column(content[name], name) for name in names}
-    lengths = {int(value.size) for value in columns.values()}
+    lengths = {value.size for value in columns.values()}
     if len(lengths) != 1:
         raise ValueError("Bilby posterior columns have inconsistent lengths.")
     count = lengths.pop()
@@ -210,11 +210,11 @@ def read_bilby_result_json(
         weights = _column(content["weights"], "weights")
         if weights.size != count or np.any(weights < 0.0) or not np.any(weights > 0.0):
             raise ValueError("Bilby posterior weights are invalid.")
-        log_weights = np.full(weights.shape, -np.inf, dtype=float)
+        log_weights = np.full(weights.shape, -np.inf, dtype=np.float64)
         positive = weights > 0.0
         log_weights[positive] = np.log(weights[positive])
     else:
-        log_weights = np.zeros((count,), dtype=float)
+        log_weights = np.zeros((count,), dtype=np.float64)
     log_weights = log_weights - np.logaddexp.reduce(log_weights)
     log_prior = (
         None if "log_prior" not in content else _column(content["log_prior"], "log_prior")

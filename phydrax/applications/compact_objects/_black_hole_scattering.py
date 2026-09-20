@@ -87,7 +87,7 @@ class ScatteringQualificationEvidence(StrictModule, NonTrainableState):
         self.source_id = source
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "black-hole-scattering-qualification-v1",
+                "kind": "black-hole-scattering-qualification",
                 "accepted": accepted_,
                 "radial_source": radial,
                 "mode": mode.mode_id,
@@ -153,7 +153,7 @@ class BlackHoleScatteringPlan(StrictModule, NonTrainableState):
         self.flux_normalization = normalization
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "black-hole-scattering-plan-v1",
+                "kind": "black-hole-scattering-plan",
                 "mode": mode.mode_id,
                 "horizon_angular_velocity": float(omega_h),
                 "flux_tolerance": self.flux_tolerance,
@@ -174,7 +174,7 @@ class BlackHoleScatteringResult(StrictModule):
     incident_flux: Array
     reflected_flux: Array
     horizon_flux: Array
-    greybody_factor: Array
+    graybody_factor: Array
     amplification_factor: Array
     corotation_slope: Array
     wronskian_residual: Array
@@ -235,7 +235,7 @@ def solve_black_hole_scattering(
     inconsistent boundary normalization.
 
     ``corotation_slope`` is the independently resolved derivative
-    ``d(greybody_factor)/d(angular_frequency)`` along this fixed mode and
+    ``d(graybody_factor)/d(angular_frequency)`` along this fixed mode and
     background branch.  It is retained for the paired thermal limit at the
     superradiant threshold; this function never manufactures it from one lane.
     """
@@ -263,7 +263,7 @@ def solve_black_hole_scattering(
     horizon_flux = horizon_wave_number * jnp.real(horizon * jnp.conj(horizon))
     tiny = jnp.finfo(frequency.dtype).tiny
     safe_incident_flux = jnp.where(incident_flux > tiny, incident_flux, 1.0)
-    greybody_factor = horizon_flux / safe_incident_flux
+    graybody_factor = horizon_flux / safe_incident_flux
     amplification_factor = reflected_flux / safe_incident_flux - 1.0
     flux_residual = incident_flux - reflected_flux - horizon_flux
 
@@ -280,7 +280,7 @@ def solve_black_hole_scattering(
                     incident_flux,
                     reflected_flux,
                     horizon_flux,
-                    greybody_factor,
+                    graybody_factor,
                     amplification_factor,
                     slope,
                     flux_residual,
@@ -303,12 +303,12 @@ def solve_black_hole_scattering(
     above_threshold = horizon_wave_number > plan.threshold_tolerance
     at_threshold = ~(below_threshold | above_threshold)
     amplified = reflected_flux > incident_flux
-    negative_absorption = greybody_factor < 0.0
+    negative_absorption = graybody_factor < 0.0
     superradiant = below_threshold & amplified & negative_absorption
     regime_consistent = (
         at_threshold
         | (below_threshold & superradiant)
-        | (above_threshold & (~amplified) & (greybody_factor >= 0.0))
+        | (above_threshold & (~amplified) & (graybody_factor >= 0.0))
     )
     superradiance_status = jnp.where(
         at_threshold,
@@ -392,7 +392,7 @@ def solve_black_hole_scattering(
         incident_flux,
         reflected_flux,
         horizon_flux,
-        greybody_factor,
+        graybody_factor,
         amplification_factor,
         slope,
         wronskian,
@@ -483,8 +483,7 @@ class SchwarzschildScatteringSolvePlan(StrictModule, NonTrainableState):
             or mode.sector != "scalar"
         ):
             raise ValueError(
-                "Schwarzschild scattering requires family='scattering', "
-                "spin_weight=0, and sector='scalar'."
+                "Schwarzschild scattering requires family='scattering', spin_weight=0, and sector='scalar'."
             )
         if (
             radial_plan.boundary.horizon != "ingoing"
@@ -520,8 +519,7 @@ class SchwarzschildScatteringSolvePlan(StrictModule, NonTrainableState):
         tolerances = tuple(float(value) for value in values)
         if any(not math.isfinite(value) or value <= 0.0 for value in tolerances):
             raise ValueError(
-                "Scattering frequency/control steps and tolerances must be "
-                "finite and positive."
+                "Scattering frequency/control steps and tolerances must be finite and positive."
             )
         nodes = np.asarray(radial_plan.radial_nodes)
         inner = float(nodes[0])
@@ -559,7 +557,7 @@ class SchwarzschildScatteringSolvePlan(StrictModule, NonTrainableState):
         self.decomposition_policy = decomposition_policy
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "schwarzschild-scalar-scattering-solve-plan-v1",
+                "kind": "schwarzschild-scalar-scattering-solve-plan",
                 "radial_plan": radial_plan.plan_id,
                 "refined_radial_plan": refined.plan_id,
                 "flux_plan": flux_plan.plan_id,
@@ -611,7 +609,7 @@ class _SchwarzschildAmplitudePair(StrictModule):
     refined: _SchwarzschildAmplitudeEvaluation
     reflection_error: Array
     horizon_error: Array
-    greybody_error: Array
+    graybody_error: Array
     threshold: Array
     finite: Array
     resolved: Array
@@ -628,10 +626,10 @@ class SchwarzschildScatteringEvidence(StrictModule):
     decomposition_condition: Array
     reflection_refinement_error: Array
     horizon_refinement_error: Array
-    greybody_refinement_error: Array
+    graybody_refinement_error: Array
     refinement_threshold: Array
     neighboring_frequencies: Array
-    neighboring_greybody_factors: Array
+    neighboring_graybody_factors: Array
     neighboring_resolved: Array
     coarse_dimensionless_corotation_slope: Array
     dimensionless_slope_refinement_error: Array
@@ -698,8 +696,8 @@ class SchwarzschildScatteringResult(StrictModule):
         return self.scattering.horizon_flux
 
     @property
-    def greybody_factor(self) -> Array:
-        return self.scattering.greybody_factor
+    def graybody_factor(self) -> Array:
+        return self.scattering.graybody_factor
 
     @property
     def corotation_slope(self) -> Array:
@@ -909,13 +907,13 @@ def _schwarzschild_amplitude_pair(
     )
     reflection_error = jnp.abs(refined.reflected_amplitude - coarse.reflected_amplitude)
     horizon_error = jnp.abs(refined.horizon_amplitude - coarse.horizon_amplitude)
-    coarse_greybody = jnp.real(
+    coarse_graybody = jnp.real(
         coarse.horizon_amplitude * jnp.conj(coarse.horizon_amplitude)
     )
-    refined_greybody = jnp.real(
+    refined_graybody = jnp.real(
         refined.horizon_amplitude * jnp.conj(refined.horizon_amplitude)
     )
-    greybody_error = jnp.abs(refined_greybody - coarse_greybody)
+    graybody_error = jnp.abs(refined_graybody - coarse_graybody)
     scale = jnp.maximum(
         jnp.maximum(
             jnp.abs(refined.reflected_amplitude),
@@ -931,14 +929,14 @@ def _schwarzschild_amplitude_pair(
         & refined.qualified
         & (reflection_error <= threshold)
         & (horizon_error <= threshold)
-        & (greybody_error <= plan.refinement_tolerance)
+        & (graybody_error <= plan.refinement_tolerance)
     )
     return _SchwarzschildAmplitudePair(
         coarse,
         refined,
         reflection_error,
         horizon_error,
-        greybody_error,
+        graybody_error,
         threshold,
         finite,
         resolved,
@@ -976,7 +974,7 @@ def solve_schwarzschild_scattering(
     pairs = (central, minus, minus_half, plus_half, plus)
     neighboring_pairs = (minus, minus_half, plus_half, plus)
 
-    def greybody(pair: _SchwarzschildAmplitudePair) -> Array:
+    def graybody(pair: _SchwarzschildAmplitudePair) -> Array:
         amplitude = pair.refined.horizon_amplitude
         return jnp.real(amplitude * jnp.conj(amplitude))
 
@@ -1009,15 +1007,15 @@ def solve_schwarzschild_scattering(
     )
     neighboring_ledger_valid = pair_ledger_valid[1:]
 
-    central_greybody = greybody(central)
-    minus_greybody = greybody(minus)
-    minus_half_greybody = greybody(minus_half)
-    plus_half_greybody = greybody(plus_half)
-    plus_greybody = greybody(plus)
-    coarse_corotation_slope = (plus_greybody - minus_greybody) / (
+    central_graybody = graybody(central)
+    minus_graybody = graybody(minus)
+    minus_half_graybody = graybody(minus_half)
+    plus_half_graybody = graybody(plus_half)
+    plus_graybody = graybody(plus)
+    coarse_corotation_slope = (plus_graybody - minus_graybody) / (
         2.0 * plan.frequency_step
     )
-    corotation_slope = (plus_half_greybody - minus_half_greybody) / plan.frequency_step
+    corotation_slope = (plus_half_graybody - minus_half_graybody) / plan.frequency_step
     mass = plan.radial_plan.mass
     coarse_dimensionless_slope = coarse_corotation_slope / mass
     dimensionless_slope = corotation_slope / mass
@@ -1072,7 +1070,7 @@ def solve_schwarzschild_scattering(
     )
     low_frequency_reference = 16.0 * dimensionless_frequency**2
     low_frequency_relative_error = jnp.abs(
-        central_greybody - low_frequency_reference
+        central_graybody - low_frequency_reference
     ) / jnp.maximum(
         low_frequency_reference,
         jnp.finfo(frequency.dtype).tiny,
@@ -1203,7 +1201,7 @@ def solve_schwarzschild_scattering(
         central.refined.decomposition_condition,
         central.reflection_error,
         central.horizon_error,
-        central.greybody_error,
+        central.graybody_error,
         central.threshold,
         jnp.asarray(
             (
@@ -1215,10 +1213,10 @@ def solve_schwarzschild_scattering(
         ),
         jnp.asarray(
             (
-                minus_greybody,
-                minus_half_greybody,
-                plus_half_greybody,
-                plus_greybody,
+                minus_graybody,
+                minus_half_graybody,
+                plus_half_graybody,
+                plus_graybody,
             )
         ),
         neighboring_resolved,

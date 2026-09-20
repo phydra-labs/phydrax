@@ -83,7 +83,9 @@ def soft_threshold(value: Array, threshold: Array, /) -> Array:
 def group_soft_threshold(value: Array, threshold: Array, /, *, axis: int = -1) -> Array:
     """Group-lasso proximal map over one declared axis."""
     norm = jnp.linalg.norm(value, axis=axis, keepdims=True)
-    scale = jnp.maximum(1.0 - threshold / jnp.maximum(norm, jnp.finfo(float).tiny), 0.0)
+    scale = jnp.maximum(
+        1.0 - threshold / jnp.maximum(norm, jnp.finfo(jnp.float64).tiny), 0.0
+    )
     return value * scale
 
 

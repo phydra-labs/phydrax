@@ -83,30 +83,30 @@ def test_memory_kernel_and_dynamical_map_physicality():
     problem = phx.solver.exponential_memory_qubit_problem(0.05, 1.0, initial)
     solution = phx.solver.solve_memory_kernel(problem, step_size=0.01, steps=2)
     assert bool(solution.valid)
-    identity = jnp.eye(4, dtype=complex)
+    identity = jnp.eye(4, dtype="complex128")
     report = phx.solver.DynamicalMapPhysicality(identity, 2)
     assert bool(report.valid)
 
 
 def test_tensor_network_purification_and_gate_truncation():
     state = phx.tensor_network.product_mps(
-        jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=complex)
+        jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype="complex128")
     )
     assert jnp.allclose(state.norm(), 1.0)
-    swap = jnp.eye(4, dtype=complex).reshape((2, 2, 2, 2))
+    swap = jnp.eye(4, dtype="complex128").reshape((2, 2, 2, 2))
     evolved, evidence = phx.tensor_network.apply_two_site_gate(
         state, 0, swap, maximum_bond_dimension=2
     )
     assert bool(evidence.valid)
     assert jnp.allclose(evolved.norm(), 1.0)
     purification = phx.tensor_network.LocallyPurifiedDensity(
-        (jnp.asarray([[[[1.0]], [[0.0]]]], dtype=complex),)
+        (jnp.asarray([[[[1.0]], [[0.0]]]], dtype="complex128"),)
     )
     assert jnp.allclose(jnp.trace(purification.to_dense_density(normalize=True)), 1.0)
 
 
 def test_markov_process_tensor_contracts_identity_interventions():
-    identity = jnp.eye(4, dtype=complex)
+    identity = jnp.eye(4, dtype="complex128")
     initial = jnp.asarray([[0.7 + 0.0j, 0.0j], [0.0j, 0.3 + 0.0j]])
     process = phx.tensor_network.markov_process_tensor((identity, identity), initial)
     final, probability = process.contract()

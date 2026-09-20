@@ -43,10 +43,10 @@ class CellQualityReport(StrictModule, NonTrainableState):
     def __init__(self, evaluation: CellQualityEvaluation, /):
         if not isinstance(evaluation, CellQualityEvaluation):
             raise TypeError("evaluation must be CellQualityEvaluation.")
-        measures = np.asarray(evaluation.measures, dtype=float)
-        ratios = np.asarray(evaluation.mean_ratios, dtype=float)
-        aspects = np.asarray(evaluation.aspect_ratios, dtype=float)
-        valid = np.asarray(evaluation.valid, dtype=bool)
+        measures = np.asarray(evaluation.measures, dtype=np.float64)
+        ratios = np.asarray(evaluation.mean_ratios, dtype=np.float64)
+        aspects = np.asarray(evaluation.aspect_ratios, dtype=np.float64)
+        valid = np.asarray(evaluation.valid, dtype=np.bool_)
         identifiers = np.asarray(evaluation.cell_global_ids, dtype=np.int64)
         invalid = int(np.count_nonzero(~valid))
         order = np.argsort(np.where(valid, ratios, -np.inf), kind="stable")
@@ -89,7 +89,7 @@ def _triangle_quality(points: Array, /) -> tuple[Array, Array, Array, Array]:
         orientation = signed_double_area > 0.0
     else:
         double_area = jnp.linalg.norm(jnp.cross(first, second), axis=-1)
-        orientation = jnp.ones(double_area.shape, dtype=bool)
+        orientation = jnp.ones(double_area.shape, dtype=jnp.bool_)
     lengths = _lengths(points, ((0, 1), (1, 2), (2, 0)))
     squared_sum = jnp.sum(lengths * lengths, axis=1)
     mean_ratio = (
@@ -215,7 +215,7 @@ def _polyhedral_quality(mesh: CellMesh, coordinates: Array, /):
     face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
     cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int32)
     cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int32)
-    cell_signs = np.asarray(connectivity.cell_face_sign_values, dtype=float)
+    cell_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.float64)
     cell_vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
     cell_vertices = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
     measures = []
@@ -298,12 +298,12 @@ def evaluate_swept_layer_quality(
 ) -> SweptLayerQualityEvaluation:
     """Measure thickness, growth, axial alignment, and interface placement."""
 
-    coordinates = np.asarray(points, dtype=float)
+    coordinates = np.asarray(points, dtype=np.float64)
     cells = np.asarray(prisms, dtype=np.int32)
     indices = np.asarray(layer_indices, dtype=np.int32)
-    anchor = np.asarray(origin, dtype=float)
-    direction = np.asarray(unit_direction, dtype=float)
-    requested = np.asarray(requested_thicknesses, dtype=float)
+    anchor = np.asarray(origin, dtype=np.float64)
+    direction = np.asarray(unit_direction, dtype=np.float64)
+    requested = np.asarray(requested_thicknesses, dtype=np.float64)
     if coordinates.ndim != 2 or coordinates.shape[1] != 3:
         raise ValueError("Sweep quality points must have shape (n, 3).")
     if (
@@ -337,7 +337,7 @@ def evaluate_swept_layer_quality(
     edge_lengths = np.linalg.norm(axial_edges, axis=2)
     transverse = axial_edges - projected_edges[:, :, None] * unit
     alignment = np.linalg.norm(transverse, axis=2) / np.maximum(
-        edge_lengths, np.finfo(float).tiny
+        edge_lengths, np.finfo(np.float64).tiny
     )
     levels = np.concatenate(([0.0], np.cumsum(requested)))
     projected_vertices = (values - anchor) @ unit
@@ -349,13 +349,15 @@ def evaluate_swept_layer_quality(
             np.max(np.abs(projected_vertices[:, 3:] - expected_upper[:, None])),
         )
     )
-    measured = np.full(requested.shape, np.nan, dtype=float)
+    measured = np.full(requested.shape, np.nan, dtype=np.float64)
     for layer in range(requested.size):
         selected = indices == layer
         if np.any(selected):
             measured[layer] = float(np.mean(projected_edges[selected]))
     growth = (
-        measured[1:] / measured[:-1] if measured.size > 1 else np.empty((0,), dtype=float)
+        measured[1:] / measured[:-1]
+        if measured.size > 1
+        else np.empty((0,), dtype=np.float64)
     )
     thickness_residual = float(np.max(np.abs(projected_edges - requested[indices, None])))
     alignment_residual = float(np.max(alignment))

@@ -542,7 +542,7 @@ def solve_finite_dmrg(
     variance_history = jnp.full((sweeps,), jnp.nan, dtype=real_dtype)
     discarded_history = jnp.full((sweeps, updates), jnp.nan, dtype=real_dtype)
     canonical_history = jnp.full((sweeps,), jnp.nan, dtype=real_dtype)
-    active_sweeps = jnp.zeros((sweeps,), dtype=bool)
+    active_sweeps = jnp.zeros((sweeps,), dtype=jnp.bool_)
 
     initial_energy = _energy(state, hamiltonian)
     energy_history = energy_history.at[0].set(jnp.real(initial_energy))

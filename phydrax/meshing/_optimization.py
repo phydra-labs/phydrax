@@ -51,12 +51,12 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
             raise TypeError("mesh must be CellMesh.")
         target = np.asarray(
             mesh.coordinates if target_coordinates is None else target_coordinates,
-            dtype=float,
+            dtype=np.float64,
         )
         fixed = (
-            np.zeros((mesh.coordinates.shape[0],), dtype=bool)
+            np.zeros((mesh.coordinates.shape[0],), dtype=np.bool_)
             if fixed_vertices is None
-            else np.asarray(fixed_vertices, dtype=bool)
+            else np.asarray(fixed_vertices, dtype=np.bool_)
         )
         iterations = int(maximum_iterations)
         step = float(initial_step_size)
@@ -176,9 +176,9 @@ def optimize_cell_geometry_coordinates(
         raise TypeError("objective must be callable.")
     coordinates = jnp.asarray(geometry.coordinates)
     fixed = (
-        jnp.zeros((coordinates.shape[0],), dtype=bool)
+        jnp.zeros((coordinates.shape[0],), dtype=jnp.bool_)
         if fixed_coordinates is None
-        else jnp.asarray(fixed_coordinates, dtype=bool)
+        else jnp.asarray(fixed_coordinates, dtype=jnp.bool_)
     )
     if fixed.shape != (coordinates.shape[0],):
         raise ValueError("fixed_coordinates must match geometry coordinate count.")

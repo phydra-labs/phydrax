@@ -10,7 +10,7 @@ Keep acquisition and derivation stages distinct:
 raw → calibrated → derived → reconstructed → inferred
 ```
 
-`DataOrigin` separately distinguishes external and synthetic products. A synthetic asset requires a generator identity. A product derived inside Phydrax requires parent identities and a transformation identity. A reconstructed or inferred field is never relabelled as a direct measurement.
+`DataOrigin` separately distinguishes external and synthetic products. A synthetic asset requires a generator identity. A product derived inside Phydrax requires parent identities and a transformation identity. A reconstructed or inferred field is never relabeled as a direct measurement.
 
 `MeasurementAsset` binds one field to acquisition identity, governed `ReferenceArtifactManifest` values, intended use, metadata, and a `DerivationRecord`. Rights are checked before the asset is admitted.
 
@@ -53,7 +53,7 @@ The validity mask has the sample shape. Component axes remain separate. Invalid 
 ## Radiation quantity meanings
 
 `RadiationQuantityKind` and `resolve_radiation_quantity` are the single shared
-catalogue for deposited energy, absorbed dose, dose to water, dose to medium,
+catalog for deposited energy, absorbed dose, dose to water, dose to medium,
 kerma, dose rate, relative dose, particle and energy fluence, LET, lineal
 energy, activity, activity concentration, and their time integrals. The factory
 returns ordinary `QuantitySpec` values; consumers still use the same field and

@@ -6,8 +6,8 @@
 
 The relaxation time is caller-supplied physical data in seconds.  It is never
 inferred from a Kubo linewidth or a numerical Green-function broadening.
-Energies are joules, band velocities are Cartesian metres per second, the cell
-volume is cubic metres, and normalized k weights represent one primitive cell.
+Energies are joules, band velocities are Cartesian meters per second, the cell
+volume is cubic meters, and normalized k weights represent one primitive cell.
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ class PeriodicBoltzmannPlan(StrictModule, NonTrainableState):
     ):
         energies = np.asarray(energies_joule)
         velocities = np.asarray(band_velocities_m_per_s)
-        weights = np.asarray(k_weights, dtype=float)
+        weights = np.asarray(k_weights, dtype=np.float64)
         chemical = float(chemical_potential_joule)
         temperature = _positive_scalar(temperature_kelvin, "temperature_kelvin")
         volume = _positive_scalar(cell_volume_m3, "cell_volume_m3")
@@ -160,7 +160,7 @@ class PeriodicBoltzmannPlan(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return int(self.band_velocities_m_per_s.shape[-1])
+        return self.band_velocities_m_per_s.shape[-1]
 
     @classmethod
     def from_periodic_results(

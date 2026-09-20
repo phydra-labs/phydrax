@@ -354,8 +354,7 @@ def validate_qualification_causality(
         raise ValueError("Qualification criterion expired before campaign start.")
     if not start.started_at <= observation.observed_at <= evidence.issued_at:
         raise ValueError(
-            "Qualification causality requires started_at <= observed_at "
-            "<= evidence issued_at."
+            "Qualification causality requires started_at <= observed_at <= evidence issued_at."
         )
     if criterion.criterion_id not in evidence.criteria_ids:
         raise ValueError("Qualification evidence does not bind the exact criterion.")

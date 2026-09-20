@@ -59,8 +59,7 @@ def _duration(
     duration = jnp.asarray(value)
     if duration.shape not in ((), batch.case_shape):
         raise ValueError(
-            f"{name} must be scalar or have the OperatorBatch case shape "
-            f"{batch.case_shape}; got {duration.shape}."
+            f"{name} must be scalar or have the OperatorBatch case shape {batch.case_shape}; got {duration.shape}."
         )
     return duration
 

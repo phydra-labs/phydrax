@@ -111,7 +111,7 @@ class LatticeBoltzmannLinkEpoch(StrictModule, NonTrainableState):
         if topology < 0 or numeric < 0:
             raise ValueError("Topology and numeric epochs must be nonnegative.")
 
-        fluid = np.asarray(geometry.fluid_mask, dtype=bool)
+        fluid = np.asarray(geometry.fluid_mask, dtype=np.bool_)
         streaming, boundary = _link_routes(discretization, fluid)
         link_shape = discretization.population_shape
         if streaming.shape != link_shape or boundary.shape != link_shape:
@@ -170,8 +170,8 @@ class LatticeBoltzmannLinkEpoch(StrictModule, NonTrainableState):
                 "boundary_normals": array_tree_fingerprint(normals),
             }
         )
-        self.streaming_links = jnp.asarray(streaming, dtype=bool)
-        self.boundary_links = jnp.asarray(boundary, dtype=bool)
+        self.streaming_links = jnp.asarray(streaming, dtype=jnp.bool_)
+        self.boundary_links = jnp.asarray(boundary, dtype=jnp.bool_)
         self.boundary_fraction = jnp.asarray(fraction)
         self.boundary_normals = jnp.asarray(normals)
         self.discretization_id = discretization.prepared_id
@@ -223,7 +223,7 @@ class LatticeBoltzmannGeometryEpoch(StrictModule, NonTrainableState):
             raise ValueError("Geometry epoch constituents use different discretizations.")
         expected_streaming, expected_boundary = _link_routes(
             discretization,
-            np.asarray(snapshot.fluid_mask, dtype=bool),
+            np.asarray(snapshot.fluid_mask, dtype=np.bool_),
         )
         if not np.array_equal(
             expected_streaming, np.asarray(links.streaming_links)
@@ -395,7 +395,7 @@ class LatticeBoltzmannTopologyEventRequest(StrictModule, NonTrainableState):
     ):
         if not isinstance(source, LatticeBoltzmannGeometryEpoch):
             raise TypeError("Topology requests require a source geometry epoch.")
-        mask = np.asarray(candidate_fluid_mask, dtype=bool)
+        mask = np.asarray(candidate_fluid_mask, dtype=np.bool_)
         step = int(requested_after_step)
         identifier = str(source_id)
         if mask.shape != source.discretization.grid.shape:
@@ -410,7 +410,7 @@ class LatticeBoltzmannTopologyEventRequest(StrictModule, NonTrainableState):
             raise ValueError(
                 "Accepted-step index must be nonnegative and source_id non-empty."
             )
-        self.candidate_fluid_mask = jnp.asarray(mask, dtype=bool)
+        self.candidate_fluid_mask = jnp.asarray(mask, dtype=jnp.bool_)
         self.requested_after_step = step
         self.source_epoch_id = source.epoch_id
         self.source_id = identifier
@@ -497,8 +497,8 @@ class LatticeBoltzmannPopulationTransferPlan(StrictModule, NonTrainableState):
             or relative < 0.0
         ):
             raise ValueError("Population-transfer floor/tolerances are invalid.")
-        source_mask = np.asarray(source.fluid_mask, dtype=bool)
-        target_mask = np.asarray(target.fluid_mask, dtype=bool)
+        source_mask = np.asarray(source.fluid_mask, dtype=np.bool_)
+        target_mask = np.asarray(target.fluid_mask, dtype=np.bool_)
         covered = source_mask & ~target_mask
         uncovered = ~source_mask & target_mask
         persistent = source_mask & target_mask

@@ -104,9 +104,7 @@ def test_shortening_work_and_derived_lengthening_correction_are_explicit():
         + unloaded.shortening_lengthening_heat_W_per_kg
     )
     force = force.at[1].set(
-        plan.parameters.muscle_mass_kg[1]
-        * (heat_without_work[1] + 10.0)
-        / velocity[1]
+        plan.parameters.muscle_mass_kg[1] * (heat_without_work[1] + 10.0) / velocity[1]
     )
     result = plan.evaluate(
         excitation,
@@ -126,9 +124,7 @@ def test_shortening_work_and_derived_lengthening_correction_are_explicit():
     assert result.muscle_metabolic_power_W[1] == 0.0
     corrected_energy = integrate_metabolic_energy_joule(
         jnp.asarray((0.0, 1.0)),
-        jnp.stack(
-            (result.muscle_metabolic_power_W, result.muscle_metabolic_power_W)
-        ),
+        jnp.stack((result.muscle_metabolic_power_W, result.muscle_metabolic_power_W)),
     )
     assert corrected_energy[1] == 0.0
 
@@ -160,14 +156,16 @@ def test_energy_integral_jit_and_local_parameter_derivative():
                 lambda model: model.parameters.aerobic_factor,
                 plan,
                 value,
-            ).evaluate(
+            )
+            .evaluate(
                 excitation,
                 activation,
                 force,
                 force_length,
                 length,
                 velocity,
-            ).muscle_metabolic_power_W
+            )
+            .muscle_metabolic_power_W
         )
     )(plan.parameters.aerobic_factor)
     assert jnp.isfinite(derivative)

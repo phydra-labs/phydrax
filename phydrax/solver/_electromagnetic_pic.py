@@ -96,15 +96,23 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         if any(
             not isinstance(value, PreparedPICParticleCochainTransfer)
             for value in transfer_values
-        ) or any(not isinstance(value, ChargeConservingCurrentPlan) for value in current_values):
+        ) or any(
+            not isinstance(value, ChargeConservingCurrentPlan) for value in current_values
+        ):
             raise TypeError("PIC transfers and current plans have incompatible types.")
         bridge = maxwell.plan.bridge
-        if bridge.dimension != 3 or any(not axis.periodic for axis in bridge.grid.structured_axes):
-            raise ValueError("Electromagnetic PIC currently requires a periodic 3-D grid.")
+        if bridge.dimension != 3 or any(
+            not axis.periodic for axis in bridge.grid.structured_axes
+        ):
+            raise ValueError(
+                "Electromagnetic PIC currently requires a periodic 3-D grid."
+            )
         if electrostatic.bridge.bridge_id != bridge.bridge_id or any(
             value.bridge.bridge_id != bridge.bridge_id for value in transfer_values
         ):
-            raise ValueError("PIC electrostatic, transfer, and Maxwell plans must share one bridge.")
+            raise ValueError(
+                "PIC electrostatic, transfer, and Maxwell plans must share one bridge."
+            )
         if any(
             current.transfer.prepared_id != transfer.prepared_id
             for current, transfer in zip(current_values, transfer_values, strict=True)
@@ -115,8 +123,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             for source in maxwell.sources
         ):
             raise ValueError(
-                "Maxwell PIC requires CompatibleMaxwellPlan("
-                "sources=(PICMaxwellCurrentSourcePlan(),))."
+                "Maxwell PIC requires CompatibleMaxwellPlan(sources=(PICMaxwellCurrentSourcePlan(),))."
             )
         if maxwell.boundaries:
             raise ValueError(
@@ -162,11 +169,16 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         c2 = self.pusher.speed_of_light**2
         value = eqx.error_if(
             value,
-            jnp.any(transfer.species.particles.active_mask & (~jnp.isfinite(speed2) | (speed2 >= c2))),
+            jnp.any(
+                transfer.species.particles.active_mask
+                & (~jnp.isfinite(speed2) | (speed2 >= c2))
+            ),
             "Initial electromagnetic PIC velocity must be finite and subluminal.",
         )
         gamma = 1.0 / jnp.sqrt(1.0 - speed2 / c2)
-        return jnp.where(transfer.species.particles.active_mask[:, None], gamma[:, None] * value, 0.0)
+        return jnp.where(
+            transfer.species.particles.active_mask[:, None], gamma[:, None] * value, 0.0
+        )
 
     def _charge(self, particles):
         routes = tuple(
@@ -179,7 +191,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         )
         charge = sum(
             (value.cochain for value in deposits),
-            jnp.zeros((self.maxwell.primary_counts[2],), dtype=particles[0].position.dtype),
+            jnp.zeros(
+                (self.maxwell.primary_counts[2],), dtype=particles[0].position.dtype
+            ),
         )
         successful = jnp.all(jnp.stack(tuple(value.successful for value in deposits)))
         return charge, routes, successful
@@ -202,13 +216,19 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         for transfer, position, velocity in zip(
             self.transfers, tuple(positions), tuple(velocities), strict=True
         ):
-            position_ = jnp.asarray(position, dtype=transfer.species.particles.safe_masses.dtype)
+            position_ = jnp.asarray(
+                position, dtype=transfer.species.particles.safe_masses.dtype
+            )
             expected = (transfer.species.capacity, 3)
             if position_.shape != expected:
-                raise ValueError(f"Electromagnetic PIC position must have shape {expected}.")
+                raise ValueError(
+                    f"Electromagnetic PIC position must have shape {expected}."
+                )
             particle_states.append(
                 PICParticleState(
-                    jnp.where(transfer.species.particles.active_mask[:, None], position_, 0.0),
+                    jnp.where(
+                        transfer.species.particles.active_mask[:, None], position_, 0.0
+                    ),
                     self._proper_velocity(velocity, transfer),
                 )
             )
@@ -247,8 +267,12 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
                 transfer.species.particles.active_mask,
                 -0.5 * dt,
             )
-            bootstrapped.append(PICParticleState(particle.position, backward.proper_velocity))
-            charge_success = charge_success & e.successful & b.successful & backward.successful
+            bootstrapped.append(
+                PICParticleState(particle.position, backward.proper_velocity)
+            )
+            charge_success = (
+                charge_success & e.successful & b.successful & backward.successful
+            )
         state = ElectromagneticPICState(
             tuple(bootstrapped),
             maxwell_state,
@@ -257,13 +281,15 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             jnp.asarray(int(PICRunStatus.SUCCESS), dtype=jnp.int32),
         )
         return jax.tree.map(
-            lambda value: eqx.error_if(
-                value,
-                ~charge_success | ~electrostatic.successful,
-                "Electromagnetic PIC initialization failed.",
-            )
-            if eqx.is_array(value)
-            else value,
+            lambda value: (
+                eqx.error_if(
+                    value,
+                    ~charge_success | ~electrostatic.successful,
+                    "Electromagnetic PIC initialization failed.",
+                )
+                if eqx.is_array(value)
+                else value
+            ),
             state,
         )
 
@@ -275,7 +301,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             total = total + jnp.sum(
                 jnp.where(
                     transfer.species.particles.active_mask,
-                    transfer.species.particles.masses.astype(gamma.dtype) * c2 * (gamma - 1.0),
+                    transfer.species.particles.masses.astype(gamma.dtype)
+                    * c2
+                    * (gamma - 1.0),
                     0.0,
                 )
             )
@@ -292,7 +320,10 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         pusher_success = jnp.asarray(True)
         maximum_fraction = jnp.asarray(0.0, dtype=dt.dtype)
         widths = jnp.asarray(
-            [jnp.min(axis.interval_widths) for axis in self.maxwell.plan.bridge.grid.structured_axes],
+            [
+                jnp.min(axis.interval_widths)
+                for axis in self.maxwell.plan.bridge.grid.structured_axes
+            ],
             dtype=dt.dtype,
         )
         for transfer, current_plan, particle in zip(
@@ -311,7 +342,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             )
             displacement = dt * pushed.velocity
             position = particle.position + displacement
-            position = jnp.where(transfer.species.particles.active_mask[:, None], position, 0.0)
+            position = jnp.where(
+                transfer.species.particles.active_mask[:, None], position, 0.0
+            )
             fraction = jnp.max(
                 jnp.where(
                     transfer.species.particles.active_mask[:, None],
@@ -324,7 +357,12 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             current = current_plan.deposit(particle.position, position, dt)
             current_results.append(current)
             next_particles.append(PICParticleState(position, pushed.proper_velocity))
-            pusher_success = pusher_success & electric.successful & magnetic.successful & pushed.successful
+            pusher_success = (
+                pusher_success
+                & electric.successful
+                & magnetic.successful
+                & pushed.successful
+            )
         total_current = sum(
             (value.current for value in current_results),
             jnp.zeros((self.maxwell.primary_counts[0],), dtype=dt.dtype),
@@ -344,7 +382,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             jnp.abs(candidate_maxwell.primary.charge - end_charge), initial=0.0
         )
         continuity = jnp.max(
-            jnp.stack(tuple(value.maximum_continuity_defect for value in current_results)),
+            jnp.stack(
+                tuple(value.maximum_continuity_defect for value in current_results)
+            ),
             initial=0.0,
         )
         current_success = jnp.all(
@@ -365,9 +405,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             previous_total,
             total - previous_total,
         )
-        stable = (
-            dt <= self.maxwell.stable_dt
-        ) & (maximum_fraction <= self.maximum_displacement_fraction)
+        stable = (dt <= self.maxwell.stable_dt) & (
+            maximum_fraction <= self.maximum_displacement_fraction
+        )
         finite = (
             jnp.isfinite(dt)
             & (dt > 0.0)
@@ -385,9 +425,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         reason = jnp.where(
             current_success, reason, reason | int(PICRejectionReason.CONTINUITY)
         )
-        reason = jnp.where(
-            stable, reason, reason | int(PICRejectionReason.DISPLACEMENT)
-        )
+        reason = jnp.where(stable, reason, reason | int(PICRejectionReason.DISPLACEMENT))
         reason = jnp.where(
             field_diagnostics.electric_constraint_linf <= 1.0e-8,
             reason,
@@ -404,7 +442,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             candidate_maxwell,
             state.time + dt,
             state.accepted_step + jnp.asarray(1, dtype=jnp.int32),
-            jnp.where(successful, int(PICRunStatus.SUCCESS), int(PICRunStatus.INVALID_STATE)).astype(jnp.int32),
+            jnp.where(
+                successful, int(PICRunStatus.SUCCESS), int(PICRunStatus.INVALID_STATE)
+            ).astype(jnp.int32),
         )
         accepted = jax.tree.map(
             lambda proposed, current: jnp.where(successful, proposed, current),

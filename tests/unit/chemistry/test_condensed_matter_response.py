@@ -124,7 +124,7 @@ def test_optical_frontend_keeps_drude_separate_and_uses_retarded_dielectric_sign
         np.zeros((1, 1)),
         np.zeros((1, 1, 1)),
         np.zeros((1, 1, 1)),
-        np.zeros((1, 1, 1), dtype=bool),
+        np.zeros((1, 1, 1), dtype="bool"),
         np.zeros((1, 1, 1)),
         np.zeros((1, 1, 1, 3, 3)),
         np.eye(3) * 7.0,
@@ -148,7 +148,7 @@ def test_optical_frontend_keeps_drude_separate_and_uses_retarded_dielectric_sign
         False,
     )
     omega = np.asarray([1.0e14, 2.0e14])
-    conductivity = np.broadcast_to(np.eye(3), (omega.size, 3, 3)).astype(complex)
+    conductivity = np.broadcast_to(np.eye(3), (omega.size, 3, 3)).astype("complex128")
     kubo = FiniteFrequencyKuboResponse(
         omega,
         conductivity,
@@ -176,7 +176,7 @@ def test_periodic_provider_tensors_retain_selection_and_stokes_balance_evidence(
         angular_frequencies = np.asarray([[0.0, 0.0, 0.0, 1.0, 2.0, 3.0]])
         eigenvectors = np.eye(6)[None, :, :]
         acoustic_mask = np.asarray([[True, True, True, False, False, False]])
-        imaginary_mask = np.zeros((1, 6), dtype=bool)
+        imaginary_mask = np.zeros((1, 6), dtype="bool")
         result_id = "gamma-phonons"
         successful = np.asarray(True)
 

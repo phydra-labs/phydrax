@@ -12,7 +12,7 @@ import numpy as np
 from jaxtyping import Array, Bool, Key
 
 from .._doc import DOC_KEY0
-from .._sampling import get_sampler_host, seed_from_key
+from .._sampling import host_design_factory, seed_from_key
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -107,8 +107,8 @@ class ScalarInterval(AbstractScalarDomain):
         *,
         label: str = "t",
     ):
-        start_arr = jnp.asarray(start, dtype=float).reshape(())
-        end_arr = jnp.asarray(end, dtype=float).reshape(())
+        start_arr = jnp.asarray(start, dtype=jnp.float64).reshape(())
+        end_arr = jnp.asarray(end, dtype=jnp.float64).reshape(())
         if bool(start_arr >= end_arr):
             raise ValueError("`start` must be less than `end`.")
 
@@ -188,19 +188,19 @@ class ScalarInterval(AbstractScalarDomain):
     ) -> Array:
         def _sample_host(num_points, sampler, where, key):
             rng = np.random.default_rng(seed_from_key(key))
-            sampler_fn = get_sampler_host(sampler, dim=1, seed=rng)
-            samples = np.empty((0, 1), dtype=float)
+            sampler_fn = host_design_factory(sampler, dimension=1, seed=rng)
+            samples = np.empty((0, 1), dtype=np.float64)
 
             while samples.shape[0] < num_points:
                 remaining_points = num_points - samples.shape[0]
                 samples_ = sampler_fn(int(remaining_points))
 
                 if where:
-                    samples_scaled = self.start + jnp.asarray(samples_, dtype=float) * (
-                        self.end - self.start
-                    )
+                    samples_scaled = self.start + jnp.asarray(
+                        samples_, dtype=jnp.float64
+                    ) * (self.end - self.start)
                     mask = np.asarray(
-                        jax.vmap(where)(samples_scaled), dtype=bool
+                        jax.vmap(where)(samples_scaled), dtype=np.bool_
                     ).reshape((-1,))
                     samples_ = samples_[mask]
                     samples = np.vstack((samples, samples_))
@@ -209,7 +209,7 @@ class ScalarInterval(AbstractScalarDomain):
 
             return samples[:num_points].reshape((-1,))
 
-        zeros = jnp.zeros((num_points,), dtype=float)
+        zeros = jnp.zeros((num_points,), dtype=jnp.float64)
         shape_dtype = jax.ShapeDtypeStruct(zeros.shape, zeros.dtype)
 
         sampled = eqx.filter_pure_callback(

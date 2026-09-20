@@ -685,7 +685,7 @@ class DGSEMFaceFluxes(StrictModule):
     is_boundary: Array
     boundary_patch_indices: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
 
 
 class DGSEMStableStepEvidence(StrictModule, NonTrainableState):
@@ -745,14 +745,14 @@ def _interior_metric_pairs(
         MetricFacePair(
             int(owner),
             *tensor_local_face(cell_kind, int(owner_local)),
-            int(neighbour),
-            *tensor_local_face(cell_kind, int(neighbour_local)),
+            int(neighbor),
+            *tensor_local_face(cell_kind, int(neighbor_local)),
         )
-        for owner, owner_local, neighbour, neighbour_local in zip(
+        for owner, owner_local, neighbor, neighbor_local in zip(
             np.asarray(domain.owner_cells),
             np.asarray(domain.owner_local_entities),
-            np.asarray(domain.neighbour_cells),
-            np.asarray(domain.neighbour_local_entities),
+            np.asarray(domain.neighbor_cells),
+            np.asarray(domain.neighbor_local_entities),
             strict=True,
         )
     )
@@ -779,7 +779,7 @@ def _periodic_metric_pairs(
         owner_axis, owner_side = tensor_local_face(cell_kind, int(local_entities[first]))
         best = None
         for candidate in available:
-            neighbour_axis, neighbour_side = tensor_local_face(
+            neighbor_axis, neighbor_side = tensor_local_face(
                 cell_kind, int(local_entities[candidate])
             )
             pair = MetricFacePair(
@@ -787,8 +787,8 @@ def _periodic_metric_pairs(
                 owner_axis,
                 owner_side,
                 int(owners[candidate]),
-                neighbour_axis,
-                neighbour_side,
+                neighbor_axis,
+                neighbor_side,
                 periodic_translation=True,
             )
             _permutation, point_defect, normal_defect = provisional.face_pair_evidence(
@@ -828,20 +828,20 @@ def _explicit_periodic_metric_pairs(
     facet_pairs = []
     for boundary_pair in boundaries.periodic_pairs:
         owner_position = positions[boundary_pair.owner_facet]
-        neighbour_position = positions[boundary_pair.neighbour_facet]
+        neighbor_position = positions[boundary_pair.neighbor_facet]
         owner_axis, owner_side = tensor_local_face(
             cell_kind, int(local_entities[owner_position])
         )
-        neighbour_axis, neighbour_side = tensor_local_face(
-            cell_kind, int(local_entities[neighbour_position])
+        neighbor_axis, neighbor_side = tensor_local_face(
+            cell_kind, int(local_entities[neighbor_position])
         )
         pair = MetricFacePair(
             int(owners[owner_position]),
             owner_axis,
             owner_side,
-            int(owners[neighbour_position]),
-            neighbour_axis,
-            neighbour_side,
+            int(owners[neighbor_position]),
+            neighbor_axis,
+            neighbor_side,
             periodic_translation=True,
         )
         _permutation, point_defect, normal_defect = provisional.face_pair_evidence(pair)
@@ -856,7 +856,7 @@ def _explicit_periodic_metric_pairs(
                 "Explicit periodic facets have incompatible points or scaled normals."
             )
         metric_pairs.append(pair)
-        facet_pairs.append((boundary_pair.owner_facet, boundary_pair.neighbour_facet))
+        facet_pairs.append((boundary_pair.owner_facet, boundary_pair.neighbor_facet))
     return tuple(metric_pairs), tuple(facet_pairs)
 
 
@@ -877,9 +877,9 @@ def _exterior_local_domain(
         domain.support_id,
         domain.entity_set_id,
         owner_cells=np.asarray(domain.owner_cells)[positions],
-        neighbour_cells=np.asarray(domain.neighbour_cells)[positions],
+        neighbor_cells=np.asarray(domain.neighbor_cells)[positions],
         owner_local_entities=local_entities[positions],
-        neighbour_local_entities=np.asarray(domain.neighbour_local_entities)[positions],
+        neighbor_local_entities=np.asarray(domain.neighbor_local_entities)[positions],
         selection_id=selection_id,
     )
 
@@ -897,9 +897,9 @@ def _periodic_facet_domain(
     interior = discretization.interior_facet_domain
     entity_indices = list(np.asarray(interior.entity_indices, dtype=np.int32))
     owners = list(np.asarray(interior.owner_cells, dtype=np.int32))
-    neighbours = list(np.asarray(interior.neighbour_cells, dtype=np.int32))
+    neighbors = list(np.asarray(interior.neighbor_cells, dtype=np.int32))
     owner_local = list(np.asarray(interior.owner_local_entities, dtype=np.int32))
-    neighbour_local = list(np.asarray(interior.neighbour_local_entities, dtype=np.int32))
+    neighbor_local = list(np.asarray(interior.neighbor_local_entities, dtype=np.int32))
     inverse_local = {
         face: local
         for local, face in enumerate(
@@ -912,13 +912,13 @@ def _periodic_facet_domain(
     for pair, facet_pair in zip(periodic_pairs, periodic_facet_ids, strict=True):
         entity_indices.append(facet_pair[0])
         owners.append(pair.owner_cell)
-        neighbours.append(pair.neighbour_cell)
+        neighbors.append(pair.neighbor_cell)
         owner_local.append(inverse_local[(pair.owner_axis, pair.owner_side)])
-        neighbour_local.append(inverse_local[(pair.neighbour_axis, pair.neighbour_side)])
+        neighbor_local.append(inverse_local[(pair.neighbor_axis, pair.neighbor_side)])
     periodic_mask = np.concatenate(
         (
-            np.zeros((int(interior.entity_indices.shape[0]),), dtype=bool),
-            np.ones((len(periodic_pairs),), dtype=bool),
+            np.zeros((interior.entity_indices.shape[0],), dtype=np.bool_),
+            np.ones((len(periodic_pairs),), dtype=np.bool_),
         )
     )
     return IntegrationDomain(
@@ -927,10 +927,10 @@ def _periodic_facet_domain(
         interior.support_id,
         interior.entity_set_id,
         owner_cells=np.asarray(owners, dtype=np.int32),
-        neighbour_cells=np.asarray(neighbours, dtype=np.int32),
+        neighbor_cells=np.asarray(neighbors, dtype=np.int32),
         owner_local_entities=np.asarray(owner_local, dtype=np.int32),
-        neighbour_local_entities=np.asarray(neighbour_local, dtype=np.int32),
-        neighbour_trace_permutations=np.stack(
+        neighbor_local_entities=np.asarray(neighbor_local, dtype=np.int32),
+        neighbor_trace_permutations=np.stack(
             tuple(np.asarray(value) for value in face_permutations), axis=0
         ),
         periodic_face_mask=periodic_mask,
@@ -1353,8 +1353,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 )
             if method.viscous is not None and certificate.viscous_evidence == "absent":
                 raise ValueError(
-                    "An entropy certificate advertising absent viscosity cannot "
-                    "compile a viscous DG operator."
+                    "An entropy certificate advertising absent viscosity cannot compile a viscous DG operator."
                 )
         elif entropy_pair is not None:
             raise ValueError(
@@ -1380,9 +1379,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         physical_facet_count = (
             0
             if boundaries is None
-            else sum(
-                int(patch.domain.entity_indices.shape[0]) for patch in boundaries.patches
-            )
+            else sum(patch.domain.entity_indices.shape[0] for patch in boundaries.patches)
         )
         report = DGSEMPreparationReport(
             sbp,
@@ -1503,7 +1500,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         measures = []
         integrated = []
         owner_cells = []
-        neighbour_cells = []
+        neighbor_cells = []
         is_boundary = []
         boundary_patch_indices = []
         face_weight = _tensor_mass_weights(self.sbp, self.metrics.dimension - 1).reshape(
@@ -1520,9 +1517,9 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             )
             minus = self._face_value(
                 local,
-                pair.neighbour_cell,
-                pair.neighbour_axis,
-                pair.neighbour_side,
+                pair.neighbor_cell,
+                pair.neighbor_axis,
+                pair.neighbor_side,
             )[permutation]
             scaled_normal = self.metrics.face_scaled_normals[pair.owner_axis][
                 pair.owner_cell, pair.owner_side
@@ -1551,7 +1548,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 )
             )
             owner_cells.append(pair.owner_cell)
-            neighbour_cells.append(pair.neighbour_cell)
+            neighbor_cells.append(pair.neighbor_cell)
             is_boundary.append(False)
             boundary_patch_indices.append(-1)
         if self.boundaries is not None:
@@ -1623,7 +1620,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                         )
                     )
                     owner_cells.append(int(owner_cell))
-                    neighbour_cells.append(-1)
+                    neighbor_cells.append(-1)
                     is_boundary.append(True)
                     boundary_patch_indices.append(patch_index)
         return DGSEMFaceFluxes(
@@ -1632,8 +1629,8 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             surface_jacobian=jnp.stack(tuple(measures), axis=0),
             integrated_flux=jnp.stack(tuple(integrated), axis=0),
             owner_cells=jnp.asarray(owner_cells, dtype=jnp.int32),
-            neighbour_cells=jnp.asarray(neighbour_cells, dtype=jnp.int32),
-            is_boundary=jnp.asarray(is_boundary, dtype=bool),
+            neighbor_cells=jnp.asarray(neighbor_cells, dtype=jnp.int32),
+            is_boundary=jnp.asarray(is_boundary, dtype=jnp.bool_),
             boundary_patch_indices=jnp.asarray(boundary_patch_indices, dtype=jnp.int32),
         )
 
@@ -1716,9 +1713,9 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 )
                 minus = self._face_value(
                     local,
-                    pair.neighbour_cell,
-                    pair.neighbour_axis,
-                    pair.neighbour_side,
+                    pair.neighbor_cell,
+                    pair.neighbor_axis,
+                    pair.neighbor_side,
                 )[permutation]
                 scaled_normal = self.metrics.face_scaled_normals[pair.owner_axis][
                     pair.owner_cell, pair.owner_side

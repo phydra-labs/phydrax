@@ -662,7 +662,7 @@ def test_scheduler_builds_certified_remap_before_committing_event():
     source_content = FiniteVolumeConservativeContentState(
         jnp.ones((1, 1)),
         source.cell_volumes,
-        jnp.ones((1,), dtype=bool),
+        jnp.ones((1,), dtype="bool"),
         0.0,
         topology_epoch_id=initial.epoch_id,
         geometry_family_id=source_metrics.geometry_family_id,
@@ -678,7 +678,7 @@ def test_scheduler_builds_certified_remap_before_committing_event():
         return FiniteVolumeConservativeContentState(
             average * target.cell_volumes[:, None],
             target.cell_volumes,
-            jnp.ones((target.cell_count,), dtype=bool),
+            jnp.ones((target.cell_count,), dtype="bool"),
             0.1,
             topology_epoch_id=successor.epoch_id,
             geometry_family_id=target_metrics.geometry_family_id,

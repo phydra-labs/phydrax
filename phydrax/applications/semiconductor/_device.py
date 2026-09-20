@@ -113,7 +113,7 @@ def _nodal_density(value, unit, count, name):
 def _resolve_dopants(support, baseline, attributes, name):
     count = support.positions.shape[0]
     resolved = baseline
-    assigned = np.zeros(count, dtype=bool)
+    assigned = np.zeros(count, dtype=np.bool_)
     for attribute in attributes:
         if not isinstance(attribute, MeshAttribute):
             raise TypeError(f"{name} attributes must be native MeshAttribute values.")
@@ -151,7 +151,7 @@ def _require_pins(support, semiconductor, potential, ohmic):
     count = support.positions.shape[0]
     edges = tuple(zip(np.asarray(support.tail), np.asarray(support.head), strict=True))
     for active, pins, label in (
-        (np.ones(count, dtype=bool), potential, "potential"),
+        (np.ones(count, dtype=np.bool_), potential, "potential"),
         (semiconductor, ohmic, "semiconductor quasi-Fermi"),
     ):
         parent = np.arange(count)
@@ -289,7 +289,7 @@ class DevicePlan(StrictModule):
                 raise TypeError(
                     "material must be a semiconductor or dielectric material."
                 )
-            models, masks = (material,), (np.ones(count, dtype=bool),)
+            models, masks = (material,), (np.ones(count, dtype=np.bool_),)
         else:
             if not all(isinstance(binding, MaterialBinding) for binding in materials):
                 raise TypeError("materials must contain MaterialBinding values.")
@@ -311,14 +311,11 @@ class DevicePlan(StrictModule):
             np.argmax(np.stack(masks), axis=0), dtype=jnp.int32
         )
         material_index = np.asarray(self.material_index)
-        self.material_nodes = tuple(
-            tuple(int(node) for node in np.flatnonzero(mask)) for mask in masks
-        )
+        self.material_nodes = tuple(tuple(np.flatnonzero(mask)) for mask in masks)
         tail, head = np.asarray(support.tail), np.asarray(support.head)
         self.material_edges = tuple(
             tuple(
-                int(edge)
-                for edge in np.flatnonzero(
+                np.flatnonzero(
                     (material_index[tail] == index) & (material_index[head] == index)
                 )
             )
@@ -335,7 +332,7 @@ class DevicePlan(StrictModule):
         self.edge_lengths = jnp.asarray(lengths)
         permittivity = jnp.zeros(count)
         ni, tau_n, tau_p = jnp.ones(count), jnp.ones(count), jnp.ones(count)
-        semiconductor = np.zeros(count, dtype=bool)
+        semiconductor = np.zeros(count, dtype=np.bool_)
         legacy_band_reference = None
         energy_reference = None
         explicit_bands = False
@@ -568,7 +565,10 @@ class DevicePlan(StrictModule):
                 "Terminal names must be unique; combine same-terminal patches in a native scope."
             )
         terminal = np.full(count, -1, dtype=np.int32)
-        ohmic, potential = np.zeros(count, dtype=bool), np.zeros(count, dtype=bool)
+        ohmic, potential = (
+            np.zeros(count, dtype=np.bool_),
+            np.zeros(count, dtype=np.bool_),
+        )
         offsets = jnp.zeros(count)
         neutrality = self.neutrality_potential(self.temperature)
         for index, contact in enumerate(contacts):

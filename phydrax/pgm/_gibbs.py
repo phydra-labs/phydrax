@@ -113,10 +113,10 @@ class GibbsState(StrictModule):
                 "Gibbs positions must have shape (chain, variable) and integer dtype."
             )
         scores = jnp.asarray(log_score)
-        if scores.shape != (int(states.shape[0]),) or jnp.iscomplexobj(scores):
+        if scores.shape != (states.shape[0],) or jnp.iscomplexobj(scores):
             raise ValueError("Gibbs log_score must be one real value per chain.")
         validity = (
-            jnp.isfinite(scores) if valid is None else jnp.asarray(valid, dtype=bool)
+            jnp.isfinite(scores) if valid is None else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if validity.shape != scores.shape:
             raise ValueError("Gibbs validity must have one value per chain.")
@@ -130,7 +130,7 @@ class GibbsState(StrictModule):
 
     @property
     def num_chains(self) -> int:
-        return int(self.positions.shape[0])
+        return self.positions.shape[0]
 
 
 class GibbsTransitionInfo(StrictModule):
@@ -193,7 +193,7 @@ class GibbsSampleResult(AbstractChainSampleResult):
         scores = jnp.asarray(log_score)
         if values.ndim != 3:
             raise ValueError("Gibbs samples must have shape (chain, draw, variable).")
-        chains, draws = int(values.shape[0]), int(values.shape[1])
+        chains, draws = values.shape[0], values.shape[1]
         if scores.shape != (chains, draws):
             raise ValueError("Gibbs log scores must have shape (chain, draw).")
         transition_shape = (chains, draws, int(sweeps_per_draw))
@@ -216,7 +216,7 @@ class GibbsSampleResult(AbstractChainSampleResult):
             raise ValueError("method_id must be non-empty.")
         self.samples = values.astype(jnp.int32)
         self.log_score = scores
-        self.transition_valid = jnp.asarray(transition_valid, dtype=bool)
+        self.transition_valid = jnp.asarray(transition_valid, dtype=jnp.bool_)
         self.invalid_conditional_count = jnp.asarray(
             invalid_conditional_count, dtype=jnp.int32
         )
@@ -231,11 +231,11 @@ class GibbsSampleResult(AbstractChainSampleResult):
 
     @property
     def num_chains(self) -> int:
-        return int(self.samples.shape[0])
+        return self.samples.shape[0]
 
     @property
     def num_draws(self) -> int:
-        return int(self.samples.shape[1])
+        return self.samples.shape[1]
 
     @property
     def chain_provenance(self) -> str:
@@ -318,7 +318,7 @@ def prepare_chromatic_gibbs(
             )
         dense_configurations = prod(signature)
         represented = (
-            int(group.configurations.shape[0])
+            group.configurations.shape[0]
             if isinstance(group, EnumeratedFactorGroup)
             else dense_configurations
         )
@@ -369,13 +369,12 @@ def prepare_chromatic_gibbs(
     )
     _validate_colors(graph, colors_host)
     stages = tuple(
-        tuple(int(value) for value in np.nonzero(colors_host == color)[0])
+        tuple(np.nonzero(colors_host == color)[0])
         for color in range(int(colors_host.max()) + 1 if colors_host.size else 0)
     )
     if len(stages) > resources_.maximum_colors:
         raise ValueError(
-            f"Gibbs colors {len(stages)} exceed maximum_colors="
-            f"{resources_.maximum_colors}."
+            f"Gibbs colors {len(stages)} exceed maximum_colors={resources_.maximum_colors}."
         )
     incident_lists: list[list[tuple[int, int, int]]] = [
         [] for _ in range(graph.num_variables)
@@ -505,9 +504,9 @@ def gibbs_sweep(
     if state.positions.shape[1:] != (prepared.graph.num_variables,):
         raise ValueError("Gibbs state variable axis does not match the plan.")
     clamp_mask = (
-        jnp.zeros((prepared.graph.num_variables,), dtype=bool)
+        jnp.zeros((prepared.graph.num_variables,), dtype=jnp.bool_)
         if clamped is None
-        else jnp.asarray(clamped, dtype=bool)
+        else jnp.asarray(clamped, dtype=jnp.bool_)
     )
     if clamp_mask.shape != (prepared.graph.num_variables,):
         raise ValueError("clamped must have one boolean per graph variable.")
@@ -576,19 +575,19 @@ def gibbs_sweep(
         status=status,
         valid=valid,
         invalid_conditional_count=invalid_count,
-        state_change_fraction=changed_count.astype(float) / denominator,
+        state_change_fraction=changed_count.astype("float64") / denominator,
     )
 
 
 def _mixing_diagnostics(
     samples: Array, invalid_count: Array, changed: Array
 ) -> GibbsDiagnostics:
-    chains, draws = int(samples.shape[0]), int(samples.shape[1])
+    chains, draws = samples.shape[0], samples.shape[1]
     if chains >= 2 and draws >= 4:
         from blackjax import diagnostics
 
-        variance = jnp.var(samples.astype(float), axis=(0, 1))
-        total = jnp.asarray(chains * draws, dtype=float)
+        variance = jnp.var(samples.astype("float64"), axis=(0, 1))
+        total = jnp.asarray(chains * draws, dtype=jnp.float64)
         rhat = diagnostics.rhat(samples, chain_axis=0, sample_axis=1)
         bulk = diagnostics.ess_bulk(samples, chain_axis=0, sample_axis=1)
         tail = diagnostics.ess_tail(samples, chain_axis=0, sample_axis=1)
@@ -647,9 +646,9 @@ def sample_gibbs(
             f"{prepared.resources.maximum_retained_elements}."
         )
     clamp_mask = (
-        jnp.zeros((prepared.graph.num_variables,), dtype=bool)
+        jnp.zeros((prepared.graph.num_variables,), dtype=jnp.bool_)
         if clamped is None
-        else jnp.asarray(clamped, dtype=bool)
+        else jnp.asarray(clamped, dtype=jnp.bool_)
     )
     if clamp_mask.shape != (prepared.graph.num_variables,):
         raise ValueError("clamped must have one boolean per graph variable.")

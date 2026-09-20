@@ -91,7 +91,7 @@ class FourierModalExcitation(StrictModule):
 
     @property
     def rhs_count(self) -> int:
-        return int(self.left_incident.shape[1])
+        return self.left_incident.shape[1]
 
 
 def plane_wave_excitation(

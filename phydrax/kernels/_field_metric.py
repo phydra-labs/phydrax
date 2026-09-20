@@ -90,21 +90,19 @@ class KernelFunctionalTerm(StrictModule):
         field = str(field_name)
         point_array = jnp.asarray(points)
         coefficient_array = jnp.asarray(coefficients)
-        orders = tuple(
-            tuple(int(value) for value in order) for order in derivative_orders
-        )
+        orders = tuple(tuple(order) for order in derivative_orders)
         if not field:
             raise ValueError("Kernel functional field names must be nonempty.")
         if (
             point_array.ndim < 2
-            or int(point_array.shape[0]) <= 0
-            or any(int(size) <= 0 for size in point_array.shape[1:])
+            or point_array.shape[0] <= 0
+            or any(size <= 0 for size in point_array.shape[1:])
         ):
             raise ValueError("Functional points need nonempty point and input axes.")
         if not jnp.issubdtype(point_array.dtype, jnp.inexact):
-            point_array = point_array.astype(float)
+            point_array = point_array.astype("float64")
         if not jnp.issubdtype(coefficient_array.dtype, jnp.inexact):
-            coefficient_array = coefficient_array.astype(float)
+            coefficient_array = coefficient_array.astype("float64")
         if not orders or any(any(value < 0 for value in order) for order in orders):
             raise ValueError("Derivative multi-indices must be nonnegative and nonempty.")
         if coefficient_array.ndim != 4:
@@ -115,7 +113,7 @@ class KernelFunctionalTerm(StrictModule):
             raise ValueError(
                 "Functional coefficients do not align with points and terms."
             )
-        if int(coefficient_array.shape[0]) <= 0 or int(coefficient_array.shape[3]) <= 0:
+        if coefficient_array.shape[0] <= 0 or coefficient_array.shape[3] <= 0:
             raise ValueError("Functional row and fiber axes must be nonempty.")
         self.points = eqx.error_if(
             point_array,
@@ -132,11 +130,11 @@ class KernelFunctionalTerm(StrictModule):
 
     @property
     def row_count(self) -> int:
-        return int(self.coefficients.shape[0])
+        return self.coefficients.shape[0]
 
     @property
     def fiber_dimension(self) -> int:
-        return int(self.coefficients.shape[-1])
+        return self.coefficients.shape[-1]
 
 
 class KernelFunctional(StrictModule):
@@ -221,8 +219,8 @@ class KernelGramEvidence(StrictModule):
         self.exactness = str(exactness)
         self.hermitian_residual = jnp.asarray(hermitian_residual)
         self.minimum_diagonal = jnp.asarray(minimum_diagonal)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.positive_semidefinite = jnp.asarray(positive_semidefinite, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.positive_semidefinite = jnp.asarray(positive_semidefinite, dtype=jnp.bool_)
 
 
 class KernelGram(StrictModule):
@@ -268,7 +266,7 @@ class ProductFieldKernelMetric(StrictModule):
             raise TypeError("field_spec must be a ProductFieldSpec.")
         kernels_ = tuple(kernels)
         adapters_ = tuple(adapters)
-        channels_ = tuple(tuple(int(index) for index in item) for item in channel_indices)
+        channels_ = tuple(tuple(item) for item in channel_indices)
         if mode not in ("independent", "coupled"):
             raise ValueError("Kernel metric mode must be independent or coupled.")
         expected_kernels = len(field_spec.fields) if mode == "independent" else 1
@@ -443,7 +441,7 @@ class ProductFieldKernelMetric(StrictModule):
         functional_id: str = "point",
     ) -> KernelFunctional:
         point_array = jnp.asarray(points)
-        point_count = int(point_array.shape[0])
+        point_count = point_array.shape[0]
         dimension = self.field_dimension(field_name)
         if covectors is None:
             coefficients = jnp.eye(point_count * dimension).reshape(
@@ -617,7 +615,7 @@ class ProductFieldKernelMetric(StrictModule):
             raise TypeError("Product metric has no exact finite-feature representation.")
         field_index = self._field_index(field_name)
         point_array = jnp.asarray(points)
-        if point_array.ndim < 2 or int(point_array.shape[0]) <= 0:
+        if point_array.ndim < 2 or point_array.shape[0] <= 0:
             raise ValueError("Field feature queries need a nonempty leading point axis.")
         local = jax.vmap(lambda point: self._point_features(field_index, point))(
             point_array
@@ -627,7 +625,7 @@ class ProductFieldKernelMetric(StrictModule):
         before = sum(
             self._field_feature_rank(name) for name in self.field_names[:field_index]
         )
-        after = int(rank) - before - int(local.shape[-1])
+        after = int(rank) - before - local.shape[-1]
         return jnp.pad(local, ((0, 0), (0, 0), (before, after)))
 
     def functional_features(self, functional: KernelFunctional, /) -> Array:

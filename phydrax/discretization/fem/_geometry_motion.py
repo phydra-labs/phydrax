@@ -114,7 +114,7 @@ class FiniteElementBoundaryRealization(StrictModule):
         status: Any,
         mapping_id: str,
     ):
-        proposed = jnp.asarray(proposed_points, dtype=float)
+        proposed = jnp.asarray(proposed_points, dtype=jnp.float64)
         safe = jnp.asarray(points, dtype=proposed.dtype)
         if proposed.ndim != 2 or safe.shape != proposed.shape:
             raise ValueError(
@@ -124,8 +124,8 @@ class FiniteElementBoundaryRealization(StrictModule):
             raise ValueError("mapping_id must be non-empty.")
         self.proposed_points = proposed
         self.points = safe
-        self.accepted = jnp.asarray(accepted, dtype=bool).reshape(())
-        self.refresh_required = jnp.asarray(refresh_required, dtype=bool).reshape(())
+        self.accepted = jnp.asarray(accepted, dtype=jnp.bool_).reshape(())
+        self.refresh_required = jnp.asarray(refresh_required, dtype=jnp.bool_).reshape(())
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
         self.mapping_id = str(mapping_id)
 
@@ -148,18 +148,18 @@ class FiniteElementGeometryEvidence(StrictModule):
         minimum_relative_jacobian: Any,
         maximum_displacement_ratio: Any,
     ):
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.orientation_preserved = jnp.asarray(
-            orientation_preserved, dtype=bool
+            orientation_preserved, dtype=jnp.bool_
         ).reshape(())
         self.minimum_absolute_jacobian = jnp.asarray(
-            minimum_absolute_jacobian, dtype=float
+            minimum_absolute_jacobian, dtype=jnp.float64
         ).reshape(())
         self.minimum_relative_jacobian = jnp.asarray(
-            minimum_relative_jacobian, dtype=float
+            minimum_relative_jacobian, dtype=jnp.float64
         ).reshape(())
         self.maximum_displacement_ratio = jnp.asarray(
-            maximum_displacement_ratio, dtype=float
+            maximum_displacement_ratio, dtype=jnp.float64
         ).reshape(())
 
 
@@ -218,7 +218,7 @@ class FiniteElementMeshRealization(StrictModule):
         evidence: FiniteElementMeshMotionEvidence,
         /,
     ):
-        proposed = jnp.asarray(proposed_coordinates, dtype=float)
+        proposed = jnp.asarray(proposed_coordinates, dtype=jnp.float64)
         safe = jnp.asarray(coordinates, dtype=proposed.dtype)
         if proposed.ndim != 2 or safe.shape != proposed.shape:
             raise ValueError("FE coordinates must have matching shape (points, dim).")
@@ -359,12 +359,14 @@ class FiniteElementMeshMotionPlan(StrictModule):
                 raise ValueError("Coordinate DOFs must coincide with mesh vertices.")
         boundary_mask = np.asarray(
             mesh.topology.entities(0).subset("boundary").mask,
-            dtype=bool,
+            dtype=np.bool_,
         )
         boundary = np.flatnonzero(boundary_mask).astype(np.int32)
         interior = np.flatnonzero(~boundary_mask).astype(np.int32)
-        reference = np.asarray(mesh.coordinates, dtype=float)
-        provider_reference = np.asarray(boundary_provider.reference_points, dtype=float)
+        reference = np.asarray(mesh.coordinates, dtype=np.float64)
+        provider_reference = np.asarray(
+            boundary_provider.reference_points, dtype=np.float64
+        )
         if provider_reference.shape != (boundary.size, mesh.ambient_dimension):
             raise ValueError("Boundary provider routes must match every boundary vertex.")
         if not np.allclose(
@@ -393,7 +395,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
         boundary_local = np.full((reference.shape[0],), -1, dtype=np.int32)
         interior_local[interior] = np.arange(interior.size, dtype=np.int32)
         boundary_local[boundary] = np.arange(boundary.size, dtype=np.int32)
-        diagonal = np.zeros((interior.size,), dtype=float)
+        diagonal = np.zeros((interior.size,), dtype=np.float64)
         ii_first: list[int] = []
         ii_second: list[int] = []
         ii_weight: list[float] = []
@@ -433,11 +435,11 @@ class FiniteElementMeshMotionPlan(StrictModule):
                 remaining.remove(start)
                 while pending:
                     current = pending.pop()
-                    for neighbour in adjacency[current]:
-                        if neighbour in remaining:
-                            remaining.remove(neighbour)
-                            component.add(neighbour)
-                            pending.append(neighbour)
+                    for neighbor in adjacency[current]:
+                        if neighbor in remaining:
+                            remaining.remove(neighbor)
+                            component.add(neighbor)
+                            pending.append(neighbor)
                 if component.isdisjoint(touches_boundary):
                     raise ValueError(
                         "Every interior mesh component must connect to the boundary."
@@ -450,7 +452,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
             diagonal_array = jnp.asarray(diagonal)
             ii_first_array = jnp.asarray(ii_first, dtype=jnp.int32)
             ii_second_array = jnp.asarray(ii_second, dtype=jnp.int32)
-            ii_weight_array = jnp.asarray(ii_weight, dtype=float)
+            ii_weight_array = jnp.asarray(ii_weight, dtype=jnp.float64)
 
             def action(value):
                 result = diagonal_array * value
@@ -462,7 +464,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
                 )
                 return result
 
-            space = ArraySpace((int(interior.size),), dtype=jnp.asarray(reference).dtype)
+            space = ArraySpace((interior.size,), dtype=jnp.asarray(reference).dtype)
             operator = FunctionLinearOperator(
                 action,
                 source=space,
@@ -521,7 +523,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
         self.interior_indices = jnp.asarray(interior)
         self.interior_boundary_interior = jnp.asarray(ib_interior, dtype=jnp.int32)
         self.interior_boundary_boundary = jnp.asarray(ib_boundary, dtype=jnp.int32)
-        self.interior_boundary_weights = jnp.asarray(ib_weight, dtype=float)
+        self.interior_boundary_weights = jnp.asarray(ib_weight, dtype=jnp.float64)
         self.prepared_extension = prepared_extension
         self.reference_determinants = reference_determinants
         self.minimum_edge_length = jnp.asarray(np.min(edge_lengths))

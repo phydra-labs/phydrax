@@ -37,7 +37,7 @@ class AlgebraElementLayout(StrictModule, NonTrainableState):
         self.algebra_axis = axis
         self.layout_id = canonical_fingerprint(
             {
-                "kind": "algebra-element-layout-v1",
+                "kind": "algebra-element-layout",
                 "algebra": algebra.algebra_id,
                 "basis": list(self.basis_indices),
                 "axis": axis,

@@ -37,7 +37,7 @@ def _entity_shape(
 
 
 def _entity_key(orientation: tuple[int, ...], coordinate: Sequence[int], /) -> EntityKey:
-    return tuple(orientation), tuple(int(value) for value in coordinate)
+    return tuple(orientation), tuple(coordinate)
 
 
 def _canonical_entity_key(
@@ -153,8 +153,8 @@ class VariablePatchEntityBucketView(StrictModule, NonTrainableState):
     ):
         indices = jnp.asarray(global_indices, dtype=jnp.int32)
         signs = jnp.asarray(orientation_signs)
-        owned_ = jnp.asarray(owned, dtype=bool)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        owned_ = jnp.asarray(owned, dtype=jnp.bool_)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if (
             indices.shape != signs.shape
             or indices.shape != owned_.shape
@@ -171,7 +171,7 @@ class VariablePatchEntityBucketView(StrictModule, NonTrainableState):
             raise ValueError("Only valid patch entities may be owners.")
         self.level = int(level)
         self.degree = int(degree)
-        self.orientation = tuple(int(value) for value in orientation)
+        self.orientation = tuple(orientation)
         self.bucket = int(bucket)
         self.global_indices = indices
         self.orientation_signs = signs
@@ -217,10 +217,10 @@ class VariablePatchEntityComplex(StrictModule, NonTrainableState):
         if level_ < 0 or level_ >= len(topology.levels):
             raise ValueError("Variable patch entity level is out of range.")
         dimension = topology.plan.levels[level_].dimension
-        capacity = tuple(int(value) for value in entity_capacity)
+        capacity = tuple(entity_capacity)
         if len(capacity) != dimension + 1 or any(value <= 0 for value in capacity):
             raise ValueError("Variable patch entity capacities require every degree.")
-        incidence_bounds = tuple(int(value) for value in incidence_capacity)
+        incidence_bounds = tuple(incidence_capacity)
         if len(incidence_bounds) != dimension or any(
             value <= 0 for value in incidence_bounds
         ):
@@ -265,7 +265,7 @@ class VariablePatchEntityComplex(StrictModule, NonTrainableState):
         padded_keys: list[tuple[EntityKey | None, ...]] = []
         key_to_index: list[dict[EntityKey, int]] = []
         for degree, (keys, bound) in enumerate(zip(ordered_keys, capacity, strict=True)):
-            active = np.zeros((bound,), dtype=bool)
+            active = np.zeros((bound,), dtype=np.bool_)
             active[: len(keys)] = True
             identifiers = np.full((bound,), -1, dtype=np.int64)
             identifiers[: len(keys)] = [
@@ -325,8 +325,8 @@ class VariablePatchEntityComplex(StrictModule, NonTrainableState):
                 raise ValueError("Variable patch incidence route capacity is exceeded.")
             source_array = np.zeros((bound,), dtype=np.int32)
             target_array = np.zeros((bound,), dtype=np.int32)
-            signs_array = np.zeros((bound,), dtype=float)
-            valid = np.zeros((bound,), dtype=bool)
+            signs_array = np.zeros((bound,), dtype=np.float64)
+            valid = np.zeros((bound,), dtype=np.bool_)
             source_array[: len(source)] = source
             target_array[: len(target)] = target
             signs_array[: len(incidence_signs)] = incidence_signs
@@ -380,9 +380,9 @@ class VariablePatchEntityComplex(StrictModule, NonTrainableState):
                         -1,
                         dtype=np.int32,
                     )
-                    orientation_signs = np.ones(indices.shape, dtype=float)
-                    owned = np.zeros(indices.shape, dtype=bool)
-                    valid = np.zeros(indices.shape, dtype=bool)
+                    orientation_signs = np.ones(indices.shape, dtype=np.float64)
+                    owned = np.zeros(indices.shape, dtype=np.bool_)
+                    valid = np.zeros(indices.shape, dtype=np.bool_)
                     for lane, box in enumerate(metadata.boxes[bucket_index]):
                         if box is None:
                             continue
@@ -440,7 +440,7 @@ class VariablePatchEntityComplex(StrictModule, NonTrainableState):
         bucket: int,
         /,
     ) -> VariablePatchEntityBucketView:
-        key = (int(degree), tuple(int(value) for value in orientation), int(bucket))
+        key = (int(degree), tuple(orientation), int(bucket))
         for view in self.views:
             if (view.degree, view.orientation, view.bucket) == key:
                 return view

@@ -13,7 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._sites import AtomisticSiteDomain
 from ._units import AtomisticUnitSystem
@@ -101,7 +101,7 @@ class AtomisticSelectionPlan(StrictModule, NonTrainableState):
 
     def __init__(self, stable_ids: ArrayLike, mask: ArrayLike, /):
         ids = np.asarray(stable_ids)
-        selected = np.asarray(mask, dtype=bool)
+        selected = np.asarray(mask, dtype=np.bool_)
         if ids.ndim != 1 or selected.shape != ids.shape:
             raise ValueError("Selection mask must align with stable IDs.")
         self.mask = jnp.asarray(selected)
@@ -220,7 +220,7 @@ class AtomisticFrame(StrictModule):
         if not isinstance(coordinate_domain, AtomisticSiteDomain):
             raise TypeError("coordinate_domain must be AtomisticSiteDomain.")
         self.auxiliary = auxiliary_values
-        self.valid = jnp.asarray(valid, dtype=bool).reshape(())
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_).reshape(())
         self.coordinate_domain = coordinate_domain
         self.system_id = str(system_id)
         self.topology_id = str(topology_id)
@@ -241,7 +241,7 @@ class AtomisticFrame(StrictModule):
 
 
 class AbstractAtomisticTrajectorySourcePlan(StrictModule, NonTrainableState):
-    source_id: AbstractAttribute[str]
+    source_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def open(self) -> "AtomisticTrajectoryReader":
@@ -249,7 +249,7 @@ class AbstractAtomisticTrajectorySourcePlan(StrictModule, NonTrainableState):
 
 
 class AbstractAtomisticTrajectorySinkPlan(StrictModule, NonTrainableState):
-    sink_id: AbstractAttribute[str]
+    sink_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def open(self, *, append: bool = False) -> "AtomisticTrajectoryWriter":

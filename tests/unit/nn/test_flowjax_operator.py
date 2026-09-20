@@ -177,7 +177,7 @@ def test_flowjax_fit_checkpoint_resume_is_bitwise_exact(tmp_path):
         "batch_size": 2,
         "seed": 13,
         "checkpoint_every": 1,
-        "configuration": {"test_contract": "flowjax-exact-resume-v1"},
+        "configuration": {"test_contract": "flowjax-exact-resume"},
         "jit": True,
     }
     uninterrupted = phx.nn.operator.training.fit_operator(

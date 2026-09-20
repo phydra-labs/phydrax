@@ -59,7 +59,7 @@ class AmbipolarPlasmaTransportPlan(StrictModule, NonTrainableState):
         *,
         electron_thermal_conductivity: float,
     ):
-        diffusivities = np.asarray(species_diffusivities, dtype=float)
+        diffusivities = np.asarray(species_diffusivities, dtype=np.float64)
         electron_conductivity = float(electron_thermal_conductivity)
         if (
             not isinstance(schema, ChemicalSpeciesSchema)

@@ -119,7 +119,7 @@ class PreparedMACExplicitTestFilter(StrictModule, NonTrainableState):
             raise ValueError("MAC dynamic LES requires a three-dimensional grid.")
         grid = momentum.operators.discretization.grid
         for axis in grid.structured_axes:
-            widths = np.asarray(axis.interval_widths, dtype=float)
+            widths = np.asarray(axis.interval_widths, dtype=np.float64)
             if not axis.periodic or axis.primary_entity != "interval":
                 raise ValueError(
                     "MAC dynamic LES is prepared only for periodic uniform cell axes."
@@ -128,16 +128,14 @@ class PreparedMACExplicitTestFilter(StrictModule, NonTrainableState):
                 widths,
                 widths[0],
                 rtol=1e-12,
-                atol=np.finfo(float).eps * max(1.0, abs(float(widths[0]))),
+                atol=np.finfo(np.float64).eps * max(1.0, abs(float(widths[0]))),
             ):
                 raise ValueError(
-                    "MAC dynamic LES is prepared only for periodic uniform grids "
-                    "with at least three cells per axis."
+                    "MAC dynamic LES is prepared only for periodic uniform grids with at least three cells per axis."
                 )
         if momentum.boundaries.sides:
             raise ValueError(
-                "MAC dynamic LES has periodic-wrap support only; physical boundary "
-                "stages are unsupported."
+                "MAC dynamic LES has periodic-wrap support only; physical boundary stages are unsupported."
             )
         widths = tuple(axis.interval_widths for axis in grid.structured_axes)
         self.plan = plan

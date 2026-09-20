@@ -40,8 +40,8 @@ class CertifiedSlabAngularQuadrature(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-12,
         quadrature_id: str | None = None,
     ):
-        mu = np.asarray(ordinates, dtype=float)
-        weight = np.asarray(weights, dtype=float)
+        mu = np.asarray(ordinates, dtype=np.float64)
+        weight = np.asarray(weights, dtype=np.float64)
         tolerance_ = float(tolerance)
         if (
             mu.ndim != 1
@@ -111,7 +111,7 @@ class CertifiedSlabAngularQuadrature(StrictModule, NonTrainableState):
 
     @property
     def angle_count(self) -> int:
-        return int(self.ordinates.size)
+        return self.ordinates.size
 
 
 __all__ = ["AngularQuadratureEvidence", "CertifiedSlabAngularQuadrature"]

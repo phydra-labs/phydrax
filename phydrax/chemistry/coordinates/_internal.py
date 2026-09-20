@@ -61,7 +61,7 @@ class InternalCoordinateState(StrictModule, NonTrainableState):
         self.condition_estimate = jnp.asarray(
             condition_estimate, dtype=values_.dtype
         ).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.state_id = canonical_fingerprint(
             {
@@ -116,7 +116,7 @@ class InternalCoordinateRetractionResult(StrictModule, NonTrainableState):
         self.target_values = target
         self.residual = residual_
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
             {
@@ -155,9 +155,9 @@ class MolecularCoordinateSystemPlan(StrictModule, NonTrainableState):
         rank_tolerance: float = 1.0e-9,
     ):
         count = int(atom_count)
-        bonds_ = tuple(tuple(int(value) for value in item) for item in bonds)
-        angles_ = tuple(tuple(int(value) for value in item) for item in angles)
-        dihedrals_ = tuple(tuple(int(value) for value in item) for item in dihedrals)
+        bonds_ = tuple(tuple(item) for item in bonds)
+        angles_ = tuple(tuple(item) for item in angles)
+        dihedrals_ = tuple(tuple(item) for item in dihedrals)
         regularization_ = float(regularization)
         rank_tolerance_ = float(rank_tolerance)
         groups = ((bonds_, 2), (angles_, 3), (dihedrals_, 4))

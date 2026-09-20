@@ -95,8 +95,7 @@ class ElectronicCalculationPlan(StrictModule, NonTrainableState):
             prepared_state = state
         else:
             raise TypeError(
-                "state must be a molecular or periodic electronic sector plan, "
-                "or its prepared form."
+                "state must be a molecular or periodic electronic sector plan, or its prepared form."
             )
         if prepared_state.system_id != system.system_id:
             raise ValueError("Prepared electronic sector belongs to another system.")
@@ -155,10 +154,10 @@ def electronic_geometry_id(
     if not isinstance(system, AtomisticSystemPlan):
         raise TypeError("system must be AtomisticSystemPlan.")
     coordinates = np.asarray(positions, dtype=np.dtype(system.coordinate_dtype))
-    expected = (int(system.particle_ids.shape[0]), 3)
+    expected = (system.particle_ids.shape[0], 3)
     if coordinates.shape != expected:
         raise ValueError(f"positions must have shape {expected}.")
-    active = np.asarray(system.active_mask, dtype=bool)
+    active = np.asarray(system.active_mask, dtype=np.bool_)
     if np.any(~np.isfinite(coordinates[active])):
         raise ValueError("Active electronic coordinates must be finite.")
     vectors = (
@@ -214,8 +213,7 @@ def make_electronic_evaluation(
         (GroundStateTaskPlan, CorrelationTaskPlan, BandStructureTaskPlan),
     ):
         raise TypeError(
-            "make_electronic_evaluation only constructs ground-state, "
-            "correlation, or band-structure evaluations."
+            "make_electronic_evaluation only constructs ground-state, correlation, or band-structure evaluations."
         )
     provider = str(provider_id).strip()
     if not provider:

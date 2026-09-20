@@ -12,7 +12,7 @@ from ..qualification import CapabilityProfile, SupportTuple
 
 
 _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str], tuple[str, ...]]] = {
-    "protein.stability.megascale-natural-small-domain.v1": (
+    "protein.stability.megascale-natural-small-domain.canonical": (
         "protein.mutation-stability-prediction",
         {
             "assay": "cDNA-display-proteolysis",
@@ -29,7 +29,7 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str], tuple[str, ...]]] = {
             "locked-prediction",
         ),
     ),
-    "nucleic.strand-displacement.rna-to-dna.declared-condition.v1": (
+    "nucleic.strand-displacement.rna-to-dna.declared-condition.canonical": (
         "nucleic.strand-displacement",
         {
             "chemistry": "RNA-invader-DNA-substrate",
@@ -46,7 +46,7 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str], tuple[str, ...]]] = {
             "locked-prediction",
         ),
     ),
-    "protein.coordinate-proposal.fixed-construct-standard-chemistry.v1": (
+    "protein.coordinate-proposal.fixed-construct-standard-chemistry.canonical": (
         "protein-coordinate-proposal",
         {
             "chemistry": "explicitly-supported-standard-residues",
@@ -61,7 +61,7 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str], tuple[str, ...]]] = {
             "chemical-validity",
         ),
     ),
-    "rna.ensemble.adenine-riboswitch.declared-protocol.v1": (
+    "rna.ensemble.adenine-riboswitch.declared-protocol.canonical": (
         "rna-conditional-ensemble-inference",
         {
             "construct": "adenine-riboswitch",

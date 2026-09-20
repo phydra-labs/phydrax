@@ -47,7 +47,7 @@ class ChannelSBDF2Method(StrictModule, NonTrainableState):
     def __init__(self):
         identifier = canonical_fingerprint(
             {
-                "kind": "channel-sbdf2-method-v2",
+                "kind": "channel-sbdf2-method",
                 "startup": "backward-euler",
                 "explicit_stability_radius": float(0.25).hex(),
                 "failure_policy": "atomic-retain-complete-history",
@@ -77,8 +77,7 @@ class ChannelSBDF2Method(StrictModule, NonTrainableState):
             dynamics, (CompiledChannelFlowDynamics, CompiledChannelLESDynamics)
         ):
             raise TypeError(
-                "dynamics must be CompiledChannelFlowDynamics or "
-                "CompiledChannelLESDynamics."
+                "dynamics must be CompiledChannelFlowDynamics or CompiledChannelLESDynamics."
             )
         raw_step = np.asarray(step_size)
         if np.iscomplexobj(raw_step):
@@ -205,7 +204,7 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
         self._required_step_size = float(step_size)
         self.method_id = canonical_fingerprint(
             {
-                "kind": "prepared-channel-sbdf2-method-v1",
+                "kind": "prepared-channel-sbdf2-method",
                 "method": method.method_id,
                 "dynamics": dynamics.compilation_id,
                 "step_size": self.required_step_size,
@@ -552,7 +551,7 @@ def solve_channel_sbdf2(
         dtype=initial.real.dtype,
     )
     starts = saved[:-1]
-    indices = jnp.arange(int(saved.size) - 1, dtype=jnp.int32)
+    indices = jnp.arange(saved.size - 1, dtype=jnp.int32)
 
     def advance(
         carry: tuple[ChannelSBDF2State, Array, Array],
@@ -650,11 +649,11 @@ def solve_channel_sbdf2(
         dynamics=dynamics,
         solver_id=canonical_fingerprint(
             {
-                "kind": "channel-sbdf2-solve-v3",
+                "kind": "channel-sbdf2-solve",
                 "method": prepared.method_id,
                 "dynamics": dynamics.compilation_id,
                 "step_size": prepared.required_step_size,
-                "steps": int(saved.size) - 1,
+                "steps": saved.size - 1,
                 "failure_policy": "atomic-retain-complete-history",
             }
         ),

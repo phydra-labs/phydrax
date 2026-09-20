@@ -16,6 +16,7 @@ import numpy as np
 from jaxtyping import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume import MetricLinePlan, PreparedMetricLine
@@ -254,8 +255,13 @@ class FluxSurfacePlan:
         if np.any(np.diff(volume) <= 0.0):
             raise ValueError("Prepared flux surfaces are not strictly nested by volume.")
         profile_coordinate = np.linspace(0.0, 1.0, equilibrium.safety_factor.size)
-        safety = np.interp(
-            self.rho_faces**2, profile_coordinate, equilibrium.safety_factor
+        safety = np.asarray(
+            linear_interpolate(
+                profile_coordinate,
+                equilibrium.safety_factor,
+                self.rho_faces**2,
+                bounds="clip",
+            ).values
         )
         geometry = FluxSurfaceGeometry(
             self.rho_faces,
@@ -331,7 +337,7 @@ def _polygon_area_centroid_r(points):
     next_points = np.roll(points, -1, axis=0)
     cross = points[:, 0] * next_points[:, 1] - next_points[:, 0] * points[:, 1]
     signed_area = 0.5 * np.sum(cross)
-    if not np.isfinite(signed_area) or abs(signed_area) <= np.finfo(float).eps:
+    if not np.isfinite(signed_area) or abs(signed_area) <= np.finfo(np.float64).eps:
         raise ValueError("Flux-surface polygon has zero or nonfinite area.")
     centroid_r = np.sum((points[:, 0] + next_points[:, 0]) * cross) / (6.0 * signed_area)
     return abs(float(signed_area)), float(centroid_r)

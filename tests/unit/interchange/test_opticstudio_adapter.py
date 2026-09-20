@@ -96,10 +96,10 @@ class _FakeZOSPy(ModuleType):
         self.analysis_calls = []
         self.analysis_failure = analysis_failure
         self.constants = SimpleNamespace(
-            SystemData=SimpleNamespace(ZemaxSystemUnits=SimpleNamespace(Meters="metres"))
+            SystemData=SimpleNamespace(ZemaxSystemUnits=SimpleNamespace(Meters="meters"))
         )
         self.solvers = SimpleNamespace(material_model=self._material_model)
-        self.analyses = SimpleNamespace(
+        self.analyzes = SimpleNamespace(
             reports=SimpleNamespace(
                 CardinalPoints=self._analysis("cardinal-points"),
                 SurfaceData=self._analysis("surface-data"),
@@ -164,9 +164,9 @@ def _plan(
     curvatures = np.asarray((0.0, 0.02, -0.04)[:surface_count])
     conics = np.asarray((0.0, 0.0, -1.0)[:surface_count])
     coefficients = np.zeros((surface_count, 1))
-    coefficient_active = np.zeros((surface_count, 1), dtype=bool)
+    coefficient_active = np.zeros((surface_count, 1), dtype="bool")
     apertures = np.full((surface_count,), 5.0)
-    aperture_active = np.ones((surface_count,), dtype=bool)
+    aperture_active = np.ones((surface_count,), dtype="bool")
     indices = np.asarray((1.0, 1.5, 1.5, 1.0)[: surface_count + 1])
     return SequentialOpticsPlan(
         frames,
@@ -264,7 +264,7 @@ def test_supported_sequential_export_is_lossless_and_si_normalized(monkeypatch):
     zospy = _install_fake_zospy(monkeypatch)
     with adapter.OpticStudioBackend().open_session() as session:
         report = adapter.export_sequential_to_opticstudio(
-            _plan(), session, length_unit_in_metres=1.0e-3
+            _plan(), session, length_unit_in_meters=1.0e-3
         )
         result = adapter.run_opticstudio_analysis(
             session, adapter.OpticStudioAnalysisRequest("system-data")
@@ -274,7 +274,7 @@ def test_supported_sequential_export_is_lossless_and_si_normalized(monkeypatch):
     assert result.artifact.parent_artifact_ids == (report.target_id,)
     assert zospy.system.new_calls == 1
     assert zospy.system.sequential_calls == 1
-    assert zospy.system.SystemData.Units.LensUnits == "metres"
+    assert zospy.system.SystemData.Units.LensUnits == "meters"
     surfaces = zospy.system.LDE.surfaces[1:-1]
     assert [surface.Radius for surface in surfaces] == pytest.approx((0.0, 0.05, -0.025))
     assert [surface.Thickness for surface in surfaces] == pytest.approx(
@@ -293,7 +293,7 @@ def test_unsupported_features_are_reported_before_vendor_mutation(monkeypatch):
     with adapter.OpticStudioBackend().open_session() as session:
         with pytest.raises(AdapterError) as error:
             adapter.export_sequential_to_opticstudio(
-                _even_asphere_plan(), session, length_unit_in_metres=1.0e-3
+                _even_asphere_plan(), session, length_unit_in_meters=1.0e-3
             )
     assert error.value.status is AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
     assert error.value.features == ("surfaces[0].surface_kind=even-asphere",)
@@ -322,8 +322,7 @@ def test_requests_and_detached_results_have_deterministic_normalization(monkeypa
         first = adapter.run_opticstudio_analysis(session, first_request)
         second = adapter.run_opticstudio_analysis(session, second_request)
     assert first.payload_json == (
-        '{"data":{"a":1,"b":2},"name":"cardinal-points",'
-        '"settings":{"surface_1":1,"surface_2":"Image","wavelength":1}}'
+        '{"data":{"a":1,"b":2},"name":"cardinal-points","settings":{"surface_1":1,"surface_2":"Image","wavelength":1}}'
     )
     assert first.payload_json == second.payload_json
     assert first.result_id == second.result_id
@@ -363,7 +362,7 @@ def test_export_rejects_a_traced_plan_before_session_access(monkeypatch):
         def export_with_curvatures(curvatures):
             traced_plan = eqx.tree_at(lambda value: value.curvatures, plan, curvatures)
             return adapter.export_sequential_to_opticstudio(
-                traced_plan, session, length_unit_in_metres=1.0e-3
+                traced_plan, session, length_unit_in_meters=1.0e-3
             )
 
         with pytest.raises(TypeError, match="traced value.*host-only"):

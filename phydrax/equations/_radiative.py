@@ -50,8 +50,8 @@ class TabulatedCoolingCurve(StrictModule, NonTrainableState):
         rate_scale: float = 1.0,
         bounds_policy: RadiativeCoolingBoundsPolicy = "error",
     ):
-        nodes = np.asarray(log_temperature_nodes, dtype=float)
-        values = np.asarray(log_rate_values, dtype=float)
+        nodes = np.asarray(log_temperature_nodes, dtype=np.float64)
+        values = np.asarray(log_rate_values, dtype=np.float64)
         temperature_scale_ = float(temperature_scale)
         rate_scale_ = float(rate_scale)
         if (

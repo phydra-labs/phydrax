@@ -64,9 +64,7 @@ def qualify() -> dict[str, object]:
         "cylinder_tangency_residual": float(
             cylinder_result.evidence.endpoint_tangency_residual
         ),
-        "cylinder_surface_residual": float(
-            cylinder_result.evidence.surface_residual
-        ),
+        "cylinder_surface_residual": float(cylinder_result.evidence.surface_residual),
         "sphere_directional_derivative_error": float(derivative_error),
         "tolerance": tolerance,
     }

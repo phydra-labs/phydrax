@@ -47,12 +47,12 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
         if gradient.discretization.prepared_id != discretization.prepared_id:
             raise ValueError("Collocated gradient belongs to a different geometry.")
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
-        interior = neighbour >= 0
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = discretization.neighbor_cells
+        interior = neighbor >= 0
+        safe_neighbor = jnp.maximum(neighbor, 0)
         normals = discretization.area_vectors / discretization.face_measures[:, None]
         connector = (
-            discretization.cell_centers[safe_neighbour]
+            discretization.cell_centers[safe_neighbor]
             - discretization.cell_centers[owner]
         )
         owner_to_face = discretization.face_centers - discretization.cell_centers[owner]
@@ -133,7 +133,7 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
     def cell_field_gradient(self, value: ArrayLike, name: str, /) -> Array:
         field = self.validate_cell_field(value, name)
         if not jnp.issubdtype(field.dtype, jnp.inexact):
-            field = field.astype(jnp.result_type(field, float))
+            field = field.astype(jnp.result_type(field, jnp.float64))
         coefficients = self.gradient.coefficients(field)
         lengths = self.gradient.characteristic_lengths.astype(field.dtype)
         scale_shape = (field.shape[0],) + (1,) * field.ndim
@@ -144,20 +144,20 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
 
         field = self.validate_cell_field(value, name)
         if not jnp.issubdtype(field.dtype, jnp.inexact):
-            field = field.astype(jnp.result_type(field, float))
+            field = field.astype(jnp.result_type(field, jnp.float64))
         cell_gradient = self.cell_field_gradient(field, name)
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         normal = self.unit_normals.astype(field.dtype)
         connector = (
-            self.discretization.cell_centers[safe_neighbour]
+            self.discretization.cell_centers[safe_neighbor]
             - self.discretization.cell_centers[owner]
         ).astype(field.dtype)
         distance = self.projected_distances.astype(field.dtype)
         tangential = connector - distance[:, None] * normal
         owner_gradient = cell_gradient[owner]
-        average_gradient = 0.5 * (owner_gradient + cell_gradient[safe_neighbour])
+        average_gradient = 0.5 * (owner_gradient + cell_gradient[safe_neighbor])
         face_count = average_gradient.shape[0]
         vector_shape = (
             (face_count,)
@@ -170,7 +170,7 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
             axis=-1,
         )
         normal_derivative = (
-            field[safe_neighbour] - field[owner] - tangential_derivative
+            field[safe_neighbor] - field[owner] - tangential_derivative
         ) / distance.reshape(face_shape)
         current_normal_derivative = jnp.sum(
             average_gradient * normal.reshape(vector_shape),
@@ -189,10 +189,10 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
     def face_normal_gradient(self, pressure: ArrayLike, /) -> Array:
         value = self.validate_cell_scalar(pressure, "Pressure")
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         distance = self.projected_distances.astype(value.dtype)
-        interior_gradient = (value[safe_neighbour] - value[owner]) / distance
+        interior_gradient = (value[safe_neighbor] - value[owner]) / distance
         return jnp.where(self.interior_faces, interior_gradient, 0.0)
 
     def divergence(self, face_normal_velocity: ArrayLike, /) -> Array:
@@ -201,11 +201,11 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
         volumes = self.discretization.cell_volumes.astype(velocity.dtype)
         integrated = velocity * measures
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         divergence = jnp.zeros((self.discretization.cell_count,), dtype=velocity.dtype)
         divergence = divergence.at[owner].add(integrated)
-        divergence = divergence.at[safe_neighbour].add(
+        divergence = divergence.at[safe_neighbor].add(
             jnp.where(self.interior_faces, -integrated, 0.0)
         )
         return divergence / volumes
@@ -213,9 +213,9 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
     def interpolate_normal_velocity(self, velocity: ArrayLike, /) -> Array:
         value = self.validate_cell_velocity(velocity)
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
-        average = 0.5 * (value[owner] + value[safe_neighbour])
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
+        average = 0.5 * (value[owner] + value[safe_neighbor])
         average = jnp.where(self.interior_faces[:, None], average, value[owner])
         return jnp.sum(average * self.unit_normals.astype(value.dtype), axis=-1)
 
@@ -231,9 +231,9 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
             "Inverse momentum diagonal must be positive and finite.",
         )
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
-        average = 0.5 * (inverse[owner] + inverse[safe_neighbour])
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
+        average = 0.5 * (inverse[owner] + inverse[safe_neighbor])
         return jnp.where(self.interior_faces, average, inverse[owner])
 
     def rhie_chow_face_velocity(
@@ -247,10 +247,10 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
         pressure_ = self.validate_cell_scalar(pressure, "Pressure")
         face_inverse = self.interpolate_inverse_momentum(inverse_momentum_diagonal)
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         cell_gradient = self.cell_gradient(pressure_)
-        average_gradient = 0.5 * (cell_gradient[owner] + cell_gradient[safe_neighbour])
+        average_gradient = 0.5 * (cell_gradient[owner] + cell_gradient[safe_neighbor])
         interpolated_normal_gradient = jnp.sum(
             average_gradient * self.unit_normals.astype(pressure_.dtype), axis=-1
         )

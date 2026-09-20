@@ -86,13 +86,13 @@ class OperatorAxis(StrictModule):
         basis: OperatorBasis = "uniform",
         periodic: bool = False,
     ):
-        nodes_ = jnp.asarray(nodes, dtype=float).reshape((-1,))
-        if int(nodes_.size) == 0:
+        nodes_ = jnp.asarray(nodes, dtype=jnp.float64).reshape((-1,))
+        if nodes_.size == 0:
             raise ValueError("OperatorAxis nodes must be non-empty.")
         if quadrature_weights is None:
             weights = None
         else:
-            weights = jnp.asarray(quadrature_weights, dtype=float).reshape((-1,))
+            weights = jnp.asarray(quadrature_weights, dtype=jnp.float64).reshape((-1,))
             if weights.shape != nodes_.shape:
                 raise ValueError(
                     "OperatorAxis quadrature weights must match the node shape."
@@ -105,7 +105,7 @@ class OperatorAxis(StrictModule):
 
     @property
     def size(self) -> int:
-        return int(self.nodes.shape[0])
+        return self.nodes.shape[0]
 
     @classmethod
     def from_discretization(
@@ -166,8 +166,7 @@ class FunctionSamples(StrictModule):
             raise ValueError("FunctionSamples requires values or coordinates.")
         if isinstance(values, Mapping):
             raise TypeError(
-                "FunctionSamples values must be one array or None; "
-                "use named OperatorBatch inputs for multiple fields."
+                "FunctionSamples values must be one array or None; use named OperatorBatch inputs for multiple fields."
             )
         values_ = None if values is None else jnp.asarray(values)
 
@@ -178,20 +177,17 @@ class FunctionSamples(StrictModule):
             coordinates_ = None
             sample_shape = tuple(axis.size for axis in axes_)
         else:
-            coordinates_ = jnp.asarray(coordinates, dtype=float)
+            coordinates_ = jnp.asarray(coordinates, dtype=jnp.float64)
             if coordinates_.ndim < 2:
                 raise ValueError(
-                    "Point-cloud coordinates must have shape "
-                    "case_shape + (num_points, coord_dim)."
+                    "Point-cloud coordinates must have shape case_shape + (num_points, coord_dim)."
                 )
-            if int(coordinates_.shape[-2]) <= 0:
+            if coordinates_.shape[-2] <= 0:
                 raise ValueError("Point clouds must contain at least one padded point.")
-            if int(coordinates_.shape[-1]) <= 0:
+            if coordinates_.shape[-1] <= 0:
                 raise ValueError("Point-cloud coordinate dimension must be positive.")
-            sample_shape = (int(coordinates_.shape[-2]),)
-            geometry_case_shapes.append(
-                tuple(int(size) for size in coordinates_.shape[:-2])
-            )
+            sample_shape = (coordinates_.shape[-2],)
+            geometry_case_shapes.append(tuple(coordinates_.shape[:-2]))
 
         def prepare_geometry_array(
             value: Array | None,
@@ -207,23 +203,20 @@ class FunctionSamples(StrictModule):
             sample_ndim = len(sample_shape)
             if (
                 array.ndim < sample_ndim
-                or tuple(int(size) for size in array.shape[-sample_ndim:]) != sample_shape
+                or tuple(array.shape[-sample_ndim:]) != sample_shape
             ):
                 raise ValueError(
-                    f"FunctionSamples {name} must end in sample shape {sample_shape}; "
-                    f"got {array.shape}."
+                    f"FunctionSamples {name} must end in sample shape {sample_shape}; got {array.shape}."
                 )
-            geometry_case_shapes.append(
-                tuple(int(size) for size in array.shape[:-sample_ndim])
-            )
+            geometry_case_shapes.append(tuple(array.shape[:-sample_ndim]))
             return array
 
         weights_ = prepare_geometry_array(
             quadrature_weights,
-            dtype=float,
+            dtype=jnp.float64,
             name="quadrature weights",
         )
-        mask_ = prepare_geometry_array(mask, dtype=bool, name="mask")
+        mask_ = prepare_geometry_array(mask, dtype=jnp.bool_, name="mask")
         if topology is not None:
             if not isinstance(topology, OperatorTopology):
                 raise TypeError("FunctionSamples topology must be an OperatorTopology.")
@@ -309,7 +302,7 @@ class FunctionSamples(StrictModule):
         if self.axes:
             return tuple(axis.size for axis in self.axes)
         if self.coordinates is not None:
-            return (int(self.coordinates.shape[-2]),)
+            return (self.coordinates.shape[-2],)
         return ()
 
     @property
@@ -321,11 +314,11 @@ class FunctionSamples(StrictModule):
         """Return the explicit geometry case shape, or ``()`` when shared."""
         shapes: list[tuple[int, ...]] = []
         if self.coordinates is not None:
-            shapes.append(tuple(int(size) for size in self.coordinates.shape[:-2]))
+            shapes.append(tuple(self.coordinates.shape[:-2]))
         sample_ndim = len(self.sample_shape)
         for array in (self.quadrature_weights, self.mask):
             if array is not None:
-                shapes.append(tuple(int(size) for size in array.shape[:-sample_ndim]))
+                shapes.append(tuple(array.shape[:-sample_ndim]))
         if self.topology is not None:
             shapes.append(self.topology.case_shape)
         return next((shape for shape in shapes if shape), ())
@@ -336,9 +329,7 @@ class FunctionSamples(StrictModule):
         /,
     ) -> tuple[int, ...]:
         explicit = self.geometry_case_shape
-        target = (
-            explicit if case_shape is None else tuple(int(size) for size in case_shape)
-        )
+        target = explicit if case_shape is None else tuple(case_shape)
         if explicit and explicit != target:
             raise ValueError(
                 f"Geometry case shape {explicit} cannot broadcast to requested {target}."
@@ -361,7 +352,7 @@ class FunctionSamples(StrictModule):
             coordinates = self.coordinates
         else:
             raise ValueError("FunctionSamples has no coordinate geometry.")
-        target = target_cases + self.sample_shape + (int(coordinates.shape[-1]),)
+        target = target_cases + self.sample_shape + (coordinates.shape[-1],)
         coordinates = jnp.broadcast_to(coordinates, target)
         if flatten:
             count = 1
@@ -422,16 +413,16 @@ class FunctionSamples(StrictModule):
             factors = []
             for axis in self.axes:
                 factor = (
-                    jnp.ones_like(axis.nodes, dtype=float)
+                    jnp.ones_like(axis.nodes, dtype=jnp.float64)
                     if axis.quadrature_weights is None
                     else axis.quadrature_weights
                 )
                 factors.append(factor)
             weights = tensor_product(factors)
         elif self.coordinates is not None:
-            weights = jnp.ones(self.sample_shape, dtype=float)
+            weights = jnp.ones(self.sample_shape, dtype=jnp.float64)
         else:
-            weights = jnp.asarray(1.0, dtype=float)
+            weights = jnp.asarray(1.0, dtype=jnp.float64)
         return jnp.broadcast_to(weights, target_cases + self.sample_shape)
 
     def mask_array(
@@ -443,7 +434,7 @@ class FunctionSamples(StrictModule):
         """Return a Boolean mask broadcast over cases."""
         target_cases = self._target_case_shape(case_shape)
         if self.mask is None:
-            mask = jnp.ones(self.sample_shape, dtype=bool)
+            mask = jnp.ones(self.sample_shape, dtype=jnp.bool_)
         else:
             mask = self.mask
         mask = jnp.broadcast_to(mask, target_cases + self.sample_shape)
@@ -513,14 +504,13 @@ def _validate_sample_values(
         )
     if (
         sample_shape
-        and tuple(int(size) for size in array.shape[case_ndim : case_ndim + sample_ndim])
-        != sample_shape
+        and tuple(array.shape[case_ndim : case_ndim + sample_ndim]) != sample_shape
     ):
         raise ValueError(
             "FunctionSamples values do not contain sample shape "
             f"{sample_shape} after {case_ndim} case axes; got {array.shape}."
         )
-    return (tuple(int(size) for size in array.shape[:case_ndim]),)
+    return (tuple(array.shape[:case_ndim]),)
 
 
 class OperatorBatch(StrictModule):
@@ -561,7 +551,7 @@ class OperatorBatch(StrictModule):
         case_ndim = len(axes)
         candidates: list[tuple[int, ...]] = []
         if case_shape is not None:
-            candidates.append(tuple(int(size) for size in case_shape))
+            candidates.append(tuple(case_shape))
         for samples in (*inputs.values(), *queries.values()):
             geometry_shape = samples.geometry_case_shape
             if geometry_shape:
@@ -584,8 +574,7 @@ class OperatorBatch(StrictModule):
                 )
             if any(candidate != resolved_shape for candidate in candidates[1:]):
                 raise ValueError(
-                    "OperatorBatch inputs and queries have inconsistent case shapes: "
-                    f"{tuple(candidates)}."
+                    f"OperatorBatch inputs and queries have inconsistent case shapes: {tuple(candidates)}."
                 )
             if any(size <= 0 for size in resolved_shape):
                 raise ValueError("OperatorBatch case dimensions must be positive.")
@@ -613,8 +602,7 @@ class OperatorBatch(StrictModule):
         """Return the only query name or fail instead of silently selecting one."""
         if len(self.queries) != 1:
             raise ValueError(
-                "This operator requires exactly one query branch; "
-                f"got {tuple(self.queries)}."
+                f"This operator requires exactly one query branch; got {tuple(self.queries)}."
             )
         return next(iter(self.queries))
 
@@ -622,8 +610,7 @@ class OperatorBatch(StrictModule):
         """Return the only query or fail instead of silently selecting one."""
         if len(self.queries) != 1:
             raise ValueError(
-                "This operator requires exactly one query branch; "
-                f"got {tuple(self.queries)}."
+                f"This operator requires exactly one query branch; got {tuple(self.queries)}."
             )
         return next(iter(self.queries.values()))
 
@@ -668,8 +655,7 @@ class OperatorClassificationSpec(StrictModule):
     ):
         if kind not in ("binary", "multiclass", "multilabel", "ordinal"):
             raise ValueError(
-                "Operator classification kind must be 'binary', 'multiclass', "
-                "'multilabel', or 'ordinal'."
+                "Operator classification kind must be 'binary', 'multiclass', 'multilabel', or 'ordinal'."
             )
         if target not in ("hard", "soft"):
             raise ValueError("Operator classification target must be 'hard' or 'soft'.")
@@ -694,8 +680,7 @@ class OperatorClassificationSpec(StrictModule):
             if cutpoint_policy == "fixed":
                 if len(resolved_thresholds) != len(ordered) - 1:
                     raise ValueError(
-                        "Fixed ordinal classification requires one threshold between "
-                        "each adjacent pair of classes."
+                        "Fixed ordinal classification requires one threshold between each adjacent pair of classes."
                     )
                 if any(not math.isfinite(value) for value in resolved_thresholds) or any(
                     right <= left
@@ -823,8 +808,7 @@ class OperatorOutputSpec(StrictModule):
                 )
             if names:
                 raise ValueError(
-                    "Classification class order belongs to classification.classes, "
-                    "not physical component_names."
+                    "Classification class order belongs to classification.classes, not physical component_names."
                 )
         self.channels = channels
         self.component_names = names
@@ -891,7 +875,7 @@ class OperatorOutputSpec(StrictModule):
     ) -> Array:
         array = jnp.asarray(values)
         expected = self.prediction_shape(batch, query_name=query_name)
-        if tuple(int(size) for size in array.shape) != expected:
+        if tuple(array.shape) != expected:
             raise ValueError(
                 f"Operator prediction shape must be {expected}; got {array.shape}."
             )
@@ -929,7 +913,7 @@ class OperatorOutputSpec(StrictModule):
     ) -> Array:
         array = jnp.asarray(values)
         expected = self.target_shape(batch, query_name=query_name)
-        if tuple(int(size) for size in array.shape) != expected:
+        if tuple(array.shape) != expected:
             raise ValueError(
                 f"Operator target shape must be {expected}; got {array.shape}."
             )
@@ -947,8 +931,7 @@ class OperatorOutputSpec(StrictModule):
                     or jnp.issubdtype(array.dtype, jnp.bool_)
                 ):
                     raise TypeError(
-                        "Hard operator classification targets must retain an integer "
-                        "or Boolean dtype."
+                        "Hard operator classification targets must retain an integer or Boolean dtype."
                     )
                 if classification.kind in ("binary", "multilabel"):
                     valid = (array == 0) | (array == 1)
@@ -1064,7 +1047,7 @@ class OperatorTargetBatch(StrictModule):
                     f"Operator target field {name!r} must be an OperatorFieldBatch."
                 )
         axes = tuple(str(axis) for axis in case_axes)
-        shape = tuple(int(size) for size in case_shape)
+        shape = tuple(case_shape)
         if len(axes) != len(shape):
             raise ValueError("case_axes and case_shape must have equal lengths.")
         if len(set(axes)) != len(axes) or any(not axis for axis in axes):
@@ -1111,18 +1094,16 @@ class OperatorTargetBatch(StrictModule):
             query_name = resolved_queries[name]
             if query_name not in batch.queries:
                 raise KeyError(
-                    f"Unknown target query {query_name!r}; "
-                    f"expected one of {tuple(batch.queries)}."
+                    f"Unknown target query {query_name!r}; expected one of {tuple(batch.queries)}."
                 )
             array = jnp.asarray(value)
             if specs is None:
                 prefix = batch.case_shape + batch.query(query_name).sample_shape
-                if tuple(int(size) for size in array.shape[: len(prefix)]) != prefix:
+                if tuple(array.shape[: len(prefix)]) != prefix:
                     raise ValueError(
-                        f"Target field {name!r} must start with shape {prefix}; "
-                        f"got {array.shape}."
+                        f"Target field {name!r} must start with shape {prefix}; got {array.shape}."
                     )
-                trailing = tuple(int(size) for size in array.shape[len(prefix) :])
+                trailing = tuple(array.shape[len(prefix) :])
                 if not trailing:
                     spec = OperatorOutputSpec("scalar")
                 elif len(trailing) == 1:
@@ -1149,8 +1130,7 @@ class OperatorTargetBatch(StrictModule):
     def field(self, name: str, /) -> OperatorFieldBatch:
         if name not in self.fields:
             raise KeyError(
-                f"Unknown operator target field {name!r}; "
-                f"expected one of {tuple(self.fields)}."
+                f"Unknown operator target field {name!r}; expected one of {tuple(self.fields)}."
             )
         return self.fields[name]
 
@@ -1162,8 +1142,7 @@ class OperatorTargetBatch(StrictModule):
         for name, field in self.fields.items():
             if field.query_name not in batch.queries:
                 raise KeyError(
-                    f"Target field {name!r} references unknown query "
-                    f"{field.query_name!r}."
+                    f"Target field {name!r} references unknown query {field.query_name!r}."
                 )
             field.spec.validate_target(
                 field.values,
@@ -1189,7 +1168,7 @@ class OperatorTargetBatch(StrictModule):
             if isinstance(index, slice):
                 size = len(range(*index.indices(self.case_shape[position])))
             else:
-                size = int(jnp.asarray(index).size)
+                size = jnp.asarray(index).size
             axes = self.case_axes
             shape_list = list(self.case_shape)
             shape_list[position] = size
@@ -1249,7 +1228,7 @@ class OperatorPrediction(StrictModule):
         if not queries:
             raise ValueError("OperatorPrediction requires at least one named query.")
         axes = tuple(str(axis) for axis in case_axes)
-        shape = () if case_shape is None else tuple(int(size) for size in case_shape)
+        shape = () if case_shape is None else tuple(case_shape)
         if len(axes) != len(shape):
             raise ValueError("OperatorPrediction case_axes and case_shape ranks differ.")
         query_map = frozendict({str(name): value for name, value in queries.items()})
@@ -1261,37 +1240,32 @@ class OperatorPrediction(StrictModule):
             geometry_shape = query.geometry_case_shape
             if geometry_shape and geometry_shape != shape:
                 raise ValueError(
-                    f"Prediction query {name!r} has case shape {geometry_shape}; "
-                    f"expected {shape}."
+                    f"Prediction query {name!r} has case shape {geometry_shape}; expected {shape}."
                 )
         field_map = frozendict({str(name): value for name, value in fields.items()})
         for name, field in field_map.items():
             if not name or not isinstance(field, OperatorFieldBatch):
                 raise TypeError(
-                    "OperatorPrediction fields must map non-empty names to "
-                    "OperatorFieldBatch values."
+                    "OperatorPrediction fields must map non-empty names to OperatorFieldBatch values."
                 )
             if field.query_name not in query_map:
                 raise ValueError(
-                    f"Output field {name!r} references unknown query "
-                    f"{field.query_name!r}."
+                    f"Output field {name!r} references unknown query {field.query_name!r}."
                 )
             expected = (
                 shape
                 + query_map[field.query_name].sample_shape
                 + field.spec.channel_shape
             )
-            if tuple(int(size) for size in field.values.shape) != expected:
+            if tuple(field.values.shape) != expected:
                 raise ValueError(
-                    f"Operator output field {name!r} must have shape {expected}; "
-                    f"got {field.values.shape}."
+                    f"Operator output field {name!r} must have shape {expected}; got {field.values.shape}."
                 )
             if field.spec.classification is not None and not jnp.issubdtype(
                 field.values.dtype, jnp.inexact
             ):
                 raise TypeError(
-                    f"Operator classification output field {name!r} must contain "
-                    "inexact logits."
+                    f"Operator classification output field {name!r} must contain inexact logits."
                 )
         self.fields = field_map
         self.queries = query_map
@@ -1328,8 +1302,7 @@ class OperatorPrediction(StrictModule):
     def field(self, name: str, /) -> OperatorFieldBatch:
         if name not in self.fields:
             raise KeyError(
-                f"Unknown operator output field {name!r}; "
-                f"expected one of {tuple(self.fields)}."
+                f"Unknown operator output field {name!r}; expected one of {tuple(self.fields)}."
             )
         return self.fields[name]
 
@@ -1345,7 +1318,7 @@ def tensor_product(factors: Sequence[Array], /) -> Array:
     """Return the outer product of one-dimensional factors."""
     factors_ = tuple(jnp.asarray(factor) for factor in factors)
     if not factors_:
-        return jnp.asarray(1.0, dtype=float)
+        return jnp.asarray(1.0, dtype=jnp.float64)
     result = factors_[0]
     for factor in factors_[1:]:
         result = jnp.multiply.outer(result, factor)
@@ -1353,7 +1326,7 @@ def tensor_product(factors: Sequence[Array], /) -> Array:
 
 
 def _pad_axis(array: Array, size: int, axis: int, /, *, value: Any) -> Array:
-    width = int(size) - int(array.shape[axis])
+    width = int(size) - array.shape[axis]
     if width < 0:
         raise ValueError(
             f"Cannot pad axis of size {array.shape[axis]} to smaller size {size}."
@@ -1377,7 +1350,7 @@ def pad_function_samples(
     current = samples.sample_shape[0]
     if target < current:
         raise ValueError(f"Cannot pad {current} points to {target}.")
-    cases = tuple(int(value) for value in case_shape)
+    cases = tuple(case_shape)
     case_ndim = len(cases)
     coordinates = _pad_axis(
         samples.coordinates_array(case_shape=cases),
@@ -1510,7 +1483,7 @@ def slice_operator_batch(
         if isinstance(index, slice):
             size = len(range(*index.indices(batch.case_shape[position])))
         else:
-            size = int(jnp.asarray(index).size)
+            size = jnp.asarray(index).size
         axes = batch.case_axes
         shape_list = list(batch.case_shape)
         shape_list[position] = size

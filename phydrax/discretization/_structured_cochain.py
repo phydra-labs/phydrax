@@ -85,7 +85,7 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
                 )
                 primal = np.ones(shape)
                 dual = np.ones(shape)
-                boundary = np.zeros(shape, dtype=bool)
+                boundary = np.zeros(shape, dtype=np.bool_)
                 for axis in range(dimension):
                     structured_axis = grid.structured_axes[axis]
                     if axis in orientation:

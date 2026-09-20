@@ -361,8 +361,7 @@ def _frame_angle(
     return eqx.error_if(
         angle,
         jnp.any(valid_direction & ~frame_valid),
-        "A tangent frame must be finite, orthonormal, tangent, and satisfy "
-        "east cross north = radial.",
+        "A tangent frame must be finite, orthonormal, tangent, and satisfy east cross north = radial.",
     )
 
 
@@ -400,8 +399,7 @@ def _spherical_synthesis_cartesian(
         for name, vector in (("east", east), ("north", north)):
             if vector.ndim == 0 or vector.shape[-1] != 3:
                 raise ValueError(
-                    f"Tangent-frame {name} vectors must end in dimension 3; "
-                    f"got {vector.shape}."
+                    f"Tangent-frame {name} vectors must end in dimension 3; got {vector.shape}."
                 )
         vectors, east, north = jnp.broadcast_arrays(vectors, east, north)
 

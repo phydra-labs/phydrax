@@ -504,14 +504,14 @@ class ConvexDifferentiationPolicy(StrictModule):
 
 __all__ = [
     "AbstractConvexProgramMethod",
+    "ClarabelInteriorPoint",
+    "ConicGeneralizedDerivativePolicy",
     "ConvexDifferentiationMode",
     "ConvexDifferentiationPolicy",
     "ConvexSolvePolicy",
     "ConvexTermination",
-    "ConicGeneralizedDerivativePolicy",
-    "NativeHomogeneousConic",
     "DensePrimalDualQP",
-    "ClarabelInteriorPoint",
     "MPAXr2HPDHG",
     "MPAXraPDHG",
+    "NativeHomogeneousConic",
 ]

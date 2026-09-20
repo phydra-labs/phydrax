@@ -74,9 +74,7 @@ def _mhd_case(dimension: int):
         ),
         "constraint_change": float(result.diagnostics.magnetic_constraint_change),
         "accepted_face_families": len(result.accepted_integrals.face_flux_integrals),
-        "accepted_edge_values": int(
-            result.accepted_integrals.edge_electromotive_integrals.size
-        ),
+        "accepted_edge_values": result.accepted_integrals.edge_electromotive_integrals.size,
     }
 
 

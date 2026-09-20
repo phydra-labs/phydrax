@@ -23,7 +23,7 @@ def test_cell_restriction_is_conservative_and_both_transfers_preserve_constants(
     fine_space = fine.field_space("fine").vector_space
     coarse_space = coarse.field_space("coarse").vector_space
     restriction, prolongation = transfer.prepare(fine_space, coarse_space)
-    field = jnp.arange(fine.size, dtype=float).reshape(fine.shape)
+    field = jnp.arange(fine.size, dtype="float64").reshape(fine.shape)
 
     restricted = restriction.mv(field)
     prolonged_constant = prolongation.mv(jnp.ones(coarse.shape))
@@ -72,9 +72,7 @@ def test_nodal_transfer_injects_nested_nodes_and_linearly_interpolates():
 
 def _prepared_multigrid(points, *, dimension=1, coefficient=1.0):
     grid = _cell_grid(points, dimension=dimension)
-    boundaries = {
-        axis: ("dirichlet", "dirichlet") for axis in grid.axis_names
-    }
+    boundaries = {axis: ("dirichlet", "dirichlet") for axis in grid.axis_names}
     diffusion = phx.discretization.ConservativeDiffusionPlan(
         grid,
         boundaries=boundaries,
@@ -96,7 +94,9 @@ def test_structured_v_cycle_has_resolution_independent_convergence_factor():
         rhs = multigrid.level_operators[0].mv(exact)
 
         result = multigrid.solve(rhs, cycles=7, tolerance=1e-7)
-        factors.append(float((result.residual_norms[-1] / result.residual_norms[0]) ** (1 / 7)))
+        factors.append(
+            float((result.residual_norms[-1] / result.residual_norms[0]) ** (1 / 7))
+        )
 
         assert result.residual_norms[-1] < 2e-5 * result.residual_norms[0]
         np.testing.assert_allclose(result.value, exact, rtol=2e-6, atol=2e-7)

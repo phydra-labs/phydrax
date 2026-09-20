@@ -68,11 +68,10 @@ class SampledControlLoss(StrictModule):
         integral = jnp.asarray(running_integral)
         terminal_ = jnp.asarray(terminal)
         total_ = jnp.asarray(total)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if samples.shape != case_shape + (num_steps,):
             raise ValueError(
-                "SampledControlLoss running_samples must have shape "
-                "case_shape + (num_steps,)."
+                "SampledControlLoss running_samples must have shape case_shape + (num_steps,)."
             )
         for name, value in (
             ("running_integral", integral),

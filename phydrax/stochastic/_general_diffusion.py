@@ -28,7 +28,7 @@ def _vector(value: ArrayLike, dimension: int, /, *, owner: str) -> Array:
         raise ValueError(f"{owner} must have shape ({dimension},); got {array.shape}.")
     if jnp.iscomplexobj(array):
         raise TypeError(f"{owner} must be real-valued.")
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 class AbstractItoScoreDiffusion(StrictModule):
@@ -122,12 +122,12 @@ class MatrixGaussianDiffusion(AbstractItoScoreDiffusion):
         if jnp.iscomplexobj(jnp.asarray(offset)):
             raise TypeError("Matrix Gaussian diffusion offset must be real-valued.")
         if not jnp.issubdtype(matrix.dtype, jnp.inexact):
-            matrix = matrix.astype(float)
+            matrix = matrix.astype("float64")
         if not jnp.issubdtype(factor.dtype, jnp.inexact):
-            factor = factor.astype(float)
+            factor = factor.astype("float64")
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
             raise ValueError("drift_matrix must be square.")
-        dimension = int(matrix.shape[0])
+        dimension = matrix.shape[0]
         if factor.ndim != 2 or factor.shape[0] != dimension or factor.shape[1] <= 0:
             raise ValueError("dispersion must have shape (dimension, noise_dimension).")
         horizon = float(terminal_time)
@@ -137,7 +137,7 @@ class MatrixGaussianDiffusion(AbstractItoScoreDiffusion):
             {
                 "kind": "matrix-gaussian-diffusion",
                 "dimension": dimension,
-                "noise_dimension": int(factor.shape[1]),
+                "noise_dimension": factor.shape[1],
                 "terminal_time": horizon,
             }
         )
@@ -265,7 +265,7 @@ class StateDependentItoDiffusion(AbstractItoScoreDiffusion):
         if jnp.iscomplexobj(result):
             raise TypeError("State-dependent diffusion factor must be real-valued.")
         if not jnp.issubdtype(result.dtype, jnp.inexact):
-            result = result.astype(float)
+            result = result.astype("float64")
         if result.shape != (self.dimension, self.noise_dimension):
             raise ValueError("State-dependent diffusion factor changed shape.")
         return result

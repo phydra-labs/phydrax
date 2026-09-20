@@ -82,7 +82,7 @@ class FrequencyResponseResult(StrictModule):
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _matrix(value: ArrayLike, /, *, owner: str) -> Array:
@@ -103,15 +103,15 @@ def _validated_matrices(
     inputs = _matrix(input_matrix, owner="input_matrix")
     outputs = _matrix(output_matrix, owner="output_matrix")
     feedthrough = _matrix(feedthrough_matrix, owner="feedthrough_matrix")
-    state_size = int(state.shape[-1])
+    state_size = state.shape[-1]
     if state.shape[-2] != state_size:
         raise ValueError("state_matrix must end in a square matrix.")
     if inputs.shape[-2] != state_size:
         raise ValueError("input_matrix row count must equal state size.")
     if outputs.shape[-1] != state_size:
         raise ValueError("output_matrix column count must equal state size.")
-    output_size = int(outputs.shape[-2])
-    input_size = int(inputs.shape[-1])
+    output_size = outputs.shape[-2]
+    input_size = inputs.shape[-1]
     if state_size <= 0 or input_size <= 0 or output_size <= 0:
         raise ValueError("State, input, and output matrix dimensions must be positive.")
     if feedthrough.shape[-2:] != (output_size, input_size):
@@ -169,7 +169,7 @@ def _frequency_result(
     )
     point_array = _inexact(points)
     point_shape = tuple(point_array.shape)
-    point_count = int(point_array.size) if point_shape else 1
+    point_count = point_array.size if point_shape else 1
     if point_count <= 0:
         raise ValueError("evaluation_points must be non-empty.")
     complex_dtype = jnp.result_type(state, inputs, outputs, feedthrough, jnp.complex64)
@@ -231,8 +231,8 @@ def _frequency_result(
 
     diagnostic_shape = batch_shape + point_shape
     matrix_prefix = diagnostic_shape
-    output_size = int(outputs.shape[-2])
-    input_size = int(inputs.shape[-1])
+    output_size = outputs.shape[-2]
+    input_size = inputs.shape[-1]
     return FrequencyResponseResult(
         evaluation_points=point_array,
         angular_frequencies=angular_frequencies,
@@ -371,8 +371,8 @@ def input_to_state_response(
 
     state = _matrix(state_matrix, owner="state_matrix")
     inputs = _matrix(input_matrix, owner="input_matrix")
-    state_size = int(state.shape[-1])
-    input_size = int(inputs.shape[-1])
+    state_size = state.shape[-1]
+    input_size = inputs.shape[-1]
     batch_shape = jnp.broadcast_shapes(state.shape[:-2], inputs.shape[:-2])
     identity = jnp.broadcast_to(
         jnp.eye(state_size, dtype=jnp.result_type(state, inputs)),

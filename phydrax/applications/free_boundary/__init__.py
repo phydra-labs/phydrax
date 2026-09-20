@@ -3,6 +3,7 @@
 #
 
 """Free-boundary PINN, operator, probabilistic, and benchmark workflows."""
+
 from ._benchmarks import (
     ExactStefanBenchmark,
     ExactStefanFields,

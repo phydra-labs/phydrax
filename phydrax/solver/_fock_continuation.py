@@ -29,8 +29,8 @@ class FockContinuationPolicy(StrictModule):
         top_probability_tolerance: float = 1e-6,
         observable_tolerance: float = 1e-6,
     ):
-        maxima = tuple(int(value) for value in maximum_cutoffs)
-        increments_ = tuple(int(value) for value in increments)
+        maxima = tuple(maximum_cutoffs)
+        increments_ = tuple(increments)
         top_tolerance = float(top_probability_tolerance)
         observable_tolerance_ = float(observable_tolerance)
         if (
@@ -80,7 +80,7 @@ class FockContinuationStage(StrictModule):
             jnp.all(jnp.isfinite(self.state))
             & jnp.all(jnp.isfinite(self.observable))
             & jnp.all(jnp.isfinite(self.top_probabilities))
-            & jnp.asarray(evidence_valid, dtype=bool)
+            & jnp.asarray(evidence_valid, dtype=jnp.bool_)
         )
 
 
@@ -98,8 +98,8 @@ class FockContinuationResult(StrictModule):
         exhausted: ArrayLike,
     ):
         self.stages = tuple(stages)
-        self.converged = jnp.asarray(converged, dtype=bool)
-        self.exhausted = jnp.asarray(exhausted, dtype=bool)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
+        self.exhausted = jnp.asarray(exhausted, dtype=jnp.bool_)
 
 
 class PreparedFockRefinementPlan(StrictModule):

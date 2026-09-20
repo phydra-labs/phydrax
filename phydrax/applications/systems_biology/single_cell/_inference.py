@@ -191,7 +191,7 @@ def fit_stationary_counts(
     conversion_factor(rate_time_unit, SECOND)
     if target.observations.assay_id != assay.assay_id:
         raise ValueError("Count target is bound to another assay calibration.")
-    initial = np.asarray(initial_rates, dtype=float)
+    initial = np.asarray(initial_rates, dtype=np.float64)
     if initial.shape != (5,) or np.any(~np.isfinite(initial)) or np.any(initial <= 0):
         raise ValueError("Initial rates must be a finite positive vector of length five.")
     fixed = {} if fixed_rates is None else dict(fixed_rates)

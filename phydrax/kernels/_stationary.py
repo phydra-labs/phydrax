@@ -20,7 +20,7 @@ class AbstractStationaryKernel(AbstractUnitDiagonalKernel):
     length_scale: Array
 
     def __init__(self, *, length_scale: ArrayLike = 1.0):
-        scale = jnp.asarray(length_scale, dtype=float)
+        scale = jnp.asarray(length_scale, dtype=jnp.float64)
         if scale.ndim > 1 or (scale.ndim == 1 and scale.shape[0] == 0):
             raise ValueError("length_scale must be scalar or a nonempty vector.")
         self.length_scale = eqx.error_if(

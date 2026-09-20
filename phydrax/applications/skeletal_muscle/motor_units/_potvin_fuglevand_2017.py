@@ -27,9 +27,7 @@ from ....dynamics import (
 
 
 POTVIN_FUGLEVAND_2017_DOI = "10.1371/journal.pcbi.1005581"
-POTVIN_FUGLEVAND_2017_REFERENCE_SHA = (
-    "15462f85106ed9ebde3d78ab6fe665c88bf8b32e"
-)
+POTVIN_FUGLEVAND_2017_REFERENCE_SHA = "15462f85106ed9ebde3d78ab6fe665c88bf8b32e"
 POTVIN_FUGLEVAND_2017_MODEL_ID = "potvin-fuglevand-2017-sustained-isometric"
 _PARAMETER_SCHEMA_ID = canonical_fingerprint(
     {
@@ -67,14 +65,18 @@ def _scalar(value: ArrayLike, name: str, /) -> Array:
     result = jnp.asarray(value)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
-    return result if jnp.issubdtype(result.dtype, jnp.inexact) else result.astype(float)
+    return (
+        result if jnp.issubdtype(result.dtype, jnp.inexact) else result.astype("float64")
+    )
 
 
 def _vector(value: ArrayLike, name: str, /) -> Array:
     result = jnp.asarray(value)
     if result.ndim != 1 or result.shape[0] == 0:
         raise ValueError(f"{name} must be one nonempty motor-unit vector.")
-    return result if jnp.issubdtype(result.dtype, jnp.inexact) else result.astype(float)
+    return (
+        result if jnp.issubdtype(result.dtype, jnp.inexact) else result.astype("float64")
+    )
 
 
 class PotvinFuglevand2017Parameters(StrictModule):
@@ -131,9 +133,7 @@ class PotvinFuglevand2017Parameters(StrictModule):
         self.minimum_firing_rate_hz = _scalar(
             minimum_firing_rate_hz, "minimum_firing_rate_hz"
         )
-        self.firing_rate_gain_hz = _scalar(
-            firing_rate_gain_hz, "firing_rate_gain_hz"
-        )
+        self.firing_rate_gain_hz = _scalar(firing_rate_gain_hz, "firing_rate_gain_hz")
         self.derecruitment_delta_hz = _scalar(
             derecruitment_delta_hz, "derecruitment_delta_hz"
         )
@@ -318,9 +318,7 @@ class PotvinFuglevand2017Plan(StrictModule, NonTrainableState):
         /,
     ) -> PreparedPotvinFuglevand2017:
         selected = (
-            potvin_fuglevand_2017_default_parameters(
-                self.unit_count, dtype=self.dtype
-            )
+            potvin_fuglevand_2017_default_parameters(self.unit_count, dtype=self.dtype)
             if parameters is None
             else parameters
         )
@@ -461,7 +459,9 @@ class PreparedPotvinFuglevand2017(StrictModule):
         common_excitation: ArrayLike,
         step_s: ArrayLike,
         /,
-    ) -> tuple[PotvinFuglevand2017State, PotvinFuglevand2017Output, PotvinFuglevand2017Evidence]:
+    ) -> tuple[
+        PotvinFuglevand2017State, PotvinFuglevand2017Output, PotvinFuglevand2017Evidence
+    ]:
         """Evaluate, advance, and atomically commit one interval."""
         candidate = self.candidate(state, common_excitation, step_s)
         return candidate.commit(), candidate.output, candidate.evidence
@@ -495,8 +495,8 @@ def potvin_fuglevand_2017_default_parameters(
     recruitment_threshold = jnp.exp(jnp.log(recruitment_range) * fraction)
     rested_twitch_force = jnp.exp(jnp.log(100.0) * fraction)
     contraction_scale = jnp.log(100.0) / jnp.log(3.0)
-    resting_contraction_time_s = (
-        0.09 * (1.0 / rested_twitch_force) ** (1.0 / contraction_scale)
+    resting_contraction_time_s = 0.09 * (1.0 / rested_twitch_force) ** (
+        1.0 / contraction_scale
     )
     maximum_firing_rate_hz = 35.0 - 10.0 * (
         (recruitment_threshold - minimum_threshold)
@@ -605,16 +605,14 @@ def _parameters_admissible(parameters: PotvinFuglevand2017Parameters, /) -> Arra
         & jnp.all(jnp.diff(parameters.resting_contraction_time_s) < 0.0)
         & (parameters.minimum_firing_rate_hz > 0.0)
         & (parameters.firing_rate_gain_hz > 0.0)
-        & jnp.all(
-            parameters.maximum_firing_rate_hz
-            >= parameters.minimum_firing_rate_hz
-        )
+        & jnp.all(parameters.maximum_firing_rate_hz >= parameters.minimum_firing_rate_hz)
         & jnp.all(parameters.nominal_twitch_force_loss_per_s >= 0.0)
         & (parameters.derecruitment_delta_hz >= 0.0)
         & (parameters.adaptation_scale >= 0.0)
         & (parameters.adaptation_time_constant_s > 0.0)
         & (parameters.contraction_time_change_ratio >= 0.0)
     )
+
 
 def _state_finite(state: PotvinFuglevand2017State, /) -> Array:
     return jnp.all(jnp.isfinite(state.recruitment_duration_s)) & jnp.all(
@@ -661,9 +659,7 @@ def _pack_state(
     /,
 ) -> Array:
     _require_state_shape(state, plan.unit_count)
-    return jnp.stack(
-        (state.recruitment_duration_s, state.current_twitch_force), axis=0
-    )
+    return jnp.stack((state.recruitment_duration_s, state.current_twitch_force), axis=0)
 
 
 def _unpack_state(
@@ -683,10 +679,12 @@ def _maximum_excitation(parameters: PotvinFuglevand2017Parameters, /) -> Array:
         parameters.firing_rate_gain_hz,
         jnp.finfo(parameters.firing_rate_gain_hz.dtype).tiny,
     )
-    return parameters.recruitment_threshold[-1] + (
-        parameters.maximum_firing_rate_hz[-1]
-        - parameters.minimum_firing_rate_hz
-    ) / safe_gain
+    return (
+        parameters.recruitment_threshold[-1]
+        + (parameters.maximum_firing_rate_hz[-1] - parameters.minimum_firing_rate_hz)
+        / safe_gain
+    )
+
 
 def _force_frequency(normalized_rate: Array, /) -> Array:
     switch_force = 1.0 - jnp.exp(-2.0 * 0.4**3)

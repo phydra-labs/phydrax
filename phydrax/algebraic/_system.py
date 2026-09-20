@@ -48,7 +48,7 @@ def _canonical_order(
 ) -> tuple[int, ...]:
     return tuple(
         sorted(
-            range(int(equations.shape[0])),
+            range(equations.shape[0]),
             key=lambda term: (
                 int(equations[term]),
                 *(int(value) for value in exponents[term]),
@@ -90,14 +90,13 @@ def _validate_groups(
             }
             if len(degrees) > 1:
                 raise ValueError(
-                    f"Equation {equation} is not homogeneous in projective group "
-                    f"{group.label!r}."
+                    f"Equation {equation} is not homogeneous in projective group {group.label!r}."
                 )
     return groups_
 
 
 class SparsePolynomialSupport(StrictModule, NonTrainableState):
-    """Canonical unpadded COO support for a labelled polynomial system."""
+    """Canonical unpadded COO support for a labeled polynomial system."""
 
     equation_indices: Array
     exponents: Array
@@ -153,8 +152,7 @@ class SparsePolynomialSupport(StrictModule, NonTrainableState):
         )
         if len(set(term_keys)) != len(term_keys):
             raise ValueError(
-                "Sparse polynomial support cannot contain duplicate equation/exponent "
-                "terms."
+                "Sparse polynomial support cannot contain duplicate equation/exponent terms."
             )
         groups_ = _validate_groups(
             groups,
@@ -174,7 +172,7 @@ class SparsePolynomialSupport(StrictModule, NonTrainableState):
         self.canonical_term_permutation = order
         self.support_id = canonical_fingerprint(
             {
-                "kind": "sparse-polynomial-support-v1",
+                "kind": "sparse-polynomial-support",
                 "variable_labels": list(variables),
                 "equation_labels": list(equations_labels),
                 "equation_indices": canonical_equations,
@@ -209,16 +207,15 @@ class SparsePolynomialSystem(StrictModule):
         coefficients_ = jnp.asarray(coefficients)
         if coefficients_.shape != (support.term_count,):
             raise ValueError(
-                f"coefficients must have shape {(support.term_count,)}; "
-                f"got {coefficients_.shape}."
+                f"coefficients must have shape {(support.term_count,)}; got {coefficients_.shape}."
             )
         if not jnp.issubdtype(coefficients_.dtype, jnp.inexact):
-            coefficients_ = coefficients_.astype(float)
+            coefficients_ = coefficients_.astype("float64")
         self.support = support
         self.coefficients = coefficients_
         self.system_id = canonical_fingerprint(
             {
-                "kind": "sparse-polynomial-system-v1",
+                "kind": "sparse-polynomial-system",
                 "support": support.support_id,
                 "coefficients": array_tree_fingerprint(coefficients_),
             }
@@ -247,8 +244,7 @@ class SparsePolynomialSystem(StrictModule):
         coefficients_ = jnp.asarray(coefficients)
         if coefficients_.shape != (raw_support.term_count,):
             raise ValueError(
-                f"coefficients must have shape {(raw_support.term_count,)}; "
-                f"got {coefficients_.shape}."
+                f"coefficients must have shape {(raw_support.term_count,)}; got {coefficients_.shape}."
             )
         order = jnp.asarray(raw_support.canonical_term_permutation, dtype=jnp.int32)
         canonical_coefficients = coefficients_[order]
@@ -266,11 +262,10 @@ class SparsePolynomialSystem(StrictModule):
         points_ = jnp.asarray(points)
         if points_.ndim < 1 or points_.shape[-1] != self.support.variable_count:
             raise ValueError(
-                "Polynomial points must have trailing shape "
-                f"({self.support.variable_count},); got {points_.shape}."
+                f"Polynomial points must have trailing shape ({self.support.variable_count},); got {points_.shape}."
             )
         if not jnp.issubdtype(points_.dtype, jnp.inexact):
-            points_ = points_.astype(float)
+            points_ = points_.astype("float64")
         dtype = jnp.result_type(points_.dtype, self.coefficients.dtype)
         bases = points_.astype(dtype)[..., None, :]
         factors = jnp.power(bases, self.support.exponents)
@@ -285,11 +280,10 @@ class SparsePolynomialSystem(StrictModule):
         points_ = jnp.asarray(points)
         if points_.ndim < 1 or points_.shape[-1] != self.support.variable_count:
             raise ValueError(
-                "Polynomial points must have trailing shape "
-                f"({self.support.variable_count},); got {points_.shape}."
+                f"Polynomial points must have trailing shape ({self.support.variable_count},); got {points_.shape}."
             )
         if not jnp.issubdtype(points_.dtype, jnp.inexact):
-            points_ = points_.astype(float)
+            points_ = points_.astype("float64")
         dtype = jnp.result_type(points_.dtype, self.coefficients.dtype)
         bases = points_.astype(dtype)[..., None, :]
         exponents = self.support.exponents
@@ -355,11 +349,11 @@ class PolynomialScaling(StrictModule, NonTrainableState):
             raise ValueError("Polynomial scales must be finite and strictly positive.")
         self.variable_scale = variable
         self.equation_scale = equation
-        self.variable_count = int(variable.shape[0])
-        self.equation_count = int(equation.shape[0])
+        self.variable_count = variable.shape[0]
+        self.equation_count = equation.shape[0]
         self.scaling_id = canonical_fingerprint(
             {
-                "kind": "polynomial-scaling-v1",
+                "kind": "polynomial-scaling",
                 "variable_scale": array_tree_fingerprint(variable),
                 "equation_scale": array_tree_fingerprint(equation),
             }
@@ -369,8 +363,7 @@ class PolynomialScaling(StrictModule, NonTrainableState):
         points_ = jnp.asarray(points)
         if points_.ndim < 1 or points_.shape[-1] != self.variable_count:
             raise ValueError(
-                f"Points must have trailing shape {(self.variable_count,)}; "
-                f"got {points_.shape}."
+                f"Points must have trailing shape {(self.variable_count,)}; got {points_.shape}."
             )
         return points_
 
@@ -378,8 +371,7 @@ class PolynomialScaling(StrictModule, NonTrainableState):
         residuals_ = jnp.asarray(residuals)
         if residuals_.ndim < 1 or residuals_.shape[-1] != self.equation_count:
             raise ValueError(
-                f"Residuals must have trailing shape {(self.equation_count,)}; "
-                f"got {residuals_.shape}."
+                f"Residuals must have trailing shape {(self.equation_count,)}; got {residuals_.shape}."
             )
         return residuals_
 

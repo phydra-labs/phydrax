@@ -57,7 +57,7 @@ class AtomisticDynamicsClaimEvidence(StrictModule, NonTrainableState):
             raise ValueError("evidence_id must be non-empty.")
         self.claim = claim
         self.evidence_id = identifier
-        self.satisfied = jnp.asarray(satisfied, dtype=bool).reshape(())
+        self.satisfied = jnp.asarray(satisfied, dtype=jnp.bool_).reshape(())
         self.residual = jnp.asarray(residual).reshape(())
 
 
@@ -134,7 +134,7 @@ class AtomisticDynamicsQualificationResult(StrictModule, NonTrainableState):
             not isinstance(value, AtomisticDynamicsClaimEvidence) for value in evidence
         ):
             raise TypeError("evidence must contain AtomisticDynamicsClaimEvidence.")
-        execution = jnp.asarray(execution_successful, dtype=bool).reshape(())
+        execution = jnp.asarray(execution_successful, dtype=jnp.bool_).reshape(())
         satisfied = (
             jnp.all(jnp.stack(tuple(value.satisfied for value in evidence)))
             if evidence

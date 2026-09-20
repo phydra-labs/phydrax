@@ -236,8 +236,7 @@ class PreparedPrecisionSelection:
 
 def _signature(tree: Any, /) -> tuple[tuple[tuple[int, ...], str], ...]:
     return tuple(
-        (tuple(int(size) for size in leaf.shape), jnp.dtype(leaf.dtype).name)
-        for leaf in jax.tree.leaves(tree)
+        (tuple(leaf.shape), jnp.dtype(leaf.dtype).name) for leaf in jax.tree.leaves(tree)
     )
 
 
@@ -436,7 +435,7 @@ def prepare_precision_rewrite(
     }
     output_signature = tuple(
         (
-            tuple(int(size) for size in variable.aval.shape),
+            tuple(variable.aval.shape),
             rewritten_output_dtypes.get(variable, jnp.dtype(variable.aval.dtype).name),
         )
         for variable in rewritten.outvars
@@ -569,7 +568,7 @@ def _maximum_error(left: Any, right: Any, /) -> tuple[float, float]:
         if not np.all(np.isfinite(lhs_)) or not np.all(np.isfinite(rhs_)):
             return float("inf"), float("inf")
         error = np.abs(lhs_ - rhs_)
-        scale = np.maximum(np.abs(rhs_), np.finfo(np.result_type(rhs_, float)).tiny)
+        scale = np.maximum(np.abs(rhs_), np.finfo(np.result_type(rhs_, np.float64)).tiny)
         relative_error = error / scale
         if not np.all(np.isfinite(error)) or not np.all(np.isfinite(relative_error)):
             return float("inf"), float("inf")

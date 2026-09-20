@@ -4,15 +4,15 @@
 
 from __future__ import annotations
 
-import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array
 
 import phydrax as phx
+from phydrax._strict import StrictModule
 
 
-class FourierMode(eqx.Module):
+class FourierMode(StrictModule):
     coefficients: Array
 
     def __call__(self, x: Array, /) -> Array:

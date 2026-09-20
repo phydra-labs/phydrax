@@ -19,7 +19,7 @@ from jaxtyping import Array, ArrayLike, Key
 import phydrax.ein as ein
 
 from .._probability import DiagonalNormalLaw
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ._wiener import WienerRealization
 
@@ -77,7 +77,7 @@ def _duration(t0: ArrayLike, t1: ArrayLike, /) -> Array:
 
 
 def _positive_shape(values: Sequence[int], /, *, name: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in values)
+    shape = tuple(values)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{name} dimensions must be positive.")
     return shape
@@ -101,9 +101,9 @@ def _reduce(value: Array, reduction: ProcessReduction, /) -> Array:
 class AbstractProcessDistribution(StrictModule):
     """One finite-dimensional process marginal with explicit process uncertainty."""
 
-    event_shape: AbstractAttribute[tuple[int, ...]]
-    batch_shape: AbstractAttribute[tuple[int, ...]]
-    uncertainty_source: AbstractAttribute[Literal["process"]]
+    event_shape: eqx.AbstractVar[tuple[int, ...]]
+    batch_shape: eqx.AbstractVar[tuple[int, ...]]
+    uncertainty_source: eqx.AbstractVar[Literal["process"]]
 
     @property
     @abstractmethod
@@ -159,7 +159,7 @@ class GaussianProcessDistribution(AbstractProcessDistribution):
         size = prod(events)
         mean_array = jnp.asarray(mean)
         _trailing_shape(mean_array, events, name="Gaussian process mean")
-        batches = tuple(int(value) for value in mean_array.shape[: -len(events)])
+        batches = tuple(mean_array.shape[: -len(events)])
         covariance_array = jnp.asarray(covariance, dtype=mean_array.dtype)
         expected = batches + (size, size)
         if covariance_array.shape == (size, size):
@@ -213,8 +213,7 @@ class GaussianProcessDistribution(AbstractProcessDistribution):
         value_array = jnp.asarray(value, dtype=self.mean.dtype)
         if value_array.shape != self.mean.shape:
             raise ValueError(
-                f"Gaussian process value must have shape {self.mean.shape}; "
-                f"got {value_array.shape}."
+                f"Gaussian process value must have shape {self.mean.shape}; got {value_array.shape}."
             )
         residual = value_array.reshape(
             self.batch_shape + (self.event_size,)
@@ -284,9 +283,9 @@ class DiagonalGaussianProcessDistribution(AbstractProcessDistribution):
 class AbstractPathwiseTransition(StrictModule):
     """A transition map conditioned on an explicit segment of one driver path."""
 
-    state_shape: AbstractAttribute[tuple[int, ...]]
-    driver_shape: AbstractAttribute[tuple[int, ...]]
-    process_id: AbstractAttribute[str]
+    state_shape: eqx.AbstractVar[tuple[int, ...]]
+    driver_shape: eqx.AbstractVar[tuple[int, ...]]
+    process_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def pathwise_transition(
@@ -314,8 +313,8 @@ class AbstractPathwiseTransition(StrictModule):
 class AbstractMarginalTransitionLaw(StrictModule):
     """A transition law after marginalizing the process driver."""
 
-    state_shape: AbstractAttribute[tuple[int, ...]]
-    process_id: AbstractAttribute[str]
+    state_shape: eqx.AbstractVar[tuple[int, ...]]
+    process_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def marginal_transition(
@@ -398,7 +397,7 @@ class ProcessRealization(StrictModule):
     def driver_values(self, times: ArrayLike, /) -> Array:
         """Evaluate the same global driver from the support start at every query."""
         query = jnp.asarray(times, dtype=self.initial_state.real.dtype)
-        if query.ndim != 1 or int(query.shape[0]) <= 0:
+        if query.ndim != 1 or query.shape[0] <= 0:
             raise ValueError("Process query times must be a non-empty vector.")
         starts = jnp.full(query.shape, self.support[0], dtype=query.dtype)
         return self._driver_evaluations(starts, query)
@@ -441,12 +440,12 @@ class LatentGaussianCoefficientProcess(
         process_id: str | None = None,
     ):
         drift_array = jnp.asarray(drift)
-        if drift_array.ndim < 1 or any(int(size) <= 0 for size in drift_array.shape):
+        if drift_array.ndim < 1 or any(size <= 0 for size in drift_array.shape):
             raise ValueError(
                 "Gaussian coefficient drift must have non-empty state shape."
             )
         diffusion_array = jnp.asarray(diffusion, dtype=drift_array.dtype)
-        states = tuple(int(size) for size in drift_array.shape)
+        states = tuple(drift_array.shape)
         if diffusion_array.ndim != drift_array.ndim + 1:
             raise ValueError(
                 "Gaussian coefficient diffusion needs one trailing driver dimension."
@@ -455,7 +454,7 @@ class LatentGaussianCoefficientProcess(
             raise ValueError(
                 "Gaussian coefficient diffusion must begin with state_shape."
             )
-        driver_size = int(diffusion_array.shape[-1])
+        driver_size = diffusion_array.shape[-1]
         if driver_size <= 0:
             raise ValueError("Gaussian coefficient driver size must be positive.")
         flat = np.asarray(jax.device_get(diffusion_array)).reshape(
@@ -467,8 +466,7 @@ class LatentGaussianCoefficientProcess(
             raise ValueError("Gaussian coefficient drift and diffusion must be finite.")
         if np.linalg.matrix_rank(flat) < prod(states):
             raise ValueError(
-                "Gaussian coefficient diffusion must have full row rank so each "
-                "marginal has a Lebesgue density."
+                "Gaussian coefficient diffusion must have full row rank so each marginal has a Lebesgue density."
             )
         if label is not None and (not isinstance(label, str) or not label):
             raise ValueError("label must be non-empty or None.")
@@ -598,13 +596,13 @@ class LatentGaussianCoefficientProcess(
                 "Process realization state_shape does not match the process."
             )
         query = jnp.asarray(times, dtype=self.drift.real.dtype)
-        if query.ndim != 1 or int(query.shape[0]) <= 0:
+        if query.ndim != 1 or query.shape[0] <= 0:
             raise ValueError("Process query times must be a non-empty vector.")
         if bool(jnp.any(jnp.diff(query) <= 0.0)):
             raise ValueError("Process query times must be strictly increasing.")
         driver_values = realization.driver_values(query)
         sample_shape = realization.sample_shape
-        num_times = int(query.shape[0])
+        num_times = query.shape[0]
         diffusion = self.diffusion.reshape(
             (prod(self.state_shape), prod(self.driver_shape))
         )
@@ -703,8 +701,8 @@ def process_query_consistency(
     atol: float = 1e-12,
 ) -> ProcessQueryDiagnostics:
     """Compare every reference query against the same path on a second grid."""
-    reference = np.asarray(reference_times, dtype=float)
-    comparison = np.asarray(comparison_times, dtype=float)
+    reference = np.asarray(reference_times, dtype=np.float64)
+    comparison = np.asarray(comparison_times, dtype=np.float64)
     if reference.ndim != 1 or comparison.ndim != 1:
         raise ValueError("Process consistency query times must be vectors.")
     indices: list[int] = []
@@ -746,7 +744,7 @@ def process_sample_statistics(
             "Process samples must have shape (sample,) + batch_shape + event_shape; "
             f"expected {('sample',) + expected_tail}, got {values.shape}."
         )
-    count = int(values.shape[0])
+    count = values.shape[0]
     if count < 2:
         raise ValueError("Process statistics require at least two samples.")
     flat = values.reshape(
@@ -857,7 +855,7 @@ def gaussian_process_diagnostics(
 ) -> GaussianProcessDiagnostics:
     """Validate replay, query invariance, cocycle, and terminal Gaussian moments."""
     query = jnp.asarray(times, dtype=process.drift.real.dtype)
-    if query.ndim != 1 or int(query.shape[0]) < 3:
+    if query.ndim != 1 or query.shape[0] < 3:
         raise ValueError(
             "Gaussian process diagnostics require at least three query times."
         )
@@ -868,7 +866,7 @@ def gaussian_process_diagnostics(
         raise ValueError("Gaussian process diagnostics require at least two paths.")
     terminal = jnp.take(
         trajectory.states,
-        int(query.shape[0]) - 1,
+        query.shape[0] - 1,
         axis=len(realization.sample_shape),
     ).reshape((sample_count,) + process.state_shape)
     marginal = process.marginal_transition(
@@ -891,7 +889,7 @@ def gaussian_process_diagnostics(
         comparison,
     )
     t0 = query[0]
-    tmid = query[int(query.shape[0]) // 2]
+    tmid = query[query.shape[0] // 2]
     t1 = query[-1]
     first_driver = realization.driver_increment(t0, tmid)
     second_driver = realization.driver_increment(tmid, t1)

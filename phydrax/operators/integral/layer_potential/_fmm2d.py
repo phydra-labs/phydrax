@@ -47,7 +47,7 @@ def _build_tree(points: np.ndarray, leaf_size: int):
         radius = float(np.max(np.linalg.norm(values - center, axis=1)))
         node = len(centers)
         centers.append(center)
-        radii.append(max(radius, np.finfo(float).eps))
+        radii.append(max(radius, np.finfo(np.float64).eps))
         children.append([-1, -1, -1, -1])
         index_sets.append(indices)
         if indices.size <= leaf_size:
@@ -97,7 +97,7 @@ def _multipole_tail_bound(
 
 
 def _m2m(child_moments: Array, child_center: complex, parent_center: complex) -> Array:
-    order = int(child_moments.shape[0] - 1)
+    order = child_moments.shape[0] - 1
     displacement = child_center - parent_center
     return jnp.stack(
         tuple(
@@ -117,7 +117,7 @@ def _m2m(child_moments: Array, child_center: complex, parent_center: complex) ->
 
 
 def _m2l(moment: Array, source_center: complex, target_center: complex) -> Array:
-    order = int(moment.shape[0] - 1)
+    order = moment.shape[0] - 1
     displacement = target_center - source_center
     local = [
         -(
@@ -139,7 +139,7 @@ def _m2l(moment: Array, source_center: complex, target_center: complex) -> Array
 
 
 def _l2l(parent_local: Array, parent_center: complex, child_center: complex) -> Array:
-    order = int(parent_local.shape[0] - 1)
+    order = parent_local.shape[0] - 1
     displacement = child_center - parent_center
     return jnp.stack(
         tuple(
@@ -189,7 +189,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
         angle = float(opening_angle)
         if order < 1 or leaf < 1 or not math.isfinite(angle) or not 0.0 < angle < 1.0:
             raise ValueError("Laplace FMM opening_angle must lie in (0, 1).")
-        points = np.asarray(potential.panelization.points, dtype=float)
+        points = np.asarray(potential.panelization.points, dtype=np.float64)
         centers, radii, children, indices, root = _build_tree(points, leaf)
         self.source_points = jnp.asarray(points)
         self.source_weights = potential.panelization.weights
@@ -206,7 +206,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
         self.source_panelization_id = potential.panelization.panelization_id
         self.backend_id = canonical_fingerprint(
             {
-                "kind": "laplace-fmm-2d-v2",
+                "kind": "laplace-fmm-2d",
                 "source_panelization_id": self.source_panelization_id,
                 "source_points": array_tree_fingerprint(self.source_points),
                 "expansion_order": order,
@@ -218,7 +218,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
     def _source_moments(self, density: Array) -> tuple[Array, ...]:
         source = self.source_points[:, 0] + 1j * self.source_points[:, 1]
         charges = self.source_weights * density
-        moments: list[Array | None] = [None] * int(self.source_centers.shape[0])
+        moments: list[Array | None] = [None] * self.source_centers.shape[0]
 
         def visit(node: int) -> Array:
             children = np.asarray(self.source_children[node])
@@ -271,7 +271,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
             raise TypeError(
                 "FMM local expansions require their bound single-layer source geometry."
             )
-        values = jnp.asarray(centers, dtype=float)
+        values = jnp.asarray(centers, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("FMM centers must have shape (center_count, 2).")
         moments = self._source_moments(potential.density)
@@ -285,7 +285,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
         target_centers_jax = jnp.asarray(target_centers)
         target_radii_jax = jnp.asarray(target_radii)
         local = [
-            jnp.zeros((self.expansion_order + 1,), dtype=complex)
+            jnp.zeros((self.expansion_order + 1,), dtype=jnp.complex128)
             for _ in range(len(target_indices))
         ]
         local_error = [
@@ -401,7 +401,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
             raise TypeError(
                 "LaplaceFMMBackend2D requires its bound single-layer source geometry."
             )
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("FMM targets must have shape (target_count, 2).")
         tolerance = float(absolute_tolerance)
@@ -410,7 +410,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
         source = self.source_points[:, 0] + 1j * self.source_points[:, 1]
         moments = self._source_moments(potential.density)
         absolute_charge = jnp.abs(self.source_weights * potential.density)
-        target_points = np.asarray(values, dtype=float)
+        target_points = np.asarray(values, dtype=np.float64)
         target_centers, target_radii, target_children, target_indices, target_root = (
             _build_tree(
                 target_points,
@@ -425,7 +425,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
         target_centers_jax = jnp.asarray(target_centers)
         target_radii_jax = jnp.asarray(target_radii)
         local = [
-            jnp.zeros((self.expansion_order + 1,), dtype=complex)
+            jnp.zeros((self.expansion_order + 1,), dtype=jnp.complex128)
             for _ in range(len(target_indices))
         ]
         local_error = [
@@ -471,8 +471,9 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
             target_leaf = bool(np.all(target_children < 0))
             if source_leaf and target_leaf:
                 near_sources[target_node].append(self.source_indices[source_node])
-                direct_count[0] += int(self.source_indices[source_node].size) * int(
-                    target_indices[target_node].size
+                direct_count[0] += (
+                    self.source_indices[source_node].size
+                    * target_indices[target_node].size
                 )
                 return
             if target_leaf:
@@ -547,9 +548,9 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
             direct_evaluations=direct_count[0],
             evaluation_id=canonical_fingerprint(
                 {
-                    "kind": "laplace-fmm-evaluation-2d-v2",
+                    "kind": "laplace-fmm-evaluation-2d",
                     "backend_id": self.backend_id,
-                    "target_count": int(values.shape[0]),
+                    "target_count": values.shape[0],
                     "potential": potential.representation_id,
                     "targets": array_tree_fingerprint(values),
                     "density": array_tree_fingerprint(potential.density),

@@ -1,4 +1,4 @@
-# Conservative grey column radiation
+# Conservative gray column radiation
 
 `ColumnRadiationPlan` solves actual upward/downward radiative transfer through a
 stack of atmospheric layers. Shortwave scattering and absorption, thermal
@@ -8,7 +8,7 @@ radiative-equilibrium temperature.
 
 ## Declared scientific scope
 
-The model is a **plane-parallel, two-band grey reference approximation**:
+The model is a **plane-parallel, two-band gray reference approximation**:
 
 - Shortwave uses the hemispheric two-stream closure, including coherent
   scattering and an explicit scattering asymmetry moment.
@@ -17,7 +17,7 @@ The model is a **plane-parallel, two-band grey reference approximation**:
   calculate zenith-angle attenuation, direct-to-diffuse redistribution, or
   spectral solar absorption. A caller that maps actual sunlight onto this
   diffuse boundary is making an additional approximation, which must be stated.
-- Longwave uses grey LTE absorption/emission, with hemispheric diffusivity 2.
+- Longwave uses gray LTE absorption/emission, with hemispheric diffusivity 2.
   Each layer is homogeneous and isothermal. Longwave scattering by condensate
   is neglected, explicitly, rather than included in an absorption coefficient
   while claiming a scattering calculation.
@@ -39,7 +39,7 @@ The model is a **plane-parallel, two-band grey reference approximation**:
 Gas, vapor, cloud liquid, and cloud ice masses determine optical depth at every evaluation.
 Temperature determines LTE source flux, not a temperature-dependent opacity.
 The dry coefficient describes the entire non-water gas mixture. Scaling it can
-represent an explicitly calibrated grey greenhouse perturbation, but is not an
+represent an explicitly calibrated gray greenhouse perturbation, but is not an
 implicit mapping from CO₂ concentration to logarithmic forcing.
 
 ### Primary derivation
@@ -70,7 +70,7 @@ optics = ColumnOpticalProperties(
     shortwave_scattering=(1e-5, 0.0, 50.0, 30.0),
     shortwave_asymmetry=(0.0, 0.0, 0.8, 0.7),
     longwave_absorption=(5e-5, 0.07, 20.0, 15.0),
-    reference_id="illustrative-grey-coefficients-not-measured",
+    reference_id="illustrative-gray-coefficients-not-measured",
 )
 plan = ColumnRadiationPlan(
     optics,
@@ -154,7 +154,7 @@ reservoir ledger receives `dt * space_heating`, atmosphere receives
 
 `budget_residual` is a signed **unnormalized W/m²** residual. It is not divided by
 a large total internal energy. Its smallness establishes discrete conservation,
-not accuracy of grey optics relative to a real atmosphere.
+not accuracy of gray optics relative to a real atmosphere.
 
 ## Transfer equations and stable solution
 
@@ -204,7 +204,7 @@ U_surface = ε σ T_surface^4 + (1-ε) D_surface
 ```
 
 The source factor uses `expm1` to retain small optical-depth accuracy. The surface
-obeys grey Kirchhoff absorption/emission balance. LW albedo is 1−ε and need not
+obeys gray Kirchhoff absorption/emission balance. LW albedo is 1−ε and need not
 equal the independently specified shortwave albedo α.
 
 The optional `longwave_down` keyword supplies explicit downward TOA longwave

@@ -25,7 +25,7 @@ FoFRealization: TypeAlias = Literal["direct", "cell_list", "morton_plane"]
 
 
 class FoFFinderEvidence(NonTrainableState, StrictModule):
-    """Capacity, convergence, and completeness evidence for one FoF catalogue."""
+    """Capacity, convergence, and completeness evidence for one FoF catalog."""
 
     required_groups: Array
     group_capacity: Array
@@ -70,7 +70,7 @@ def _pack_links(
     flat_right = jnp.asarray(right, dtype=jnp.int32).reshape((-1,))
     flat_left_ids = jnp.asarray(left_ids).reshape((-1,))
     flat_right_ids = jnp.asarray(right_ids).reshape((-1,))
-    flat_valid = jnp.asarray(valid, dtype=bool).reshape((-1,))
+    flat_valid = jnp.asarray(valid, dtype=jnp.bool_).reshape((-1,))
     order = jnp.lexsort(
         (
             flat_right_ids,
@@ -191,7 +191,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
         active: Array,
         finite_particles: Array,
     ) -> tuple[EdgeRelation, Array, Array, Array, Array]:
-        first, second = np.triu_indices(int(ids.size), k=1)
+        first, second = np.triu_indices(ids.size, k=1)
         left = jnp.asarray(first, dtype=jnp.int32)
         right = jnp.asarray(second, dtype=jnp.int32)
         box = jnp.asarray(self.box_size, dtype=position.dtype)
@@ -212,14 +212,14 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
             ids[left],
             ids[right],
             valid,
-            particle_count=int(ids.size),
-            capacity=int(left.size),
+            particle_count=ids.size,
+            capacity=left.size,
             topology_complete=topology_complete,
         )
         return (
             relation,
             required,
-            jnp.asarray(int(left.size), dtype=jnp.int32),
+            jnp.asarray(left.size, dtype=jnp.int32),
             overflow,
             topology_complete,
         )
@@ -231,7 +231,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
         active: Array,
         finite_particles: Array,
     ) -> tuple[EdgeRelation, Array, Array, Array, Array]:
-        particle_count = int(ids.size)
+        particle_count = ids.size
         box = jnp.asarray(self.box_size, dtype=position.dtype)
         safe_position = jnp.where(finite_particles[:, None], position, 0)
         wrapped = jnp.mod(safe_position, box)
@@ -323,7 +323,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
         position: Array,
         active: Array,
     ) -> tuple[EdgeRelation, Array, Array, Array, Array]:
-        particle_count = int(ids.size)
+        particle_count = ids.size
         address = MortonAddressPlan(
             (0.0, 0.0, 0.0),
             self.box_size,
@@ -370,7 +370,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
         position = jnp.asarray(positions)
         velocity = jnp.asarray(velocities, dtype=position.dtype)
         mass = jnp.asarray(masses, dtype=position.dtype)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if (
             ids.ndim != 1
             or not jnp.issubdtype(ids.dtype, jnp.integer)
@@ -592,7 +592,7 @@ class DirectHaloUnbindingPlan(StrictModule, NonTrainableState):
         position = jnp.asarray(positions)
         velocity = jnp.asarray(velocities, dtype=position.dtype)
         mass = jnp.asarray(masses, dtype=position.dtype)
-        initial = jnp.asarray(candidate_mask, dtype=bool)
+        initial = jnp.asarray(candidate_mask, dtype=jnp.bool_)
 
         def update(_, state):
             mask, iteration = state
@@ -602,7 +602,7 @@ class DirectHaloUnbindingPlan(StrictModule, NonTrainableState):
             ) / jnp.maximum(total_mass, 1.0)
             displacement = position[None, :, :] - position[:, None, :]
             radius = jnp.sqrt(jnp.sum(displacement**2, axis=-1) + self.softening**2)
-            pair = mask[None, :] & ~jnp.eye(position.shape[0], dtype=bool)
+            pair = mask[None, :] & ~jnp.eye(position.shape[0], dtype=jnp.bool_)
             potential = -self.gravitational_constant * jnp.sum(
                 jnp.where(pair, mass[None, :] / radius, 0.0), axis=1
             )
@@ -623,7 +623,7 @@ class DirectHaloUnbindingPlan(StrictModule, NonTrainableState):
         radius = jnp.sqrt(jnp.sum(displacement**2, axis=-1) + self.softening**2)
         potential = -self.gravitational_constant * jnp.sum(
             jnp.where(
-                bound[None, :] & ~jnp.eye(position.shape[0], dtype=bool),
+                bound[None, :] & ~jnp.eye(position.shape[0], dtype=jnp.bool_),
                 mass[None, :] / radius,
                 0.0,
             ),
@@ -664,7 +664,7 @@ class HaloPropertyPlan(StrictModule, NonTrainableState):
         position = jnp.asarray(positions)
         velocity = jnp.asarray(velocities, dtype=position.dtype)
         mass = jnp.asarray(masses, dtype=position.dtype)
-        bound = jnp.asarray(bound_mask, dtype=bool)
+        bound = jnp.asarray(bound_mask, dtype=jnp.bool_)
         center_ = jnp.asarray(center, dtype=position.dtype)
         radius = jnp.sqrt(jnp.sum((position - center_) ** 2, axis=-1))
         order = jnp.argsort(radius)
@@ -699,29 +699,31 @@ class SubstructureCandidateResult(StrictModule):
 
 
 class DensityPeakSubstructurePlan(StrictModule, NonTrainableState):
-    neighbour_count: int = eqx.field(static=True)
+    neighbor_count: int = eqx.field(static=True)
 
-    def __init__(self, neighbour_count: int = 16):
-        count = int(neighbour_count)
+    def __init__(self, neighbor_count: int = 16):
+        count = int(neighbor_count)
         if count < 2:
-            raise ValueError("Substructure neighbour count must be at least two.")
-        self.neighbour_count = count
+            raise ValueError("Substructure neighbor count must be at least two.")
+        self.neighbor_count = count
 
     def identify(
         self, positions: ArrayLike, masses: ArrayLike, host_mask: ArrayLike, /
     ) -> SubstructureCandidateResult:
         position = jnp.asarray(positions)
         mass = jnp.asarray(masses, dtype=position.dtype)
-        host = jnp.asarray(host_mask, dtype=bool)
+        host = jnp.asarray(host_mask, dtype=jnp.bool_)
         displacement = position[:, None, :] - position[None, :, :]
         distance = jnp.sqrt(jnp.sum(displacement**2, axis=-1))
         distance = jnp.where(
-            host[None, :] & ~jnp.eye(position.shape[0], dtype=bool), distance, jnp.inf
+            host[None, :] & ~jnp.eye(position.shape[0], dtype=jnp.bool_),
+            distance,
+            jnp.inf,
         )
-        neighbours = jnp.sort(distance, axis=1)[:, : self.neighbour_count]
-        smoothing = neighbours[:, -1]
+        neighbors = jnp.sort(distance, axis=1)[:, : self.neighbor_count]
+        smoothing = neighbors[:, -1]
         density = (
-            self.neighbour_count
+            self.neighbor_count
             * mass
             / (4.0 * jnp.pi * jnp.maximum(smoothing, 1.0e-12) ** 3 / 3.0)
         )

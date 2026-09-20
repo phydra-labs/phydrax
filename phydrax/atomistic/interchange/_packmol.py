@@ -223,7 +223,7 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
             with output.open(encoding="utf-8") as handle:
                 count = int(handle.readline())
                 handle.readline()
-                positions = np.zeros((count, 3), dtype=float)
+                positions = np.zeros((count, 3), dtype=np.float64)
                 for index in range(count):
                     fields = handle.readline().split()
                     positions[index] = tuple(float(value) for value in fields[1:4])
@@ -231,7 +231,9 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
         if positions.shape[0] > 1:
             displacement = positions[:, None, :] - positions[None, :, :]
             distance = np.sqrt(np.sum(displacement * displacement, axis=-1))
-            distance = np.where(np.eye(positions.shape[0], dtype=bool), np.inf, distance)
+            distance = np.where(
+                np.eye(positions.shape[0], dtype=np.bool_), np.inf, distance
+            )
             minimum = float(np.min(distance))
         successful = (
             completed.returncode == 0
@@ -256,7 +258,7 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
             "INFO",
             "provider.execution.completed",
             "PACKMOL execution completed",
-            atom_count=int(positions.shape[0]),
+            atom_count=positions.shape[0],
             elapsed_seconds=time.perf_counter() - started,
             plan_id=self.plan_id,
             provider="packmol",

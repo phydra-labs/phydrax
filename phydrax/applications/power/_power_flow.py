@@ -168,7 +168,7 @@ def fixed_mode_power_flow(
 
 def _allocate(total, initial, lower, upper):
     """Bounded equal incremental participation; at most one saturation per pass."""
-    value = np.clip(np.asarray(initial, dtype=float), lower, upper)
+    value = np.clip(np.asarray(initial, dtype=np.float64), lower, upper)
     for _ in range(len(value) + 1):
         remainder = float(total) - float(value.sum())
         free = value < upper if remainder > 0 else value > lower
@@ -285,14 +285,14 @@ def solve_power_flow(
         [complex(g.p, g.q) if g.in_service else 0j for g in generators]
     )
     required = np.asarray(fixed.bus_power + compiled.load_power)
-    external = np.zeros(n, dtype=complex)
+    external = np.zeros(n, dtype=np.complex128)
     reference_violation = 0.0
     for i, ids in enumerate(compiled.generators_at_bus):
         if not ids:
             if modes_final[i] == "reference":
                 external[i] = required[i]
             continue
-        indices = np.asarray(ids, dtype=int)
+        indices = np.asarray(ids, dtype=np.int64)
         group = [generators[g] for g in ids]
         if modes_final[i] in ("reference", "pv", "q_min", "q_max"):
             lower, upper = (

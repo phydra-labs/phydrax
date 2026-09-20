@@ -44,7 +44,7 @@ class CliffordResourceBudget(StrictModule, NonTrainableState):
         ) = values
         self.budget_id = canonical_fingerprint(
             {
-                "kind": "clifford-resource-budget-v1",
+                "kind": "clifford-resource-budget",
                 "maximum_blades": values[0],
                 "maximum_product_terms": values[1],
                 "maximum_plan_bytes": values[2],
@@ -58,8 +58,7 @@ class CliffordResourceBudget(StrictModule, NonTrainableState):
             raise ValueError("Clifford blade count must be nonnegative.")
         if count > self.maximum_blades:
             raise ValueError(
-                f"Clifford layout requests {count} blades; budget allows "
-                f"{self.maximum_blades}."
+                f"Clifford layout requests {count} blades; budget allows {self.maximum_blades}."
             )
 
     def admit_product_pairs(self, pair_count: int, /) -> None:
@@ -84,13 +83,11 @@ class CliffordResourceBudget(StrictModule, NonTrainableState):
             raise ValueError("Clifford plan resource counts must be nonnegative.")
         if terms > self.maximum_product_terms:
             raise ValueError(
-                f"Clifford product requests {terms} terms; budget allows "
-                f"{self.maximum_product_terms}."
+                f"Clifford product requests {terms} terms; budget allows {self.maximum_product_terms}."
             )
         if metadata > self.maximum_plan_bytes:
             raise ValueError(
-                f"Clifford product requests {metadata} metadata bytes; budget allows "
-                f"{self.maximum_plan_bytes}."
+                f"Clifford product requests {metadata} metadata bytes; budget allows {self.maximum_plan_bytes}."
             )
 
 
@@ -130,7 +127,7 @@ class CliffordResourceEvidence(StrictModule, NonTrainableState):
         self.budget_id = budget.budget_id
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "clifford-resource-evidence-v1",
+                "kind": "clifford-resource-evidence",
                 "blade_count": blades,
                 "product_terms": terms,
                 "plan_bytes": metadata,

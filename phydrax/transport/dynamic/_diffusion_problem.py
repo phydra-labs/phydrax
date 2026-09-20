@@ -69,7 +69,7 @@ class DiffusionBridgeProblem(StrictModule):
             )
         resolved_id = problem_id or canonical_fingerprint(
             {
-                "kind": "finite-diffusion-bridge-problem-v1",
+                "kind": "finite-diffusion-bridge-problem",
                 "time_grid": time_grid.time_id,
                 "reference": reference.process_id,
                 "event_shape": initial_law.event_shape,
@@ -170,9 +170,9 @@ def _proposal_arrays(realization: IntegrationRealization, /):
     points = jnp.asarray(samples)
     log_weights = jnp.asarray(weights)
     active = (
-        jnp.ones(log_weights.shape, dtype=bool)
+        jnp.ones(log_weights.shape, dtype=jnp.bool_)
         if mask is None
-        else jnp.asarray(mask, dtype=bool)
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     if points.shape[0] != log_weights.shape[0] or active.shape != log_weights.shape:
         raise ValueError(

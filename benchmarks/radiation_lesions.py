@@ -206,7 +206,7 @@ def run(histories: int, repeats: int):
     support = rad.prepare_lesion_expectation(candidates, denominator=histories)
     direct = jnp.asarray([support.direct_multiplicity])
     indirect = jnp.asarray([support.indirect_multiplicity])
-    mask = jnp.ones(direct.shape, dtype=bool)
+    mask = jnp.ones(direct.shape, dtype="bool")
     denominators = jnp.asarray([support.denominator])
     logits = jnp.zeros(2)
     compiled, compilation = measure_lower_and_compile(

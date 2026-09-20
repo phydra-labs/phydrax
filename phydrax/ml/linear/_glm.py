@@ -242,7 +242,7 @@ class MultinomialLogisticRegressionRecipe(AbstractRecipe):
         targets, labels, label_valid = multinomial_targets(
             prepared, batch.target_schema, num_classes=self.num_classes
         )
-        classes = int(labels.shape[0])
+        classes = labels.shape[0]
         cases = prepared.targets.shape[0]
         features = prepared.design.features
         dtype = jnp.result_type(parameter_dtype(prepared), self.l2_strength)

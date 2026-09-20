@@ -173,8 +173,8 @@ from ._radiative_plasma import (
     GRPhotonNumberResult,
     GRPhotonNumberState,
     KleinNishinaScatteringPlan,
-    ThermalBremsstrahlungGreyOpacityPlan,
-    ThermalSynchrotronGreyOpacityPlan,
+    ThermalBremsstrahlungGrayOpacityPlan,
+    ThermalSynchrotronGrayOpacityPlan,
 )
 from ._self_force import (
     FirstOrderSelfForceModeSum,
@@ -346,8 +346,8 @@ __all__ = [
     "spheroidal_angular_matrix",
     "spheroidal_angular_operator",
     "spheroidal_angular_residual",
-    "ThermalBremsstrahlungGreyOpacityPlan",
-    "ThermalSynchrotronGreyOpacityPlan",
+    "ThermalBremsstrahlungGrayOpacityPlan",
+    "ThermalSynchrotronGrayOpacityPlan",
     "TurbulentElectronHeatingPlan",
     "SpheroidalAngularPlan",
     "SpheroidalAngularResult",

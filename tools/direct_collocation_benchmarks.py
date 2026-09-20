@@ -110,7 +110,7 @@ def _record(intervals: int, repeats: int, /) -> dict[str, Any]:
         "constraints": program.num_constraints,
         "jacobian_nonzeros": program.jacobian_plan.nnz,
         "jacobian_density": program.jacobian_plan.nnz / dense_entries,
-        "jacobian_coefficient_bytes": int(coefficients.nbytes),
+        "jacobian_coefficient_bytes": coefficients.nbytes,
         "compilation_ms": compilation_ms,
         "objective_mean_ms": objective_ms,
         "objective_std_ms": objective_std,

@@ -83,7 +83,7 @@ class BSDETerm(AbstractSamplingTerm):
         if sampling_mode == "resample" and fixed_paths is not None:
             raise ValueError("fixed_paths is valid only for fixed sampling.")
         weights = tuple(
-            jnp.asarray(value, dtype=float).reshape(())
+            jnp.asarray(value, dtype=jnp.float64).reshape(())
             for value in (terminal_weight, local_weight, global_weight)
         )
         if any(bool(~jnp.isfinite(value)) or float(value) < 0.0 for value in weights):

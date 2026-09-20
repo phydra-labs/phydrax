@@ -156,9 +156,7 @@ def test_directed_forest_and_native_batches_match_exact_inference():
 
     assert prepared.forest
     assert result.successful
-    assert int(result.diagnostics.iterations) == int(
-        graph.topology.incidence_edges.shape[0]
-    )
+    assert int(result.diagnostics.iterations) == graph.topology.incidence_edges.shape[0]
     assert jnp.allclose(
         jnp.exp(result.variable_log_probabilities.values),
         exact.variable_probabilities.values,

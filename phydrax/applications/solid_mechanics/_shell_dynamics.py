@@ -306,7 +306,7 @@ class TriangularShellPlan(StrictModule, NonTrainableState):
             | (topology[:, 2] == topology[:, 0])
         ):
             raise ValueError("A triangle cannot repeat a node.")
-        triangle_count = int(topology.shape[0])
+        triangle_count = topology.shape[0]
         if not isinstance(material, ShellMaterialParameters):
             raise TypeError("material must be ShellMaterialParameters.")
         thickness_values = _constant_triangle_array(
@@ -330,18 +330,18 @@ class TriangularShellPlan(StrictModule, NonTrainableState):
         stencils, hinge_triangles, hinge_edges = _fixed_topology(topology)
 
         if fixed_mask is None:
-            fixed = np.zeros((0,), dtype=bool)
+            fixed = np.zeros((0,), dtype=np.bool_)
             fixed_provided = False
         else:
             fixed_raw = np.asarray(fixed_mask)
             if fixed_raw.ndim != 1 or not np.issubdtype(fixed_raw.dtype, np.bool_):
                 raise TypeError("fixed_mask must be a one-dimensional Boolean array.")
-            fixed = np.asarray(fixed_raw, dtype=bool)
+            fixed = np.asarray(fixed_raw, dtype=np.bool_)
             fixed_provided = True
 
         if self_contact_pairs is None:
             pairs = np.zeros((0, 2), dtype=np.int32)
-            slot_valid = np.zeros((0,), dtype=bool)
+            slot_valid = np.zeros((0,), dtype=np.bool_)
         else:
             raw_pairs = np.asarray(self_contact_pairs)
             if raw_pairs.ndim != 2 or raw_pairs.shape[1:] != (2,):
@@ -372,7 +372,7 @@ class TriangularShellPlan(StrictModule, NonTrainableState):
             ):
                 raise ValueError("self_contact_pairs cannot contain duplicate pairs.")
             pairs = canonical_pairs.astype(np.int32)
-            shared_node = np.zeros((pairs.shape[0],), dtype=bool)
+            shared_node = np.zeros((pairs.shape[0],), dtype=np.bool_)
             for slot in range(pairs.shape[0]):
                 if valid_indices[slot]:
                     left_nodes = topology[pairs[slot, 0]]
@@ -382,7 +382,7 @@ class TriangularShellPlan(StrictModule, NonTrainableState):
                     )
             slot_valid = valid_indices & ~shared_node
 
-        contact_capacity = int(pairs.shape[0])
+        contact_capacity = pairs.shape[0]
         keys = np.arange(contact_capacity, dtype=np.int32)
         triangles_array = jnp.asarray(topology)
         thickness_array = jnp.asarray(
@@ -426,7 +426,7 @@ class TriangularShellPlan(StrictModule, NonTrainableState):
         self.self_contact_slot_valid = jnp.asarray(slot_valid)
         self.contact_keys = jnp.asarray(keys)
         self.triangle_count = triangle_count
-        self.hinge_count = int(stencils.shape[0])
+        self.hinge_count = stencils.shape[0]
         self.self_contact_capacity = contact_capacity
         (
             self.rest_area_tolerance,
@@ -492,7 +492,7 @@ class PreparedTriangularShell(StrictModule, NonTrainableState):
         reference = np.asarray(raw_reference, dtype=np.float64)
         if not np.all(np.isfinite(reference)):
             raise ValueError("reference_positions must be finite.")
-        node_count = int(reference.shape[0])
+        node_count = reference.shape[0]
         triangles = np.asarray(plan.triangles)
         if int(np.max(triangles)) >= node_count:
             raise ValueError("triangle node indices exceed the reference node count.")
@@ -501,7 +501,7 @@ class PreparedTriangularShell(StrictModule, NonTrainableState):
         fixed = (
             np.asarray(plan.fixed_mask)
             if plan.fixed_mask_provided
-            else np.zeros((node_count,), dtype=bool)
+            else np.zeros((node_count,), dtype=np.bool_)
         )
 
         vertices = reference[triangles]
@@ -671,7 +671,7 @@ class PreparedTriangularShell(StrictModule, NonTrainableState):
             participant_ids=0,
             body_ids=int(body_id),
             patch_ids=int(patch_id),
-            static_mask=np.asarray(self.fixed_mask, dtype=bool),
+            static_mask=np.asarray(self.fixed_mask, dtype=np.bool_),
             physical_radius=radius,
         )
         dtype = np.dtype(self.reference_positions.dtype)

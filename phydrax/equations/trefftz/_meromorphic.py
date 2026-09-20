@@ -32,7 +32,7 @@ class PoleSet(StrictModule, NonTrainableState):
 
     def __init__(self, locations: ArrayLike, orders: Sequence[int], /):
         locations_raw = np.asarray(locations, dtype=np.complex128)
-        orders_ = tuple(int(value) for value in orders)
+        orders_ = tuple(orders)
         if locations_raw.ndim != 1 or locations_raw.size == 0:
             raise ValueError("Pole locations must be one nonempty vector.")
         if len(orders_) != locations_raw.size or any(value <= 0 for value in orders_):
@@ -204,7 +204,7 @@ class PoleClearanceReport(StrictModule, NonTrainableState):
         else:
             differences = jnp.abs(poles.locations[:, None] - poles.locations[None, :])
             differences = jnp.where(
-                jnp.eye(poles.locations.size, dtype=bool),
+                jnp.eye(poles.locations.size, dtype=jnp.bool_),
                 jnp.asarray(jnp.inf, dtype=differences.dtype),
                 differences,
             )
@@ -353,7 +353,7 @@ class MeromorphicLinearFrame(StrictModule, NonTrainableState):
         multi_index: Sequence[int],
         /,
     ) -> Array:
-        derivative = tuple(int(value) for value in multi_index)
+        derivative = tuple(multi_index)
         if len(derivative) != 1 or derivative[0] < 0:
             raise ValueError("Meromorphic frame derivative multi-index is invalid.")
         if derivative[0] > self._certificate.maximum_derivative_order:
@@ -476,7 +476,7 @@ class MeromorphicVariableProjectionPlan(StrictModule, NonTrainableState):
         coordinates_ = jnp.asarray(coordinates)
         observations_ = jnp.asarray(observations)
         degree = int(regular_degree)
-        orders = tuple(int(value) for value in pole_orders)
+        orders = tuple(pole_orders)
         if (
             coordinates_.ndim != 1
             or observations_.shape != coordinates_.shape

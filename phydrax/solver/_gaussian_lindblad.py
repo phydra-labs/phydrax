@@ -60,9 +60,9 @@ class GaussianLindbladProblem(StrictModule):
         self.diffusion = 0.5 * (diffusion_ + diffusion_.T)
         self.forcing = forcing_
         omega = canonical_commutation_matrix(initial_state.mode_count, dtype=drift_.dtype)
-        generator_matrix = self.diffusion.astype(complex) - 0.5j * initial_state.hbar * (
-            drift_ @ omega + omega @ drift_.T
-        )
+        generator_matrix = self.diffusion.astype(
+            "complex128"
+        ) - 0.5j * initial_state.hbar * (drift_ @ omega + omega @ drift_.T)
         generator_margin = jnp.min(jnp.linalg.eigvalsh(generator_matrix))
         if not bool(jax.device_get(generator_margin >= -1e-9)):
             raise ValueError(

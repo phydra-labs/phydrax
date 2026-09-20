@@ -153,7 +153,9 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Projection density, tolerance, and iterations are invalid.")
         shape = operators.discretization.cell_shape
-        representative_mask = jnp.ones(shape, dtype=bool).at[(0,) * len(shape)].set(False)
+        representative_mask = (
+            jnp.ones(shape, dtype=jnp.bool_).at[(0,) * len(shape)].set(False)
+        )
         unit_face = tuple(
             jnp.ones(layout.shape, dtype=operators.pressure_space.dtype)
             for layout in operators.discretization.face_layouts
@@ -171,7 +173,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             unit_face,
             representative_mask,
             unit_face,
-            jnp.ones(shape, dtype=bool),
+            jnp.ones(shape, dtype=jnp.bool_),
         )
         operator = FunctionLinearOperator(
             action,
@@ -240,7 +242,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             or geometry.operator_id != self.operators.prepared_id
         ):
             raise ValueError("Qualified solid geometry binds another MAC grid.")
-        liquid = jnp.asarray(liquid_mask, dtype=bool)
+        liquid = jnp.asarray(liquid_mask, dtype=jnp.bool_)
         if liquid.shape != self.operators.discretization.cell_shape:
             raise ValueError("liquid_mask must match the MAC cell shape.")
         fluid_active = jnp.ones_like(liquid) if geometry is None else geometry.cell_active

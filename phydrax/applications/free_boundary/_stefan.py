@@ -104,11 +104,11 @@ class StefanCollocationBatch(StrictModule, NonTrainableState):
         interface_times: ArrayLike,
         initial_reference: ArrayLike,
     ):
-        interior = jnp.asarray(interior_reference, dtype=float)
-        ambient = jnp.asarray(ambient_points, dtype=float)
-        boundary = jnp.asarray(boundary_times, dtype=float).reshape((-1,))
-        interface = jnp.asarray(interface_times, dtype=float).reshape((-1,))
-        initial = jnp.asarray(initial_reference, dtype=float).reshape((-1,))
+        interior = jnp.asarray(interior_reference, dtype=jnp.float64)
+        ambient = jnp.asarray(ambient_points, dtype=jnp.float64)
+        boundary = jnp.asarray(boundary_times, dtype=jnp.float64).reshape((-1,))
+        interface = jnp.asarray(interface_times, dtype=jnp.float64).reshape((-1,))
+        initial = jnp.asarray(initial_reference, dtype=jnp.float64).reshape((-1,))
         if interior.ndim != 2 or interior.shape[-1] != 2:
             raise ValueError("interior_reference must have shape (point, 2).")
         if ambient.ndim != 2 or ambient.shape[-1] != 2:
@@ -260,8 +260,7 @@ def stefan_collocation_batch(
     if not isinstance(parameters, OnePhaseStefanParameters):
         raise TypeError("parameters must be OnePhaseStefanParameters.")
     counts = tuple(
-        int(value)
-        for value in (
+        (
             interior_points,
             ambient_points,
             boundary_points,
@@ -678,7 +677,7 @@ def _scalar_call(model: Callable[[Array], Array], point: Array, key, /) -> Array
 
 
 def _finite_scalar(value: ArrayLike, name: str, /) -> Array:
-    scalar = jnp.asarray(value, dtype=float)
+    scalar = jnp.asarray(value, dtype=jnp.float64)
     if scalar.shape != () or not bool(jnp.isfinite(scalar)):
         raise ValueError(f"{name} must be one finite scalar.")
     return scalar

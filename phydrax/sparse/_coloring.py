@@ -28,7 +28,6 @@ SparseHessianMode: TypeAlias = Literal[
 SparseDerivativeMode: TypeAlias = SparseJacobianMode | SparseHessianMode
 SparseDerivativeCompiler: TypeAlias = Literal["auto", "native", "asdex"]
 SparseColoringCompiler: TypeAlias = Literal["native", "asdex"]
-_COLORING_SCHEMA_VERSION = 1
 _JACOBIAN_MODES = ("fwd", "rev")
 _HESSIAN_MODES = ("fwd_over_rev", "rev_over_fwd", "rev_over_rev")
 
@@ -70,8 +69,7 @@ class SparseColoring(StrictModule, NonTrainableState):
         expected_colors = pattern.target_size if mode == "rev" else pattern.source_size
         if colors_host.shape != (expected_colors,):
             raise ValueError(
-                f"Color vector must have shape {(expected_colors,)}; "
-                f"got {colors_host.shape}."
+                f"Color vector must have shape {(expected_colors,)}; got {colors_host.shape}."
             )
         if np.any(colors_host < -1):
             raise ValueError("Color values must be -1 or non-negative.")
@@ -90,13 +88,11 @@ class SparseColoring(StrictModule, NonTrainableState):
         expected_gather_shape = (pattern.nnz,)
         if gather_colors_host.shape != expected_gather_shape:
             raise ValueError(
-                f"gather_colors must have shape {expected_gather_shape}; "
-                f"got {gather_colors_host.shape}."
+                f"gather_colors must have shape {expected_gather_shape}; got {gather_colors_host.shape}."
             )
         if gather_elements_host.shape != expected_gather_shape:
             raise ValueError(
-                f"gather_elements must have shape {expected_gather_shape}; "
-                f"got {gather_elements_host.shape}."
+                f"gather_elements must have shape {expected_gather_shape}; got {gather_elements_host.shape}."
             )
         if pattern.nnz:
             if color_count == 0 or np.any(
@@ -171,10 +167,9 @@ class SparseColoring(StrictModule, NonTrainableState):
         )
 
     def to_dict(self, /) -> dict[str, Any]:
-        """Return a versioned JSON-compatible coloring artifact."""
+        """Return the canonical JSON-compatible coloring artifact."""
 
         return {
-            "schema_version": _COLORING_SCHEMA_VERSION,
             "pattern": self.pattern.to_dict(),
             "colors": np.asarray(self.colors).tolist(),
             "gather_colors": np.asarray(self.gather_colors).tolist(),
@@ -193,7 +188,6 @@ class SparseColoring(StrictModule, NonTrainableState):
         if not isinstance(value, Mapping):
             raise TypeError("Serialized sparse coloring must be a mapping.")
         expected = {
-            "schema_version",
             "pattern",
             "colors",
             "gather_colors",
@@ -211,13 +205,6 @@ class SparseColoring(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Invalid sparse-coloring fields; missing={missing}, unknown={unknown}."
             )
-        schema_version = value["schema_version"]
-        if (
-            not isinstance(schema_version, int)
-            or isinstance(schema_version, bool)
-            or schema_version != _COLORING_SCHEMA_VERSION
-        ):
-            raise ValueError(f"Unsupported sparse-coloring schema {schema_version!r}.")
         for name in ("colors", "gather_colors", "gather_elements"):
             indices = value[name]
             if not isinstance(indices, list) or any(
@@ -285,8 +272,7 @@ def native_coloring(
         resolved_mode: SparseDerivativeMode = "fwd_over_rev" if mode is None else mode
         if resolved_mode not in _HESSIAN_MODES:
             raise ValueError(
-                "Hessian mode must be 'fwd_over_rev', 'rev_over_fwd', "
-                "'rev_over_rev', or None."
+                "Hessian mode must be 'fwd_over_rev', 'rev_over_fwd', 'rev_over_rev', or None."
             )
         if not pattern.symmetric:
             raise ValueError("Hessian coloring requires a symmetric sparse pattern.")
@@ -428,8 +414,7 @@ def _validate_symmetric_coloring(
         transposed = int(color) == int(colors[row]) and int(element) == int(column)
         if not direct and not transposed:
             raise ValueError(
-                "Symmetric extraction must address one endpoint color at the "
-                "opposite endpoint coordinate."
+                "Symmetric extraction must address one endpoint color at the opposite endpoint coordinate."
             )
         expected_vertex = int(column) if direct else int(row)
         contributors = compressed_entries.get((int(element), int(color)), [])

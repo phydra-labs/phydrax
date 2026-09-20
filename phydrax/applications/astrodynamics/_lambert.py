@@ -47,7 +47,7 @@ class LambertPlan(StrictModule, NonTrainableState):
         iterations = int(bisection_iterations)
         tolerance = float(relative_tolerance)
         maximum = float(maximum_x)
-        normal = np.asarray(plane_normal, dtype=float)
+        normal = np.asarray(plane_normal, dtype=np.float64)
         if revolutions < 0:
             raise ValueError("max_revolutions must be non-negative.")
         if grid < 64:
@@ -263,7 +263,7 @@ def solve_lambert(
     capacity = plan.capacity
     departure = jnp.zeros((capacity, 3), dtype=r1.dtype)
     arrival = jnp.zeros((capacity, 3), dtype=r1.dtype)
-    valid = jnp.zeros((capacity,), dtype=bool)
+    valid = jnp.zeros((capacity,), dtype=jnp.bool_)
     status = jnp.full((capacity,), int(AstrodynamicsStatus.NO_SOLUTION), dtype=jnp.int32)
     revolutions = jnp.zeros((capacity,), dtype=jnp.int32)
     branch = jnp.zeros((capacity,), dtype=jnp.int32)

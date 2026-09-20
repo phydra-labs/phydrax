@@ -9,7 +9,6 @@ import io
 import json
 import os
 import zipfile
-from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import equinox as eqx
@@ -23,9 +22,6 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.mpm import MPMRuntimeState
 from ..equations import CompiledMaterialPointProblem
-
-
-_CHECKPOINT_SCHEMA_VERSION = 1
 
 
 def _leaf_name(path, index):
@@ -60,39 +56,7 @@ def _atomic_text(path: Path, content: str):
     temporary.replace(path)
 
 
-class MPMCheckpointMigration(StrictModule, NonTrainableState):
-    source_version: int = eqx.field(static=True)
-    target_version: int = eqx.field(static=True)
-    migration_id: str = eqx.field(static=True)
-    migrate_manifest: Callable = eqx.field(static=True)
-
-    def __init__(
-        self,
-        source_version: int,
-        target_version: int,
-        migrate_manifest: Callable,
-        /,
-        *,
-        migration_id: str,
-    ):
-        source = int(source_version)
-        target = int(target_version)
-        identifier = str(migration_id)
-        if (
-            source < 0
-            or target != source + 1
-            or not callable(migrate_manifest)
-            or not identifier
-        ):
-            raise ValueError("MPM checkpoint migration must advance one schema version.")
-        self.source_version = source
-        self.target_version = target
-        self.migration_id = identifier
-        self.migrate_manifest = migrate_manifest
-
-
 class MPMCheckpointManifest(StrictModule, NonTrainableState):
-    schema_version: int = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
     compilation_id: str = eqx.field(static=True)
     claim_id: str | None = eqx.field(static=True)
@@ -106,7 +70,6 @@ class MPMCheckpointManifest(StrictModule, NonTrainableState):
 class MPMCheckpointPlan(StrictModule, NonTrainableState):
     compiled: CompiledMaterialPointProblem
     template_state: MPMRuntimeState
-    migrations: tuple[MPMCheckpointMigration, ...]
     checkpoint_id: str = eqx.field(static=True)
     leaf_names: tuple[str, ...] = eqx.field(static=True)
 
@@ -115,37 +78,25 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
         compiled: CompiledMaterialPointProblem,
         template_state: MPMRuntimeState,
         /,
-        *,
-        migrations: Sequence[MPMCheckpointMigration] = (),
     ):
         if not isinstance(compiled, CompiledMaterialPointProblem):
             raise TypeError("compiled must be CompiledMaterialPointProblem.")
         if not isinstance(template_state, MPMRuntimeState):
             raise TypeError("template_state must be MPMRuntimeState.")
-        paths, leaves = jax.tree_util.tree_flatten_with_path(template_state)[0], None
+        paths, _leaves = jax.tree_util.tree_flatten_with_path(template_state)[0], None
         names = tuple(_leaf_name(path, index) for index, (path, _) in enumerate(paths))
         if len(set(names)) != len(names):
             raise ValueError("MPM checkpoint leaf names are not unique.")
-        migrations_ = tuple(migrations)
-        expected = 0
-        for value in sorted(migrations_, key=lambda item: item.source_version):
-            if not isinstance(value, MPMCheckpointMigration):
-                raise TypeError("migrations must contain MPMCheckpointMigration.")
-            expected = max(expected, value.target_version)
         self.compiled = compiled
         self.template_state = template_state
-        self.migrations = migrations_
         self.leaf_names = names
         self.checkpoint_id = canonical_fingerprint(
             {
                 "kind": "mpm-checkpoint-plan",
-                "schema_version": _CHECKPOINT_SCHEMA_VERSION,
                 "compilation": compiled.compilation_id,
                 "leaf_names": names,
                 "leaf_shapes": [list(np.asarray(leaf).shape) for _, leaf in paths],
                 "leaf_dtypes": [np.asarray(leaf).dtype.str for _, leaf in paths],
-                "migrations": [value.migration_id for value in migrations_],
-                "migration_extent": expected,
             }
         )
 
@@ -175,7 +126,6 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
                 "sha256": _sha256(payload),
             }
         metadata = {
-            "schema_version": _CHECKPOINT_SCHEMA_VERSION,
             "checkpoint_id": self.checkpoint_id,
             "compilation_id": self.compiled.compilation_id,
             "claim_id": self.compiled.claim_id,
@@ -206,7 +156,6 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
             os.fsync(raw.fileno())
         temporary.replace(target)
         return MPMCheckpointManifest(
-            _CHECKPOINT_SCHEMA_VERSION,
             self.checkpoint_id,
             self.compiled.compilation_id,
             metadata["claim_id"],
@@ -233,28 +182,12 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
             os.close(directory_fd)
         return manifest
 
-    def _migrate(self, manifest):
-        current = dict(manifest)
-        version = int(current.get("schema_version", -1))
-        while version < _CHECKPOINT_SCHEMA_VERSION:
-            candidates = [
-                value for value in self.migrations if value.source_version == version
-            ]
-            if len(candidates) != 1:
-                raise ValueError(
-                    f"No unique MPM checkpoint migration from schema {version}."
-                )
-            current = dict(candidates[0].migrate_manifest(current))
-            version = int(current.get("schema_version", -1))
-        return current
-
     def read(self, path: str | Path, /):
         target = Path(path)
         with zipfile.ZipFile(target, "r") as archive:
-            manifest = self._migrate(json.loads(archive.read("manifest.json")))
+            manifest = json.loads(archive.read("manifest.json"))
             if (
-                manifest.get("schema_version") != _CHECKPOINT_SCHEMA_VERSION
-                or manifest.get("checkpoint_id") != self.checkpoint_id
+                manifest.get("checkpoint_id") != self.checkpoint_id
                 or manifest.get("compilation_id") != self.compiled.compilation_id
             ):
                 raise ValueError("MPM checkpoint identity is incompatible.")
@@ -300,6 +233,5 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
 
 __all__ = [
     "MPMCheckpointManifest",
-    "MPMCheckpointMigration",
     "MPMCheckpointPlan",
 ]

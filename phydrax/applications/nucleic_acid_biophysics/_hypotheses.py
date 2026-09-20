@@ -70,7 +70,7 @@ class NucleicStructureHypothesis:
             raise ValueError(
                 "A hypothesis needs explicit nonperiodic or externally unwrapped coordinates."
             )
-        coordinates = np.asarray(positions, dtype=float)
+        coordinates = np.asarray(positions, dtype=np.float64)
         mask = (
             np.ones(len(mapping.atom_ids), bool)
             if coordinate_mask is None

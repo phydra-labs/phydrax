@@ -69,15 +69,15 @@ class CompactU1GaugeMeasure(AbstractIncrementalLatticeAction):
         num_plaquettes = topology.entities(2).count
         incidence = topology.incidences[1]
         relation = incidence.relation
-        route_valid = np.asarray(relation.valid, dtype=bool)
+        route_valid = np.asarray(relation.valid, dtype=np.bool_)
         source = np.asarray(relation.source_indices, dtype=np.int64)[route_valid]
         target = np.asarray(relation.target_indices, dtype=np.int64)[route_valid]
         signs = np.asarray(incidence.signs)[route_valid]
         counts = np.bincount(source, minlength=num_edges)
         capacity = max(1, int(counts.max(initial=0)))
         edge_plaquettes = np.zeros((num_edges, capacity), dtype=np.int32)
-        edge_signs = np.zeros((num_edges, capacity), dtype=float)
-        edge_valid = np.zeros((num_edges, capacity), dtype=bool)
+        edge_signs = np.zeros((num_edges, capacity), dtype=np.float64)
+        edge_valid = np.zeros((num_edges, capacity), dtype=np.bool_)
         offsets = np.zeros((num_edges,), dtype=np.int32)
         for edge, plaquette, sign in zip(source, target, signs, strict=True):
             slot = offsets[edge]

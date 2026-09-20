@@ -86,7 +86,7 @@ def test_sparse_features_are_explicit_and_preserve_duplicate_entries():
         dense @ jnp.arange(6.0).reshape(3, 2),
     )
     with pytest.raises(ValueError, match="feature_mask is unsupported"):
-        phx.ml.MLBatch(sparse, feature_mask=jnp.ones((2, 3), dtype=bool))
+        phx.ml.MLBatch(sparse, feature_mask=jnp.ones((2, 3), dtype="bool"))
 
 
 def test_fit_is_pure_frozen_and_remains_differentiable_when_called():

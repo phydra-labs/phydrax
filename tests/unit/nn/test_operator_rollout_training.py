@@ -112,7 +112,7 @@ def _batch(values, *, control=None, mask=None, shifted_query=False):
             )
         },
         case_axes=("case",),
-        case_shape=(int(jnp.asarray(values).shape[0]),),
+        case_shape=(jnp.asarray(values).shape[0],),
     )
 
 
@@ -156,7 +156,7 @@ def _trained(model, task, *, normalization=None, output_pipeline=None):
 
 
 def _dataset(*, cases=4, mask=None, target_nan=False):
-    initial = jnp.arange(1, cases + 1, dtype=float)[:, None]
+    initial = jnp.arange(1, cases + 1, dtype="float64")[:, None]
     values = jnp.broadcast_to(initial, (cases, 4))
     batch = _batch(values, mask=mask)
     first = 1.5 * values

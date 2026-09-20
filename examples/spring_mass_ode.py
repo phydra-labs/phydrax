@@ -201,13 +201,13 @@ def _(eqx, jax, jnp, phx):
         initial_position = phx.conditions.Initial(
             "x",
             initial,
-            target=jnp.asarray([1.0, 0.0, 0.0], dtype=float),
+            target=jnp.asarray([1.0, 0.0, 0.0], dtype="float64"),
             evolution_var="t",
         )
         initial_velocity = phx.conditions.Initial(
             "x",
             initial,
-            target=jnp.zeros((3,), dtype=float),
+            target=jnp.zeros((3,), dtype="float64"),
             evolution_var="t",
             order=1,
         )
@@ -222,7 +222,7 @@ def _(eqx, jax, jnp, phx):
                 [-1.0, 2.0, -1.0],
                 [0.0, -1.0, 3.0],
             ],
-            dtype=float,
+            dtype="float64",
         )
 
         residual = phx.conditions.Residual(
@@ -458,10 +458,7 @@ def _(diag_stats, mo, train_stats):
         - `|x3'(0)-0|`: `{diag_stats["v3_0_error"]:.3e}`
         """
         if train_stats is not None:
-            msg += (
-                f"\n- loss (init → final): `{train_stats['init_loss']:.3e}` → "
-                f"`{train_stats['final_loss']:.3e}`"
-            )
+            msg += f"\n- loss (init → final): `{train_stats['init_loss']:.3e}` → `{train_stats['final_loss']:.3e}`"
         diagnostics_panel = mo.md(msg)
     diagnostics_panel
     return

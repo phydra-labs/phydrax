@@ -264,7 +264,7 @@ class MovingTraceRoute(StrictModule, NonTrainableState):
         if (
             current.route_kind != next.route_kind
             or current.owner_dofs.shape != next.owner_dofs.shape
-            or current.neighbour_dofs.shape != next.neighbour_dofs.shape
+            or current.neighbor_dofs.shape != next.neighbor_dofs.shape
             or current.physical_points.shape != next.physical_points.shape
         ):
             raise ValueError("Moving trace route endpoints are incompatible.")
@@ -296,9 +296,9 @@ class MovingTraceRoute(StrictModule, NonTrainableState):
         return PreparedDGTraceRoute(
             self.current.route_kind,
             self.current.owner_dofs,
-            neighbour_dofs=self.current.neighbour_dofs,
+            neighbor_dofs=self.current.neighbor_dofs,
             owner_basis=self.current.owner_basis,
-            neighbour_basis=self.current.neighbour_basis,
+            neighbor_basis=self.current.neighbor_basis,
             owner_gradients=self.current.owner_gradients,
             physical_points=points,
             physical_weights=weights,

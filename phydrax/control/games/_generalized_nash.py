@@ -154,12 +154,11 @@ class FiniteHorizonLQOpenLoopGNEProblem(StrictModule):
         a = _real_array(dynamics_matrices, "dynamics_matrices")
         if a.ndim < 3 or a.shape[-1] != a.shape[-2]:
             raise ValueError(
-                "dynamics_matrices must have shape "
-                "case_shape + (horizon, state_size, state_size)."
+                "dynamics_matrices must have shape case_shape + (horizon, state_size, state_size)."
             )
-        case_shape = tuple(int(size) for size in a.shape[:-3])
-        horizon = int(a.shape[-3])
-        state_size = int(a.shape[-1])
+        case_shape = tuple(a.shape[:-3])
+        horizon = a.shape[-3]
+        state_size = a.shape[-1]
         if horizon < 1 or state_size < 1:
             raise ValueError("horizon and state_size must be positive.")
         b = _real_array(control_matrices, "control_matrices")
@@ -169,10 +168,9 @@ class FiniteHorizonLQOpenLoopGNEProblem(StrictModule):
             or tuple(b.shape[-3:-1]) != (horizon, state_size)
         ):
             raise ValueError(
-                "control_matrices must have shape "
-                "case_shape + (horizon, state_size, control_size)."
+                "control_matrices must have shape case_shape + (horizon, state_size, control_size)."
             )
-        control_size = int(b.shape[-1])
+        control_size = b.shape[-1]
         if partition.joint_control_size != control_size:
             raise ValueError(
                 "partition joint control size must match control_matrices; "
@@ -875,7 +873,7 @@ def _numeric_preparation(
     physical = lowered[:4]
     multiplier = lowered[4:]
     case_rank = len(problem.case_shape)
-    finite = jnp.ones(problem.case_shape, dtype=bool)
+    finite = jnp.ones(problem.case_shape, dtype=jnp.bool_)
     for value in (
         problem.dynamics_matrices,
         problem.control_matrices,
@@ -1589,8 +1587,8 @@ def solve_prepared_open_loop_gne(
         response_values = jnp.full_like(costs, jnp.nan)
         response_gaps = jnp.full_like(costs, jnp.nan)
         response_errors = jnp.full_like(costs, jnp.nan)
-        response_successful = jnp.zeros_like(costs, dtype=bool)
-        response_complete = jnp.zeros(prepared.plan.case_shape, dtype=bool)
+        response_successful = jnp.zeros_like(costs, dtype=jnp.bool_)
+        response_complete = jnp.zeros(prepared.plan.case_shape, dtype=jnp.bool_)
     gap_upper = jnp.maximum(response_gaps, 0.0) + response_errors
     global_gap = jnp.max(gap_upper, axis=-1)
 
@@ -1603,7 +1601,7 @@ def solve_prepared_open_loop_gne(
     vi_ok = vi_result.successful & vi_result.certificate.certified
     kkt_ok = original_kkt <= prepared.plan.kkt_tolerance
     case_rank = len(prepared.plan.case_shape)
-    output_finite = jnp.ones(prepared.plan.case_shape, dtype=bool)
+    output_finite = jnp.ones(prepared.plan.case_shape, dtype=jnp.bool_)
     for value in (
         flat_controls,
         states,

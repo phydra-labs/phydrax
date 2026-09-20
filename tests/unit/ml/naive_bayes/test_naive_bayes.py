@@ -149,8 +149,8 @@ def test_every_naive_bayes_family_has_normalized_schema_aware_jit_vmap_behavior(
 def test_gaussian_nb_preserves_case_masks_product_weights_and_string_vocabulary():
     features = jnp.stack((_GAUSSIAN, 1.5 * _GAUSSIAN + 0.2))
     targets = jnp.stack((_TARGETS, _TARGETS))
-    feature_mask = jnp.ones_like(features, dtype=bool).at[:, 2, 1].set(False)
-    target_mask = jnp.ones_like(targets, dtype=bool).at[:, 3].set(False)
+    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 2, 1].set(False)
+    target_mask = jnp.ones_like(targets, dtype="bool").at[:, 3].set(False)
     sample_mask = jnp.arange(8) != 7
     sample_weight = jnp.linspace(0.5, 1.2, 8)
     measure_weight = jnp.linspace(1.4, 0.7, 8)
@@ -315,7 +315,7 @@ def test_naive_bayes_failures_report_empty_single_class_nonfinite_weight_and_dom
         MLBatch(
             _GAUSSIAN,
             _TARGETS,
-            sample_mask=jnp.zeros(8, dtype=bool),
+            sample_mask=jnp.zeros(8, dtype="bool"),
         )
     )
     single_class = GaussianNaiveBayesRecipe(num_classes=2).fit_batch(

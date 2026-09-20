@@ -159,7 +159,7 @@ class PreparedForcePrimitivePath(StrictModule, NonTrainableState):
         capacity = snapshot.dynamics.system.capacity
         particle_chain = np.full((capacity,), -1, dtype=np.int32)
         particle_contour = np.full((capacity,), -1, dtype=np.int32)
-        endpoint = np.zeros((capacity,), dtype=bool)
+        endpoint = np.zeros((capacity,), dtype=np.bool_)
         indices = np.asarray(snapshot.layout.particle_indices)
         mask = np.asarray(snapshot.layout.chain_mask)
         for chain_index, (row, active) in enumerate(zip(indices, mask, strict=True)):
@@ -202,7 +202,7 @@ class PreparedForcePrimitivePath(StrictModule, NonTrainableState):
             active[:, None]
             & active[None, :]
             & different_chain
-            & jnp.triu(jnp.ones_like(squared, dtype=bool), 1)
+            & jnp.triu(jnp.ones_like(squared, dtype=jnp.bool_), 1)
         )
         distance = jnp.sqrt(jnp.where(pair_mask & (squared > 0.0), squared, 1.0))
         cutoff = 2.0 ** (1.0 / 6.0) * self.plan.excluded_volume_sigma
@@ -276,7 +276,7 @@ class PreparedForcePrimitivePath(StrictModule, NonTrainableState):
             active[:, None]
             & active[None, :]
             & different_chain
-            & jnp.triu(jnp.ones_like(distance, dtype=bool), 1)
+            & jnp.triu(jnp.ones_like(distance, dtype=jnp.bool_), 1)
         )
         minimum_distance = jnp.min(jnp.where(pair_mask, distance, jnp.inf))
         contact_mask = pair_mask & (distance <= self.plan.contact_distance)

@@ -6,12 +6,13 @@
 
 from __future__ import annotations
 
-import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
 
-class ElectronicKernelEvaluation(eqx.Module):
+
+class ElectronicKernelEvaluation(StrictModule):
     """Fixed-structure ground-state kernel values safe under JAX transforms."""
 
     energy: Array
@@ -71,7 +72,7 @@ class ElectronicKernelEvaluation(eqx.Module):
             raise ValueError("Point-charge forces must have shape (point_capacity, 3).")
         self.energy = energy_
         self.forces = forces_
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.hessian = hessian_
         self.dipole = dipole_
         self.polarizability = polarizability_
@@ -81,7 +82,7 @@ class ElectronicKernelEvaluation(eqx.Module):
         self.residual = jnp.asarray(residual, dtype=energy_.dtype).reshape(())
 
 
-class PotentialEnergyKernelEvaluation(eqx.Module):
+class PotentialEnergyKernelEvaluation(StrictModule):
     """Minimal compiled potential-energy-surface evaluation."""
 
     energy: Array
@@ -95,7 +96,7 @@ class PotentialEnergyKernelEvaluation(eqx.Module):
             raise ValueError("Kernel forces must have shape (atom_capacity, 3).")
         self.energy = energy_
         self.forces = forces_
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
 
 
 __all__ = ["ElectronicKernelEvaluation", "PotentialEnergyKernelEvaluation"]

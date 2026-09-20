@@ -20,6 +20,8 @@ import jax.random as jr
 import numpy as np
 import optax
 
+from phydrax._strict import StrictModule
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...domain import HyperRectangle, TimeInterval
 from ...dynamics import ContinuousSystem, StateLayout
@@ -221,7 +223,7 @@ def prepare_coordinate_training_data(
     )
 
 
-class ConditionalCoordinateVelocity(eqx.Module):
+class ConditionalCoordinateVelocity(StrictModule):
     """Dense global coordinate model with explicit chemical atom/token features.
 
     Fixed support/order is an ABI, not permutation equivariance. Proper-rigid
@@ -308,7 +310,7 @@ def _endpoints(data, indices, key, num_pairs):
         target=data.encoded_coordinates[index],
         source_indices=jnp.arange(num_pairs),
         target_indices=index,
-        valid=jnp.ones(num_pairs, dtype=bool),
+        valid=jnp.ones(num_pairs, dtype=jnp.bool_),
         log_weights=jnp.zeros(num_pairs),
         context={"condition": data.conditions[index]},
         coupling_id=data.dataset_id,
@@ -437,14 +439,14 @@ def fit_coordinate_model(
     )
 
 
-class _CoordinateField(eqx.Module):
+class _CoordinateField(StrictModule):
     model: ConditionalCoordinateVelocity
 
     def __call__(self, time, state, condition):
         return self.model(state, time, condition)
 
 
-class PreparedCoordinateSampler(eqx.Module):
+class PreparedCoordinateSampler(StrictModule):
     evolution: DiffraxEvolution
     model: ConditionalCoordinateVelocity
     decoder: AbstractCoordinateDecoder
@@ -569,7 +571,7 @@ def sample_coordinate_proposals(
     )
     decoded = sampler.decoder.decode(raw_coordinates)
     positions = jnp.asarray(decoded.positions)
-    decoder_valid = jnp.asarray(decoded.valid, dtype=bool)
+    decoder_valid = jnp.asarray(decoded.valid, dtype=jnp.bool_)
     if (
         positions.shape != (context.shape[0], fit.support.template.atom_capacity, 3)
         or decoder_valid.shape != valid.shape

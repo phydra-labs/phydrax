@@ -92,7 +92,7 @@ def fermionic_keldysh_from_propagators(
         raise TypeError("grid must be ClosedTimePathGrid.")
     propagator = jnp.asarray(propagators)
     density = jnp.asarray(initial_density)
-    time_count = int(grid.plan.time_nodes.size)
+    time_count = grid.plan.time_nodes.size
     if (
         propagator.ndim != 3
         or propagator.shape[0] != time_count
@@ -104,8 +104,8 @@ def fermionic_keldysh_from_propagators(
         )
     if not str(source_id):
         raise ValueError("source_id must be non-empty.")
-    modes = int(density.shape[0])
-    identity = jnp.eye(modes, dtype=jnp.result_type(propagator, density, complex))
+    modes = density.shape[0]
+    identity = jnp.eye(modes, dtype=jnp.result_type(propagator, density, jnp.complex128))
     lesser = 1j * contract(
         "tai,ij,sbj->tsab", propagator, density, jnp.conj(propagator), backend="jax"
     )
@@ -231,15 +231,15 @@ class FermionicSecondBornPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(grid, ClosedTimePathGrid):
             raise TypeError("grid must be ClosedTimePathGrid.")
-        hamiltonian = np.asarray(one_particle_hamiltonian, dtype=complex)
-        coupling = np.asarray(interaction, dtype=float)
-        modes = int(hamiltonian.shape[0]) if hamiltonian.ndim == 2 else 0
+        hamiltonian = np.asarray(one_particle_hamiltonian, dtype=np.complex128)
+        coupling = np.asarray(interaction, dtype=np.float64)
+        modes = hamiltonian.shape[0] if hamiltonian.ndim == 2 else 0
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         damping_ = float(damping)
         conservation = float(conservation_tolerance)
         capacity = int(maximum_matrix_elements)
-        dimension = int(grid.plan.time_nodes.size) * modes
+        dimension = grid.plan.time_nodes.size * modes
         required = 18 * dimension * dimension
         if (
             hamiltonian.shape != (modes, modes)

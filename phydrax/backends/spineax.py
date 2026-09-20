@@ -31,8 +31,7 @@ def spineax_availability() -> BackendAvailability:
         SPINEAX_CAPABILITIES,
         module="spineax.cudss",
         requirement=(
-            "install the phydrax[cudss] extra on Linux x86-64 with CUDA 13 and "
-            "an NVIDIA Turing-or-newer device"
+            "install the phydrax[cudss] extra on Linux x86-64 with CUDA 13 and an NVIDIA Turing-or-newer device"
         ),
         distributions=("spineax",),
         supported_platforms=("linux",),

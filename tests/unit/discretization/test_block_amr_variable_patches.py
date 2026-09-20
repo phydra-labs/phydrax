@@ -47,11 +47,11 @@ def _tags(plan, *, first=(), second=()):
     level = plan.levels[0]
     wide = jnp.zeros(
         (level.buckets[0].lane_capacity,) + level.buckets[0].signature.envelope_shape,
-        dtype=bool,
+        dtype="bool",
     )
     narrow = jnp.zeros(
         (level.buckets[1].lane_capacity,) + level.buckets[1].signature.envelope_shape,
-        dtype=bool,
+        dtype="bool",
     )
     for lane, local in first:
         wide = wide.at[lane, local].set(True)
@@ -326,10 +326,10 @@ def test_variable_patch_compiler_ignores_stale_deeper_tags_during_coarsening():
                     [[False, True, False, False], [False] * 4] + [[False] * 4] * 6
                 ),
             ),
-            (jnp.zeros((8, 4), dtype=bool),),
+            (jnp.zeros((8, 4), dtype="bool"),),
         ),
     ).topology
-    refine_second = jnp.zeros((8, 4), dtype=bool).at[0, 1].set(True)
+    refine_second = jnp.zeros((8, 4), dtype="bool").at[0, 1].set(True)
     second = compiler.compile(
         first,
         (
@@ -341,11 +341,11 @@ def test_variable_patch_compiler_ignores_stale_deeper_tags_during_coarsening():
             (refine_second,),
         ),
     ).topology
-    stale_deep = jnp.zeros((8, 4), dtype=bool).at[0, 1].set(True)
+    stale_deep = jnp.zeros((8, 4), dtype="bool").at[0, 1].set(True)
     result = compiler.compile(
         second,
         (
-            (jnp.zeros((8, 4), dtype=bool),),
+            (jnp.zeros((8, 4), dtype="bool"),),
             (stale_deep,),
         ),
     )
@@ -391,7 +391,7 @@ def test_clustering_policy_splits_sparse_connected_component():
         ),
     )
     source = compiler.initial_topology()
-    tags = jnp.zeros((1, 4, 4), dtype=bool)
+    tags = jnp.zeros((1, 4, 4), dtype="bool")
     tags = tags.at[0, 0, :].set(True)
     tags = tags.at[0, :, 0].set(True)
 

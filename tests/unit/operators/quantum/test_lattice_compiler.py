@@ -157,7 +157,7 @@ def test_sign_free_candidate_retains_raw_chain_and_refuses_sign_cancellation():
     np.testing.assert_array_equal(sign_free.raw_chain, chain)
     np.testing.assert_array_equal(sign_free.raw_orders, orders)
     np.testing.assert_array_equal(sign_free.order_histogram, (2, 3, 2, 1))
-    cancelling = assess_sign_free_stochastic_candidate(
+    canceling = assess_sign_free_stochastic_candidate(
         plan,
         chain,
         orders,
@@ -165,5 +165,5 @@ def test_sign_free_candidate_retains_raw_chain_and_refuses_sign_cancellation():
         jnp.asarray(((1, -1, 1, -1), (1, -1, 1, -1))),
         accepted,
     )
-    assert not bool(cancelling.sign_free)
-    assert not bool(cancelling.successful)
+    assert not bool(canceling.sign_free)
+    assert not bool(canceling.successful)

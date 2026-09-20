@@ -97,7 +97,7 @@ def bind_protein(
     """Bind a complete user-parameterized isolated protein, without atom completion.
 
     The caller certifies the force-field numeric coefficients already use
-    ``parameter_energy_unit``. A mismatching scale is refused, never relabelled.
+    ``parameter_energy_unit``. A mismatching scale is refused, never relabeled.
     This first chemistry profile excludes solvent/ions/caps and virtual DOFs;
     externally solvated ensembles remain valid inputs to thermodynamic estimators.
     """

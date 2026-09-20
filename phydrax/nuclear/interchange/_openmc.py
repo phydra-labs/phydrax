@@ -61,7 +61,7 @@ class OpenMCStatepointProfile:
         if isinstance(self.tally_id, bool) or not isinstance(self.tally_id, Integral):
             raise TypeError("tally_id must be an integer.")
         tally = int(self.tally_id)
-        shape = tuple(int(value) for value in self.value_shape)
+        shape = tuple(self.value_shape)
         labels = tuple(str(value).strip() for value in self.axis_labels)
         rate = float(self.source_rate_s)
         if tally < 1 or not shape or any(value < 1 for value in shape):

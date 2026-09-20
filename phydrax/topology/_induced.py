@@ -47,8 +47,8 @@ class FiniteFieldCoordinateMap(StrictModule, NonTrainableState):
         values %= field.modulus
         self.matrix = jnp.asarray(values)
         self.degree = int(degree)
-        self.source_dimension = int(values.shape[1])
-        self.target_dimension = int(values.shape[0])
+        self.source_dimension = values.shape[1]
+        self.target_dimension = values.shape[0]
         self.field = field
         self.source_basis_id = str(source_basis_id)
         self.target_basis_id = str(target_basis_id)
@@ -299,8 +299,7 @@ def induced_homology_coordinates(
             or target_degree.cocycles is None
         ):
             raise ValueError(
-                "Induced homology coordinates require source cycles and paired "
-                "target cycle/cocycle bases."
+                "Induced homology coordinates require source cycles and paired target cycle/cocycle bases."
             )
         source_cycles = _basis_vectors(source_degree.cycles, source_layout)
         target_cycles = _basis_vectors(target_degree.cycles, target_layout)

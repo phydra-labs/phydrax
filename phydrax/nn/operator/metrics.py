@@ -17,10 +17,10 @@ OperatorReduction = Literal["none", "mean", "sum"]
 
 
 def _sample_layout(values: Array, query: FunctionSamples, /) -> tuple[int, bool]:
-    shape = tuple(int(size) for size in query.sample_shape)
+    shape = tuple(query.sample_shape)
     if not shape:
         raise ValueError("Operator metrics require a non-empty query sample shape.")
-    values_shape = tuple(int(size) for size in values.shape)
+    values_shape = tuple(values.shape)
     rank = len(shape)
     if values.ndim >= rank and values_shape[-rank:] == shape:
         return values.ndim - rank, False
@@ -71,7 +71,7 @@ def _weighted_energy(
     if has_channels:
         energy = jnp.sum(energy, axis=-1)
     shape = query.sample_shape
-    case_shape = tuple(int(size) for size in energy.shape[:sample_start])
+    case_shape = tuple(energy.shape[:sample_start])
     weights = query.weights(case_shape=case_shape)
     weighted = energy * weights
     axes = tuple(range(sample_start, sample_start + len(shape)))
@@ -110,8 +110,8 @@ def operator_l2_loss(
 
 
 def _first_derivative(values: Array, nodes: Array, axis: int, /) -> Array:
-    nodes_ = jnp.asarray(nodes, dtype=float)
-    n = int(nodes_.shape[0])
+    nodes_ = jnp.asarray(nodes, dtype=jnp.float64)
+    n = nodes_.shape[0]
     if n <= 1:
         return jnp.zeros_like(values)
 
@@ -244,7 +244,7 @@ def operator_spectral_loss(
     for size in query.sample_shape:
         frequency_factors.append(jnp.fft.fftfreq(size) * float(size))
     grids = jnp.meshgrid(*frequency_factors, indexing="ij")
-    frequency_squared = jnp.zeros(query.sample_shape, dtype=float)
+    frequency_squared = jnp.zeros(query.sample_shape, dtype=jnp.float64)
     for grid in grids:
         frequency_squared = frequency_squared + grid**2
     spectral_weight = (1.0 + frequency_squared) ** float(frequency_power)
@@ -276,7 +276,7 @@ def operator_conservation_error(
 ) -> Array:
     """Error between predicted and target spatial integrals, per physical case."""
     pred, truth, start, has_channels = _validate_pair(prediction, target, query)
-    case_shape = tuple(int(size) for size in pred.shape[:start])
+    case_shape = tuple(pred.shape[:start])
     weights = query.weights(case_shape=case_shape)
     if has_channels:
         weights = weights[..., None]

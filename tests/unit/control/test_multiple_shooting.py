@@ -100,7 +100,7 @@ def test_multiple_shooting_pose_continuity_defect_is_local_and_sign_invariant():
 
 def _linear_problem(*, num_steps=2, path_constraints=(), terminal_constraints=()):
     grid = phx.dynamics.TimeGrid(
-        jnp.arange(num_steps + 1, dtype=float),
+        jnp.arange(num_steps + 1, dtype="float64"),
         time_id=f"multiple-shooting-linear-{num_steps}",
     )
     dynamics = make_discrete_control_dynamics(

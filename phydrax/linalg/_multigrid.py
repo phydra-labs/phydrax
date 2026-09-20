@@ -186,7 +186,7 @@ class MultigridSetupDiagnostics(StrictModule):
         compatible_relaxation_factors: tuple[float, ...] = (),
         aggregate_candidate_ranks: tuple[tuple[int, ...], ...] = (),
     ):
-        dimensions = tuple(int(value) for value in level_dimensions)
+        dimensions = tuple(level_dimensions)
         nonzeros = tuple(None if value is None else int(value) for value in level_nnz)
         if not dimensions or any(value < 0 for value in dimensions):
             raise ValueError("Multigrid level dimensions must be nonnegative.")
@@ -230,9 +230,7 @@ class MultigridSetupDiagnostics(StrictModule):
             raise ValueError(
                 "operator_pattern_fingerprints must identify every hierarchy level."
             )
-        assignments = tuple(
-            tuple(int(index) for index in level) for level in aggregate_assignments
-        )
+        assignments = tuple(tuple(level) for level in aggregate_assignments)
         if assignments and len(assignments) != len(transfers):
             raise ValueError(
                 "aggregate_assignments must identify every aggregated transition."
@@ -245,7 +243,7 @@ class MultigridSetupDiagnostics(StrictModule):
         if dependency_fingerprint == "":
             raise ValueError("reuse_dependency_fingerprint must be non-empty.")
         self.level_dimensions = dimensions
-        level_bytes = tuple(int(value) for value in level_storage_bytes)
+        level_bytes = tuple(level_storage_bytes)
         if level_bytes and (
             len(level_bytes) != len(dimensions) or any(value < 0 for value in level_bytes)
         ):
@@ -262,9 +260,7 @@ class MultigridSetupDiagnostics(StrictModule):
             raise ValueError(
                 "compatible_relaxation_factors must align with hierarchy transitions."
             )
-        candidate_ranks = tuple(
-            tuple(int(rank) for rank in ranks) for ranks in aggregate_candidate_ranks
-        )
+        candidate_ranks = tuple(tuple(ranks) for ranks in aggregate_candidate_ranks)
         if candidate_ranks and (
             len(candidate_ranks) != len(transfers)
             or any(rank <= 0 for ranks in candidate_ranks for rank in ranks)
@@ -299,7 +295,7 @@ def _default_setup_diagnostics(
     dimensions = tuple(level.operator.source.size for level in levels)
     nonzeros = tuple(
         (
-            int(level.operator.sparse_storage().values.size)
+            level.operator.sparse_storage().values.size
             if isinstance(level.operator, AbstractSparseLinearOperator)
             else (
                 int(jnp.count_nonzero(level.operator.matrix))
@@ -987,8 +983,8 @@ def _operator_from_scipy(
     relation = EdgeRelation(
         coo.col,
         coo.row,
-        source_size=int(coo.shape[1]),
-        target_size=int(coo.shape[0]),
+        source_size=coo.shape[1],
+        target_size=coo.shape[0],
     )
     return SparseLinearMap(
         relation,

@@ -58,8 +58,12 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
             raise TypeError("multiblock must be PreparedMultiblockGrid.")
         if not isinstance(interface, BlockInterface):
             raise TypeError("interface must be BlockInterface.")
-        if interface.name not in tuple(value.name for value in multiblock.plan.interfaces):
-            raise ValueError("BlockInterface does not belong to the prepared multiblock grid.")
+        if interface.name not in tuple(
+            value.name for value in multiblock.plan.interfaces
+        ):
+            raise ValueError(
+                "BlockInterface does not belong to the prepared multiblock grid."
+            )
         report_index = tuple(value.name for value in multiblock.plan.interfaces).index(
             interface.name
         )
@@ -98,7 +102,7 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         self.gauge_certificate_id = gauge_id
         self.provider_id = canonical_fingerprint(
             {
-                "kind": "multiblock-interface-correction-v1",
+                "kind": "multiblock-interface-correction",
                 "multiblock": multiblock.prepared_id,
                 "interface": interface.interface_id,
                 "support": support.interface_id,
@@ -111,7 +115,9 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, /, *, rank=None, resources=None, numeric_version=0) -> PreparedTraceExtension:
+    def prepare(
+        self, /, *, rank=None, resources=None, numeric_version=0
+    ) -> PreparedTraceExtension:
         provider = TwoSidedInterfaceCorrectionProvider(
             self.trace_operator,
             self.candidate_operator,

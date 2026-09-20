@@ -2,10 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Measure grey-column analytic limits, W/m² budgets, and derivative epsilon sweeps.
+"""Measure gray-column analytic limits, W/m² budgets, and derivative epsilon sweeps.
 
 PYTHONPATH=. python tools/column_radiation_qualification.py --layers 12
-This is numerical evidence for declared synthetic grey coefficients, not a
+This is numerical evidence for declared synthetic gray coefficients, not a
 comparison to atmospheric observations or a spectral reference radiation model.
 """
 
@@ -38,7 +38,7 @@ def main():
         shortwave_scattering=(1e-5, 0.0, 50.0, 30.0),
         shortwave_asymmetry=(0.0, 0.0, 0.8, 0.7),
         longwave_absorption=(5e-5, 0.07, 20.0, 15.0),
-        reference_id="declared-synthetic-grey-qualification-coefficients-not-measured",
+        reference_id="declared-synthetic-gray-qualification-coefficients-not-measured",
     )
     plan = ColumnRadiationPlan(optics, surface_albedo=0.19, surface_emissivity=0.94)
     z = jnp.linspace(0.0, 1.0, args.layers)
@@ -209,7 +209,7 @@ def main():
                 "backend": jax.default_backend(),
                 "layers": args.layers,
                 "optical_reference_id": optics.reference_id,
-                "scope": "diffuse hemispheric SW scattering; grey LTE LW; no spectral or observational accuracy claim",
+                "scope": "diffuse hemispheric SW scattering; gray LTE LW; no spectral or observational accuracy claim",
                 "control_names": [
                     "vapor_mass_multiplier",
                     "liquid_mass_multiplier",

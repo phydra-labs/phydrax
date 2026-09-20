@@ -111,8 +111,8 @@ def _validate_program_resources(
     /,
 ) -> None:
     arrays = _program_arrays(program)
-    input_entries = sum(int(array.size) for array in arrays)
-    input_bytes = sum(int(array.size) * int(array.dtype.itemsize) for array in arrays)
+    input_entries = sum(array.size for array in arrays)
+    input_bytes = sum(array.size * array.dtype.itemsize for array in arrays)
     materialization = policy.materialization
     if input_entries > materialization.max_entries:
         raise ValueError(
@@ -162,13 +162,11 @@ class ConvexProgramPlan(StrictModule):
             sparse = program.constraint_is_sparse or program.quadratic_is_sparse
             if sparse and not capabilities.sparse:
                 raise ValueError(
-                    f"Method {policy.method.method_id!r} does not support sparse "
-                    "canonical program data."
+                    f"Method {policy.method.method_id!r} does not support sparse canonical program data."
                 )
             if not sparse and not capabilities.dense:
                 raise ValueError(
-                    f"Method {policy.method.method_id!r} does not support dense "
-                    "canonical program data."
+                    f"Method {policy.method.method_id!r} does not support dense canonical program data."
                 )
             if isinstance(policy.method, (MPAXraPDHG, MPAXr2HPDHG)):
                 blocks = (

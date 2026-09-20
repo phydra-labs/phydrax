@@ -82,7 +82,7 @@ def run_benchmarks(
     repeats: int = 5,
 ) -> dict[str, Any]:
     """Compare dense and Davies–Harte setup, storage, and sampled-path costs."""
-    resolved_sizes = tuple(int(size) for size in sizes)
+    resolved_sizes = tuple(sizes)
     if not resolved_sizes or any(size < 2 for size in resolved_sizes):
         raise ValueError("sizes must contain integers of at least two.")
     if int(num_paths) < 2:

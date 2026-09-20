@@ -133,7 +133,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             internal_vertex = vertex_edge_count == 2
         else:
             boundary_edge = edge_face_count == 1
-            boundary_vertex = np.zeros((scene.vertex_count,), dtype=bool)
+            boundary_vertex = np.zeros((scene.vertex_count,), dtype=np.bool_)
             if np.any(boundary_edge):
                 boundary_vertex[np.unique(edges[boundary_edge])] = True
             internal_vertex = ~boundary_vertex

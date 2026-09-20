@@ -174,7 +174,7 @@ def _stb_qualification(rig, geometry):
         prepared,
         jnp.zeros((1, 3)),
         jnp.zeros((1,)),
-        jnp.zeros((1,), dtype=bool),
+        jnp.zeros((1,), dtype="bool"),
     )
     truth = jnp.asarray([[0.1, 0.0, 6.0]])
     observed = phx.rendering.render_camera_stack(

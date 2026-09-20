@@ -75,7 +75,7 @@ class DimensionSamplingPolicy(StrictModule):
                 raise ValueError("Importance sampling currently requires replacement.")
             if probabilities is None:
                 raise ValueError("Importance sampling requires probabilities.")
-            probs = jnp.asarray(probabilities, dtype=float).reshape((-1,))
+            probs = jnp.asarray(probabilities, dtype=jnp.float64).reshape((-1,))
             if probs.shape != (dimension,):
                 raise ValueError("probabilities must have shape (total_dimension,).")
             if bool(jnp.any(~jnp.isfinite(probs))) or bool(jnp.any(probs <= 0.0)):
@@ -140,8 +140,8 @@ class DimensionOperatorSamples(StrictModule):
             raise ValueError("values must have subset_size as their first axis.")
         mean = jnp.mean(samples, axis=0)
         if policy.subset_size == 1:
-            sample_variance = jnp.full(mean.shape, jnp.nan, dtype=float)
-            standard_error = jnp.full(mean.shape, jnp.nan, dtype=float)
+            sample_variance = jnp.full(mean.shape, jnp.nan, dtype=jnp.float64)
+            standard_error = jnp.full(mean.shape, jnp.nan, dtype=jnp.float64)
         else:
             centered = samples - mean
             sample_variance = jnp.sum(jnp.abs(centered) ** 2, axis=0) / float(

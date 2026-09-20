@@ -41,7 +41,7 @@ def test_cardinality_matches_enumeration_and_certifies_boundary(count):
     np.testing.assert_array_equal(result.decision.indices, jnp.asarray(expected))
     np.testing.assert_array_equal(
         result.features,
-        jnp.asarray([index in expected for index in range(4)], dtype=float),
+        jnp.asarray([index in expected for index in range(4)], dtype="float64"),
     )
     np.testing.assert_allclose(result.objective_value, costs[list(expected)].sum())
     assert result.status == int(phx.combinatorial.CombinatorialStatus.OPTIMAL)
@@ -91,7 +91,9 @@ def test_cardinality_masks_infeasibility_and_batches_under_jit():
     )
     assert infeasible.status == int(phx.combinatorial.CombinatorialStatus.INFEASIBLE)
     assert not infeasible.valid
-    np.testing.assert_array_equal(infeasible.decision.indices, -jnp.ones((3,), dtype=int))
+    np.testing.assert_array_equal(
+        infeasible.decision.indices, -jnp.ones((3,), dtype="int64")
+    )
 
     nonfinite = phx.combinatorial.solve_combinatorial(
         phx.combinatorial.LinearCombinatorialProblem(
@@ -114,7 +116,7 @@ def test_cardinality_rejects_invalid_static_contracts():
     with pytest.raises(ValueError, match=r"\[0, size\]"):
         phx.combinatorial.CardinalitySpace(3, 4)
     with pytest.raises(ValueError, match="shape"):
-        phx.combinatorial.CardinalitySpace(3, 1, valid=jnp.ones((2,), dtype=bool))
+        phx.combinatorial.CardinalitySpace(3, 1, valid=jnp.ones((2,), dtype="bool"))
 
 
 def test_cardinality_oracle_honors_required_and_forbidden_items():

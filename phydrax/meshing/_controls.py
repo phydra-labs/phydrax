@@ -84,7 +84,7 @@ class RegionSeed(StrictModule, NonTrainableState):
         role: _organization.RegionRole,
         /,
     ):
-        coordinates = np.asarray(point, dtype=float)
+        coordinates = np.asarray(point, dtype=np.float64)
         region = str(region_name).strip()
         material = str(material_id).strip()
         if (
@@ -118,7 +118,7 @@ class HoleSeed(StrictModule, NonTrainableState):
     seed_id: str = eqx.field(static=True)
 
     def __init__(self, point: ArrayLike, scope: MeshingScope, /):
-        coordinates = np.asarray(point, dtype=float)
+        coordinates = np.asarray(point, dtype=np.float64)
         if (
             coordinates.ndim != 1
             or coordinates.size == 0
@@ -243,7 +243,7 @@ class LayerSchedule(StrictModule, NonTrainableState):
             or np.issubdtype(values.dtype, np.floating)
         ):
             raise TypeError("thicknesses must contain real numeric values.")
-        normalized = values.astype(float, copy=False)
+        normalized = values.astype("float64", copy=False)
         if not np.all(np.isfinite(normalized)) or np.any(normalized <= 0.0):
             raise ValueError("thicknesses must be finite and strictly positive.")
         explicit = tuple(float(value) for value in normalized)
@@ -402,7 +402,7 @@ class PeriodicConstraint(StrictModule, NonTrainableState):
             raise TypeError("Periodic scopes must be MeshingScope values.")
         if source_scope.source_revision != target_scope.source_revision:
             raise ValueError("Periodic scopes must share one source revision.")
-        matrix = np.asarray(transform, dtype=float)
+        matrix = np.asarray(transform, dtype=np.float64)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] < 2:
             raise ValueError("Periodic transform must be one square homogeneous matrix.")
         if not np.all(np.isfinite(matrix)) or not np.allclose(
@@ -410,7 +410,7 @@ class PeriodicConstraint(StrictModule, NonTrainableState):
             np.eye(matrix.shape[0])[-1],
         ):
             raise ValueError("Periodic transform must be finite and homogeneous.")
-        if abs(np.linalg.det(matrix[:-1, :-1])) <= np.finfo(float).eps:
+        if abs(np.linalg.det(matrix[:-1, :-1])) <= np.finfo(np.float64).eps:
             raise ValueError("Periodic transform must be invertible.")
         threshold = float(tolerance)
         if not np.isfinite(threshold) or threshold < 0.0:

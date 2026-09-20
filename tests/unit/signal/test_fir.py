@@ -17,7 +17,7 @@ def _active_values(result):
 
 
 def test_zero_state_fir_matches_scipy_and_preserves_middle_sample_axis():
-    values = jnp.arange(2 * 11 * 3, dtype=float).reshape((2, 11, 3))
+    values = jnp.arange(2 * 11 * 3, dtype="float64").reshape((2, 11, 3))
     taps = jnp.asarray((0.25, 0.5, 0.25))
 
     output = fir_filter(values, taps, axis=1)

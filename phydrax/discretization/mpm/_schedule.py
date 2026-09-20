@@ -9,17 +9,17 @@ import abc
 import equinox as eqx
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
 class AbstractExplicitMPMSchedule(StrictModule, NonTrainableState):
     """Static phase ordering for one explicit material-point attempt."""
 
-    schedule_code: AbstractAttribute[int]
-    stress_update: AbstractAttribute[str]
-    second_momentum_extrapolation: AbstractAttribute[bool]
-    schedule_id: AbstractAttribute[str]
+    schedule_code: eqx.AbstractVar[int]
+    stress_update: eqx.AbstractVar[str]
+    second_momentum_extrapolation: eqx.AbstractVar[bool]
+    schedule_id: eqx.AbstractVar[str]
 
     @property
     @abc.abstractmethod

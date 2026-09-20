@@ -76,14 +76,14 @@ def reduced_potential_dataset_from_alchemical_evaluation(
     )
     if unit_id != "1":
         raise ValueError("Alchemical reduced potentials must use unit_id='1'.")
-    beta = np.asarray(inverse_temperatures, dtype=float)
+    beta = np.asarray(inverse_temperatures, dtype=np.float64)
     if beta.shape != np.asarray(
         evaluation.inverse_temperatures
     ).shape or not np.array_equal(beta, np.asarray(evaluation.inverse_temperatures)):
         raise ValueError("inverse_temperatures do not match the alchemical evaluation.")
     values = jnp.asarray(evaluation.values)
-    coverage = jnp.asarray(evaluation.coverage, dtype=bool)
-    successful = jnp.asarray(evaluation.successful, dtype=bool)
+    coverage = jnp.asarray(evaluation.coverage, dtype=jnp.bool_)
+    successful = jnp.asarray(evaluation.successful, dtype=jnp.bool_)
     if (
         values.ndim != 2
         or coverage.shape != values.shape
@@ -135,8 +135,8 @@ def reduced_potential_dataset_from_multistate(result) -> ReducedPotentialDataset
     if not isinstance(result, AtomisticMultistateSegmentResult):
         raise TypeError("result must be AtomisticMultistateSegmentResult.")
     values = jnp.asarray(result.reduced_potentials)
-    coverage = jnp.asarray(result.coverage, dtype=bool)
-    active = jnp.asarray(result.sample_active, dtype=bool)
+    coverage = jnp.asarray(result.coverage, dtype=jnp.bool_)
+    active = jnp.asarray(result.sample_active, dtype=jnp.bool_)
     if values.ndim != 3:
         raise ValueError(
             "Segment reduced_potentials must have shape (capacity,states,replicas)."
@@ -157,7 +157,7 @@ def reduced_potential_dataset_from_multistate(result) -> ReducedPotentialDataset
     ):
         if jnp.asarray(array).shape != expected_samples:
             raise ValueError(f"Segment {name} must have shape (capacity,replicas).")
-    if bool(jnp.any(active & jnp.asarray(result.sams_adapting, dtype=bool))):
+    if bool(jnp.any(active & jnp.asarray(result.sams_adapting, dtype=jnp.bool_))):
         raise ValueError(
             "SAMS adaptation draws must be inactive for free-energy analysis."
         )
@@ -263,8 +263,8 @@ def reduced_work_dataset_from_alchemical_switching(
     )
     if not record.successful or not complete:
         raise ValueError("Switching record must own complete runtime-qualified coverage.")
-    forward_count = int(jnp.asarray(record.forward_work).size)
-    reverse_count = int(jnp.asarray(record.reverse_work).size)
+    forward_count = jnp.asarray(record.forward_work).size
+    reverse_count = jnp.asarray(record.reverse_work).size
     if (
         record.forward_lineage.sample_count != forward_count
         or record.reverse_lineage.sample_count != reverse_count
@@ -284,8 +284,8 @@ def reduced_work_dataset_from_alchemical_switching(
         raise ValueError("Reverse switching lineage has the wrong origin identity.")
 
     def oriented(work, coverage, lineage, source, destination):
-        covered = jnp.asarray(coverage, dtype=bool)
-        active = jnp.ones(covered.shape, dtype=bool)
+        covered = jnp.asarray(coverage, dtype=jnp.bool_)
+        active = jnp.ones(covered.shape, dtype=jnp.bool_)
         return (
             jnp.asarray(work),
             covered,

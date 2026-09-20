@@ -53,7 +53,7 @@ class TensorTrainSolvePlan(StrictModule, NonTrainableState):
         max_dense_entries: int,
         max_local_unknowns: int,
     ):
-        modes = tuple(int(size) for size in mode_sizes)
+        modes = tuple(mode_sizes)
         rank = int(max_rank)
         enrich = int(enrichment_rank)
         sweep_count = int(sweeps)
@@ -304,8 +304,7 @@ def _update_core(
     frame = _core_frame(tensor, axis)
     if frame.shape[1] > plan.max_local_unknowns:
         raise ValueError(
-            f"ALS core needs {frame.shape[1]} local unknowns, exceeding budget "
-            f"{plan.max_local_unknowns}."
+            f"ALS core needs {frame.shape[1]} local unknowns, exceeding budget {plan.max_local_unknowns}."
         )
     design = ein.contract("ij,jk->ik", matrix, frame)
     local = regularized_least_squares(design, right_hand_side, plan.local_regularization)

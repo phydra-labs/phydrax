@@ -159,7 +159,7 @@ class StochasticElectronicKineticPolicy(StrictModule):
         cumulative_mean = jnp.cumsum(complex_samples) / jnp.arange(
             1, self.maximum_probes + 1
         )
-        centered = complex_samples[:, None] - cumulative_mean[None, :]
+        complex_samples[:, None] - cumulative_mean[None, :]
         # The final fixed population remains the reported unbiased estimate.
         trace = cumulative_mean[-1]
         variance = jnp.sum(jnp.abs(complex_samples - trace) ** 2) / max(
@@ -238,7 +238,7 @@ class ElectronicIntegralHamiltonian(StrictModule):
         self.two_body = two
         self.representation = representation
         self.projector_id = None if projector_id is None else str(projector_id)
-        self.orbital_count = int(one.shape[0])
+        self.orbital_count = one.shape[0]
         self.hermiticity_residual = hermiticity
         self.antisymmetry_residual = antisymmetry
         self.valid = (
@@ -254,7 +254,7 @@ class ElectronicIntegralHamiltonian(StrictModule):
         )
 
     def connected(self, occupation: ArrayLike, /) -> ElectronicConnections:
-        occupied_mask = np.asarray(occupation, dtype=bool)
+        occupied_mask = np.asarray(occupation, dtype=np.bool_)
         if occupied_mask.shape != (self.orbital_count,):
             raise ValueError("occupation must select the finite spin-orbital basis.")
         occupied = np.flatnonzero(occupied_mask).tolist()
@@ -297,12 +297,12 @@ class ElectronicIntegralHamiltonian(StrictModule):
         return ElectronicConnections(
             configurations=jnp.asarray(np.stack(configurations)),
             matrix_elements=jnp.asarray(elements),
-            active=jnp.ones((capacity,), dtype=bool),
+            active=jnp.ones((capacity,), dtype=jnp.bool_),
             capacity=capacity,
         )
 
     def diagonal(self, occupation: ArrayLike, /) -> Array:
-        mask = jnp.asarray(occupation, dtype=bool)
+        mask = jnp.asarray(occupation, dtype=jnp.bool_)
         weights = mask.astype(self.one_body.real.dtype)
         return contract("p,p->", weights, jnp.diag(self.one_body)) + 0.5 * contract(
             "p,q,pqpq->", weights, weights, self.two_body
@@ -337,7 +337,7 @@ def periodic_coulomb_energy(
         or lattice.shape != (positions.shape[1], positions.shape[1])
     ):
         raise ValueError("periodic positions/charges/cell shapes are inconsistent.")
-    dimension = int(positions.shape[1])
+    dimension = positions.shape[1]
     if dimension != 3:
         raise ValueError("The finite Ewald electronic route currently supports 3D cells.")
     real_radius, reciprocal = int(real_image_radius), int(reciprocal_radius)
@@ -348,7 +348,7 @@ def periodic_coulomb_energy(
     integer_displacement = jnp.all(
         fractional_displacement == jnp.rint(fractional_displacement), axis=-1
     )
-    distinct_particles = ~jnp.eye(positions.shape[0], dtype=bool)
+    distinct_particles = ~jnp.eye(positions.shape[0], dtype=jnp.bool_)
     periodic_coincidence = jnp.any(integer_displacement & distinct_particles)
     positions = jnp.mod(positions, jnp.asarray(1, dtype=positions.dtype))
     net_charge = jnp.sum(charge)
@@ -367,7 +367,7 @@ def periodic_coulomb_energy(
         + shifts[None, None, :, :] @ lattice
     )
     squared = jnp.sum(displacement * displacement, axis=-1)
-    particle_identity = jnp.eye(positions.shape[0], dtype=bool)[:, :, None]
+    particle_identity = jnp.eye(positions.shape[0], dtype=jnp.bool_)[:, :, None]
     zero_image = jnp.all(shifts == 0, axis=-1)[None, None, :]
     self_zero = particle_identity & zero_image
     coincident = (squared == 0.0) & ~self_zero

@@ -116,7 +116,7 @@ def finite_pfaffian(matrix: ArrayLike, plan: PfaffianControlPlan, /) -> Array:
     value = jnp.asarray(matrix)
     if value.ndim != 2 or value.shape[0] != value.shape[1]:
         raise ValueError("Pfaffian input must be one square matrix.")
-    dimension = int(value.shape[0])
+    dimension = value.shape[0]
     if dimension % 2:
         raise ValueError("Pfaffian input dimension must be even.")
     if dimension > plan.maximum_dimension:
@@ -124,7 +124,7 @@ def finite_pfaffian(matrix: ArrayLike, plan: PfaffianControlPlan, /) -> Array:
             f"Pfaffian dimension {dimension} exceeds capacity {plan.maximum_dimension}."
         )
     if not jnp.issubdtype(value.dtype, jnp.inexact):
-        value = value.astype(float)
+        value = value.astype("float64")
     return _pfaffian_recursive(value)
 
 

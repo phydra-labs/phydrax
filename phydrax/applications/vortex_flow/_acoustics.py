@@ -56,8 +56,8 @@ class AerodynamicLoadHistory(StrictModule):
             canonical_fingerprint(
                 {
                     "kind": "aerodynamic-load-history",
-                    "time_count": int(time.size),
-                    "source_count": int(position.shape[1]),
+                    "time_count": time.size,
+                    "source_count": position.shape[1],
                 }
             )
             if history_id is None

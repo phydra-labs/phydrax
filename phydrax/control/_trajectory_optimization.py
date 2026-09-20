@@ -33,11 +33,11 @@ def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError("Trajectory optimization arrays must be real-valued.")
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _case_shape(value: Sequence[int], /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("Trajectory optimization case dimensions must be positive.")
     return shape
@@ -92,8 +92,8 @@ class TrajectoryOptimizationView(StrictModule):
     ):
         times_ = _inexact(times)
         cases = _case_shape(case_shape)
-        state_event = tuple(int(size) for size in state_shape)
-        control_event = tuple(int(size) for size in control_shape)
+        state_event = tuple(state_shape)
+        control_event = tuple(control_shape)
         geometry = EuclideanStateGeometry() if state_geometry is None else state_geometry
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("state_geometry must be an AbstractStateGeometry or None.")
@@ -101,12 +101,12 @@ class TrajectoryOptimizationView(StrictModule):
             raise ValueError(
                 "TrajectoryOptimizationView requires exact inverse-retraction geometry."
             )
-        if times_.ndim != 1 or int(times_.size) < 2:
+        if times_.ndim != 1 or times_.size < 2:
             raise ValueError("Trajectory times must be rank one with at least two nodes.")
         states_ = _inexact(states)
         controls_ = _inexact(controls)
-        expected_states = cases + (int(times_.size),) + state_event
-        expected_controls = cases + (int(times_.size) - 1,) + control_event
+        expected_states = cases + (times_.size,) + state_event
+        expected_controls = cases + (times_.size - 1,) + control_event
         if states_.shape != expected_states:
             raise ValueError(
                 f"states must have shape {expected_states}; got {states_.shape}."
@@ -131,7 +131,7 @@ class TrajectoryOptimizationView(StrictModule):
 
     @property
     def num_nodes(self) -> int:
-        return int(self.times.size)
+        return self.times.size
 
     @property
     def num_intervals(self) -> int:
@@ -169,12 +169,12 @@ class TrajectoryOptimizationView(StrictModule):
         axis = len(self.case_shape)
         lower = jnp.take(self.states, indices, axis=axis)
         upper = jnp.take(self.states, indices + 1, axis=axis)
-        sample_count = (prod(self.case_shape) if self.case_shape else 1) * int(query.size)
+        sample_count = (prod(self.case_shape) if self.case_shape else 1) * query.size
         flat_lower = lower.reshape((sample_count,) + self.state_shape)
         flat_upper = upper.reshape((sample_count,) + self.state_shape)
         flat_weight = jnp.broadcast_to(
             weight,
-            self.case_shape + (int(query.size),),
+            self.case_shape + (query.size,),
         ).reshape((sample_count,))
 
         def interpolate(base, point, fraction):
@@ -302,8 +302,7 @@ class TrajectoryOptimizationProblem(StrictModule):
     ):
         if not isinstance(dynamics, (ContinuousSystem, DifferentialAlgebraicSystem)):
             raise TypeError(
-                "TrajectoryOptimizationProblem dynamics must be ContinuousSystem or "
-                "DifferentialAlgebraicSystem."
+                "TrajectoryOptimizationProblem dynamics must be ContinuousSystem or DifferentialAlgebraicSystem."
             )
         if isinstance(dynamics, ContinuousSystem):
             state_layout = dynamics.state_layout
@@ -329,14 +328,12 @@ class TrajectoryOptimizationProblem(StrictModule):
                 state_shape and tuple(state.shape[-len(state_shape) :]) != state_shape
             ):
                 raise ValueError(
-                    "initial_state must end with dynamics state shape "
-                    f"{state_shape}; got {state.shape}."
+                    f"initial_state must end with dynamics state shape {state_shape}; got {state.shape}."
                 )
             cases = tuple(state.shape[: state.ndim - len(state_shape)])
             if requested_cases and requested_cases != cases:
                 raise ValueError(
-                    f"case_shape {requested_cases} does not match initial_state cases "
-                    f"{cases}."
+                    f"case_shape {requested_cases} does not match initial_state cases {cases}."
                 )
             state = eqx.error_if(
                 state,

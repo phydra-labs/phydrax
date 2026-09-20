@@ -122,9 +122,9 @@ def test_snapshot_reports_staleness_crossed_quotes_and_causal_exclusion() -> Non
     ask = QuoteKey("AAPL", "ask", venue="XNAS")
     late = QuoteKey("AAPL", "last", venue="XNAS")
     observations = (
-        QuoteObservation(bid, 101.0, _timestamp(10, 20, "bid-v1"), _lineage()),
-        QuoteObservation(ask, 100.0, _timestamp(10, 20, "ask-v1"), _lineage()),
-        QuoteObservation(late, 100.5, _timestamp(10, 80, "last-v1"), _lineage()),
+        QuoteObservation(bid, 101.0, _timestamp(10, 20, "bid"), _lineage()),
+        QuoteObservation(ask, 100.0, _timestamp(10, 20, "ask"), _lineage()),
+        QuoteObservation(late, 100.5, _timestamp(10, 80, "last"), _lineage()),
     )
     snapshot = MarketDataSnapshot(
         observations, snapshot_time=_timestamp(100, 100, "archive")

@@ -47,8 +47,8 @@ def _schedule(
                 start,
                 end,
                 quantity,
-                np.asarray(rates, dtype=float),
-                None if uncertainty is None else np.asarray(uncertainty, dtype=float),
+                np.asarray(rates, dtype="float64"),
+                None if uncertainty is None else np.asarray(uncertainty, dtype="float64"),
             )
             for start, end in intervals
         )

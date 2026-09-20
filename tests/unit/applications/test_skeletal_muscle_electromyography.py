@@ -31,18 +31,14 @@ def test_event_template_superposition_mask_and_fractional_delay():
         template_source_id="licensed-explicit-test-template",
     ).prepare()
     times = jnp.arange(8) * 0.001
-    single = prepared.synthesize(
-        jnp.asarray(((0.0,),)), jnp.asarray(((True,),)), times
-    )
+    single = prepared.synthesize(jnp.asarray(((0.0,),)), jnp.asarray(((True,),)), times)
     double = prepared.synthesize(
         jnp.asarray(((0.0, 0.002),)), jnp.asarray(((True, True),)), times
     )
     masked = prepared.synthesize(
         jnp.asarray(((0.0, 0.002),)), jnp.asarray(((True, False),)), times
     )
-    half = prepared.synthesize(
-        jnp.asarray(((0.0005,),)), jnp.asarray(((True,),)), times
-    )
+    half = prepared.synthesize(jnp.asarray(((0.0005,),)), jnp.asarray(((True,),)), times)
 
     assert bool(single.evidence.successful)
     np.testing.assert_allclose(single.voltage_V[0, :5], (0.0, 1.0, 2.0, 1.0, 0.0))
@@ -131,9 +127,10 @@ def test_planar_conductor_plan_identity_includes_physical_parameters():
     different_depth = _conductor(-0.02)
     different_conductivity = _conductor(muscle_longitudinal_conductivity=0.6)
 
-    assert len(
-        {baseline.plan_id, different_depth.plan_id, different_conductivity.plan_id}
-    ) == 3
+    assert (
+        len({baseline.plan_id, different_depth.plan_id, different_conductivity.plan_id})
+        == 3
+    )
 
 
 def _neutral_source():
@@ -155,7 +152,9 @@ def test_planar_surface_conductor_zero_mode_reality_and_depth_attenuation():
         jnp.abs(shallow_result.surface_voltage_V)
     )
     compiled = eqx.filter_jit(shallow.evaluate)(source)
-    np.testing.assert_allclose(compiled.surface_voltage_V, shallow_result.surface_voltage_V)
+    np.testing.assert_allclose(
+        compiled.surface_voltage_V, shallow_result.surface_voltage_V
+    )
 
 
 def test_planar_conductor_rejects_non_neutral_source_and_montage():

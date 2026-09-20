@@ -7,7 +7,6 @@ from __future__ import annotations
 from math import sqrt
 from typing import Literal
 
-import equinox as eqx
 import jax.numpy as jnp
 from jax import core as jax_core
 from jaxtyping import Array
@@ -43,7 +42,7 @@ def _tensor_basis(dtype: jnp.dtype, /) -> Array:
     )
 
 
-class O3Features(eqx.Module):
+class O3Features(StrictModule):
     """Cartesian realization of scalar, vector, and rank-two O(3) irreps."""
 
     scalars: Array
@@ -75,8 +74,7 @@ class O3Representation(StrictModule, NonTrainableState):
         pseudotensors: int = 0,
     ):
         counts = tuple(
-            int(value)
-            for value in (
+            (
                 scalars,
                 pseudoscalars,
                 vectors,
@@ -109,10 +107,9 @@ class O3Representation(StrictModule, NonTrainableState):
 
     def split(self, values: Array, /) -> O3Features:
         array = jnp.asarray(values)
-        if int(array.shape[-1]) != self.packed_size:
+        if array.shape[-1] != self.packed_size:
             raise ValueError(
-                f"O(3) values require packed size {self.packed_size}; "
-                f"got {array.shape[-1]}."
+                f"O(3) values require packed size {self.packed_size}; got {array.shape[-1]}."
             )
         offset = 0
 

@@ -66,7 +66,7 @@ class HarmonicThermodynamicsResult(StrictModule, NonTrainableState):
         self.asymptotic_mode_count = jnp.asarray(
             asymptotic_count, dtype=jnp.int32
         ).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.unit_system_id = str(unit_system_id)
         self.normalization = "per-primitive-cell"
         self.result_id = canonical_fingerprint(
@@ -106,8 +106,8 @@ class HarmonicThermodynamicsPlan(StrictModule, NonTrainableState):
         *,
         maximum_scalar_evaluations: int = 2_000_000_000,
     ):
-        weights = np.asarray(qpoint_weights, dtype=float)
-        temperature = np.asarray(temperatures, dtype=float)
+        weights = np.asarray(qpoint_weights, dtype=np.float64)
+        temperature = np.asarray(temperatures, dtype=np.float64)
         if (
             weights.ndim != 1
             or weights.size == 0
@@ -152,7 +152,7 @@ class HarmonicThermodynamicsPlan(StrictModule, NonTrainableState):
         frequency = jnp.asarray(angular_frequencies, dtype=self.qpoint_weights.dtype)
         if frequency.ndim != 2 or frequency.shape[0] != self.qpoint_weights.shape[0]:
             raise ValueError("Angular frequencies must have shape (Q, branches).")
-        if int(frequency.size * self.temperatures.size) > self.maximum_scalar_evaluations:
+        if frequency.size * self.temperatures.size > self.maximum_scalar_evaluations:
             raise ValueError(
                 "Harmonic thermodynamic scalar-evaluation capacity exceeded."
             )
@@ -246,7 +246,7 @@ class QuasiHarmonicResult(StrictModule, NonTrainableState):
         self.interpolation_residuals = jnp.asarray(
             interpolation, dtype=self.temperatures.dtype
         )
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.result_id = canonical_fingerprint(
             {
                 "kind": "quasi-harmonic-result",
@@ -284,9 +284,9 @@ class QuasiHarmonicPlan(StrictModule, NonTrainableState):
         *,
         minimum_boundary_margin: float = 0.0,
     ):
-        volume = np.asarray(volumes, dtype=float)
-        static = np.asarray(static_energies, dtype=float)
-        frequency = np.asarray(frequencies_by_volume, dtype=float)
+        volume = np.asarray(volumes, dtype=np.float64)
+        static = np.asarray(static_energies, dtype=np.float64)
+        frequency = np.asarray(frequencies_by_volume, dtype=np.float64)
         if not isinstance(thermodynamics, HarmonicThermodynamicsPlan):
             raise TypeError("thermodynamics must be HarmonicThermodynamicsPlan.")
         if (
@@ -431,7 +431,7 @@ class LatticeConvergenceReport(StrictModule, NonTrainableState):
                 "Convergence estimates must have equal shape and finite values."
             )
         absolute = np.abs(second - first)
-        relative = absolute / np.maximum(np.abs(second), np.finfo(float).tiny)
+        relative = absolute / np.maximum(np.abs(second), np.finfo(np.float64).tiny)
         abs_tol = float(absolute_tolerance)
         rel_tol = float(relative_tolerance)
         if any(not isfinite(value) or value < 0.0 for value in (abs_tol, rel_tol)):

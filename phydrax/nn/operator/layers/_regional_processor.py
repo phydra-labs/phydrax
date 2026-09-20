@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array
 
+from phydrax._strict import StrictModule
+
 from ...._model import register_artifact_value
 from ....graph import (
     batched_knn_graph,
@@ -27,11 +29,11 @@ from ...models._mlp import MLP
 
 def _apply_rms_norm(norm: eqx.nn.RMSNorm, values: Array, /) -> Array:
     values = jnp.asarray(values)
-    flattened = values.reshape((-1, int(values.shape[-1])))
+    flattened = values.reshape((-1, values.shape[-1]))
     return jax.vmap(norm)(flattened).reshape(values.shape)
 
 
-class _RegionalMessage(eqx.Module):
+class _RegionalMessage(StrictModule):
     model: MLP
     source_norm: eqx.nn.RMSNorm
     target_norm: eqx.nn.RMSNorm
@@ -81,7 +83,7 @@ class _RegionalMessage(eqx.Module):
         return self.model(features)
 
 
-class _RegionalUpdate(eqx.Module):
+class _RegionalUpdate(StrictModule):
     model: MLP
     node_norm: eqx.nn.RMSNorm
     message_norm: eqx.nn.RMSNorm
@@ -174,7 +176,7 @@ def _regional_block(
     )
 
 
-class RegionalGraphProcessor(eqx.Module):
+class RegionalGraphProcessor(StrictModule):
     """Measure-aware message passing on a regional latent point cloud.
 
     Coordinates and graph topology are rebuilt from each operator batch with a
@@ -276,22 +278,22 @@ class RegionalGraphProcessor(eqx.Module):
         key: EvalKey = None,
     ) -> Array:
         values = jnp.asarray(values)
-        coordinates = jnp.asarray(coordinates, dtype=float)
-        measure = jnp.asarray(measure, dtype=float)
-        mask = jnp.asarray(mask, dtype=bool)
-        if values.ndim < 2 or int(values.shape[-1]) != self.channels:
+        coordinates = jnp.asarray(coordinates, dtype=jnp.float64)
+        measure = jnp.asarray(measure, dtype=jnp.float64)
+        mask = jnp.asarray(mask, dtype=jnp.bool_)
+        if values.ndim < 2 or values.shape[-1] != self.channels:
             raise ValueError(
                 f"Regional values must end in (num_points, {self.channels})."
             )
         if coordinates.shape[:-1] != values.shape[:-1]:
             raise ValueError("Regional coordinates and values must share point axes.")
-        if int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
                 f"Regional coordinates must have dimension {self.coord_dim}."
             )
         if measure.shape != values.shape[:-1] or mask.shape != values.shape[:-1]:
             raise ValueError("Regional measure and mask must match the value point axes.")
-        if self.neighbors > int(values.shape[-2]):
+        if self.neighbors > values.shape[-2]:
             raise ValueError("neighbors cannot exceed the regional latent point count.")
 
         graph = batched_knn_graph(
@@ -305,7 +307,7 @@ class RegionalGraphProcessor(eqx.Module):
             target_chunk_size=self.target_chunk_size,
             validate=False,
         )
-        edge_mask = jnp.asarray(graph.edge_mask, dtype=bool)
+        edge_mask = jnp.asarray(graph.edge_mask, dtype=jnp.bool_)
         keep = self.edge_dropout(jnp.ones(edge_mask.shape), key=key) > 0.0
         graph = graph.replace(edge_mask=edge_mask & keep, validate=False)
         output = self.processor(graph)
@@ -318,7 +320,7 @@ class RegionalGraphProcessor(eqx.Module):
 
 
 register_artifact_value(
-    "phydrax.operator.layer:RegionalGraphProcessor@1",
+    "phydrax.operator.layer:RegionalGraphProcessor",
     RegionalGraphProcessor,
 )
 

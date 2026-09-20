@@ -34,14 +34,8 @@ def _warped_map(reference):
 
 def _warped_map_3d(reference):
     xi, eta, zeta = reference
-    warp = (
-        jnp.sin(jnp.pi * xi)
-        * jnp.sin(jnp.pi * eta)
-        * jnp.sin(jnp.pi * zeta)
-    )
-    return jnp.asarray(
-        (xi + 0.02 * warp, eta - 0.015 * warp, zeta + 0.01 * warp)
-    )
+    warp = jnp.sin(jnp.pi * xi) * jnp.sin(jnp.pi * eta) * jnp.sin(jnp.pi * zeta)
+    return jnp.asarray((xi + 0.02 * warp, eta - 0.015 * warp, zeta + 0.01 * warp))
 
 
 def test_affine_mapped_gradient_integral_and_face_geometry_are_exact():

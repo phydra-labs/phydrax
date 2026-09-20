@@ -155,7 +155,7 @@ class ObliqueShockReferencePlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Attached oblique-shock inputs are invalid.")
         mach_angle = np.arcsin(1.0 / mach)
-        epsilon = 32.0 * np.finfo(float).eps
+        epsilon = 32.0 * np.finfo(np.float64).eps
         beta_samples = np.linspace(
             mach_angle + epsilon,
             0.5 * np.pi - epsilon,

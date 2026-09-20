@@ -71,7 +71,7 @@ class PeriodicEwaldEvidence(StrictModule, NonTrainableState):
             (energy_closure_residual, force_balance_residual, stress_symmetry_residual),
             dtype=net.dtype,
         ).reshape((3,))
-        background = jnp.asarray(background_applied, dtype=bool).reshape(())
+        background = jnp.asarray(background_applied, dtype=jnp.bool_).reshape(())
         finite = (
             jnp.isfinite(net)
             & ~jnp.isnan(distance)
@@ -80,7 +80,7 @@ class PeriodicEwaldEvidence(StrictModule, NonTrainableState):
             & jnp.all(residuals >= 0.0)
         )
         admitted = (
-            jnp.asarray(successful, dtype=bool).reshape(())
+            jnp.asarray(successful, dtype=jnp.bool_).reshape(())
             & finite
             & jnp.all(residuals <= tolerance)
         )
@@ -347,7 +347,7 @@ class PreparedPeriodicEwald(StrictModule, NonTrainableState):
         )
         distance_squared = jnp.sum(displacement**2, axis=-1)
         zero_translation = jnp.all(self.real_indices == 0, axis=1)
-        diagonal = jnp.eye(positions.shape[0], dtype=bool)[:, :, None]
+        diagonal = jnp.eye(positions.shape[0], dtype=jnp.bool_)[:, :, None]
         include = ~(diagonal & zero_translation[None, None, :])
         safe_distance = jnp.sqrt(
             jnp.where(
@@ -570,7 +570,7 @@ class GTHComponentEvidence(StrictModule, NonTrainableState):
         if norms.size == 0 or not source or not plan:
             raise ValueError("GTH component evidence is incomplete.")
         finite = jnp.all(jnp.isfinite(norms)) & jnp.all(norms >= 0.0)
-        admitted = jnp.asarray(successful, dtype=bool).reshape(()) & finite
+        admitted = jnp.asarray(successful, dtype=jnp.bool_).reshape(()) & finite
         self.component_norms = norms
         self.successful = admitted
         self.source_manifest_id = source

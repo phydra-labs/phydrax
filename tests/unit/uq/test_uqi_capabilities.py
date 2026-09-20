@@ -31,7 +31,9 @@ def test_complex_likelihoods_are_normalized_real_and_dtype_preserving():
         hermitian_tolerance=1e-12,
         symmetry_tolerance=1e-12,
     )
-    value = dense.log_prob(jnp.zeros((2,), dtype=complex), jnp.zeros((2,), dtype=complex))
+    value = dense.log_prob(
+        jnp.zeros((2,), dtype="complex128"), jnp.zeros((2,), dtype="complex128")
+    )
     assert value.shape == ()
     assert jnp.isfinite(value)
 

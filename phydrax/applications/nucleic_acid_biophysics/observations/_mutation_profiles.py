@@ -208,8 +208,7 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
             or coverage_.shape != mutation_.shape
         ):
             raise ValueError(
-                "Mutation, effective-depth, and coverage arrays must share a non-empty "
-                "(profile, nucleotide) shape."
+                "Mutation, effective-depth, and coverage arrays must share a non-empty (profile, nucleotide) shape."
             )
         for value, name in (
             (mutation_, "mutation"),
@@ -219,7 +218,7 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
             if value.dtype != bool and not np.issubdtype(value.dtype, np.integer):
                 raise TypeError(f"Mapped {name} must be a boolean or integer array.")
         mutation_ = mutation_.astype(np.int8)
-        observed_ = observed_.astype(bool)
+        observed_ = observed_.astype("bool")
         coverage_ = coverage_.astype(np.int8)
         if (
             np.any((mutation_ != 0) & (mutation_ != 1))
@@ -292,7 +291,7 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
             raise ValueError(
                 "Source rows and boolean mapping inclusion must provide one valid value per profile."
             )
-        included = included.astype(bool)
+        included = included.astype("bool")
         source_coordinates = tuple(
             zip(indices[7].tolist(), source_rows.astype(np.int64).tolist(), strict=True)
         )
@@ -329,8 +328,7 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
             previous = replicate_coordinates.setdefault(replicate, coordinates)
             if previous != coordinates:
                 raise ValueError(
-                    "A replicate ID must identify one construct, condition, preparation, "
-                    "batch, reagent, and protocol."
+                    "A replicate ID must identify one construct, condition, preparation, batch, reagent, and protocol."
                 )
         (
             self.construct_ids,
@@ -378,11 +376,11 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
 
     @property
     def profile_count(self) -> int:
-        return int(self.mutation.shape[0])
+        return self.mutation.shape[0]
 
     @property
     def nucleotide_count(self) -> int:
-        return int(self.mutation.shape[1])
+        return self.mutation.shape[1]
 
     @property
     def analysis_mask(self) -> Array:
@@ -408,7 +406,7 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Unknown mutation-profile case IDs: {tuple(sorted(unknown))!r}."
             )
-        selected = jnp.zeros((self.profile_count,), dtype=bool)
+        selected = jnp.zeros((self.profile_count,), dtype=jnp.bool_)
         for case_id in identifiers:
             selected = selected | (self.case_index == self.case_ids.index(case_id))
         return selected

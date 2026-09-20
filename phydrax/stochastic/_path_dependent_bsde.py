@@ -15,7 +15,7 @@ from ._bsde import BSDEPathBatch
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner} must contain positive dimensions.")
     return shape

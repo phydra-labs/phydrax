@@ -57,9 +57,7 @@ def _equilibrium(parameters, activation=None):
         )
         * parameters.tendon_slack_length_m
     )
-    musculotendon_length = (
-        tendon_length + parameters.optimal_fiber_length_m * cosine
-    )
+    musculotendon_length = tendon_length + parameters.optimal_fiber_length_m * cosine
     state = DeGrooteFregly2016State(activation, normalized_tendon_force)
     return state, musculotendon_length, jnp.zeros_like(activation)
 
@@ -159,12 +157,14 @@ def test_explicit_formulation_equilibrium_force_energy_and_power_evidence():
 
     force_rate = evaluation.rates.normalized_tendon_force_per_s
     tendon_energy_rate = jax.jvp(
-        lambda force: prepared.evaluate(
-            DeGrooteFregly2016State(state.activation, force),
-            state.activation,
-            length,
-            velocity,
-        ).evidence.tendon_energy_J,
+        lambda force: (
+            prepared.evaluate(
+                DeGrooteFregly2016State(state.activation, force),
+                state.activation,
+                length,
+                velocity,
+            ).evidence.tendon_energy_J
+        ),
         (state.normalized_tendon_force,),
         (force_rate,),
     )[1]
@@ -187,9 +187,9 @@ def test_explicit_model_jit_vmap_jvp_trainable_leaves_and_atomic_rollback():
 
     excitations = jnp.stack((state.activation, 0.9 * state.activation))
     batched_force = jax.vmap(
-        lambda excitation: prepared.evaluate(
-            state, excitation, length, velocity
-        ).tendon_force_N
+        lambda excitation: (
+            prepared.evaluate(state, excitation, length, velocity).tendon_force_N
+        )
     )(excitations)
     assert batched_force.shape == (2, 2)
 
@@ -234,26 +234,28 @@ def test_explicit_model_jit_vmap_jvp_trainable_leaves_and_atomic_rollback():
 def test_implicit_formulation_uses_root_owned_sensitivity_and_rolls_back_failures():
     parameters = _parameters(1)
     state, length, velocity = _equilibrium(parameters, jnp.asarray([0.45]))
-    prepared = DeGrooteFregly2016ImplicitTendonForcePlan(
-        parameters, ("soleus",)
-    ).prepare(state)
+    prepared = DeGrooteFregly2016ImplicitTendonForcePlan(parameters, ("soleus",)).prepare(
+        state
+    )
     candidate = prepared.candidate(
         state, state.activation, length, velocity, jnp.asarray(1.0e-5)
     )
 
     assert bool(candidate.successful)
-    assert candidate.evidence.sensitivity_owner == "phydrax.nonlinear.implicit_root_result"
-    np.testing.assert_allclose(
-        candidate.evidence.algebraic_residual, 0.0, atol=2.0e-6
+    assert (
+        candidate.evidence.sensitivity_owner == "phydrax.nonlinear.implicit_root_result"
     )
+    np.testing.assert_allclose(candidate.evidence.algebraic_residual, 0.0, atol=2.0e-6)
     derivative = jax.jvp(
-        lambda muscle_length: prepared.candidate(
-            state,
-            state.activation,
-            muscle_length,
-            velocity,
-            jnp.asarray(1.0e-5),
-        ).evidence.scaled_force_rate_control,
+        lambda muscle_length: (
+            prepared.candidate(
+                state,
+                state.activation,
+                muscle_length,
+                velocity,
+                jnp.asarray(1.0e-5),
+            ).evidence.scaled_force_rate_control
+        ),
         (length,),
         (jnp.ones_like(length),),
     )[1]

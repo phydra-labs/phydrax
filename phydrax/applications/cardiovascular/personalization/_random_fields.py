@@ -72,18 +72,18 @@ class CanonicalCardiacCoordinates:
     coordinate_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        points = jnp.asarray(self.values, dtype=float)
-        weights = jnp.asarray(self.quadrature_weights, dtype=float).reshape((-1,))
+        points = jnp.asarray(self.values, dtype=jnp.float64)
+        weights = jnp.asarray(self.quadrature_weights, dtype=jnp.float64).reshape((-1,))
         axes = tuple(self.axes)
         if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
             raise ValueError("Canonical coordinates must have shape (point, coordinate).")
-        if len(axes) != int(points.shape[1]) or any(
+        if len(axes) != points.shape[1] or any(
             not isinstance(axis, CanonicalCoordinateAxis) for axis in axes
         ):
             raise TypeError("axes must define every canonical coordinate dimension.")
         if len({axis.name for axis in axes}) != len(axes):
             raise ValueError("Canonical coordinate axis names must be unique.")
-        if weights.shape != (int(points.shape[0]),):
+        if weights.shape != (points.shape[0],):
             raise ValueError("Quadrature weights must contain one value per point.")
         if (
             bool(jnp.any(~jnp.isfinite(points)))
@@ -133,7 +133,7 @@ class CanonicalCardiacCoordinates:
 
     @property
     def point_count(self) -> int:
-        return int(self.values.shape[0])
+        return self.values.shape[0]
 
 
 class CardiacFieldTransform(Protocol):

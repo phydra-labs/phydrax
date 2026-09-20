@@ -4,6 +4,8 @@
 
 """Representation-aware geometry sources, kernels, and realizations."""
 
+from importlib import import_module
+
 from .._sharp_measures import (
     exact_sharp_geometry,
     QualifiedSharpGeometry,
@@ -17,8 +19,8 @@ from . import (
     complex,
     design,
     implicit,
-    process,
     polynomial_image,
+    process,
     reconstruction,
     simplicial,
 )
@@ -346,8 +348,24 @@ from .simplicial import (
     TriangleSurface,
     TriangleTopology,
 )
-from .surface import *  # noqa: F403
 from .surface import __all__ as _surface_all
+
+
+_FACADE_EXPORT_MODULES = (".surface",)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

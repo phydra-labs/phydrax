@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-# ruff: noqa: F401, RUF022
+# ruff: noqa: F401
 
 from ._aa import (
     AALatticeBoltzmannAddressing,
@@ -58,14 +58,14 @@ from ._collision import (
     SmagorinskyCollisionPlan,
     TRTCollisionPlan,
 )
-from ._colour_gradient import (
-    ColourGradientDiagnostics,
-    ColourGradientLBMMethod,
-    ColourGradientLBMRuntimeParameters,
-    ColourGradientLBMState,
-    ColourGradientMacroscopicState,
-    ColourGradientStepResult,
-    PreparedColourGradientLBMDynamics,
+from ._color_gradient import (
+    ColorGradientDiagnostics,
+    ColorGradientLBMMethod,
+    ColorGradientLBMRuntimeParameters,
+    ColorGradientLBMState,
+    ColorGradientMacroscopicState,
+    ColorGradientStepResult,
+    PreparedColorGradientLBMDynamics,
 )
 from ._commercial_qualification import (
     c0_guo_baseline_profiles,

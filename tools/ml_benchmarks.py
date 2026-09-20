@@ -394,7 +394,7 @@ def _output_evidence(prediction: Any) -> dict[str, Any]:
     return {
         "shape": list(contiguous.shape),
         "dtype": str(contiguous.dtype),
-        "elements": int(contiguous.size),
+        "elements": contiguous.size,
         "checksum_sha256": digest.hexdigest(),
         "sum": float(np.sum(values, dtype=np.float64)),
         "l2_norm": float(np.linalg.norm(values.ravel())),
@@ -411,7 +411,7 @@ def _validate_result(
     case_name: str, result: tuple[Any, Any, Any]
 ) -> tuple[dict[str, Any], Any, Any]:
     prediction, valid, status = result
-    valid_host = np.asarray(jax.device_get(valid), dtype=bool)
+    valid_host = np.asarray(jax.device_get(valid), dtype="bool")
     status_host = np.asarray(jax.device_get(status), dtype=np.int64)
     if not bool(np.all(valid_host)):
         raise RuntimeError(
@@ -560,7 +560,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
     finished = datetime.now(timezone.utc)
     document = {
-        "schema_version": 1,
         "benchmark": "phydrax.ml native scientific workflows",
         "generated_at_utc": finished.isoformat(),
         "elapsed_wall_seconds": (finished - started).total_seconds(),

@@ -15,12 +15,12 @@ import phydrax as phx
 
 def _batch(*, cases=2, size=8):
     axis = phx.nn.operator.OperatorAxis(
-        "x", jnp.arange(size, dtype=float) / size, periodic=True
+        "x", jnp.arange(size, dtype="float64") / size, periodic=True
     )
     return phx.nn.operator.OperatorBatch(
         inputs={
             "u": phx.nn.operator.FunctionSamples(
-                values=jnp.arange(cases * size, dtype=float).reshape(cases, size),
+                values=jnp.arange(cases * size, dtype="float64").reshape(cases, size),
                 axes=(axis,),
             )
         },
@@ -35,7 +35,7 @@ def _batch(*, cases=2, size=8):
 def _periodic_fourier_batch(*, cases=2, size=8):
     axis = phx.nn.operator.OperatorAxis(
         "x",
-        jnp.arange(size, dtype=float) / size,
+        jnp.arange(size, dtype="float64") / size,
         quadrature_weights=jnp.full(size, 1.0 / size),
         basis="fourier",
         periodic=True,
@@ -43,7 +43,7 @@ def _periodic_fourier_batch(*, cases=2, size=8):
     return phx.nn.operator.OperatorBatch(
         inputs={
             "u": phx.nn.operator.FunctionSamples(
-                values=jnp.arange(cases * size, dtype=float).reshape(cases, size),
+                values=jnp.arange(cases * size, dtype="float64").reshape(cases, size),
                 axes=(axis,),
             )
         },
@@ -216,7 +216,11 @@ def test_trained_operator_applies_physical_transforms_around_model_execution():
     nondimensional = (batch.input("u").values - 1.0) / 2.0
 
     assert jnp.allclose(prepared.execution_batch.input("u").values, nondimensional)
-    raw = trained.execution_model.predict(prepared.execution_batch).field("output").values
+    raw = (
+        trained.execution_model.predict_prevalidated(prepared.execution_batch)
+        .field("output")
+        .values
+    )
     prediction = trained.predict_prepared(prepared).field("solution").values
     assert jnp.allclose(prediction, raw * 3.0 + 4.0)
 
@@ -492,7 +496,7 @@ def test_operator_artifact_rejects_unknown_architecture_codec(tmp_path):
     phx.nn.operator.training.save_operator_artifact(tmp_path, _trained())
     manifest_path = tmp_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["execution_model_architecture_id"] = "unknown.operator:FNO@1"
+    manifest["execution_model_architecture_id"] = "unknown.operator:FNO"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(ValueError, match="Unknown operator architecture ID"):
@@ -513,7 +517,7 @@ def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp
     assert manifest.execution_model_architecture_id == "phydrax.operator.architecture:FNO"
     recipe = json.dumps(manifest.execution_model_recipe, sort_keys=True)
     assert "phydrax.operator.architecture:FNO" in recipe
-    assert "phydrax.artifact:Linear@1" in recipe
+    assert "phydrax.artifact:Linear" in recipe
 
     restored = phx.nn.operator.training.load_trained_operator(destination)
     resume = phx.nn.operator.training.load_operator_training_state(destination)
@@ -795,12 +799,12 @@ import phydrax as phx
 
 size = 8
 axis = phx.nn.operator.OperatorAxis(
-    "x", jnp.arange(size, dtype=float) / size, periodic=True
+    "x", jnp.arange(size, dtype="float64") / size, periodic=True
 )
 batch = phx.nn.operator.OperatorBatch(
     inputs={
         "u": phx.nn.operator.FunctionSamples(
-            values=jnp.arange(2 * size, dtype=float).reshape(2, size),
+            values=jnp.arange(2 * size, dtype="float64").reshape(2, size),
             axes=(axis,),
         )
     },
@@ -895,7 +899,7 @@ def test_training_checkpoint_uses_only_current_manifest(tmp_path):
     batch = _batch()
     target = jnp.zeros_like(batch.input("u").values)
     model = _trained().execution_model
-    optimizer_state = {"momentum": jnp.ones((2,), dtype=float)}
+    optimizer_state = {"momentum": jnp.ones((2,), dtype="float64")}
     schema = phx.nn.operator.training.operator_batch_schema(
         batch,
         target=phx.nn.operator.OperatorTargetBatch.from_arrays(

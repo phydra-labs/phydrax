@@ -298,7 +298,7 @@ class PreparedPairwiseExchangeBinding(StrictModule, NonTrainableState):
             self.trained.execution_plan.prepare_prevalidated(batch)
         )
         raw = jnp.asarray(prediction.field(self.plan.target_name).values)
-        dimension = int(self.geometry.displacement.shape[-1])
+        dimension = self.geometry.displacement.shape[-1]
         if self.plan.exchange_kind == "vector":
             if raw.shape != (self.pairs.capacity, dimension):
                 raise ValueError("Vector pair exchange has the wrong shape.")

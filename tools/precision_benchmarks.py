@@ -503,7 +503,7 @@ def _finite_volume_case(cells: int, repeats: int, /) -> dict[str, Any]:
         )
         results[name] = {
             "seconds": seconds,
-            "state_bytes": int(value.size * value.dtype.itemsize),
+            "state_bytes": value.size * value.dtype.itemsize,
             "state_dtype": value.dtype.name,
             "conservation_defect": float(
                 jnp.max(jnp.abs(diagnostics.conservation_defect))
@@ -702,7 +702,7 @@ def _open_system_case(steps: int, repeats: int, /) -> dict[str, Any]:
         assert evidence is not None
         results[name] = {
             "seconds": seconds,
-            "trajectory_bytes": int(value.size * value.dtype.itemsize),
+            "trajectory_bytes": value.size * value.dtype.itemsize,
             "output_dtype": value.dtype.name,
             "statistical_error": float(result.approximation.statistical_error),
             "precision_evidence_id": evidence.evidence_id,

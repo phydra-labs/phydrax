@@ -14,8 +14,8 @@ from phydrax.applications.compact_objects._black_hole_thermodynamics import (
 from phydrax.applications.compact_objects._inverse import (
     FixedBranchModelEvaluation,
     kerr_geometry_inverse_adapter,
-    kerr_thermodynamics_model_evaluation,
     kerr_thermodynamics_inverse_adapter,
+    kerr_thermodynamics_model_evaluation,
     qnm_root_model_evaluation,
     simple_qnm_root_inverse_adapter,
 )
@@ -57,7 +57,7 @@ def test_kerr_geometry_jvp_vjp_and_finite_difference_agree():
         realization_id="kerr:analytic",
         branch_id="subextremal",
         adapter_id="kerr-geometry-audit",
-        evaluator_semantic_id="kerr-geometry-observable:v1",
+        evaluator_semantic_id="kerr-geometry-observable",
         evaluator_numeric_id="kerr-geometry-implementation:r1",
     )
     evidence = adapter.sensitivity(
@@ -86,12 +86,10 @@ def test_root_branch_change_and_event_do_not_expose_gradients():
         realization_id="kerr:analytic",
         branch_id="subextremal",
         adapter_id="qnm-root-audit",
-        evaluator_semantic_id="qnm-root-observable:v1",
+        evaluator_semantic_id="qnm-root-observable",
         evaluator_numeric_id="qnm-root-implementation:r1",
     )
-    changed = root.sensitivity(
-        jnp.asarray([0.0]), jnp.asarray([1.0]), epsilon=1.0e-3
-    )
+    changed = root.sensitivity(jnp.asarray([0.0]), jnp.asarray([1.0]), epsilon=1.0e-3)
     assert not bool(changed.branch_stable)
     assert not bool(changed.derivative_valid)
     assert jnp.all(jnp.isnan(changed.jvp))
@@ -110,7 +108,7 @@ def test_root_branch_change_and_event_do_not_expose_gradients():
         realization_id="kerr:analytic",
         branch_id="subextremal",
         adapter_id="kerr-thermodynamics-audit",
-        evaluator_semantic_id="kerr-thermodynamics-observable:v1",
+        evaluator_semantic_id="kerr-thermodynamics-observable",
         evaluator_numeric_id="kerr-thermodynamics-implementation:r1",
     ).sensitivity(jnp.asarray([1.0]), jnp.asarray([0.5]))
     assert not bool(event.center_eligible)
@@ -165,7 +163,7 @@ def test_opaque_evaluator_requires_revision_and_body_change_changes_identity():
         "realization_id": "kerr:analytic",
         "branch_id": "subextremal",
         "adapter_id": "body-sensitive-adapter",
-        "evaluator_semantic_id": "body-sensitive-observable:v1",
+        "evaluator_semantic_id": "body-sensitive-observable",
     }
     first_adapter = kerr_geometry_inverse_adapter(
         first,

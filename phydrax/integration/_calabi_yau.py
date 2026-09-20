@@ -91,7 +91,7 @@ class ProjectiveIntegralResult(StrictModule):
         self.normalized_value = jnp.asarray(normalized_value)
         self.physical_value = jnp.asarray(physical_value)
         self.effective_sample_size = jnp.asarray(effective_sample_size)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.precision_evidence = precision_evidence

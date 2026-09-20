@@ -69,7 +69,7 @@ class RecycledScatteringSweepResult(StrictModule):
 
 
 def _case_shape(shape: Sequence[int], count: int, /) -> tuple[int, ...]:
-    resolved = tuple(int(value) for value in shape)
+    resolved = tuple(shape)
     if not resolved or any(value <= 0 for value in resolved) or prod(resolved) != count:
         raise ValueError("case_shape must be positive and match the case count.")
     return resolved

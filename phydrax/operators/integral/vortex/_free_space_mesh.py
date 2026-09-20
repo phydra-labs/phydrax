@@ -37,8 +37,11 @@ class FreeSpaceVortexFFTPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, shape: tuple[int, ...], lower: ArrayLike, upper: ArrayLike, /):
-        shape_ = tuple(int(value) for value in shape)
-        lower_, upper_ = np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)
+        shape_ = tuple(shape)
+        lower_, upper_ = (
+            np.asarray(lower, dtype=np.float64),
+            np.asarray(upper, dtype=np.float64),
+        )
         dimension = len(shape_)
         if (
             dimension not in (2, 3)
@@ -130,7 +133,7 @@ class FreeSpaceVortexFFTPlan(StrictModule, NonTrainableState):
             gradient = jnp.stack(tuple(gradient_components), axis=-1)
         cell_measure = jnp.prod(self.spacing)
         circulation = jnp.sum(omega, axis=tuple(range(self.dimension))) * cell_measure
-        boundary_mask = jnp.zeros(self.shape, dtype=bool)
+        boundary_mask = jnp.zeros(self.shape, dtype=jnp.bool_)
         for axis in range(self.dimension):
             lower_index = [slice(None)] * self.dimension
             upper_index = [slice(None)] * self.dimension

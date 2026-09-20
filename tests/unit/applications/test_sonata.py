@@ -170,8 +170,7 @@ def test_clock_rejects_physical_offgrid_delay_and_spike_time(tmp_path):
     with pytest.raises(AdapterError, match="off-grid"):
         ep.import_sonata(**arguments, dt_ms=0.25, execution="clock")
     (tmp_path / "edge_types.csv").write_text(
-        "edge_type_id model_template dynamics_params delay syn_weight\n"
-        "8 phydrax:CurrentSynapse current.json 0.25 1.0\n"
+        "edge_type_id model_template dynamics_params delay syn_weight\n8 phydrax:CurrentSynapse current.json 0.25 1.0\n"
     )
     with h5py.File(tmp_path / "spikes.h5", "r+") as handle:
         handle["spikes/input/timestamps"][0] = 0.0011

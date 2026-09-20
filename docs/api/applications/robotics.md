@@ -92,7 +92,7 @@ grouped in the [soft robotics API](soft_robotics.md).
 
 ::: phydrax.discretization.reduced_semi_implicit_velocity_euler_step
 
-## COM-centred rigid inertial realization
+## COM-centered rigid inertial realization
 
 ::: phydrax.discretization.RigidBodyMassProperties
 

@@ -33,7 +33,6 @@ class CalabiYauMetricArtifact(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope
     metric_evidence: CalabiYauMetricEvidence | None
     precision_policy_id: str = eqx.field(static=True)
-    schema_version: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -51,7 +50,6 @@ class CalabiYauMetricArtifact(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
         metric_evidence: CalabiYauMetricEvidence | None = None,
-        schema_version: int = 2,
     ):
         self.potential_model = potential_model
         self.normalization = jnp.asarray(normalization)
@@ -87,11 +85,9 @@ class CalabiYauMetricArtifact(StrictModule):
                     "Metric and held-out evidence precision requests differ."
                 )
         self.metric_evidence = metric_evidence
-        self.schema_version = int(schema_version)
 
     def metadata(self) -> dict[str, object]:
         return {
-            "schema_version": self.schema_version,
             "hypersurface_id": self.hypersurface_id,
             "projective_dimension": self.projective_dimension,
             "degree": self.degree,
@@ -104,7 +100,7 @@ class CalabiYauMetricArtifact(StrictModule):
             if self.metric_evidence is None
             else bool(self.metric_evidence.accepted),
             "normalization": float(self.normalization),
-            "iteration_count": int(self.objective_history.shape[0]),
+            "iteration_count": self.objective_history.shape[0],
         }
 
     def evaluate(
@@ -148,7 +144,6 @@ def freeze_calabi_yau_result(
         precision_evidence=result.precision_evidence,
         precision_policy_id=result.precision.policy_id,
         metric_evidence=evidence,
-        schema_version=2,
     )
 
 

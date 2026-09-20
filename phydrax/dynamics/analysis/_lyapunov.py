@@ -79,14 +79,14 @@ class LyapunovSpectrumCheckpoint(StrictModule):
         status: ArrayLike = LYAPUNOV_SUCCESS,
     ):
         state_array = jnp.asarray(state)
-        shape = tuple(int(size) for size in state_shape)
-        dimension = int(state_array.size)
+        shape = tuple(state_shape)
+        dimension = state_array.size
         rank = int(leading_k)
         basis_array = jnp.asarray(basis)
         logs = jnp.asarray(log_stretch)
-        elapsed = jnp.asarray(accumulated_time, dtype=float)
+        elapsed = jnp.asarray(accumulated_time, dtype=jnp.float64)
         coordinate = jnp.asarray(current_coordinate)
-        valid_array = jnp.asarray(valid, dtype=bool)
+        valid_array = jnp.asarray(valid, dtype=jnp.bool_)
         status_array = jnp.asarray(status, dtype=jnp.int32)
         if not jnp.issubdtype(state_array.dtype, jnp.floating):
             raise TypeError("Checkpoint state must have a real floating dtype.")
@@ -191,7 +191,7 @@ class LyapunovSpectrumResult(StrictModule):
             raise TypeError("checkpoint must be a LyapunovSpectrumCheckpoint.")
         spectrum = jnp.asarray(exponents)
         history = jnp.asarray(finite_time_exponents)
-        times = jnp.asarray(accumulation_times, dtype=float)
+        times = jnp.asarray(accumulation_times, dtype=jnp.float64)
         if spectrum.shape != (checkpoint.leading_k,):
             raise ValueError("Spectrum shape does not match the checkpoint rank.")
         if history.ndim != 2 or history.shape[1:] != spectrum.shape:
@@ -203,8 +203,8 @@ class LyapunovSpectrumResult(StrictModule):
         self.accumulation_times = times
         self.convergence_drift = jnp.asarray(convergence_drift)
         self.kaplan_yorke_dimension = jnp.asarray(kaplan_yorke_dimension)
-        self.kaplan_yorke_valid = jnp.asarray(kaplan_yorke_valid, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.kaplan_yorke_valid = jnp.asarray(kaplan_yorke_valid, dtype=jnp.bool_)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.final_state = checkpoint.state
         self.checkpoint = checkpoint
@@ -233,12 +233,12 @@ class LyapunovSpectrumResult(StrictModule):
 def kaplan_yorke_dimension(exponents: ArrayLike, /) -> Array:
     """Return the Kaplan--Yorke dimension for one complete ordered spectrum."""
     values = jnp.asarray(exponents)
-    if values.ndim != 1 or int(values.size) == 0:
+    if values.ndim != 1 or values.size == 0:
         raise ValueError("exponents must be a non-empty rank-1 array.")
     values = jnp.sort(values)[::-1]
     cumulative = jnp.cumsum(values)
     count = jnp.sum(cumulative >= 0.0, dtype=jnp.int32)
-    dimension = int(values.size)
+    dimension = values.size
     index = jnp.minimum(count, dimension - 1)
     fractional = cumulative[jnp.maximum(count - 1, 0)] / jnp.abs(values[index])
     interior = count.astype(values.dtype) + fractional
@@ -258,8 +258,8 @@ def _thin_qr(matrix: Array, /) -> tuple[Array, Array]:
 
 
 def _initial_basis(state: Array, rank: int, supplied: ArrayLike | None, /) -> Array:
-    dimension = int(state.size)
-    dtype = jnp.result_type(state, float)
+    dimension = state.size
+    dtype = jnp.result_type(state, jnp.float64)
     if supplied is None:
         if rank == dimension:
             return jnp.eye(dimension, dtype=dtype)
@@ -354,12 +354,12 @@ def finite_time_lyapunov_spectrum(
         if rank <= 0 or rank > dimension:
             raise ValueError("leading_k must lie between one and the state dimension.")
         basis = _initial_basis(state, rank, initial_basis)
-        logs = jnp.zeros((rank,), dtype=jnp.result_type(state, float))
+        logs = jnp.zeros((rank,), dtype=jnp.result_type(state, jnp.float64))
         elapsed = jnp.asarray(0.0, dtype=grid.coordinates.dtype)
         start_step = 0
         previous_intervals = 0
         initial_member = jnp.asarray(
-            evolution.state_layout.geometry.contains(state), dtype=bool
+            evolution.state_layout.geometry.contains(state), dtype=jnp.bool_
         )
         valid = jnp.all(jnp.isfinite(state)) & initial_member
         status = jnp.where(valid, LYAPUNOV_SUCCESS, LYAPUNOV_EVOLUTION_FAILED).astype(
@@ -599,7 +599,7 @@ def finite_time_lyapunov_spectrum(
         )
     drift = (
         jnp.max(jnp.abs(history[-1] - history[-2]))
-        if int(history.shape[0]) >= 2
+        if history.shape[0] >= 2
         else jnp.asarray(jnp.nan, dtype=logs.dtype)
     )
     full_spectrum = rank == dimension

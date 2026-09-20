@@ -23,7 +23,7 @@ class GraphMetricPrior(StrictModule, NonTrainableState):
 
     cell_measures: Array
     edge_owner: Array
-    edge_neighbour: Array
+    edge_neighbor: Array
     edge_weights: Array
     damping_precision: float = eqx.field(static=True)
     gradient_precision: float = eqx.field(static=True)
@@ -35,7 +35,7 @@ class GraphMetricPrior(StrictModule, NonTrainableState):
         self,
         cell_measures: ArrayLike,
         edge_owner: ArrayLike,
-        edge_neighbour: ArrayLike,
+        edge_neighbor: ArrayLike,
         edge_weights: ArrayLike,
         /,
         *,
@@ -44,9 +44,9 @@ class GraphMetricPrior(StrictModule, NonTrainableState):
         reference: ArrayLike = 0.0,
         parameter_unit_id: str = "dimensionless",
     ):
-        measures = np.asarray(cell_measures, dtype=float)
-        owner, neighbour = np.asarray(edge_owner), np.asarray(edge_neighbour)
-        weights = np.asarray(edge_weights, dtype=float)
+        measures = np.asarray(cell_measures, dtype=np.float64)
+        owner, neighbor = np.asarray(edge_owner), np.asarray(edge_neighbor)
+        weights = np.asarray(edge_weights, dtype=np.float64)
         if (
             measures.ndim != 1
             or measures.size == 0
@@ -56,15 +56,15 @@ class GraphMetricPrior(StrictModule, NonTrainableState):
             raise ValueError("Prior cell measures must be a positive finite vector.")
         if (
             owner.ndim != 1
-            or neighbour.shape != owner.shape
+            or neighbor.shape != owner.shape
             or weights.shape != owner.shape
             or not np.issubdtype(owner.dtype, np.integer)
-            or not np.issubdtype(neighbour.dtype, np.integer)
+            or not np.issubdtype(neighbor.dtype, np.integer)
             or np.any(owner < 0)
-            or np.any(neighbour < 0)
+            or np.any(neighbor < 0)
             or np.any(owner >= measures.size)
-            or np.any(neighbour >= measures.size)
-            or np.any(owner == neighbour)
+            or np.any(neighbor >= measures.size)
+            or np.any(owner == neighbor)
             or np.any(~np.isfinite(weights))
             or np.any(weights <= 0)
         ):
@@ -79,7 +79,9 @@ class GraphMetricPrior(StrictModule, NonTrainableState):
             raise ValueError("Prior precisions must be finite and nonnegative.")
         if damping == 0 and gradient == 0:
             raise ValueError("At least one prior precision must be positive.")
-        reference_ = np.broadcast_to(np.asarray(reference, dtype=float), measures.shape)
+        reference_ = np.broadcast_to(
+            np.asarray(reference, dtype=np.float64), measures.shape
+        )
         if np.any(~np.isfinite(reference_)):
             raise ValueError("Prior reference must be finite and cell-sized.")
         unit = str(parameter_unit_id).strip()
@@ -87,7 +89,7 @@ class GraphMetricPrior(StrictModule, NonTrainableState):
             raise ValueError("Prior parameter unit identity is required.")
         self.cell_measures = jnp.asarray(measures)
         self.edge_owner = jnp.asarray(owner, dtype=jnp.int32)
-        self.edge_neighbour = jnp.asarray(neighbour, dtype=jnp.int32)
+        self.edge_neighbor = jnp.asarray(neighbor, dtype=jnp.int32)
         self.edge_weights = jnp.asarray(weights)
         self.damping_precision, self.gradient_precision = damping, gradient
         self.reference = jnp.asarray(reference_)
@@ -96,7 +98,7 @@ class GraphMetricPrior(StrictModule, NonTrainableState):
             {
                 "kind": "graph-metric-prior",
                 "cell_measures": measures,
-                "edges": (owner, neighbour),
+                "edges": (owner, neighbor),
                 "edge_weights": weights,
                 "precisions": (damping, gradient),
                 "reference": reference_,
@@ -117,7 +119,7 @@ class GraphMetricPrior(StrictModule, NonTrainableState):
         )
         centered = field - self.reference
         damping = self.damping_precision * jnp.sum(self.cell_measures * centered**2)
-        difference = field[self.edge_neighbour] - field[self.edge_owner]
+        difference = field[self.edge_neighbor] - field[self.edge_owner]
         gradient = self.gradient_precision * jnp.sum(self.edge_weights * difference**2)
         return damping, gradient
 
@@ -128,7 +130,7 @@ class GraphMetricPrior(StrictModule, NonTrainableState):
 
 class TotalVariationPrior(StrictModule, NonTrainableState):
     edge_owner: Array
-    edge_neighbour: Array
+    edge_neighbor: Array
     edge_weights: Array
     scale: float = eqx.field(static=True)
     smoothing: float = eqx.field(static=True)
@@ -138,26 +140,26 @@ class TotalVariationPrior(StrictModule, NonTrainableState):
     def __init__(
         self,
         edge_owner: ArrayLike,
-        edge_neighbour: ArrayLike,
+        edge_neighbor: ArrayLike,
         edge_weights: ArrayLike,
         scale: float,
         /,
         *,
         smoothing: float = 0.0,
     ):
-        owner, neighbour = np.asarray(edge_owner), np.asarray(edge_neighbour)
-        weights = np.asarray(edge_weights, dtype=float)
+        owner, neighbor = np.asarray(edge_owner), np.asarray(edge_neighbor)
+        weights = np.asarray(edge_weights, dtype=np.float64)
         scale_, smoothing_ = float(scale), float(smoothing)
         if (
             owner.ndim != 1
             or owner.size == 0
-            or neighbour.shape != owner.shape
+            or neighbor.shape != owner.shape
             or weights.shape != owner.shape
             or not np.issubdtype(owner.dtype, np.integer)
-            or not np.issubdtype(neighbour.dtype, np.integer)
+            or not np.issubdtype(neighbor.dtype, np.integer)
             or np.any(owner < 0)
-            or np.any(neighbour < 0)
-            or np.any(owner == neighbour)
+            or np.any(neighbor < 0)
+            or np.any(owner == neighbor)
             or np.any(~np.isfinite(weights))
             or np.any(weights <= 0)
             or not np.isfinite(scale_)
@@ -167,10 +169,10 @@ class TotalVariationPrior(StrictModule, NonTrainableState):
         ):
             raise ValueError("Total-variation graph, scale, or smoothing is invalid.")
         self.edge_owner = jnp.asarray(owner, dtype=jnp.int32)
-        self.edge_neighbour = jnp.asarray(neighbour, dtype=jnp.int32)
+        self.edge_neighbor = jnp.asarray(neighbor, dtype=jnp.int32)
         self.edge_weights = jnp.asarray(weights)
         self.scale, self.smoothing = scale_, smoothing_
-        self.field_count = int(max(np.max(owner), np.max(neighbour))) + 1
+        self.field_count = int(max(np.max(owner), np.max(neighbor))) + 1
         self.differentiability = "nonsmooth" if smoothing_ == 0 else "smoothed"
 
     def log_prob(self, values: ArrayLike, /) -> Array:
@@ -184,7 +186,7 @@ class TotalVariationPrior(StrictModule, NonTrainableState):
             jnp.any(~jnp.isfinite(field)),
             "Total-variation prior field must be finite.",
         )
-        difference = field[self.edge_neighbour] - field[self.edge_owner]
+        difference = field[self.edge_neighbor] - field[self.edge_owner]
         magnitude = (
             jnp.abs(difference)
             if self.smoothing == 0
@@ -208,7 +210,7 @@ class TemporalDifferencePrior(StrictModule, NonTrainableState):
         order: Literal[1, 2] = 1,
         time_unit_id: str = "s",
     ):
-        values = np.asarray(times, dtype=float)
+        values = np.asarray(times, dtype=np.float64)
         scale_ = float(scale)
         if (
             values.ndim != 1
@@ -277,8 +279,8 @@ class CrossGradientPrior(StrictModule, NonTrainableState):
         normalized: bool = False,
         epsilon: float = 0.0,
     ):
-        matrix = np.asarray(gradient_matrix, dtype=float)
-        measures = np.asarray(cell_measures, dtype=float)
+        matrix = np.asarray(gradient_matrix, dtype=np.float64)
+        measures = np.asarray(cell_measures, dtype=np.float64)
         dimension_, scale_, epsilon_ = int(dimension), float(scale), float(epsilon)
         if (
             matrix.ndim != 3

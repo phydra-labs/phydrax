@@ -299,7 +299,7 @@ class SplineTransformer(AbstractRecipe):
         quantiles = _weighted_quantiles(x, weights, probabilities)
         lower, upper = quantiles[..., 0], quantiles[..., -1]
         constant = upper <= lower
-        radius = jnp.sqrt(jnp.finfo(jnp.result_type(x, float)).eps) * jnp.maximum(
+        radius = jnp.sqrt(jnp.finfo(jnp.result_type(x, jnp.float64)).eps) * jnp.maximum(
             jnp.abs(lower), 1.0
         )
         safe_lower = jnp.where(constant, lower - radius, lower)
@@ -502,7 +502,7 @@ class FourierFeatures(AbstractRecipe):
             raise TypeError(
                 "Complex Fourier features require explicit real periods and origins."
             )
-        real_x = x.real.astype(jnp.result_type(x.real, float))
+        real_x = x.real.astype(jnp.result_type(x.real, jnp.float64))
         minimum = jnp.min(jnp.where(weights > 0.0, real_x, jnp.inf), axis=-2)
         maximum = jnp.max(jnp.where(weights > 0.0, real_x, -jnp.inf), axis=-2)
         minimum = jnp.where(mass > 0.0, minimum, jnp.zeros_like(minimum))
@@ -641,7 +641,7 @@ class RandomFourierFeatures(AbstractRecipe):
     ):
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
-        gamma_ = jnp.asarray(gamma, dtype=float)
+        gamma_ = jnp.asarray(gamma, dtype=jnp.float64)
         if gamma_.ndim != 0:
             raise ValueError("gamma must be scalar.")
         gamma_ = eqx.error_if(
@@ -664,7 +664,11 @@ class RandomFourierFeatures(AbstractRecipe):
             batch, weight_policy=self.weight_policy
         )
         frequency_key, phase_key = jax.random.split(key)
-        dtype = x.real.dtype if jnp.issubdtype(x.dtype, jnp.inexact) else jnp.dtype(float)
+        dtype = (
+            x.real.dtype
+            if jnp.issubdtype(x.dtype, jnp.inexact)
+            else jnp.dtype(jnp.float64)
+        )
         frequencies = jax.random.normal(
             frequency_key, (batch.feature_count, self.n_components), dtype=dtype
         ) * jnp.sqrt(2.0 * self.gamma)
@@ -787,7 +791,9 @@ class FeatureHasher(AbstractRecipe):
             [value % self.n_features for value in hashes], dtype=jnp.int32
         )
         sign_dtype = (
-            _x.real.dtype if jnp.issubdtype(_x.dtype, jnp.inexact) else jnp.dtype(float)
+            _x.real.dtype
+            if jnp.issubdtype(_x.dtype, jnp.inexact)
+            else jnp.dtype(jnp.float64)
         )
         signs = jnp.asarray(
             [
@@ -890,7 +896,11 @@ class GaussianRandomProjection(AbstractRecipe):
         x, _weights, mass, effective, valid, status = _feature_observations(
             batch, weight_policy=self.weight_policy
         )
-        dtype = x.real.dtype if jnp.issubdtype(x.dtype, jnp.inexact) else jnp.dtype(float)
+        dtype = (
+            x.real.dtype
+            if jnp.issubdtype(x.dtype, jnp.inexact)
+            else jnp.dtype(jnp.float64)
+        )
         projection = jax.random.normal(
             key, (batch.feature_count, self.n_components), dtype=dtype
         ) / jnp.sqrt(float(self.n_components))
@@ -1013,7 +1023,11 @@ class SparseRandomProjection(AbstractRecipe):
         signs = jax.random.bernoulli(
             sign_key, 0.5, (batch.feature_count, self.n_components)
         )
-        dtype = x.real.dtype if jnp.issubdtype(x.dtype, jnp.inexact) else jnp.dtype(float)
+        dtype = (
+            x.real.dtype
+            if jnp.issubdtype(x.dtype, jnp.inexact)
+            else jnp.dtype(jnp.float64)
+        )
         coefficients = jnp.where(signs, 1.0, -1.0).astype(dtype).reshape((-1,))
         coefficients = coefficients / jnp.sqrt(float(self.n_components) * density)
         relation = EdgeRelation(
@@ -1146,7 +1160,7 @@ class FittedPowerTransformer(AbstractArrayModel):
         values = _check_features(x, self.in_size)
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("PowerTransformer requires real-valued features.")
-        values = values.astype(jnp.result_type(values, float))
+        values = values.astype(jnp.result_type(values, jnp.float64))
         lambdas = _align_parameter(self.lambdas, values, self.case_shape)
         if self.method == "box-cox":
             values = eqx.error_if(
@@ -1163,7 +1177,7 @@ class FittedPowerTransformer(AbstractArrayModel):
     def inverse_transform(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         values = _check_features(x, self.out_size)
-        values = values.astype(jnp.result_type(values, float))
+        values = values.astype(jnp.result_type(values, jnp.float64))
         lambdas = _align_parameter(self.lambdas, values, self.case_shape)
         if self.method == "box-cox":
             domain = (jnp.abs(lambdas) <= 1e-7) | (1.0 + lambdas * values > 0.0)
@@ -1225,7 +1239,7 @@ class PowerTransformer(AbstractRecipe):
         )
         if jnp.issubdtype(x.dtype, jnp.complexfloating):
             raise TypeError("PowerTransformer requires real-valued features.")
-        x = x.astype(jnp.result_type(x, float))
+        x = x.astype(jnp.result_type(x, jnp.float64))
         positive = jnp.all((x > 0.0) | (weights == 0.0), axis=-2)
         if self.method == "box-cox":
             positive_case = jnp.all(positive, axis=-1)
@@ -1240,7 +1254,7 @@ class PowerTransformer(AbstractRecipe):
             self.lambda_range[0],
             self.lambda_range[1],
             self.n_lambdas,
-            dtype=jnp.result_type(x, float),
+            dtype=jnp.result_type(x, jnp.float64),
         )
         expanded = safe_x[..., None]
         lambda_bank = lambdas.reshape((1,) * x.ndim + (self.n_lambdas,))

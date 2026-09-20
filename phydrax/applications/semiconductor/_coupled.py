@@ -133,8 +133,7 @@ class TunnelingChannel(StrictModule):
             or attempt_host < 0
         ):
             raise ValueError(
-                "A tunneling channel needs a physical path, scalar finite energy "
-                "and scalar nonnegative attempt rate."
+                "A tunneling channel needs a physical path, scalar finite energy and scalar nonnegative attempt rate."
             )
         self.path = path
         self.energy = jnp.asarray(energy)
@@ -701,7 +700,7 @@ class ClassicalPhysics(StrictModule):
         heat += recombination * (un / safe_n + up / safe_p + bn + bp)
         left, right = support.tail, support.head
         if plan.electrothermal:
-            thermionic_edges = jnp.zeros(gn.shape, dtype=bool)
+            thermionic_edges = jnp.zeros(gn.shape, dtype=jnp.bool_)
             for index, _, _ in exchanges:
                 thermionic_edges = thermionic_edges.at[plan.interfaces[index].edge].set(
                     True

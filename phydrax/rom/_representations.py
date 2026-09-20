@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import FieldTransfer
 from ..linalg import AbstractVectorSpace
@@ -188,11 +188,11 @@ class ReducedBasisAtlasArtifact(StrictModule, NonTrainableState):
 
 
 class AbstractReferenceStateChart(StrictModule, NonTrainableState):
-    latent_space: AbstractAttribute[AbstractVectorSpace]
-    reference_space: AbstractAttribute[AbstractVectorSpace]
-    support_id: AbstractAttribute[str]
-    geometry_id: AbstractAttribute[str]
-    chart_id: AbstractAttribute[str]
+    latent_space: eqx.AbstractVar[AbstractVectorSpace]
+    reference_space: eqx.AbstractVar[AbstractVectorSpace]
+    support_id: eqx.AbstractVar[str]
+    geometry_id: eqx.AbstractVar[str]
+    chart_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def decode(self, latent: ArrayLike, /) -> Array:

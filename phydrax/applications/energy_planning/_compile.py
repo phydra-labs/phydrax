@@ -145,7 +145,7 @@ class _Builder:
                     self.binary.append(index)
             indices.append(index)
         self.variables.append(EnergyVariable(name, tuple(indices), scale))
-        return np.asarray(indices, dtype=int)
+        return np.asarray(indices, dtype=np.int64)
 
     def row(self, name, terms, rhs=0.0, *, equality=False, scale=1.0):
         combined = {}

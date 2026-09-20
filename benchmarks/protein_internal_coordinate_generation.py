@@ -79,7 +79,7 @@ def _fixed_construct():
             [2.7, 0.7, -0.5],
             [1.5, 0.5, 0.5],
         ],
-        dtype=float,
+        dtype="float64",
     )
     numbers = tuple(
         1 if key.atom_name == "H" else {"C": 6, "N": 7, "O": 8}[key.atom_name[0]]
@@ -132,9 +132,9 @@ def _fixed_construct():
         content_digest=digest,
         producer="phydrax-benchmark",
         producer_version="native",
-        build_id="cis-proline-v1",
+        build_id="cis-proline",
         license_id=rights.license_id,
-        resource_id="cis-proline-v1",
+        resource_id="cis-proline",
         status="complete",
     )
     chemistry = ResolvedProteinChemistry(
@@ -178,7 +178,7 @@ def _fixed_construct():
         masses,
         units,
         topology=topology,
-        molecule_ids=np.zeros(len(keys), dtype=int),
+        molecule_ids=np.zeros(len(keys), dtype="int64"),
     )
     lengths = np.linalg.norm(positions[routes[:, 0]] - positions[routes[:, 1]], axis=-1)
     potential = atomistic.AtomisticPotentialProgram(
@@ -260,7 +260,7 @@ def _prepare_corpora():
 
 
 def _accepted_diverse_count(positions, accepted, threshold=0.05):
-    rows = np.asarray(positions)[np.asarray(accepted, dtype=bool)]
+    rows = np.asarray(positions)[np.asarray(accepted, dtype="bool")]
     representatives = []
     for row in rows:
         if all(

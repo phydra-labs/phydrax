@@ -7,9 +7,9 @@ from __future__ import annotations
 import math
 from typing import Literal, TypeAlias
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -38,8 +38,7 @@ def binary_log_prob_from_logits(
         raise TypeError("Binary targets must be real-valued.")
     if raw_target.shape != values.shape:
         raise ValueError(
-            "Binary targets must match logits; "
-            f"got logits={values.shape} and target={raw_target.shape}."
+            f"Binary targets must match logits; got logits={values.shape} and target={raw_target.shape}."
         )
     observation = raw_target.astype(jnp.result_type(raw_target, 0.0))
     logits_valid = jnp.isfinite(values)
@@ -73,8 +72,8 @@ def categorical_log_prob_from_logits(
     values = _real_array("Categorical logits", logits)
     if values.ndim == 0:
         raise ValueError("Categorical logits must have a terminal class axis.")
-    classes = int(values.shape[-1]) if class_count is None else int(class_count)
-    if classes < 2 or int(values.shape[-1]) != classes:
+    classes = values.shape[-1] if class_count is None else int(class_count)
+    if classes < 2 or values.shape[-1] != classes:
         raise ValueError(
             f"Categorical logits must end in class_count={classes}; got {values.shape}."
         )
@@ -111,8 +110,8 @@ def categorical_probabilities_from_logits(
     values = _real_array("Categorical logits", logits)
     if values.ndim == 0:
         raise ValueError("Categorical logits must have a terminal class axis.")
-    classes = int(values.shape[-1]) if class_count is None else int(class_count)
-    if classes < 2 or int(values.shape[-1]) != classes:
+    classes = values.shape[-1] if class_count is None else int(class_count)
+    if classes < 2 or values.shape[-1] != classes:
         raise ValueError(
             f"Categorical logits must end in class_count={classes}; got {values.shape}."
         )
@@ -140,7 +139,7 @@ def independent_bernoulli_log_prob_from_logits(
             f"got logits={values.shape} and target={raw_target.shape}."
         )
     if target_mask is None:
-        mask = jnp.ones(values.shape, dtype=bool)
+        mask = jnp.ones(values.shape, dtype=jnp.bool_)
     else:
         mask = jnp.asarray(target_mask)
         if mask.dtype != jnp.bool_ or mask.shape != values.shape:
@@ -193,7 +192,7 @@ def soft_categorical_cross_entropy_from_logits(
     observation = _real_array("Soft categorical targets", target)
     if values.ndim == 0 or observation.shape != values.shape:
         raise ValueError("Soft categorical targets must match terminal-class logits.")
-    classes = int(values.shape[-1])
+    classes = values.shape[-1]
     if classes < 2:
         raise ValueError("Soft categorical targets require at least two classes.")
     dtype = jnp.result_type(values, observation)
@@ -217,18 +216,12 @@ def binary_focal_risk_from_logits(
     /,
     *,
     gamma: float = 2.0,
-    alpha: float | None = None,
+    alpha: ArrayLike | None = None,
 ) -> Array:
     """Return hard binary focal risk without probability clipping."""
     gamma_value = float(gamma)
     if not math.isfinite(gamma_value) or gamma_value < 0.0:
         raise ValueError("gamma must be finite and nonnegative.")
-    if alpha is not None:
-        alpha_value = float(alpha)
-        if not math.isfinite(alpha_value) or not 0.0 < alpha_value < 1.0:
-            raise ValueError("Binary focal alpha must lie strictly inside (0, 1).")
-    else:
-        alpha_value = 1.0
     log_probability = binary_log_prob_from_logits(logits, target)
     cross_entropy = -log_probability
     if gamma_value == 0.0:
@@ -238,12 +231,19 @@ def binary_focal_risk_from_logits(
     if alpha is None:
         class_weight = jnp.ones_like(cross_entropy)
     else:
+        alpha_value = _real_array("Binary focal alpha", alpha)
+        if alpha_value.ndim != 0:
+            raise ValueError("Binary focal alpha must be scalar.")
+        alpha_value = eqx.error_if(
+            alpha_value,
+            ~jnp.isfinite(alpha_value) | (alpha_value <= 0.0) | (alpha_value >= 1.0),
+            "Binary focal alpha must lie strictly inside (0, 1).",
+        )
         raw_target = jnp.asarray(target)
         target_valid = jnp.isfinite(raw_target) & ((raw_target == 0) | (raw_target == 1))
         observation = jnp.where(target_valid, raw_target, 0).astype(cross_entropy.dtype)
-        class_weight = alpha_value * observation + (1.0 - alpha_value) * (
-            1.0 - observation
-        )
+        weight = alpha_value.astype(cross_entropy.dtype)
+        class_weight = weight * observation + (1.0 - weight) * (1.0 - observation)
     result = class_weight * factor * cross_entropy
     return jnp.where(jnp.isfinite(log_probability), result, jnp.inf)
 
@@ -270,12 +270,14 @@ def categorical_focal_risk_from_logits(
     if alpha is None:
         class_weight = jnp.ones_like(cross_entropy)
     else:
-        alpha_array = np.asarray(alpha, dtype=float)
-        if alpha_array.shape != (int(values.shape[-1]),):
+        weights = _real_array("Categorical focal alpha", alpha)
+        if weights.shape != (values.shape[-1],):
             raise ValueError("Categorical focal alpha must have shape (class_count,).")
-        if np.any(~np.isfinite(alpha_array)) or np.any(alpha_array <= 0.0):
-            raise ValueError("Categorical focal alpha must be finite and positive.")
-        weights = jnp.asarray(alpha_array)
+        weights = eqx.error_if(
+            weights,
+            jnp.any(~jnp.isfinite(weights) | (weights <= 0.0)),
+            "Categorical focal alpha must be finite and positive.",
+        ).astype(values.dtype)
         raw_target = jnp.asarray(target)
         target_valid = (
             jnp.isfinite(raw_target)
@@ -290,7 +292,7 @@ def categorical_focal_risk_from_logits(
 
 def _ordinal_threshold_array(thresholds: ArrayLike, /) -> Array:
     cutpoints = _real_array("Ordinal thresholds", thresholds)
-    if cutpoints.ndim != 1 or int(cutpoints.shape[0]) < 2:
+    if cutpoints.ndim != 1 or cutpoints.shape[0] < 2:
         raise ValueError("Ordinal thresholds must be a vector with at least two entries.")
     valid = jnp.all(jnp.isfinite(cutpoints)) & jnp.all(jnp.diff(cutpoints) > 0.0)
     return jnp.where(valid, cutpoints, jnp.full_like(cutpoints, jnp.nan))
@@ -324,7 +326,7 @@ def _ordinal_log_masses_from_cumulative_logits(
     /,
 ) -> Array:
     logits = _real_array("Ordinal cumulative logits", cumulative_logits)
-    if logits.ndim < 1 or int(logits.shape[-1]) < 2:
+    if logits.ndim < 1 or logits.shape[-1] < 2:
         raise ValueError(
             "Ordinal cumulative logits require a terminal axis with at least two entries."
         )
@@ -371,7 +373,7 @@ def ordinal_log_prob_from_cumulative_logits(
         raise ValueError(
             "Hard ordinal targets must match the cumulative-logit prefix shape."
         )
-    levels = int(log_masses.shape[-1])
+    levels = log_masses.shape[-1]
     real_targets = observations.astype(jnp.result_type(observations, 0.0))
     valid = (
         jnp.isfinite(real_targets)
@@ -417,7 +419,7 @@ def ordinal_log_prob_from_location(
     raw_target = jnp.asarray(target)
     if raw_target.shape != eta.shape:
         raise ValueError("Ordinal targets must match scalar location shape.")
-    levels = int(cutpoints.shape[0]) + 1
+    levels = cutpoints.shape[0] + 1
     observation = raw_target.astype(jnp.result_type(raw_target, 0.0))
     target_valid = (
         jnp.isfinite(observation)
@@ -454,15 +456,22 @@ def classification_probabilities(
     thresholds: ArrayLike | None = None,
 ) -> Array:
     """Convert declared classification coordinates to explicit probabilities."""
-    if kind == "binary":
-        return binary_probabilities_from_logits(logits)
-    if kind == "multiclass":
-        return categorical_probabilities_from_logits(logits, class_count=class_count)
-    if kind == "multilabel":
-        return independent_bernoulli_probabilities_from_logits(logits)
-    if thresholds is None:
-        return ordinal_class_probabilities_from_cumulative_logits(logits)
-    return ordinal_class_probabilities_from_location(logits, thresholds)
+    match kind:
+        case "binary":
+            return binary_probabilities_from_logits(logits)
+        case "multiclass":
+            return categorical_probabilities_from_logits(
+                logits,
+                class_count=class_count,
+            )
+        case "multilabel":
+            return independent_bernoulli_probabilities_from_logits(logits)
+        case "ordinal":
+            if thresholds is None:
+                return ordinal_class_probabilities_from_cumulative_logits(logits)
+            return ordinal_class_probabilities_from_location(logits, thresholds)
+        case _:
+            raise ValueError(f"Unknown classification kind {kind!r}.")
 
 
 def pointwise_classification_loss(
@@ -479,6 +488,20 @@ def pointwise_classification_loss(
     thresholds: ArrayLike | None = None,
 ) -> Array:
     """Return one unreduced classification score per observation prefix."""
+    match kind:
+        case "binary" | "multiclass" | "multilabel":
+            if objective not in ("nll", "soft_cross_entropy", "focal"):
+                raise ValueError(
+                    f"Unknown {kind} classification objective {objective!r}."
+                )
+        case "ordinal":
+            if objective not in ("nll", "soft_cross_entropy"):
+                raise ValueError(
+                    "Ordinal classification supports NLL or soft cross entropy."
+                )
+        case _:
+            raise ValueError(f"Unknown classification kind {kind!r}.")
+
     if target_mask is not None and kind != "multilabel":
         mask = jnp.asarray(target_mask)
         values = jnp.asarray(logits)
@@ -516,74 +539,92 @@ def pointwise_classification_loss(
             thresholds=thresholds,
         )
         return jnp.where(mask, active_loss, 0.0)
-    if kind == "ordinal":
-        if objective not in ("nll", "soft_cross_entropy"):
-            raise ValueError("Ordinal classification supports NLL or soft cross entropy.")
-        values = jnp.asarray(logits)
-        if thresholds is None:
-            if objective == "nll":
-                return -ordinal_log_prob_from_cumulative_logits(values, target)
-            return soft_ordinal_cross_entropy_from_cumulative_logits(values, target)
-        cumulative_logits = _ordinal_threshold_array(thresholds) - values[..., None]
-        if objective == "nll":
-            return -ordinal_log_prob_from_cumulative_logits(cumulative_logits, target)
-        return soft_ordinal_cross_entropy_from_cumulative_logits(
-            cumulative_logits,
-            target,
-        )
-    if kind == "binary":
-        if objective == "nll":
-            return -binary_log_prob_from_logits(logits, target)
-        if objective == "soft_cross_entropy":
-            return soft_binary_cross_entropy_from_logits(logits, target)
-        return binary_focal_risk_from_logits(
-            logits,
-            target,
-            gamma=gamma,
-            alpha=None if alpha is None else float(alpha),
-        )
-    if kind == "multiclass":
-        if objective == "nll":
-            return -categorical_log_prob_from_logits(
-                logits, target, class_count=class_count
-            )
-        if objective == "soft_cross_entropy":
-            return soft_categorical_cross_entropy_from_logits(logits, target)
-        return categorical_focal_risk_from_logits(
-            logits,
-            target,
-            gamma=gamma,
-            alpha=alpha,
-        )
-    values = _real_array("Multilabel logits", logits)
-    if objective == "nll":
-        per_label = -independent_bernoulli_log_prob_from_logits(
-            values,
-            target,
-            target_mask=target_mask,
-        )
-    else:
-        if target_mask is None:
-            mask = jnp.ones(values.shape, dtype=bool)
-        else:
-            mask = jnp.asarray(target_mask)
-            if mask.dtype != jnp.bool_ or mask.shape != values.shape:
-                raise ValueError(
-                    "target_mask must be Boolean and match multilabel logits."
+
+    match kind:
+        case "ordinal":
+            values = jnp.asarray(logits)
+            if thresholds is None:
+                if objective == "nll":
+                    return -ordinal_log_prob_from_cumulative_logits(values, target)
+                return soft_ordinal_cross_entropy_from_cumulative_logits(
+                    values,
+                    target,
                 )
-        safe_logits = jnp.where(mask, values, 0.0)
-        safe_target = jnp.where(mask, jnp.asarray(target), 0)
-        if objective == "soft_cross_entropy":
-            per_label = soft_binary_cross_entropy_from_logits(safe_logits, safe_target)
-        else:
-            per_label = binary_focal_risk_from_logits(
-                safe_logits,
-                safe_target,
-                gamma=gamma,
-                alpha=None if alpha is None else float(alpha),
+            cumulative_logits = _ordinal_threshold_array(thresholds) - values[..., None]
+            if objective == "nll":
+                return -ordinal_log_prob_from_cumulative_logits(
+                    cumulative_logits,
+                    target,
+                )
+            return soft_ordinal_cross_entropy_from_cumulative_logits(
+                cumulative_logits,
+                target,
             )
-        per_label = jnp.where(mask, per_label, 0.0)
-    return jnp.sum(per_label, axis=-1)
+        case "binary":
+            match objective:
+                case "nll":
+                    return -binary_log_prob_from_logits(logits, target)
+                case "soft_cross_entropy":
+                    return soft_binary_cross_entropy_from_logits(logits, target)
+                case "focal":
+                    return binary_focal_risk_from_logits(
+                        logits,
+                        target,
+                        gamma=gamma,
+                        alpha=alpha,
+                    )
+        case "multiclass":
+            match objective:
+                case "nll":
+                    return -categorical_log_prob_from_logits(
+                        logits,
+                        target,
+                        class_count=class_count,
+                    )
+                case "soft_cross_entropy":
+                    return soft_categorical_cross_entropy_from_logits(logits, target)
+                case "focal":
+                    return categorical_focal_risk_from_logits(
+                        logits,
+                        target,
+                        gamma=gamma,
+                        alpha=alpha,
+                    )
+        case "multilabel":
+            values = _real_array("Multilabel logits", logits)
+            if objective == "nll":
+                per_label = -independent_bernoulli_log_prob_from_logits(
+                    values,
+                    target,
+                    target_mask=target_mask,
+                )
+            else:
+                if target_mask is None:
+                    mask = jnp.ones(values.shape, dtype=jnp.bool_)
+                else:
+                    mask = jnp.asarray(target_mask)
+                    if mask.dtype != jnp.bool_ or mask.shape != values.shape:
+                        raise ValueError(
+                            "target_mask must be Boolean and match multilabel logits."
+                        )
+                safe_logits = jnp.where(mask, values, 0.0)
+                safe_target = jnp.where(mask, jnp.asarray(target), 0)
+                if objective == "soft_cross_entropy":
+                    per_label = soft_binary_cross_entropy_from_logits(
+                        safe_logits,
+                        safe_target,
+                    )
+                else:
+                    per_label = binary_focal_risk_from_logits(
+                        safe_logits,
+                        safe_target,
+                        gamma=gamma,
+                        alpha=alpha,
+                    )
+                per_label = jnp.where(mask, per_label, 0.0)
+            return jnp.sum(per_label, axis=-1)
+        case _:
+            raise AssertionError("Classification selector validation fell through.")
 
 
 __all__ = [

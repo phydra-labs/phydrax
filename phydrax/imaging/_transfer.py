@@ -90,9 +90,9 @@ class ConservativeVoxelCellTransfer(StrictModule):
     ):
         voxel = np.asarray(voxel_indices)
         cell = np.asarray(cell_indices)
-        overlap = np.asarray(overlap_measures, dtype=float)
-        voxel_measure = np.asarray(voxel_measures, dtype=float)
-        cell_measure = np.asarray(cell_measures, dtype=float)
+        overlap = np.asarray(overlap_measures, dtype=np.float64)
+        voxel_measure = np.asarray(voxel_measures, dtype=np.float64)
+        cell_measure = np.asarray(cell_measures, dtype=np.float64)
         if not np.issubdtype(voxel.dtype, np.integer) or not np.issubdtype(
             cell.dtype, np.integer
         ):
@@ -232,7 +232,7 @@ class ConservativeVoxelCellTransfer(StrictModule):
             & (adjoint <= 1.0e-10)
         )
         return TransferEvidence(
-            jnp.ones((self.cell_count,), dtype=bool),
+            jnp.ones((self.cell_count,), dtype=jnp.bool_),
             jnp.asarray(1.0),
             constant_residual,
             constant_residual,
@@ -412,10 +412,10 @@ class TensorImageTransferPlan:
         target_frame = str(self.target_frame_id).strip()
         if not target_frame or target_frame != self.target_frame_id:
             raise ValueError("target_frame_id must be a canonical non-empty identifier.")
-        points = np.asarray(self.query_points, dtype=float)
+        points = np.asarray(self.query_points, dtype=np.float64)
         if points.ndim < 1 or points.shape[-1] != 3 or not np.all(np.isfinite(points)):
             raise ValueError("query_points must end in finite 3D coordinates.")
-        rotations = np.asarray(self.reorientation, dtype=float)
+        rotations = np.asarray(self.reorientation, dtype=np.float64)
         expected = points.shape[:-1] + (3, 3)
         if rotations.shape == (3, 3):
             rotations = np.broadcast_to(rotations, expected).copy()
@@ -509,7 +509,7 @@ class ProbabilityImageTransferPlan:
             raise TypeError("asset must be MedicalImageAsset.")
         if self.asset.layout.kind is not ValueKind.PROBABILITY:
             raise ValueError("Probability transfer requires a probability image asset.")
-        points = np.asarray(self.query_points, dtype=float)
+        points = np.asarray(self.query_points, dtype=np.float64)
         if points.ndim < 1 or points.shape[-1] != 3 or not np.all(np.isfinite(points)):
             raise ValueError("query_points must end in finite 3D coordinates.")
         object.__setattr__(self, "query_points", points)
@@ -567,7 +567,7 @@ class LabelImageTransferPlan:
     def __post_init__(self) -> None:
         if not isinstance(self.labels, LabelVolume):
             raise TypeError("labels must be LabelVolume.")
-        points = np.asarray(self.query_points, dtype=float)
+        points = np.asarray(self.query_points, dtype=np.float64)
         if points.ndim < 1 or points.shape[-1] != 3 or not np.all(np.isfinite(points)):
             raise ValueError("query_points must end in finite 3D coordinates.")
         object.__setattr__(self, "query_points", points)

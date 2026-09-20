@@ -63,7 +63,7 @@ def main() -> None:
     fd = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
     topology = fd.initial_topology()
     tags = (
-        jnp.zeros((base_blocks, 4, 4, 4), dtype=bool)
+        jnp.zeros((base_blocks, 4, 4, 4), dtype="bool")
         .at[base_blocks // 2, 1:3, 1:3, 1:3]
         .set(True)
     )

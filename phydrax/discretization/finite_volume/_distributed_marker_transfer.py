@@ -48,7 +48,7 @@ class DistributedMarkerOwnershipPlan(StrictModule, NonTrainableState):
         ids = np.asarray(marker_ids)
         owner = np.asarray(owner_rank)
         support = np.asarray(support_rank)
-        valid = np.asarray(support_valid, dtype=bool)
+        valid = np.asarray(support_valid, dtype=np.bool_)
         ranks = int(rank_count)
         if ids.ndim != 1 or np.unique(ids).size != ids.size:
             raise ValueError("Distributed marker IDs must be unique and rank one.")

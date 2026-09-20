@@ -43,7 +43,7 @@ class FourierLaguerrePlan(StrictModule, NonTrainableState):
         )
         self.layout_id = canonical_fingerprint(
             {
-                "kind": "fourier-laguerre-layout-v1",
+                "kind": "fourier-laguerre-layout",
                 "radial": radial.layout_id,
                 "angular": angular.layout_id,
                 "axes": ("p", "ell", "m"),
@@ -51,7 +51,7 @@ class FourierLaguerrePlan(StrictModule, NonTrainableState):
         )
         self.fingerprint = canonical_fingerprint(
             {
-                "kind": "fourier-laguerre-plan-v1",
+                "kind": "fourier-laguerre-plan",
                 "radial": radial.transform_id,
                 "angular": angular.transform_id,
                 "sample_axes": ("p", "theta", "phi"),
@@ -69,7 +69,7 @@ class FourierLaguerrePlan(StrictModule, NonTrainableState):
         """Identity of the concrete radial and angular executions."""
         return canonical_fingerprint(
             {
-                "kind": "fourier-laguerre-execution-v1",
+                "kind": "fourier-laguerre-execution",
                 "transform": self.transform_id,
                 "radial": self.radial.execution_id,
                 "angular": self.angular.execution_id,
@@ -84,18 +84,11 @@ class FourierLaguerrePlan(StrictModule, NonTrainableState):
     def analysis(self, values: ArrayLike, /) -> Array:
         """Transform radial-spherical samples to padded ``(p, ell, m)`` modes."""
         array = jnp.asarray(values)
-        scalar = (
-            array.ndim >= 3
-            and tuple(int(size) for size in array.shape[-3:]) == self.sample_shape
-        )
-        channel = (
-            array.ndim >= 4
-            and tuple(int(size) for size in array.shape[-4:-1]) == self.sample_shape
-        )
+        scalar = array.ndim >= 3 and tuple(array.shape[-3:]) == self.sample_shape
+        channel = array.ndim >= 4 and tuple(array.shape[-4:-1]) == self.sample_shape
         if not scalar and not channel:
             raise ValueError(
-                "Fourier-Laguerre analysis expects (..., p, n_theta, n_phi) or "
-                "(..., p, n_theta, n_phi, channels)."
+                "Fourier-Laguerre analysis expects (..., p, n_theta, n_phi) or (..., p, n_theta, n_phi, channels)."
             )
         angular_coefficients = self.angular.analysis(array)
         if scalar:
@@ -109,14 +102,8 @@ class FourierLaguerrePlan(StrictModule, NonTrainableState):
     def synthesis(self, coefficients: ArrayLike, /) -> Array:
         """Transform padded ``(p, ell, m)`` modes to radial-spherical samples."""
         array = jnp.asarray(coefficients)
-        scalar = (
-            array.ndim >= 3
-            and tuple(int(size) for size in array.shape[-3:]) == self.coefficient_shape
-        )
-        channel = (
-            array.ndim >= 4
-            and tuple(int(size) for size in array.shape[-4:-1]) == self.coefficient_shape
-        )
+        scalar = array.ndim >= 3 and tuple(array.shape[-3:]) == self.coefficient_shape
+        channel = array.ndim >= 4 and tuple(array.shape[-4:-1]) == self.coefficient_shape
         if not scalar and not channel:
             raise ValueError(
                 "Fourier-Laguerre synthesis expects (..., p, bandlimit, "

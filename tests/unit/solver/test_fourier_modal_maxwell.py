@@ -449,7 +449,7 @@ def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() ->
 
     zero_pml = fm.LateralTransformationOpticsPMLPlan(
         jnp.ones(harmonics.sample_shape + (3,), dtype=jnp.complex128),
-        jnp.zeros(harmonics.sample_shape, dtype=bool),
+        jnp.zeros(harmonics.sample_shape, dtype="bool"),
         pml_id="zero-pml",
     )
     transformed = fm.transform_fourier_modal_material(material, harmonics, zero_pml)
@@ -477,7 +477,7 @@ def test_pml_rejects_complex_off_diagonal_shear() -> None:
     jacobian = jacobian.at[..., 0, 1].set(0.1j)
     plan = fm.LateralTransformationOpticsPMLPlan(
         jacobian,
-        jnp.ones(harmonics.sample_shape, dtype=bool),
+        jnp.ones(harmonics.sample_shape, dtype="bool"),
         pml_id="complex-shear",
     )
 

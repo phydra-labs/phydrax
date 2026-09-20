@@ -84,9 +84,9 @@ def prepare_periodic_free_surface_green_3d(
         raise ValueError(
             "Periodic free-surface Green requires a fully periodic rank-2 cell in R3."
         )
-    vectors = np.asarray(cell.vectors, dtype=float)
+    vectors = np.asarray(cell.vectors, dtype=np.float64)
     scale = max(float(np.linalg.norm(vectors)), 1.0)
-    if np.max(np.abs(vectors[:, 2])) > 64.0 * np.finfo(float).eps * scale:
+    if np.max(np.abs(vectors[:, 2])) > 64.0 * np.finfo(np.float64).eps * scale:
         raise ValueError(
             "Free-surface periodic vectors must lie in the horizontal plane."
         )
@@ -100,13 +100,13 @@ def prepare_periodic_free_surface_green_3d(
     if indices.shape[0] > limit:
         raise ValueError("Periodic free-surface image capacity exceeded.")
     wavevector = (
-        np.zeros((3,), dtype=float)
+        np.zeros((3,), dtype=np.float64)
         if bloch_wavevector is None
-        else np.asarray(bloch_wavevector, dtype=float)
+        else np.asarray(bloch_wavevector, dtype=np.float64)
     )
     if wavevector.shape != (3,) or np.any(~np.isfinite(wavevector)):
         raise ValueError("bloch_wavevector must be one finite R3 vector.")
-    if abs(float(wavevector[2])) > 64.0 * np.finfo(float).eps * max(
+    if abs(float(wavevector[2])) > 64.0 * np.finfo(np.float64).eps * max(
         float(np.linalg.norm(wavevector)), 1.0
     ):
         raise ValueError("Free-surface Bloch wavevectors must be horizontal.")
@@ -124,7 +124,7 @@ def prepare_periodic_free_surface_green_3d(
         }
     )
     evidence = PeriodicFreeSurfaceGreenEvidence3D(
-        image_count=int(indices.shape[0]),
+        image_count=indices.shape[0],
         image_cutoff=cutoff,
         exact_finite_image_sum=True,
         infinite_lattice_certified=False,

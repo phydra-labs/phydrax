@@ -26,7 +26,7 @@ class HistogramPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, edges: ArrayLike, /, *, observable_id: str, unit_id: str):
-        edges_ = np.asarray(edges, dtype=float)
+        edges_ = np.asarray(edges, dtype=np.float64)
         observable = str(observable_id).strip()
         unit = str(unit_id).strip()
         if (
@@ -41,7 +41,7 @@ class HistogramPlan(StrictModule, NonTrainableState):
         self.edges = jnp.asarray(edges_)
         self.observable_id = observable
         self.unit_id = unit
-        self.bin_count = int(edges_.size - 1)
+        self.bin_count = edges_.size - 1
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "collider-histogram-plan",
@@ -77,9 +77,9 @@ def fill_weighted_histogram(
     if values_.ndim != 1 or weights_.shape != values_.shape:
         raise ValueError("Histogram values and weights must be aligned vectors.")
     active_ = (
-        jnp.ones(values_.shape, dtype=bool)
+        jnp.ones(values_.shape, dtype=jnp.bool_)
         if active is None
-        else jnp.asarray(active, dtype=bool)
+        else jnp.asarray(active, dtype=jnp.bool_)
     )
     if active_.shape != values_.shape:
         raise ValueError("active must align with histogram values.")
@@ -121,7 +121,7 @@ def build_cutflow(
     """Accumulate a precomputed cumulative cut matrix and verify nesting."""
     if not isinstance(weights, EventWeightSet):
         raise TypeError("weights must be EventWeightSet.")
-    masks = jnp.asarray(cumulative_masks, dtype=bool)
+    masks = jnp.asarray(cumulative_masks, dtype=jnp.bool_)
     names = tuple(str(value).strip() for value in cut_names)
     if (
         masks.shape != (weights.event_capacity, len(names))
@@ -171,7 +171,7 @@ def histogram_weight_variations(
     active = (
         weights.event_active
         if selected is None
-        else weights.event_active & jnp.asarray(selected, dtype=bool)
+        else weights.event_active & jnp.asarray(selected, dtype=jnp.bool_)
     )
     histograms = tuple(
         fill_weighted_histogram(plan, values_, weights.values[:, index], active=active)

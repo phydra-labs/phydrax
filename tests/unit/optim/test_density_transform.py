@@ -13,7 +13,7 @@ def test_conic_filter_has_positive_normalized_rows_and_preserves_box() -> None:
     plan = phx.optim.ConicDensityFilterPlan(
         jnp.asarray([[0.0], [0.4], [1.1], [2.0]]),
         1.25,
-        jnp.ones((4,), dtype=bool),
+        jnp.ones((4,), dtype="bool"),
         None,
         jnp.asarray([0.2, 0.4, 0.7, 1.1]),
     )
@@ -35,7 +35,7 @@ def test_conic_filter_uses_physical_distance_and_nonuniform_measures() -> None:
     prepared = phx.optim.ConicDensityFilterPlan(
         jnp.asarray([[0.0], [0.5], [2.0]]),
         1.1,
-        jnp.ones((3,), dtype=bool),
+        jnp.ones((3,), dtype="bool"),
         None,
         jnp.asarray([1.0, 3.0, 2.0]),
     ).prepare()
@@ -112,7 +112,7 @@ def test_tanh_projection_is_monotone_bounded_and_supports_dynamic_beta() -> None
 
 def test_radius_eta_beta_and_measures_are_validated() -> None:
     coordinates = jnp.asarray([[0.0], [1.0]])
-    mask = jnp.ones((2,), dtype=bool)
+    mask = jnp.ones((2,), dtype="bool")
     for radius in (-1.0, jnp.nan, jnp.inf):
         with pytest.raises(ValueError, match="radius"):
             phx.optim.ConicDensityFilterPlan(coordinates, radius, mask)
@@ -137,7 +137,7 @@ def test_sparse_resource_limit_fails_before_route_materialization() -> None:
     plan = phx.optim.ConicDensityFilterPlan(
         jnp.asarray([[0.0], [0.1], [0.2]]),
         1.0,
-        jnp.ones((3,), dtype=bool),
+        jnp.ones((3,), dtype="bool"),
         maximum_connections=4,
     )
     with pytest.raises(ValueError, match="maximum_connections"):
@@ -164,7 +164,7 @@ def test_density_transform_vjp_matches_centered_directional_difference() -> None
         phx.optim.ConicDensityFilterPlan(
             jnp.asarray([[0.0], [0.5], [1.4], [2.2]]),
             1.6,
-            jnp.ones((4,), dtype=bool),
+            jnp.ones((4,), dtype="bool"),
             None,
             jnp.asarray([0.4, 0.7, 1.1, 0.6]),
         ),

@@ -72,8 +72,7 @@ class HorizontalCometric(StrictModule):
             value = jnp.asarray(self.control_metric_function(point))
             if value.shape != expected:
                 raise ValueError(
-                    f"Horizontal control metric must have shape {expected}; "
-                    f"got {value.shape}."
+                    f"Horizontal control metric must have shape {expected}; got {value.shape}."
                 )
             return value
 
@@ -246,8 +245,8 @@ class HorizontalValidationReport(StrictModule):
         minimum_frame_singular_value: ArrayLike,
         step_two_rank: ArrayLike,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.minimum_frame_singular_value = jnp.asarray(minimum_frame_singular_value)
         self.step_two_rank = jnp.asarray(step_two_rank)
 

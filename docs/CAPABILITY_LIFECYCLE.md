@@ -66,4 +66,4 @@ A change cannot promote itself. Promotion requires current retained evidence and
 
 `phydrax.qualification.CapabilityCatalog` owns the repository inventory. `CapabilityProfile`, `ReleaseIndex`, and the trust policy own exact release admission. Generated capability tables are derived views. Narrative documentation must not invent a different maturity state.
 
-The checked capability inventory is intentionally not a release index and confers no licence, support, scientific-validity, safety, regulatory, clinical, or commercial claim.
+The checked capability inventory is intentionally not a release index and confers no license, support, scientific-validity, safety, regulatory, clinical, or commercial claim.

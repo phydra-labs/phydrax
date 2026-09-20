@@ -47,7 +47,7 @@ class HarmonicConstraint(StrictModule, NonTrainableState):
                 "kind": "harmonic-constraint",
                 "frame": frame.frame_id,
                 "policy": policy,
-                "period_count": int(periods.shape[0]),
+                "period_count": periods.shape[0],
             }
         )
 

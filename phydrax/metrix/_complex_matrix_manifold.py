@@ -146,8 +146,7 @@ class UnitaryGroup(AbstractLieGroup):
         values = jnp.asarray(coordinates)
         if values.shape[-1:] != self.algebra_shape:
             raise ValueError(
-                "Unitary algebra coordinates must have trailing shape "
-                f"{self.algebra_shape}."
+                f"Unitary algebra coordinates must have trailing shape {self.algebra_shape}."
             )
         dtype = jnp.result_type(values.dtype, jnp.complex64)
         matrix = jnp.zeros(values.shape[:-1] + self.point_shape, dtype=dtype)
@@ -235,8 +234,7 @@ class SpecialUnitaryGroup(AbstractLieGroup):
         values = jnp.asarray(coordinates)
         if values.shape[-1:] != self.algebra_shape:
             raise ValueError(
-                "Special-unitary algebra coordinates must have trailing shape "
-                f"{self.algebra_shape}."
+                f"Special-unitary algebra coordinates must have trailing shape {self.algebra_shape}."
             )
         dtype = jnp.result_type(values.dtype, jnp.complex64)
         matrix = jnp.zeros(values.shape[:-1] + self.point_shape, dtype=dtype)

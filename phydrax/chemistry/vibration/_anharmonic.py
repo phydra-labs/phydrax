@@ -71,7 +71,7 @@ class AnharmonicForceFieldResult(StrictModule, NonTrainableState):
         self.cubic = cubic_
         self.quartic = quartic_
         self.maximum_permutation_residual = residual
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
             {
@@ -136,7 +136,7 @@ class AnharmonicForceFieldPlan(StrictModule, NonTrainableState):
 
     def evaluate(self, origin: ArrayLike | None = None, /) -> AnharmonicForceFieldResult:
         coordinate = (
-            jnp.zeros((self.mode_count,), dtype=float)
+            jnp.zeros((self.mode_count,), dtype=jnp.float64)
             if origin is None
             else jnp.asarray(origin)
         )
@@ -234,7 +234,7 @@ class VibrationalPerturbationResult(StrictModule, NonTrainableState):
         self.minimum_nonresonant_denominator = jnp.asarray(
             minimum_nonresonant_denominator, dtype=harmonic.dtype
         ).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.kind = kind
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
@@ -266,7 +266,7 @@ def _product_basis_hamiltonian(
 ):
     mode_count = frequencies.size
     states = np.asarray(
-        tuple(product(range(maximum_quanta + 1), repeat=mode_count)), dtype=int
+        tuple(product(range(maximum_quanta + 1), repeat=mode_count)), dtype=np.int64
     )
     dimension = states.shape[0]
     if dimension > maximum_basis_states:
@@ -285,7 +285,7 @@ def _product_basis_hamiltonian(
         return result
 
     harmonic = np.sum(frequencies[None, :] * (states + 0.5), axis=1)
-    third = np.zeros((dimension, dimension), dtype=float)
+    third = np.zeros((dimension, dimension), dtype=np.float64)
     fourth = np.zeros_like(third)
     for indices in np.ndindex(cubic.shape):
         coefficient = cubic[indices]
@@ -367,7 +367,7 @@ class VibrationalPerturbationPlan(StrictModule, NonTrainableState):
         )
 
     def evaluate(self, state_quanta: ArrayLike, /) -> VibrationalPerturbationResult:
-        requested = np.asarray(state_quanta, dtype=int)
+        requested = np.asarray(state_quanta, dtype=np.int64)
         if (
             requested.ndim != 2
             or requested.shape[1] != self.frequencies.size
@@ -384,7 +384,7 @@ class VibrationalPerturbationPlan(StrictModule, NonTrainableState):
         )
         lookup = {tuple(state): index for index, state in enumerate(states)}
         target_indices = np.asarray([lookup[tuple(state)] for state in requested])
-        cubic_corrections = np.zeros((requested.shape[0],), dtype=float)
+        cubic_corrections = np.zeros((requested.shape[0],), dtype=np.float64)
         quartic_corrections = np.diag(fourth)[target_indices]
         anharmonic = harmonic[target_indices] + quartic_corrections
         resonant_pairs = []
@@ -420,9 +420,9 @@ class VibrationalPerturbationPlan(StrictModule, NonTrainableState):
                 root = int(np.argmax(np.abs(vectors[0]) ** 2))
                 anharmonic[output_index] = values[root] + correction
         resonance_array = (
-            np.zeros((0, 2), dtype=int)
+            np.zeros((0, 2), dtype=np.int64)
             if not resonant_pairs
-            else np.asarray(sorted(set(resonant_pairs)), dtype=int)
+            else np.asarray(sorted(set(resonant_pairs)), dtype=np.int64)
         )
         successful = (
             bool(self.force_field.successful)

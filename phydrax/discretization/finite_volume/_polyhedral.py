@@ -34,7 +34,7 @@ class PreparedPolyhedralFiniteVolumeGeometry(StrictModule, NonTrainableState):
     cell_quadrature_weights: Array
     cell_quadrature_valid: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     closure_residual: Array
     mesh_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
@@ -64,21 +64,23 @@ def prepare_polyhedral_finite_volume_geometry(
         or closure <= 0
     ):
         raise ValueError("Polyhedral geometry tolerances must be positive and finite.")
-    points = np.asarray(mesh.coordinates, dtype=float)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
     connectivity = mesh.connectivity
     worksets = prepare_polyhedral_worksets(
         connectivity,
         maximum_entries=maximum_workset_entries,
     )
     face_vertices = np.asarray(worksets.face_vertices, dtype=np.int32)
-    face_valid = np.asarray(worksets.face_vertex_valid, dtype=bool)
+    face_valid = np.asarray(worksets.face_vertex_valid, dtype=np.bool_)
     face_count, max_vertices = face_vertices.shape
-    face_centers = np.zeros((face_count, points.shape[1]), dtype=float)
+    face_centers = np.zeros((face_count, points.shape[1]), dtype=np.float64)
     area_vectors = np.zeros_like(face_centers)
-    face_measures = np.zeros((face_count,), dtype=float)
-    face_q_points = np.zeros((face_count, max_vertices - 2, points.shape[1]), dtype=float)
-    face_q_weights = np.zeros((face_count, max_vertices - 2), dtype=float)
-    face_q_valid = np.zeros((face_count, max_vertices - 2), dtype=bool)
+    face_measures = np.zeros((face_count,), dtype=np.float64)
+    face_q_points = np.zeros(
+        (face_count, max_vertices - 2, points.shape[1]), dtype=np.float64
+    )
+    face_q_weights = np.zeros((face_count, max_vertices - 2), dtype=np.float64)
+    face_q_valid = np.zeros((face_count, max_vertices - 2), dtype=np.bool_)
     for face in range(face_count):
         polygon = points[face_vertices[face, face_valid[face]]]
         if polygon.shape[0] < 3:
@@ -113,20 +115,22 @@ def prepare_polyhedral_finite_volume_geometry(
         area_vectors[face], face_measures[face] = newell, measure
     cell_faces = np.asarray(worksets.cell_faces, dtype=np.int32)
     cell_face_signs = np.asarray(worksets.cell_face_signs, dtype=np.int8)
-    cell_face_valid = np.asarray(worksets.cell_face_valid, dtype=bool)
+    cell_face_valid = np.asarray(worksets.cell_face_valid, dtype=np.bool_)
     cell_vertices = np.asarray(worksets.cell_vertices, dtype=np.int32)
-    cell_vertex_valid = np.asarray(worksets.cell_vertex_valid, dtype=bool)
+    cell_vertex_valid = np.asarray(worksets.cell_vertex_valid, dtype=np.bool_)
     cell_count, max_faces = cell_faces.shape
     cell_capacity = max_faces * (max_vertices - 2)
-    cell_centers = np.zeros((cell_count, points.shape[1]), dtype=float)
-    cell_volumes = np.zeros((cell_count,), dtype=float)
-    cell_q_points = np.zeros((cell_count, cell_capacity, points.shape[1]), dtype=float)
-    cell_q_weights = np.zeros((cell_count, cell_capacity), dtype=float)
-    cell_q_valid = np.zeros((cell_count, cell_capacity), dtype=bool)
-    closure_residual = np.zeros((cell_count,), dtype=float)
+    cell_centers = np.zeros((cell_count, points.shape[1]), dtype=np.float64)
+    cell_volumes = np.zeros((cell_count,), dtype=np.float64)
+    cell_q_points = np.zeros(
+        (cell_count, cell_capacity, points.shape[1]), dtype=np.float64
+    )
+    cell_q_weights = np.zeros((cell_count, cell_capacity), dtype=np.float64)
+    cell_q_valid = np.zeros((cell_count, cell_capacity), dtype=np.bool_)
+    closure_residual = np.zeros((cell_count,), dtype=np.float64)
     for cell in range(cell_count):
         volume_sum = 0.0
-        first_moment = np.zeros((points.shape[1],), dtype=float)
+        first_moment = np.zeros((points.shape[1],), dtype=np.float64)
         closure_vector = np.zeros_like(first_moment)
         star = np.mean(points[cell_vertices[cell, cell_vertex_valid[cell]]], axis=0)
         slot = 0
@@ -149,7 +153,7 @@ def prepare_polyhedral_finite_volume_geometry(
                 )
                 if not np.isfinite(volume) or volume <= 0:
                     raise ValueError(
-                        "Polyhedral cell is not star-shaped about its certified centre."
+                        "Polyhedral cell is not star-shaped about its certified center."
                     )
                 centroid = (star + np.sum(triangle, axis=0)) / 4.0
                 volume_sum += volume
@@ -178,7 +182,7 @@ def prepare_polyhedral_finite_volume_geometry(
                 "Polyhedral positive tetrahedral quadrature misses cell volume."
             )
     owner = np.asarray(connectivity.face_owner, dtype=np.int32)
-    neighbour = np.asarray(connectivity.face_neighbour, dtype=np.int32)
+    neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int32)
     geometry_id = canonical_fingerprint(
         {
             "kind": "prepared-polyhedral-finite-volume-geometry",
@@ -201,7 +205,7 @@ def prepare_polyhedral_finite_volume_geometry(
         jnp.asarray(cell_q_weights),
         jnp.asarray(cell_q_valid),
         jnp.asarray(owner),
-        jnp.asarray(neighbour),
+        jnp.asarray(neighbor),
         jnp.asarray(closure_residual),
         mesh.mesh_id,
         geometry_id,

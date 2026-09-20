@@ -269,7 +269,7 @@ def _block_gmres_raw(
     converged = residual_norms <= thresholds
     iterations = jnp.zeros((rhs_count,), dtype=jnp.int32)
     _, _, _, initial_rank = _rank_revealing_factor(residual, block_gram)
-    breakdown = jnp.zeros((rhs_count,), dtype=bool)
+    breakdown = jnp.zeros((rhs_count,), dtype=jnp.bool_)
     last_executed_iteration = jnp.asarray(0, dtype=jnp.int32)
     cycles = (max_steps + restart - 1) // restart
 
@@ -503,7 +503,7 @@ def _block_cg_raw(
     true_residual = initial_residual
     converged = _column_norms(true_residual, block_gram) <= thresholds
     iterations = jnp.zeros((rhs_count,), dtype=jnp.int32)
-    breakdown = jnp.zeros((rhs_count,), dtype=bool)
+    breakdown = jnp.zeros((rhs_count,), dtype=jnp.bool_)
     last_executed_iteration = jnp.asarray(0, dtype=jnp.int32)
 
     def iteration_body(index, operand):
@@ -647,7 +647,7 @@ def _rank_revealing_factor(value: Array, block_gram):
         return (
             jnp.zeros((value.shape[0], 0), dtype=value.dtype),
             jnp.zeros((0, value.shape[1]), dtype=value.dtype),
-            jnp.zeros((0,), dtype=bool),
+            jnp.zeros((0,), dtype=jnp.bool_),
             jnp.asarray(0, dtype=jnp.int32),
         )
     column_norms = _column_norms(value, block_gram)

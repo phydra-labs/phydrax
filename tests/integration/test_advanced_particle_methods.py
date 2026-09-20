@@ -99,7 +99,7 @@ def test_iisph_and_dfsph_fixed_steps_return_complete_projection_status():
         count * (count - 1) // 2, box=box
     ).prepare(particles)
     kernel = phx.discretization.WendlandC2SPHKernel(1)
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     velocity = jnp.zeros_like(position)
 
     iisph = phx.discretization.PreparedIISPH(

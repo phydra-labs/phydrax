@@ -74,8 +74,8 @@ class FiniteVolumeDecompositionPlan(StrictModule, NonTrainableState):
         periodic: Sequence[bool] | None = None,
         grid_revision: str | None = None,
     ):
-        shape = tuple(int(value) for value in global_shape)
-        splits = tuple(int(value) for value in split_factors)
+        shape = tuple(global_shape)
+        splits = tuple(split_factors)
         names = tuple(str(value) for value in axis_names)
         width = int(halo_width)
         periodic_ = (True,) * len(shape) if periodic is None else tuple(periodic)

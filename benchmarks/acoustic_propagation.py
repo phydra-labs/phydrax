@@ -28,11 +28,11 @@ def main() -> None:
     time_step = 0.001
     maximum_speed = 2000.0
     grid = geo.AcousticGrid((args.size, args.size), (spacing, spacing))
-    centre = spacing * (args.size - 1) / 2
+    center = spacing * (args.size - 1) / 2
     acquisition = geo.SeismicAcquisition(
         grid,
-        ((centre, centre),),
-        ((centre + 4 * spacing, centre), (centre, centre + 4 * spacing)),
+        ((center, center),),
+        ((center + 4 * spacing, center), (center, center + 4 * spacing)),
     )
     plan = geo.ConstantDensityAcousticPlan(
         grid,
@@ -49,8 +49,8 @@ def main() -> None:
     wavespeed = jnp.full(grid.shape, 1500.0)
     direction = jnp.exp(
         -(
-            (grid.axis_nodes()[0][:, None] - centre) ** 2
-            + (grid.axis_nodes()[1][None, :] - centre) ** 2
+            (grid.axis_nodes()[0][:, None] - center) ** 2
+            + (grid.axis_nodes()[1][None, :] - center) ** 2
         )
         / (2 * (4 * spacing) ** 2)
     )

@@ -184,14 +184,14 @@ class UniformVUMPSResult(StrictModule):
 
 
 def _operator_transfer(bra, operator, ket, /):
-    bond, operator_bond = int(ket.shape[0]), int(operator.shape[0])
+    bond, operator_bond = ket.shape[0], operator.shape[0]
     return ein.contract("apr,wpqx,bqs->awbrxs", jnp.conj(bra), operator, ket).reshape(
         (bond * operator_bond * bond, bond * operator_bond * bond)
     )
 
 
 def _cell_matrix_element(bra_tensors, operator_tensors, ket_tensors, /):
-    bond, operator_bond = int(ket_tensors[0].shape[0]), int(operator_tensors[0].shape[0])
+    bond, operator_bond = ket_tensors[0].shape[0], operator_tensors[0].shape[0]
     transfer = jnp.eye(
         bond * operator_bond * bond,
         dtype=jnp.result_type(*bra_tensors, *operator_tensors, *ket_tensors),
@@ -204,7 +204,7 @@ def _cell_matrix_element(bra_tensors, operator_tensors, ket_tensors, /):
 
 
 def _cell_overlap(bra_tensors, ket_tensors, /):
-    bond = int(ket_tensors[0].shape[0])
+    bond = ket_tensors[0].shape[0]
     transfer = jnp.eye(bond * bond, dtype=jnp.result_type(*bra_tensors, *ket_tensors))
     for bra, ket in zip(bra_tensors, ket_tensors, strict=True):
         transfer = transfer @ ein.contract("apr,bps->abrs", jnp.conj(bra), ket).reshape(
@@ -245,7 +245,7 @@ def plan_uniform_vumps(problem, policy, /):
         problem.hamiltonian.bond_dimension,
     )
     norm_elements, operator_elements = (bond * bond) ** 2, (bond * op_bond * bond) ** 2
-    tensor_elements = sum(int(tensor.size) for tensor in problem.initial_state.tensors)
+    tensor_elements = sum(tensor.size for tensor in problem.initial_state.tensors)
     history = 4 * policy.maximum_iterations + 2
     if (
         max(norm_elements, operator_elements) > policy.maximum_transfer_elements
@@ -350,7 +350,7 @@ def solve_uniform_vumps(problem_or_prepared, policy=None, /):
     energies = jnp.full((iterations + 1,), jnp.nan, dtype=real_dtype)
     residuals = jnp.full((iterations,), jnp.nan, dtype=real_dtype)
     gaps = jnp.full((iterations + 1,), jnp.nan, dtype=real_dtype)
-    active = jnp.zeros((iterations,), dtype=bool)
+    active = jnp.zeros((iterations,), dtype=jnp.bool_)
     energy = _cell_energy(state.tensors, prepared.problem.hamiltonian.tensors)
     energies, gaps = energies.at[0].set(energy), gaps.at[0].set(fixed.injectivity_gap)
     best_state, best_energy = state, energy
@@ -517,12 +517,12 @@ def solve_uniform_tangent_response(
     ):
         raise ValueError("frequencies must be a nonempty finite vector.")
     fixed = uniform_transfer_fixed_points(state, UniformTransferPolicy(maximum_modes=2))
-    tangent_dimension = int(source.size - 1)
+    tangent_dimension = source.size - 1
     capacity = policy.maximum_modes
     complex_dtype = jnp.result_type(source, jnp.complex64)
     energies = jnp.full((capacity,), jnp.nan, dtype=source.real.dtype)
     weights = jnp.full((capacity,), jnp.nan, dtype=source.real.dtype)
-    active = jnp.zeros((capacity,), dtype=bool)
+    active = jnp.zeros((capacity,), dtype=jnp.bool_)
     response = jnp.full(frequency_values.shape, jnp.nan + 0j, dtype=complex_dtype)
     metric_floor = jnp.asarray(jnp.nan, dtype=source.real.dtype)
     status = UniformTangentStatus.SUCCESS

@@ -146,17 +146,17 @@ def _complex_array(value: Any, name: str, ndim: int, /) -> np.ndarray:
     shape = tuple(_nonnegative_integer(entry, f"{name} shape") for entry in shape_values)
     pairs = np.asarray(record["values"])
     if pairs.size == 0:
-        pairs = np.empty((0, 2), dtype=float)
+        pairs = np.empty((0, 2), dtype=np.float64)
     if (
         len(shape) != ndim
-        or pairs.shape != (int(np.prod(shape, dtype=int)), 2)
+        or pairs.shape != (int(np.prod(shape, dtype=np.int64)), 2)
         or pairs.dtype.kind not in "fiu"
         or np.any(~np.isfinite(pairs))
     ):
         raise ValueError(
             f"{name} must be a finite rank-{ndim} array of [real, imaginary] pairs."
         )
-    values = pairs[:, 0].astype(float) + 1j * pairs[:, 1].astype(float)
+    values = pairs[:, 0].astype("float64") + 1j * pairs[:, 1].astype("float64")
     return values.reshape(shape)
 
 
@@ -164,7 +164,7 @@ def _real_array(value: Any, name: str, ndim: int, /) -> np.ndarray:
     array = np.asarray(value)
     if array.ndim != ndim or array.dtype.kind not in "fiu" or np.any(~np.isfinite(array)):
         raise ValueError(f"{name} must be a finite real rank-{ndim} array.")
-    return array.astype(float, copy=False)
+    return array.astype("float64", copy=False)
 
 
 def _system_record(system: SparsePolynomialSystem, /) -> dict[str, Any]:
@@ -964,7 +964,7 @@ class MembershipEvidence(StrictModule, NonTrainableState):
         ):
             raise ValueError("Membership observations have invalid shapes or values.")
         if points.dtype.kind in "iu":
-            points = points.astype(float)
+            points = points.astype("float64")
         if not isinstance(paths, PathInventory):
             raise TypeError("paths must be a PathInventory.")
         self.query_points = jnp.asarray(points)
@@ -1480,7 +1480,7 @@ def _validate_path_targets(
         if request.operation is HomotopyGeometryOperation.IMAGE_DEGREE:
             if not isinstance(output, PseudoWitnessSet):
                 raise TypeError("Image-degree output must be a PseudoWitnessSet.")
-            upper = int(output.source_points.shape[0])
+            upper = output.source_points.shape[0]
         else:
             if not isinstance(output, WitnessSet):
                 raise TypeError("Slice output must be a WitnessSet.")

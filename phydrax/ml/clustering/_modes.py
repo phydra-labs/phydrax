@@ -245,7 +245,9 @@ class AffinityPropagation(AbstractRecipe):
         )
         if self.preference_is_data_driven:
             preference = jnp.nanmedian(
-                jnp.where(pair_active & ~jnp.eye(n, dtype=bool), similarity, jnp.nan),
+                jnp.where(
+                    pair_active & ~jnp.eye(n, dtype=jnp.bool_), similarity, jnp.nan
+                ),
                 axis=(-2, -1),
             )
             preference = jnp.where(jnp.isfinite(preference), preference, 0.0)
@@ -258,7 +260,7 @@ class AffinityPropagation(AbstractRecipe):
         availability = jnp.zeros_like(similarity)
         responsibility = jnp.zeros_like(similarity)
         delta = jnp.full(batch.case_shape, jnp.inf, dtype=w.dtype)
-        identity = jnp.eye(n, dtype=bool)
+        identity = jnp.eye(n, dtype=jnp.bool_)
 
         def step(_, state):
             availability, responsibility, delta = state
@@ -266,12 +268,12 @@ class AffinityPropagation(AbstractRecipe):
             best_index = jnp.argmax(combined, axis=-1)
             best = jnp.max(combined, axis=-1)
             without_best = jnp.where(
-                jax.nn.one_hot(best_index, n, dtype=bool), -jnp.inf, combined
+                jax.nn.one_hot(best_index, n, dtype=jnp.bool_), -jnp.inf, combined
             )
             second = jnp.max(without_best, axis=-1)
             second = jnp.where(jnp.isfinite(second), second, 0.0)
             excluded = jnp.where(
-                jax.nn.one_hot(best_index, n, dtype=bool),
+                jax.nn.one_hot(best_index, n, dtype=jnp.bool_),
                 second[..., None],
                 best[..., None],
             )

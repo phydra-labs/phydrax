@@ -245,7 +245,7 @@ def test_kfac_supports_condition_fields_and_jax_iteration_scalar():
         binding=phx.domain.FunctionBinding(pass_iter=True),
     )
     def scheduled_weight(x, *, iter_):
-        return jnp.ones_like(x[0]) + 0.0 * iter_.astype(float)
+        return jnp.ones_like(x[0]) + 0.0 * iter_.astype("float64")
 
     condition = phx.conditions.Residual(
         "u",
@@ -269,7 +269,9 @@ def test_kfac_supports_condition_fields_and_jax_iteration_scalar():
         keep_best=False,
         log_every=0,
     )
-    assert jnp.isfinite(trained.loss(key=jr.key(27), step=jnp.asarray(1.0, dtype=float)))
+    assert jnp.isfinite(
+        trained.loss(key=jr.key(27), step=jnp.asarray(1.0, dtype="float64"))
+    )
 
 
 def test_kfac_logs_train_and_evaluation_terms_to_events_and_tensorboard(

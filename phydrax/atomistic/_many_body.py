@@ -56,7 +56,7 @@ class ScalarWallPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
     ):
         if not isinstance(kind, WallKind):
             raise TypeError("kind must be WallKind.")
-        parameter = np.asarray(parameters, dtype=float)
+        parameter = np.asarray(parameters, dtype=np.float64)
         expected = {
             WallKind.PLANE: 4,
             WallKind.SPHERE: 4,
@@ -187,7 +187,7 @@ class ManifoldConstraintPlan(StrictModule, NonTrainableState):
     def __init__(self, kind: WallKind, parameters: ArrayLike, /):
         if not isinstance(kind, WallKind):
             raise TypeError("kind must be WallKind.")
-        parameter = np.asarray(parameters, dtype=float)
+        parameter = np.asarray(parameters, dtype=np.float64)
         expected = {
             WallKind.PLANE: 4,
             WallKind.SPHERE: 4,
@@ -410,7 +410,7 @@ class ManyBodyPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
     ):
         if not isinstance(kind, ManyBodyKind):
             raise TypeError("kind must be ManyBodyKind.")
-        parameter = np.asarray(parameters, dtype=float).reshape((-1,))
+        parameter = np.asarray(parameters, dtype=np.float64).reshape((-1,))
         expected_size = {
             ManyBodyKind.EAM: 5,
             ManyBodyKind.STILLINGER_WEBER: 10,
@@ -496,7 +496,7 @@ def _many_body_neighbor_slots(context, /):
             ),
             jnp.empty((atom_capacity, 0), dtype=context.positions.dtype),
             jnp.empty((atom_capacity, 0), dtype=jnp.int32),
-            jnp.empty((atom_capacity, 0), dtype=bool),
+            jnp.empty((atom_capacity, 0), dtype=jnp.bool_),
         )
     edges = graph.graph
     senders = edges.senders

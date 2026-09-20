@@ -45,7 +45,7 @@ class DiagramDistanceResult(StrictModule, NonTrainableState):
     ):
         self.distance = jnp.asarray(distance)
         self.assignment = jnp.asarray(assignment, dtype=jnp.int32)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.method = str(method)
         self.source_diagram_id = str(source_diagram_id)
         self.target_diagram_id = str(target_diagram_id)
@@ -94,8 +94,8 @@ def _augmented_cost(
     source_count = source.interval_count
     target_count = target.interval_count
     size = source_count + target_count
-    costs = np.zeros((size, size), dtype=float)
-    valid = np.zeros((size, size), dtype=bool)
+    costs = np.zeros((size, size), dtype=np.float64)
+    valid = np.zeros((size, size), dtype=np.bool_)
     for source_index in range(source_count):
         for target_index in range(target_count):
             compatible = (
@@ -202,7 +202,7 @@ def _perfect_matching(valid: np.ndarray):
         return False
 
     for row in range(row_count):
-        if not augment(row, np.zeros((column_count,), dtype=bool)):
+        if not augment(row, np.zeros((column_count,), dtype=np.bool_)):
             return None
     rows = np.full((row_count,), -1, dtype=np.int32)
     for column, row in enumerate(assigned):

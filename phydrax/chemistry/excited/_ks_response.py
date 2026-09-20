@@ -51,12 +51,8 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("TDDFT requires a converged restricted KS state.")
         occupation_host = np.asarray(state.occupations)
-        occupied_indices = tuple(
-            int(value) for value in np.flatnonzero(occupation_host > 1.0)
-        )
-        virtual_indices = tuple(
-            int(value) for value in np.flatnonzero(occupation_host < 1.0e-12)
-        )
+        occupied_indices = tuple(np.flatnonzero(occupation_host > 1.0))
+        virtual_indices = tuple(np.flatnonzero(occupation_host < 1.0e-12))
         if len(occupied_indices) + len(virtual_indices) != occupation_host.size:
             raise ValueError("Native TDDFT requires integer closed-shell occupations.")
         if not occupied_indices or not virtual_indices:
@@ -73,7 +69,7 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
             ao_gradient,
         ) = kohn_sham._fixed_quantities(coordinate)
         coefficients = state.coefficients
-        orbital_count = int(coefficients.shape[1])
+        orbital_count = coefficients.shape[1]
         pairs = tuple(
             (virtual, occupied)
             for occupied in occupied_indices

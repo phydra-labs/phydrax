@@ -82,7 +82,7 @@ def _prepared_problem(*, stateful: bool = False, case_ndim: int = 0):
         "soft-robot-mpm",
         material,
         external_acceleration=commanded_acceleration,
-        external_acceleration_id="soft-robot-uniform-body-acceleration-v1",
+        external_acceleration_id="soft-robot-uniform-body-acceleration",
     )
     compiled = phx.equations.compile_material_point_problem(
         problem,
@@ -158,8 +158,8 @@ def test_mpm_soft_plant_routes_body_force_and_reports_motion_conservation_and_wo
     assert energy.external_work > 0.0
 
     request = MPMSoftObservationRequest(
-        particle_mask=jnp.ones((plant.resolution.particle_capacity,), dtype=bool),
-        grid_mask=jnp.ones(plant.resolution.grid_shape, dtype=bool),
+        particle_mask=jnp.ones((plant.resolution.particle_capacity,), dtype="bool"),
+        grid_mask=jnp.ones(plant.resolution.grid_shape, dtype="bool"),
         surface_normals=jnp.broadcast_to(
             jnp.asarray((0.0, 1.0)), plant.resolution.grid_shape + (2,)
         ),

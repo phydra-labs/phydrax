@@ -172,7 +172,12 @@ def test_c0_exact_support_and_envelope_admission_refusal():
     assert {
         (profile.envelope.lattice.name, profile.envelope.collision.family)
         for profile in profiles
-    } == {("D2Q9", "bgk"), ("D2Q9", "trt"), ("D3Q19", "bgk"), ("D3Q19", "trt")}
+    } == {
+        ("D2Q9", "bgk"),
+        ("D2Q9", "trt"),
+        ("D3Q19", "bgk"),
+        ("D3Q19", "trt"),
+    }
     profile = profiles[0]
     admission = profile.envelope.evaluate(_point())
     assert bool(admission.header.globally_eligible)
@@ -291,7 +296,7 @@ def test_c2_profiles_bind_interface_laplace_capillary_droplet_and_wetting_gates(
         dict(profile.support_tuple.attributes)["interface_family"] for profile in profiles
     } == {
         "binary-free-energy",
-        "binary-colour-gradient",
+        "binary-color-gradient",
     }
     dynamic = c2_dynamic_wetting_profile(wetting)
     required = set(dynamic.required_claims)

@@ -329,7 +329,7 @@ def enumerate_construction_sequences(
     for candidate in candidates_:
         score, accepted = evaluator(candidate)
         scores.append(jnp.asarray(score))
-        valid.append(jnp.asarray(accepted, dtype=bool))
+        valid.append(jnp.asarray(accepted, dtype=jnp.bool_))
     score_array = jnp.stack(tuple(scores))
     valid_array = jnp.stack(tuple(valid))
     safe = jnp.where(valid_array, score_array, jnp.inf)

@@ -14,6 +14,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from phydrax._strict import StrictModule
+
 from ._first_order import (
     AbstractRiemannianOptimizer,
     RiemannianStepMetrics,
@@ -39,7 +41,7 @@ class AbstractRiemannianLineSearchOptimizer(AbstractRiemannianOptimizer):
         raise NotImplementedError
 
 
-class RiemannianConjugateGradientState(eqx.Module):
+class RiemannianConjugateGradientState(StrictModule):
     step: Array
     previous_gradient: PyTree[Array]
     previous_direction: PyTree[Array]
@@ -236,7 +238,7 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
         return state.metrics
 
 
-class RiemannianLBFGSState(eqx.Module):
+class RiemannianLBFGSState(StrictModule):
     step: Array
     s_history: PyTree[Array]
     y_history: PyTree[Array]
@@ -313,7 +315,7 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
             s_history=history,
             y_history=history,
             rho=jnp.zeros((self.history_size,)),
-            active=jnp.zeros((self.history_size,), dtype=bool),
+            active=jnp.zeros((self.history_size,), dtype=jnp.bool_),
             count=jnp.asarray(0, dtype=jnp.int32),
             next_index=jnp.asarray(0, dtype=jnp.int32),
             line_search_evaluations=jnp.asarray(0, dtype=jnp.int32),

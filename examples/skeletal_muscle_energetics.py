@@ -36,9 +36,7 @@ def main() -> None:
         "model_id": result.model_id,
         "successful": bool(result.evidence.successful),
         "muscle_metabolic_power_W": result.muscle_metabolic_power_W.tolist(),
-        "total_muscle_metabolic_power_W": float(
-            result.total_muscle_metabolic_power_W
-        ),
+        "total_muscle_metabolic_power_W": float(result.total_muscle_metabolic_power_W),
         "claim_scope": "muscle-only phenomenological power; basal and thermal fields excluded",
     }
     print(json.dumps(payload, indent=2, sort_keys=True))

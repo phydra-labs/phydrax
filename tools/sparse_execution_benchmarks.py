@@ -52,7 +52,7 @@ def _group_case():
         maximum_group_size=8,
     )
     state, first, steady = _time(
-        lambda value: plan.build(value, jnp.ones(value.shape, dtype=bool)), keys
+        lambda value: plan.build(value, jnp.ones(value.shape, dtype="bool")), keys
     )
     return {
         "items": count,
@@ -124,7 +124,7 @@ def _raster_case():
         lambda points: tiled.render(image, points, amplitudes, 1.0), coordinates
     )
     return {
-        "particles": int(coordinates.shape[0]),
+        "particles": coordinates.shape[0],
         "image_pixels": int(np.prod(image.image_shape)),
         "routes": int(tiled_result.evidence.route_count),
         "reference_compile_and_first_ms": reference_first,
@@ -164,7 +164,7 @@ def _lbm_case():
     result, first, steady = _time(lambda value: prepared.step(value, 1.0), state)
     return {
         "logical_cells": count * count,
-        "fluid_cells": int(fluid.size),
+        "fluid_cells": fluid.size,
         "storage_cells": prepared.storage_capacity,
         "state_bytes": _array_bytes(state),
         "compile_and_first_ms": first,

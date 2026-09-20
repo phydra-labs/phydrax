@@ -53,7 +53,7 @@ def _concept(path, *, dataset, values, ids=(4, 8)):
         group.attrs["N"] = 2
         group.attrs["mass"] = 3.0
         group.create_dataset("pos", data=np.asarray([[1.0, 2.0, 3.0], [2.0, 4.0, 6.0]]))
-        group.create_dataset(dataset, data=np.asarray(values, dtype=float))
+        group.create_dataset(dataset, data=np.asarray(values, dtype="float64"))
         group.create_dataset("ids", data=np.asarray(ids, dtype=np.int64))
 
 

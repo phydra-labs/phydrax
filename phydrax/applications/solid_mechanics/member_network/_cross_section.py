@@ -72,9 +72,9 @@ class ThinWalledSection(StrictModule, NonTrainableState):
             else jnp.asarray(material_indices, dtype=jnp.int32)
         )
         free = (
-            jnp.zeros((nodes_.shape[0],), dtype=bool)
+            jnp.zeros((nodes_.shape[0],), dtype=jnp.bool_)
             if free_edge_nodes is None
-            else jnp.asarray(free_edge_nodes, dtype=bool)
+            else jnp.asarray(free_edge_nodes, dtype=jnp.bool_)
         )
         if materials.shape != thickness_.shape or free.shape != (nodes_.shape[0],):
             raise ValueError("Section material/free-edge arrays have invalid shapes.")
@@ -83,9 +83,7 @@ class ThinWalledSection(StrictModule, NonTrainableState):
         self.thickness = thickness_
         self.material_indices = materials
         self.free_edge_nodes = free
-        self.closed_cells = tuple(
-            tuple(int(index) for index in cell) for cell in closed_cells
-        )
+        self.closed_cells = tuple(tuple(cell) for cell in closed_cells)
         self.section_id = str(
             section_id
             or canonical_fingerprint(

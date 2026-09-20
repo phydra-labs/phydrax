@@ -100,7 +100,10 @@ def materialize_observation(
 def global_boolean_consensus(value: Any, /, *, require_all: bool = True) -> bool:
     """Return one process-symmetric boolean agreement at a host safe point."""
 
-    local = np.asarray(bool(np.asarray(jax.device_get(value))), dtype=np.int8)
+    observed = np.asarray(jax.device_get(value))
+    if observed.shape != () or observed.dtype != np.dtype(np.bool_):
+        raise ValueError("Global boolean consensus requires one Boolean scalar.")
+    local = observed.astype(np.int8)
     gathered = np.asarray(multihost_utils.process_allgather(local, tiled=False))
     return bool(np.all(gathered)) if require_all else bool(np.any(gathered))
 
@@ -115,7 +118,7 @@ class CancellationToken:
         self._reason: str | None = None
 
     @property
-    def cancelled(self) -> bool:
+    def canceled(self) -> bool:
         return self._event.is_set()
 
     @property
@@ -133,12 +136,12 @@ class CancellationToken:
     def wait(self, timeout: float | None = None, /) -> bool:
         return self._event.wait(timeout)
 
-    def raise_if_cancelled(self) -> None:
-        if self.cancelled:
-            raise ExecutionCancelledError(self._reason or "execution cancelled")
+    def raise_if_canceled(self) -> None:
+        if self.canceled:
+            raise ExecutionCanceledError(self._reason or "execution canceled")
 
 
-class ExecutionCancelledError(RuntimeError):
+class ExecutionCanceledError(RuntimeError):
     """Cooperative execution stopped at a declared safe boundary."""
 
 
@@ -168,7 +171,7 @@ __all__ = (
     "CancellationMode",
     "CancellationToken",
     "DistributedObservationPolicy",
-    "ExecutionCancelledError",
+    "ExecutionCanceledError",
     "ExecutionFailureContext",
     "FailureScope",
     "HostObservation",

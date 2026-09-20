@@ -146,8 +146,7 @@ def _select_vector_field(
         return values
     if values.ndim != 4 or values.shape[:3] != sample_shape + (3,):
         raise ValueError(
-            f"{name} must have shape {sample_shape + (3,)} or "
-            f"{sample_shape + (3, 'R')}; got {values.shape}."
+            f"{name} must have shape {sample_shape + (3,)} or {sample_shape + (3, 'R')}; got {values.shape}."
         )
     if excitation_index < 0 or excitation_index >= values.shape[3]:
         raise IndexError(f"excitation_index is out of range for {name}.")
@@ -270,7 +269,7 @@ def tile_periodic_plane_to_finite_window(
         raise ValueError("source must live on a periodic-cell space.")
     if finite_space.topology != "finite-window":
         raise ValueError("finite_space must have finite-window topology.")
-    counts = tuple(int(value) for value in tile_counts)
+    counts = tuple(tile_counts)
     if len(counts) != 2 or any(value < 1 for value in counts):
         raise ValueError("tile_counts must contain two positive integers.")
     source_shape = source.electric.space.shape

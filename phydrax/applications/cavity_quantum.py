@@ -119,8 +119,8 @@ class MaxwellEigenmodeNormalizationPlan(StrictModule, NonTrainableState):
     ):
         electric = np.asarray(electric_energy_metric)
         magnetic = np.asarray(magnetic_energy_metric)
-        frequencies = np.asarray(angular_frequencies, dtype=float)
-        hbar_value = np.asarray(hbar, dtype=float)
+        frequencies = np.asarray(angular_frequencies, dtype=np.float64)
+        hbar_value = np.asarray(hbar, dtype=np.float64)
         if (
             electric.ndim != 2
             or electric.shape[0] != electric.shape[1]
@@ -164,7 +164,7 @@ class MaxwellEigenmodeNormalizationPlan(StrictModule, NonTrainableState):
         targets = (
             float(hbar_value) * frequencies
             if target_energies is None
-            else np.asarray(target_energies, dtype=float)
+            else np.asarray(target_energies, dtype=np.float64)
         )
         if targets.shape != frequencies.shape or not np.all(
             np.isfinite(targets) & (targets > 0.0)
@@ -494,7 +494,7 @@ class CavityDipoleCouplingPlan(StrictModule, NonTrainableState):
     ):
         evaluation = np.asarray(electric_field_evaluation)
         dipole = np.asarray(dipole_moment_coulomb_meter)
-        hbar = np.asarray(hbar_joule_second, dtype=float)
+        hbar = np.asarray(hbar_joule_second, dtype=np.float64)
         if evaluation.ndim != 2 or evaluation.shape[0] not in (1, 2, 3):
             raise ValueError(
                 "electric_field_evaluation must map coefficients to 1-3 components."
@@ -580,7 +580,7 @@ class PurcellLoweringPlan(StrictModule, NonTrainableState):
         /,
     ):
         values = tuple(
-            np.asarray(value, dtype=float)
+            np.asarray(value, dtype=np.float64)
             for value in (
                 cavity_angular_frequency,
                 emitter_angular_frequency,
@@ -620,7 +620,7 @@ class PurcellLoweringPlan(StrictModule, NonTrainableState):
             induced / self.bare_emitter_decay_rate,
             jnp.inf,
         )
-        lowering = jnp.asarray(((0.0, 1.0), (0.0, 0.0)), dtype=complex)
+        lowering = jnp.asarray(((0.0, 1.0), (0.0, 0.0)), dtype=jnp.complex128)
         jumps = jnp.sqrt(total)[..., None, None, None] * lowering[None, ...]
         finite = jnp.isfinite(induced) & jnp.isfinite(total) & jnp.isfinite(shift)
         successful = finite & (total >= 0.0)
@@ -644,7 +644,7 @@ class ZeroCavityDrive(StrictModule, NonTrainableState):
         self.drive_id = canonical_fingerprint({"kind": "zero-cavity-drive"})
 
     def __call__(self, time: ArrayLike, /) -> Array:
-        return jnp.zeros_like(jnp.asarray(time), dtype=complex)
+        return jnp.zeros_like(jnp.asarray(time), dtype=jnp.complex128)
 
 
 class MaxwellBlochState(StrictModule):
@@ -661,7 +661,7 @@ class MaxwellBlochState(StrictModule):
         inversion: ArrayLike,
         /,
     ):
-        amplitude = jnp.asarray(cavity_amplitude, dtype=complex)
+        amplitude = jnp.asarray(cavity_amplitude, dtype=jnp.complex128)
         u = jnp.asarray(bloch_u)
         v = jnp.asarray(bloch_v)
         w = jnp.asarray(inversion)
@@ -861,8 +861,8 @@ class MaxwellLindbladState(StrictModule):
     density_matrix: Array
 
     def __init__(self, cavity_amplitude: ArrayLike, density_matrix: ArrayLike, /):
-        amplitude = jnp.asarray(cavity_amplitude, dtype=complex)
-        density = jnp.asarray(density_matrix, dtype=complex)
+        amplitude = jnp.asarray(cavity_amplitude, dtype=jnp.complex128)
+        density = jnp.asarray(density_matrix, dtype=jnp.complex128)
         if amplitude.shape != ():
             raise ValueError("Single-mode cavity amplitude must be scalar.")
         if density.ndim != 2 or density.shape[0] != density.shape[1]:
@@ -907,9 +907,9 @@ class MaxwellLindbladPlan(StrictModule, NonTrainableState):
         drive_id: str | None = None,
         maximum_dimension: int = 1024,
     ):
-        hamiltonian = np.asarray(bare_hamiltonian_angular_frequency, dtype=complex)
-        transition = np.asarray(transition_operator, dtype=complex)
-        jumps = np.asarray(jump_operators, dtype=complex)
+        hamiltonian = np.asarray(bare_hamiltonian_angular_frequency, dtype=np.complex128)
+        transition = np.asarray(transition_operator, dtype=np.complex128)
+        jumps = np.asarray(jump_operators, dtype=np.complex128)
         if (
             hamiltonian.ndim != 2
             or hamiltonian.shape[0] != hamiltonian.shape[1]
@@ -935,7 +935,7 @@ class MaxwellLindbladPlan(StrictModule, NonTrainableState):
             raise ValueError("Bare Lindblad Hamiltonian must be Hermitian.")
         coupling = np.asarray(angular_coupling)
         detuning = np.asarray(cavity_detuning)
-        decay = np.asarray(cavity_energy_decay_rate, dtype=float)
+        decay = np.asarray(cavity_energy_decay_rate, dtype=np.float64)
         if any(
             value.shape != () or not np.isfinite(value)
             for value in (coupling, detuning, decay)
@@ -1152,7 +1152,7 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
         cell_limit = int(maximum_cells)
         if edge_limit < 1 or cell_limit < 1:
             raise ValueError("H(curl) resource limits must be positive.")
-        edge_count = int(mesh.entity_set(1).entity_ids.size)
+        edge_count = mesh.entity_set(1).entity_ids.size
         cell_count = sum(block.cell_count for block in mesh.blocks)
         mesh_supported = (
             mesh.topological_dimension == 3

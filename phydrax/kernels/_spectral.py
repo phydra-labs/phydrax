@@ -37,7 +37,7 @@ class AbstractSpectralMultiplier(StrictModule):
 
 
 def _positive_scalar(value: ArrayLike, name: str, /) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim != 0:
         raise ValueError(f"{name} must be scalar.")
     return eqx.error_if(
@@ -53,7 +53,7 @@ class HeatSpectralMultiplier(AbstractSpectralMultiplier):
     diffusion_time: Array
 
     def __init__(self, diffusion_time: ArrayLike, /):
-        value = jnp.asarray(diffusion_time, dtype=float)
+        value = jnp.asarray(diffusion_time, dtype=jnp.float64)
         if value.ndim != 0:
             raise ValueError("diffusion_time must be scalar.")
         self.diffusion_time = eqx.error_if(
@@ -93,7 +93,7 @@ class MaternSpectralMultiplier(AbstractSpectralMultiplier):
         spectral_dimension: float,
         /,
     ) -> Array:
-        values = jnp.asarray(eigenvalues, dtype=float)
+        values = jnp.asarray(eigenvalues, dtype=jnp.float64)
         dimension = jnp.asarray(spectral_dimension, dtype=values.dtype)
         safe_values = jnp.where(values > 0.0, values, 1.0)
         log_ratio = (
@@ -167,7 +167,7 @@ class SpectralFeatureKernel(AbstractFiniteFeatureKernel):
 
     def _entity_indices(self, points: ArrayLike, /) -> Array:
         design = _as_points(points, name="points")
-        if int(design.shape[1]) != 1:
+        if design.shape[1] != 1:
             raise ValueError("Spectral entity inputs must have one coordinate.")
         entity_ids = design[:, 0]
         lower = self.eigenbasis.index_offset

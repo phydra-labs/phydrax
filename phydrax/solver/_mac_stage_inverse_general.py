@@ -374,8 +374,7 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
         else:
             if not isinstance(viscosity_action, PreparedMACVariationalViscosityAction):
                 raise TypeError(
-                    "viscosity_action must be PreparedMACVariationalViscosityAction "
-                    "or None."
+                    "viscosity_action must be PreparedMACVariationalViscosityAction or None."
                 )
             if viscosity_action.momentum.prepared_id != momentum.prepared_id:
                 raise ValueError(

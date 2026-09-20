@@ -84,7 +84,7 @@ class TensorValuationApplicability(StrictModule):
         )
         if any(not value for value in identifiers):
             raise ValueError("Tensor applicability identities must be nonempty.")
-        ranks = tuple(int(rank) for rank in max_ranks)
+        ranks = tuple(max_ranks)
         if len(ranks) != max(order - 1, 0) or any(rank < 1 for rank in ranks):
             raise ValueError("max_ranks must provide one positive cap per tensor cut.")
         validation = float(validation_tolerance)
@@ -139,7 +139,7 @@ class TensorSupportEvidence(StrictModule):
         evidence_id: str,
         tolerance: float,
     ):
-        violation = jnp.asarray(maximum_support_violation, dtype=float)
+        violation = jnp.asarray(maximum_support_violation, dtype=jnp.float64)
         identifiers = tuple(
             str(value) for value in (domain_id, support_id, factor_layout_id, evidence_id)
         )
@@ -174,7 +174,7 @@ class TensorCausalityEvidence(StrictModule):
         evidence_id: str,
         tolerance: float,
     ):
-        dependency = jnp.asarray(maximum_future_dependency, dtype=float)
+        dependency = jnp.asarray(maximum_future_dependency, dtype=jnp.float64)
         filtration = str(filtration_id)
         identifier = str(evidence_id)
         tolerance_ = float(tolerance)
@@ -378,7 +378,7 @@ def tensor_independent_validation(
         rmse,
         relative,
         maximum,
-        int(points.shape[0]),
+        points.shape[0],
         identifier,
         independence,
         applicability.training_independence_id,
@@ -391,8 +391,8 @@ def tensor_independent_validation(
 def _resource_evidence(
     applicability: TensorValuationApplicability, tensor: TensorTrain, /
 ) -> TensorResourceEvidence:
-    entries = sum(int(core.size) for core in tensor.cores)
-    bytes_ = sum(int(core.size * core.dtype.itemsize) for core in tensor.cores)
+    entries = sum(core.size for core in tensor.cores)
+    bytes_ = sum(core.size * core.dtype.itemsize for core in tensor.cores)
     dense_entries = applicability.grid.point_count
     return TensorResourceEvidence(
         entries,

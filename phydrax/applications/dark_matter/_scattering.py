@@ -51,7 +51,7 @@ def _requested_use(
 
 
 def _external_array(value: ArrayLike, /) -> Array:
-    return jax.lax.stop_gradient(jnp.asarray(value, dtype=float))
+    return jax.lax.stop_gradient(jnp.asarray(value, dtype=jnp.float64))
 
 
 def _linear_interpolate(grid: Array, values: Array, coordinate: Array, /) -> Array:
@@ -98,7 +98,7 @@ def elastic_scatter_velocity(
     /,
 ) -> ElasticCollisionResult:
     """Apply one elastic mark through the native particle-pair primitive."""
-    projectile = jnp.asarray(projectile_velocity_m_s, dtype=float)
+    projectile = jnp.asarray(projectile_velocity_m_s, dtype=jnp.float64)
     target = jnp.asarray(target_velocity_m_s, dtype=projectile.dtype)
     direction = jnp.asarray(outgoing_relative_direction, dtype=projectile.dtype)
     if projectile.shape != (3,) or target.shape != (3,) or direction.shape != (3,):
@@ -235,9 +235,9 @@ class ElasticScatteringTable(StrictModule, NonTrainableState):
             raise ValueError(
                 "Thermal rate manifest must bind the mark cutoff and tail policy."
             )
-        masses = np.asarray(target_masses_kg, dtype=float)
-        speeds = np.asarray(relative_speeds_m_s, dtype=float)
-        cross_sections = np.asarray(cross_sections_m2, dtype=float)
+        masses = np.asarray(target_masses_kg, dtype=np.float64)
+        speeds = np.asarray(relative_speeds_m_s, dtype=np.float64)
+        cross_sections = np.asarray(cross_sections_m2, dtype=np.float64)
         if (
             masses.shape != (len(targets),)
             or speeds.ndim != 1
@@ -254,8 +254,8 @@ class ElasticScatteringTable(StrictModule, NonTrainableState):
             raise ValueError(
                 "Elastic masses, speed support, or cross sections are invalid."
             )
-        temperatures = np.asarray(temperatures_K, dtype=float)
-        coefficients = np.asarray(rate_coefficients_m3_s, dtype=float)
+        temperatures = np.asarray(temperatures_K, dtype=np.float64)
+        coefficients = np.asarray(rate_coefficients_m3_s, dtype=np.float64)
         if (
             temperatures.ndim != 1
             or temperatures.size < 2

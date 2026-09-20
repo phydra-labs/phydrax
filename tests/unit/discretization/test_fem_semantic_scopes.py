@@ -140,7 +140,7 @@ def test_dirichlet_selection_rejects_interior_facets():
     mesh = _mesh()
     discretization = _discretization(mesh)
     interior_facet = int(
-        np.flatnonzero(~np.asarray(mesh.connectivity.boundary_edges, dtype=bool))[0]
+        np.flatnonzero(~np.asarray(mesh.connectivity.boundary_edges, dtype="bool"))[0]
     )
     selection = phx.meshing.resolve_mesh_scope(mesh, _scope(mesh, 1, (interior_facet,)))
 

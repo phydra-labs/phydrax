@@ -62,7 +62,7 @@ class TargetVarianceAcquisitionPolicy(StrictModule, NonTrainableState):
         mass = jnp.sum(weights)
         if not bool(jnp.isfinite(mass)) or float(np.asarray(mass)) <= 0.0:
             raise ValueError("target_weights must have positive total mass.")
-        costs = jnp.asarray(level_costs, dtype=float)
+        costs = jnp.asarray(level_costs, dtype=jnp.float64)
         if costs.shape != (path.num_levels,) or bool(
             jnp.any(~jnp.isfinite(costs) | (costs <= 0.0))
         ):
@@ -134,7 +134,7 @@ def select_fidelity_acquisition(
     model.validate_state(state)
     candidates = _as_points(candidate_points)
     level_ids = tuple(str(value) for value in candidate_level_ids)
-    if len(level_ids) != int(candidates.shape[0]):
+    if len(level_ids) != candidates.shape[0]:
         raise ValueError("candidate_level_ids must contain one level per candidate.")
     unknown = tuple(sorted(set(level_ids) - set(model.path.level_ids)))
     if unknown:
@@ -144,9 +144,9 @@ def select_fidelity_acquisition(
         dtype=jnp.int32,
     )
     admitted = (
-        jnp.ones((candidates.shape[0],), dtype=bool)
+        jnp.ones((candidates.shape[0],), dtype=jnp.bool_)
         if available is None
-        else jnp.asarray(available, dtype=bool)
+        else jnp.asarray(available, dtype=jnp.bool_)
     )
     if admitted.shape != (candidates.shape[0],):
         raise ValueError("available must contain one flag per candidate.")
@@ -154,7 +154,7 @@ def select_fidelity_acquisition(
     if selection_count <= 0:
         raise ValueError("No fidelity acquisition candidates are available.")
 
-    target_count = int(policy.target_points.shape[0])
+    target_count = policy.target_points.shape[0]
     target_level = model.path.num_levels - 1
     combined_points = jnp.concatenate((policy.target_points, candidates), axis=0)
     combined_outputs = jnp.concatenate(
@@ -227,7 +227,7 @@ def select_fidelity_acquisition(
 
 
 def _as_points(value: ArrayLike, /) -> Array:
-    points = jnp.asarray(value, dtype=float)
+    points = jnp.asarray(value, dtype=jnp.float64)
     if points.ndim == 1:
         points = points[:, None]
     if points.ndim != 2 or points.shape[0] == 0:

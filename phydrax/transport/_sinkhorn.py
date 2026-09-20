@@ -56,8 +56,8 @@ class Sinkhorn(AbstractBalancedTransportSolver):
             raise ValueError("check_every must be positive.")
         if block_size is not None and int(block_size) < 1:
             raise ValueError("block_size must be positive or None.")
-        epsilon_ = jnp.asarray(epsilon, dtype=float).reshape(())
-        tolerance_ = jnp.asarray(tolerance, dtype=float).reshape(())
+        epsilon_ = jnp.asarray(epsilon, dtype=jnp.float64).reshape(())
+        tolerance_ = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
         self.epsilon = eqx.error_if(
             epsilon_,
             ~jnp.isfinite(epsilon_) | (epsilon_ <= 0.0),

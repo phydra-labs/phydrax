@@ -116,8 +116,7 @@ def _validate_jump_provenance(
         return
     if not isinstance(realization, CompositeStochasticRealization):
         raise ValueError(
-            "Paths with jump events require a CompositeStochasticRealization "
-            "when realization provenance is present."
+            "Paths with jump events require a CompositeStochasticRealization when realization provenance is present."
         )
     wiener_components = tuple(
         component
@@ -323,7 +322,7 @@ def evaluate_jump_bsde(
     compensators = jnp.zeros_like(base.local_residuals)
     event_counts: dict[str, Array] = {}
     event_status: dict[str, Array] = {}
-    successful = jnp.ones(paths.sample_shape, dtype=bool)
+    successful = jnp.ones(paths.sample_shape, dtype=jnp.bool_)
     times = paths.times
     output_axes = (1,) * len(problem.base.output_shape)
     for label, events in paths.jump_events.items():
@@ -419,11 +418,11 @@ def jump_bsde_diagnostics(
     valid = evaluation.valid_paths
     num_valid = int(jnp.sum(valid))
     mean_counts = {
-        label: jnp.mean(counts.astype(float))
+        label: jnp.mean(counts.astype("float64"))
         for label, counts in evaluation.event_counts.items()
     }
     failures = {
-        label: jnp.mean((status != JUMP_SUCCESS).astype(float))
+        label: jnp.mean((status != JUMP_SUCCESS).astype("float64"))
         for label, status in evaluation.event_status.items()
     }
     compensated_mean = jnp.mean(

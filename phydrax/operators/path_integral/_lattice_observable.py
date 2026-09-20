@@ -51,7 +51,7 @@ class LatticeObservablePlan(StrictModule):
     ):
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
-        shape = tuple(int(value) for value in output_shape)
+        shape = tuple(output_shape)
         if any(value <= 0 for value in shape):
             raise ValueError("output_shape dimensions must be positive.")
         if normalization not in (
@@ -179,9 +179,9 @@ def phi4_pair_correlation_plan(
     if np.any(target < 0) or np.any(target >= site_count):
         raise ValueError("target_indices lie outside the scalar field.")
     weight = (
-        np.ones(source.shape, dtype=float)
+        np.ones(source.shape, dtype=np.float64)
         if weights is None
-        else np.asarray(weights, dtype=float)
+        else np.asarray(weights, dtype=np.float64)
     )
     if weight.shape != source.shape or np.any(~np.isfinite(weight)):
         raise ValueError("Pair weights must be finite and match the index vectors.")

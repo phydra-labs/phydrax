@@ -61,20 +61,20 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
         state_shape: tuple[int, ...],
         scale_floor: float = 1e-6,
     ):
-        cases = tuple(int(size) for size in case_shape)
-        state = tuple(int(size) for size in state_shape)
+        cases = tuple(case_shape)
+        state = tuple(state_shape)
         state_size = prod(state) if state else 1
         initial = jnp.asarray(initial_location)
         initial_scale = jnp.asarray(initial_raw_scale)
         matrices = jnp.asarray(transitions)
         additions = jnp.asarray(offsets)
         innovation_scale = jnp.asarray(innovation_raw_scale)
-        valid = jnp.asarray(step_valid, dtype=bool)
+        valid = jnp.asarray(step_valid, dtype=jnp.bool_)
         if initial.shape != cases + state or initial_scale.shape != initial.shape:
             raise ValueError("Initial Gaussian Markov parameters have invalid shapes.")
         if valid.ndim != len(cases) + 1 or valid.shape[: len(cases)] != cases:
             raise ValueError("step_valid must have shape case_shape + (time,).")
-        steps = int(valid.shape[-1])
+        steps = valid.shape[-1]
         if steps < 1:
             raise ValueError("Gaussian Markov paths require at least one transition.")
         if matrices.shape != cases + (steps, state_size, state_size):
@@ -173,7 +173,7 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
         *,
         sample_shape: tuple[int, ...] = (),
     ) -> tuple[Array, Array]:
-        shape = tuple(int(size) for size in sample_shape)
+        shape = tuple(sample_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("sample_shape dimensions must be positive.")
         sample_count = prod(shape) if shape else 1
@@ -389,7 +389,7 @@ class StateSpaceVariationalResult(StrictModule):
 
     @property
     def num_draws(self) -> int:
-        return int(self.log_model.shape[0])
+        return self.log_model.shape[0]
 
 
 def fit_state_space_variational(

@@ -28,6 +28,7 @@ def test_similarity_and_resource_contracts_fail_closed():
     with pytest.raises(ValueError, match="resource budget"):
         phx.equations.HarmonicPolynomialBasis(2, 2, resources=budget)
 
+
 def test_construction_audits_are_paired_and_fail_each_block_independently():
     with pytest.raises(ValueError, match="block 1 failed"):
         _critical_construction_audit(
@@ -57,9 +58,7 @@ def test_canonical_harmonic_basis_is_deterministic_and_exact():
         strict=True,
     ):
         assert jnp.array_equal(left, right)
-    assert all(
-        float(values[-1]) > 0.0 for values in first.singular_value_blocks
-    )
+    assert all(float(values[-1]) > 0.0 for values in first.singular_value_blocks)
     assert len(first.construction_residuals) == first.maximum_degree + 1
     assert all(
         float(residual) <= float(tolerance)
@@ -176,14 +175,14 @@ def test_bound_trial_metadata_provenance_audit_and_enforcement_guard():
         functions={"u": field},
         terms=(phx.terms.ResidualPenalty(condition, source),),
     )
-    assert solver.discretization_bundle.records[0].artifact_kind == "exact-pde-trial-space"
+    assert (
+        solver.discretization_bundle.records[0].artifact_kind == "exact-pde-trial-space"
+    )
 
 
 def test_direct_linear_trial_space_solve_recovers_harmonic_boundary_field():
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
-    model = phx.equations.LinearTrefftzField(
-        phx.equations.HarmonicPolynomialBasis(2, 1)
-    )
+    model = phx.equations.LinearTrefftzField(phx.equations.HarmonicPolynomialBasis(2, 1))
     field = domain.Model("x")(model)
     target = domain.Function("x")(lambda x: 0.5 + 1.25 * x[0] - 0.75 * x[1])
     boundary = domain.component({"x": phx.domain.Boundary()})
@@ -220,9 +219,7 @@ def test_direct_linear_trial_space_solve_recovers_harmonic_boundary_field():
 def test_direct_linear_solver_rejects_nonfixed_realizations():
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
     field = domain.Model("x")(
-        phx.equations.LinearTrefftzField(
-            phx.equations.HarmonicPolynomialBasis(2, 1)
-        )
+        phx.equations.LinearTrefftzField(phx.equations.HarmonicPolynomialBasis(2, 1))
     )
     boundary = domain.component({"x": phx.domain.Boundary()})
     condition = phx.conditions.Dirichlet("u", boundary, target=0.0)

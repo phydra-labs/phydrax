@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+import phydrax.ein as ein
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
@@ -60,7 +61,7 @@ def _canonical_signed_permutations(
     matrices = []
     for permutation in itertools.permutations(range(dimension)):
         for signs in itertools.product((-1, 1), repeat=dimension):
-            matrix = np.zeros((dimension, dimension), dtype=float)
+            matrix = np.zeros((dimension, dimension), dtype=np.float64)
             for row, column in enumerate(permutation):
                 matrix[row, column] = signs[row]
             if not proper_only or round(float(np.linalg.det(matrix))) == 1:
@@ -69,7 +70,7 @@ def _canonical_signed_permutations(
     matrices.sort(
         key=lambda matrix: (
             0 if np.array_equal(matrix, identity) else 1,
-            tuple(int(value) for value in matrix.reshape(-1)),
+            tuple(matrix.reshape(-1)),
         )
     )
     return np.stack(matrices, axis=0)
@@ -108,13 +109,13 @@ class FiniteOrthogonalGroup(StrictModule, NonTrainableState):
         if host.shape[1] == 0:
             raise ValueError("Finite group dimension must be positive.")
         if not np.issubdtype(host.dtype, np.floating):
-            host = host.astype(float)
+            host = host.astype("float64")
         if np.any(~np.isfinite(host)):
             raise ValueError("Finite group matrices must be finite.")
         order, dimension, _ = host.shape
         identity = np.eye(dimension, dtype=host.dtype)
         orthogonality_defect = np.max(
-            np.abs(np.einsum("gji,gjk->gik", host, host) - identity[None, ...])
+            np.abs(ein.contract("gji,gjk->gik", host, host) - identity[None, ...])
         )
         if orthogonality_defect > tolerance_value:
             raise ValueError("Every finite group matrix must be orthogonal.")
@@ -127,7 +128,7 @@ class FiniteOrthogonalGroup(StrictModule, NonTrainableState):
             np.abs(host[:, None, :, :] - host[None, :, :, :]),
             axis=(2, 3),
         )
-        duplicate_mask = (pairwise <= tolerance_value) & ~np.eye(order, dtype=bool)
+        duplicate_mask = (pairwise <= tolerance_value) & ~np.eye(order, dtype=np.bool_)
         if np.any(duplicate_mask):
             raise ValueError("Finite group matrices must be unique.")
         identity_index = _matrix_index(host, identity, tolerance_value)
@@ -170,7 +171,7 @@ class FiniteOrthogonalGroup(StrictModule, NonTrainableState):
 
     @property
     def order(self) -> int:
-        return int(self.matrices.shape[0])
+        return self.matrices.shape[0]
 
     @property
     def is_proper(self) -> bool:
@@ -202,9 +203,7 @@ class FiniteOrthogonalGroup(StrictModule, NonTrainableState):
             raise IndexError("Finite group element index is out of range.")
         array = jnp.asarray(values)
         axes = (
-            tuple(range(self.dimension))
-            if spatial_axes is None
-            else tuple(int(axis) for axis in spatial_axes)
+            tuple(range(self.dimension)) if spatial_axes is None else tuple(spatial_axes)
         )
         if len(axes) != self.dimension or len(set(axes)) != len(axes):
             raise ValueError(

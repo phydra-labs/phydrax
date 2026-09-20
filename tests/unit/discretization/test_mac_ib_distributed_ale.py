@@ -27,9 +27,7 @@ def test_mac_marker_transfer_is_dual_measure_adjoint():
     markers = phx.discretization.LagrangianMarkerSetPlan(
         jnp.asarray([3, 7]), marker_position, jnp.asarray([0.4, 0.6])
     ).prepare()
-    transfer = phx.discretization.MACMarkerTransferPlan(
-        operators, markers
-    ).prepare()
+    transfer = phx.discretization.MACMarkerTransferPlan(operators, markers).prepare()
     relation = transfer.relation(marker_position)
     velocity = tuple(
         jnp.full(layout.shape, 0.2 * (axis + 1))

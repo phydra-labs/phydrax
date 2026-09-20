@@ -41,7 +41,7 @@ class MaxwellBoundaryPlan(StrictModule):
                 raise ValueError("Impedance boundaries require admittance.")
             value = jnp.asarray(admittance)
             if not jnp.issubdtype(value.dtype, jnp.inexact):
-                value = value.astype(float)
+                value = value.astype("float64")
             value = eqx.error_if(
                 value,
                 jnp.any(~jnp.isfinite(value)) | jnp.any(jnp.real(value) < 0.0),
@@ -93,15 +93,15 @@ class PreparedMaxwellBoundary(StrictModule):
             raise TypeError("bridge must be a StructuredCochainBridge.")
         electric_boundary = jnp.asarray(
             bridge.cochain.boundary_masks[layout.electric_degree],
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         magnetic_boundary = jnp.asarray(
             bridge.cochain.boundary_masks[layout.magnetic_degree],
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         if layout.polarization == "tez":
             shape = bridge.orientation_shapes[layout.magnetic_degree][0]
-            adjacent = np.zeros(shape, dtype=bool)
+            adjacent = np.zeros(shape, dtype=np.bool_)
             for axis, structured_axis in enumerate(bridge.grid.structured_axes):
                 if structured_axis.periodic:
                     continue
@@ -197,7 +197,7 @@ class BlochCochainCalculus(StrictModule, NonTrainableState):
             raise TypeError("bridge must be a StructuredCochainBridge.")
         if not all(axis.periodic for axis in bridge.grid.structured_axes):
             raise ValueError("Bloch calculus requires periodic quotient axes.")
-        wavevector_ = jnp.asarray(wavevector, dtype=float)
+        wavevector_ = jnp.asarray(wavevector, dtype=jnp.float64)
         if wavevector_.shape != (bridge.dimension,):
             raise ValueError("wavevector must have one entry per structured axis.")
         if bool(jnp.any(~jnp.isfinite(wavevector_))):
@@ -274,8 +274,7 @@ class MaxwellInterfaceJump(StrictModule):
             or np.unique(right).size != right.size
         ):
             raise ValueError(
-                "Interface trace indices must be unique paired nonnegative signed "
-                "integers."
+                "Interface trace indices must be unique paired nonnegative signed integers."
             )
         orientation_ = jnp.broadcast_to(jnp.asarray(orientation), left.shape)
         jump_ = jnp.broadcast_to(jnp.asarray(jump), left.shape)

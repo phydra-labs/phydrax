@@ -197,9 +197,9 @@ class SusceptibilityEstimate(StrictModule, NonTrainableState):
         source_kind: FiniteDensitySourceKind,
         provenance_ids: Sequence[str],
     ):
-        temperatures_ = np.asarray(temperatures, dtype=float)
-        values_ = np.asarray(values, dtype=float)
-        covariance_ = np.asarray(covariance, dtype=float)
+        temperatures_ = np.asarray(temperatures, dtype=np.float64)
+        values_ = np.asarray(values, dtype=np.float64)
+        covariance_ = np.asarray(covariance, dtype=np.float64)
         indices_ = tuple(indices)
         if (
             temperatures_.ndim != 1
@@ -233,9 +233,9 @@ class SusceptibilityEstimate(StrictModule, NonTrainableState):
         if any(value.total_order > domain.maximum_total_order for value in indices_):
             raise ValueError("A susceptibility index exceeds the domain's maximum order.")
         valid_ = (
-            np.ones(expected, dtype=bool)
+            np.ones(expected, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if valid_.shape != expected:
             raise ValueError("valid must align with susceptibility values.")

@@ -72,7 +72,7 @@ class BetaPlaneStatisticalCoordinates(StrictModule, NonTrainableState):
             }
         )
         layout = SecondCumulantLayout(
-            int(active.size),
+            active.size,
             np.flatnonzero(active_low),
             eddy_indices=np.flatnonzero(~active_low),
             layout_id=canonical_fingerprint(
@@ -87,15 +87,14 @@ class BetaPlaneStatisticalCoordinates(StrictModule, NonTrainableState):
         self.active_coordinate_indices = jnp.asarray(active, dtype=jnp.int32)
         self.coordinate_modal_indices = jnp.asarray(active_modes, dtype=jnp.int32)
         self.layout = layout
-        self.coordinate_size = int(active.size)
+        self.coordinate_size = active.size
         self.coordinate_id = coordinate_id
 
     def validate_coordinates(self, values: ArrayLike, /) -> Array:
         coordinates = jnp.asarray(values)
         if coordinates.shape != (self.coordinate_size,):
             raise ValueError(
-                f"Statistical coordinates must have shape {(self.coordinate_size,)}; "
-                f"got {coordinates.shape}."
+                f"Statistical coordinates must have shape {(self.coordinate_size,)}; got {coordinates.shape}."
             )
         if not jnp.issubdtype(coordinates.dtype, jnp.floating):
             raise TypeError("Beta-plane statistical coordinates must be real-valued.")

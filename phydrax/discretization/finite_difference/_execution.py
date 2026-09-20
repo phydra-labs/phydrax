@@ -62,7 +62,7 @@ class InteriorStencilKernel(StrictModule, NonTrainableState):
         accumulation = jnp.dtype(accumulation_dtype)
         output = jnp.dtype(output_dtype)
         self.axis = int(axis)
-        self.offsets = tuple(int(value) for value in offsets)
+        self.offsets = tuple(offsets)
         self.weights = weights_
         self.target_start = start
         self.target_stop = stop
@@ -138,7 +138,7 @@ class ClosureStencilKernel(StrictModule, NonTrainableState):
         targets = jnp.asarray(target_indices, dtype=jnp.int32)
         sources = jnp.asarray(source_indices, dtype=jnp.int32)
         weights_ = jnp.asarray(weights)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if (
             targets.ndim != 1
             or sources.ndim != 2
@@ -161,8 +161,8 @@ class ClosureStencilKernel(StrictModule, NonTrainableState):
                 "kind": "closure-stencil-kernel",
                 "stencil": stencil_id,
                 "axis": int(axis),
-                "rows": int(targets.size),
-                "capacity": int(sources.shape[1]),
+                "rows": targets.size,
+                "capacity": sources.shape[1],
             }
         )
 
@@ -284,7 +284,7 @@ class StencilExecutionPlan(StrictModule, NonTrainableState):
         scale = jnp.maximum(1.0, jnp.max(jnp.abs(reference)))
         residual = float(np.asarray(jnp.max(jnp.abs(lowered - reference)) / scale))
         canonical_bytes = sum(
-            int(np.asarray(value).nbytes)
+            np.asarray(value).nbytes
             for value in (operator.indices, operator.weights, operator.valid)
         )
         lowered_arrays = []
@@ -299,10 +299,10 @@ class StencilExecutionPlan(StrictModule, NonTrainableState):
                     closure.valid,
                 )
             )
-        lowered_bytes = sum(int(np.asarray(value).nbytes) for value in lowered_arrays)
+        lowered_bytes = sum(np.asarray(value).nbytes for value in lowered_arrays)
         report = StencilExecutionReport(
-            interior_rows=int(interior_rows.size),
-            closure_rows=int(closure_rows.size),
+            interior_rows=interior_rows.size,
+            closure_rows=closure_rows.size,
             canonical_metadata_bytes=canonical_bytes,
             lowered_metadata_bytes=lowered_bytes,
             maximum_parity_residual=residual,

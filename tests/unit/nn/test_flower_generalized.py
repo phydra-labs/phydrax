@@ -262,7 +262,7 @@ def test_conservative_flower_matches_source_and_arbitrary_query_mass():
 
 
 def test_probabilistic_flower_is_repeatable_and_reports_every_sampled_block():
-    nodes = -1.0 + 2.0 * jnp.arange(4, dtype=float) / 4.0
+    nodes = -1.0 + 2.0 * jnp.arange(4, dtype="float64") / 4.0
     values = jnp.sin(jnp.pi * nodes) + 0.2 * jnp.cos(2.0 * jnp.pi * nodes)
     model = _flower(
         boundary=("periodic",),

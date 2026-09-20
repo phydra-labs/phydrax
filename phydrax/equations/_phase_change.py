@@ -49,7 +49,7 @@ class AntoineSaturationPressurePlan(StrictModule, NonTrainableState):
             float(coefficient_c),
             float(pressure_scale),
         )
-        interval = np.asarray(temperature_interval, dtype=float)
+        interval = np.asarray(temperature_interval, dtype=np.float64)
         if (
             interval.shape != (2,)
             or np.any(~np.isfinite(interval))

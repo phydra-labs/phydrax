@@ -77,10 +77,10 @@ def _inside_components(corner_inside: np.ndarray) -> tuple[tuple[int, ...], ...]
         while pending:
             current = pending.popleft()
             component.append(current)
-            for neighbour in adjacency[current]:
-                if neighbour in remaining:
-                    remaining.remove(neighbour)
-                    pending.append(neighbour)
+            for neighbor in adjacency[current]:
+                if neighbor in remaining:
+                    remaining.remove(neighbor)
+                    pending.append(neighbor)
         components.append(tuple(sorted(component)))
     return tuple(components)
 
@@ -148,8 +148,8 @@ def _base_qef_vertices(
     regularization: float,
     tolerance: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    vertices = np.zeros_like(cell_lower, dtype=float)
-    regularizations = np.zeros((cell_lower.shape[0],), dtype=float)
+    vertices = np.zeros_like(cell_lower, dtype=np.float64)
+    regularizations = np.zeros((cell_lower.shape[0],), dtype=np.float64)
     identity = np.eye(3)
     for vertex, anchor_indices in enumerate(vertex_anchors):
         points = anchors[np.asarray(anchor_indices, dtype=np.int32)]
@@ -181,8 +181,7 @@ def _base_qef_vertices(
             selected_regularization *= 10.0
         if not accepted:
             raise ValueError(
-                "Implicit QEF vertex left its discovery cell even after bounded "
-                "regularization adaptation."
+                "Implicit QEF vertex left its discovery cell even after bounded regularization adaptation."
             )
         vertices[vertex] = value
         regularizations[vertex] = selected_regularization
@@ -258,7 +257,8 @@ def discover_implicit_surface(
         raise ValueError("Implicit realization requires parameter-differentiable fields.")
 
     axes = tuple(
-        np.asarray(axis.point_coordinates, dtype=float) for axis in grid.structured_axes
+        np.asarray(axis.point_coordinates, dtype=np.float64)
+        for axis in grid.structured_axes
     )
     if any(axis.size < 2 or np.any(np.diff(axis) <= 0.0) for axis in axes):
         raise ValueError("Implicit grid axes must contain increasing point coordinates.")
@@ -295,16 +295,16 @@ def discover_implicit_surface(
         raise ValueError("Implicit surface exceeds maximum_crossings.")
 
     crossing_index = {key: index for index, key in enumerate(crossing_keys)}
-    anchors = np.zeros((len(crossing_keys), 3), dtype=float)
-    trust_radii = np.zeros((len(crossing_keys),), dtype=float)
+    anchors = np.zeros((len(crossing_keys), 3), dtype=np.float64)
+    trust_radii = np.zeros((len(crossing_keys),), dtype=np.float64)
     inside_lattice: dict[tuple[int, int, int, int], tuple[int, int, int]] = {}
     for index, key in enumerate(crossing_keys):
         axis, i, j, k = key
         lower_index = np.asarray((i, j, k), dtype=np.int32)
         upper_index = lower_index.copy()
         upper_index[axis] += 1
-        lower_tuple = tuple(int(value) for value in lower_index)
-        upper_tuple = tuple(int(value) for value in upper_index)
+        lower_tuple = tuple(lower_index)
+        upper_tuple = tuple(upper_index)
         lower_point = lattice_points[lower_tuple]
         upper_point = lattice_points[upper_tuple]
         anchors[index] = _bisect_root(
@@ -388,7 +388,7 @@ def discover_implicit_surface(
             if any(cell[axis] < 0 or cell[axis] >= cell_shape[axis] for axis in range(3)):
                 raise ValueError("Implicit surface intersects the outer grid boundary.")
             offset = inside_point - np.asarray(cell, dtype=np.int32)
-            corner = _CORNER_INDEX.get(tuple(int(value) for value in offset))
+            corner = _CORNER_INDEX.get(tuple(offset))
             if corner is None or (*cell, corner) not in corner_vertex:
                 raise ValueError("Implicit manifold incidence is incomplete.")
             selected.append(corner_vertex[(*cell, corner)])
@@ -438,7 +438,7 @@ def discover_implicit_surface(
     pair_array = np.asarray(pairs, dtype=np.int32).reshape((-1, 2))
     maximum_anchors = max(len(indices) for indices in vertex_anchors)
     padded = np.zeros((len(vertex_anchors), maximum_anchors), dtype=np.int32)
-    mask = np.zeros_like(padded, dtype=bool)
+    mask = np.zeros_like(padded, dtype=np.bool_)
     for vertex, indices in enumerate(vertex_anchors):
         padded[vertex, : len(indices)] = indices
         mask[vertex, : len(indices)] = True

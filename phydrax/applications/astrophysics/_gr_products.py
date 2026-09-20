@@ -30,7 +30,7 @@ _STOKES_COMPONENTS = ("I", "Q", "U", "V")
 
 def _boolean_mask(value: ArrayLike, shape: tuple[int, ...], name: str, /) -> np.ndarray:
     result = np.asarray(value)
-    if result.dtype != np.dtype(bool) or result.shape != shape:
+    if result.dtype != np.dtype(np.bool_) or result.shape != shape:
         raise ValueError(f"{name} must be a boolean array with shape {shape}.")
     return result
 
@@ -94,8 +94,7 @@ class GRImageScreen(StrictModule, NonTrainableState):
             or np.any(mask & (weights <= 0.0))
         ):
             raise ValueError(
-                "Screen coordinates must be finite and owned pixels need positive "
-                "finite solid angle."
+                "Screen coordinates must be finite and owned pixels need positive finite solid angle."
             )
         self.screen_coordinates = jnp.asarray(coordinates)
         self.solid_angle = jnp.asarray(weights)
@@ -190,7 +189,7 @@ class StokesImage(StrictModule, NonTrainableState):
         )
         lensing = np.asarray(lensing_masks)
         if (
-            lensing.dtype != np.dtype(bool)
+            lensing.dtype != np.dtype(np.bool_)
             or lensing.ndim != 3
             or lensing.shape[1:] != screen.pixel_shape
             or lensing.shape[0] == 0
@@ -215,8 +214,7 @@ class StokesImage(StrictModule, NonTrainableState):
             or np.any(shifts < 0.0)
         ):
             raise ValueError(
-                "Image values must be finite; frequency and valid redshifts must be "
-                "positive."
+                "Image values must be finite; frequency and valid redshifts must be positive."
             )
         valid = np.asarray(screen.valid_mask) & redshift_mask & np.any(lensing, axis=0)
         intensity = values[0]

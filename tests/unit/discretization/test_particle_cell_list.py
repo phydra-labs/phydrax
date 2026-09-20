@@ -24,7 +24,7 @@ def _particles(ids, dimension=1, *, active_mask=None):
 
 
 def _stable_pairs(state):
-    valid = np.asarray(state.pair_relation.valid, dtype=bool)
+    valid = np.asarray(state.pair_relation.valid, dtype="bool")
     left = np.asarray(state.pair_relation.left_particle_ids)[valid]
     right = np.asarray(state.pair_relation.right_particle_ids)[valid]
     return set(zip(left.tolist(), right.tolist(), strict=True))
@@ -192,7 +192,7 @@ def test_cell_list_runtime_build_is_filter_jittable():
         24,
         box,
     ).prepare(particles)
-    position = (jnp.arange(8, dtype=float) + 0.5)[:, None] / 8.0
+    position = (jnp.arange(8, dtype="float64") + 0.5)[:, None] / 8.0
 
     eager = prepared.build(position)
     compiled = eqx.filter_jit(prepared.build)(position)

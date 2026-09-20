@@ -50,7 +50,7 @@ class LinearMetricModel(AbstractArrayModel):
         factor_ = jnp.asarray(factor)
         features = int(feature_count)
         components = int(component_count)
-        cases = tuple(int(value) for value in case_shape)
+        cases = tuple(case_shape)
         if features <= 0 or components <= 0:
             raise ValueError("feature_count and component_count must be positive.")
         if factor_.shape != cases + (components, features):
@@ -80,7 +80,7 @@ class LinearMetricModel(AbstractArrayModel):
             )
         query_shape = points.shape[len(self.case_shape) : -1]
         cases = size(self.case_shape)
-        q = size(tuple(int(s) for s in query_shape)) if query_shape else 1
+        q = size(tuple(query_shape)) if query_shape else 1
         output = jax.vmap(lambda x_, a_: x_ @ a_.T)(
             points.reshape((cases, q, self.feature_count)),
             self.factor.reshape((cases, self.component_count, self.feature_count)),
@@ -121,9 +121,9 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
             raise ValueError("iterations must be positive.")
         self.component_count = None if component_count is None else int(component_count)
         self.iterations = int(iterations)
-        learning_rate_ = jnp.asarray(learning_rate, dtype=float)
-        temperature_ = jnp.asarray(temperature, dtype=float)
-        ridge_ = jnp.asarray(ridge, dtype=float)
+        learning_rate_ = jnp.asarray(learning_rate, dtype=jnp.float64)
+        temperature_ = jnp.asarray(temperature, dtype=jnp.float64)
+        ridge_ = jnp.asarray(ridge, dtype=jnp.float64)
         if any(value.ndim != 0 for value in (learning_rate_, temperature_, ridge_)):
             raise ValueError("learning_rate, temperature, and ridge must be scalars.")
         self.learning_rate = eqx.error_if(
@@ -180,7 +180,9 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
             same = target[:, None] == target[None, :]
             active = weight > 0
             pair_mask = (
-                active[:, None] & active[None, :] & ~jnp.eye(points.shape[0], dtype=bool)
+                active[:, None]
+                & active[None, :]
+                & ~jnp.eye(points.shape[0], dtype=jnp.bool_)
             )
 
             def objective(factor):
@@ -270,7 +272,7 @@ class MahalanobisMetricRecipe(AbstractRecipe):
         component_count: int | None = None,
         weight_policy: WeightPolicy = "statistical",
     ):
-        ridge_ = jnp.asarray(ridge, dtype=float)
+        ridge_ = jnp.asarray(ridge, dtype=jnp.float64)
         if ridge_.ndim != 0:
             raise ValueError("ridge must be scalar.")
         self.ridge = eqx.error_if(

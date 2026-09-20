@@ -228,7 +228,9 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         )
         if periodic_indices:
             ambient_dimension = len(axes_)
-            vectors = np.zeros((len(periodic_indices), ambient_dimension), dtype=float)
+            vectors = np.zeros(
+                (len(periodic_indices), ambient_dimension), dtype=np.float64
+            )
             for row, axis_index in enumerate(periodic_indices):
                 vectors[row, axis_index] = float(axes_[axis_index].length)
             origin = np.asarray(
@@ -364,7 +366,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         key: DiscretizationKey | None = None,
         plan_id: str | None = None,
         numeric_version: str = "0",
-        dtype: Any = float,
+        dtype: Any = jnp.float64,
     ) -> "TensorSpectralDiscretization":
         """Prepare a modal tensor space from already materialized numerical axes."""
         axes_ = tuple(axes)
@@ -373,13 +375,12 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         fields = tuple(str(value) for value in field_names)
         if len(fields) != 1 or not fields[0]:
             raise ValueError(
-                "Tensor spectral spaces declare one base field; PDE compilation "
-                "derives additional field spaces."
+                "Tensor spectral spaces declare one base field; PDE compilation derives additional field spaces."
             )
         plans = []
         domains = []
         for axis in axes_:
-            count = int(axis.nodes.size)
+            count = axis.nodes.size
             if axis.basis == "fourier":
                 plans.append(FourierBasisPlan(count))
             elif axis.basis == "sine":
@@ -454,7 +455,9 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
     ):
         """Return independent coordinates for a real field in complex modal storage."""
         if not self.plan.precision.coefficient_dtype.startswith("complex"):
-            raise TypeError("Real-valued modal storage does not require a coordinate map.")
+            raise TypeError(
+                "Real-valued modal storage does not require a coordinate map."
+            )
         from ._coordinates import HermitianSpectralCoordinates
 
         return HermitianSpectralCoordinates(
@@ -626,7 +629,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
             if axes is None
             else (int(axes),)
             if isinstance(axes, int)
-            else tuple(int(axis) for axis in axes)
+            else tuple(axes)
         )
         if (
             not selected
@@ -750,7 +753,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
             if axes is None
             else (int(axes),)
             if isinstance(axes, int)
-            else tuple(int(axis) for axis in axes)
+            else tuple(axes)
         )
         if (
             not selected
@@ -785,7 +788,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
             if axes is None
             else (int(axes),)
             if isinstance(axes, int)
-            else tuple(int(axis) for axis in axes)
+            else tuple(axes)
         )
         if (
             not selected
@@ -811,10 +814,9 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
 
     def unflatten(self, coefficients: ArrayLike, /) -> Array:
         value = jnp.asarray(coefficients)
-        if value.ndim < 1 or int(value.shape[0]) != self.num_modes:
+        if value.ndim < 1 or value.shape[0] != self.num_modes:
             raise ValueError(
-                f"Flattened modal state must begin with ({self.num_modes},); "
-                f"got {value.shape}."
+                f"Flattened modal state must begin with ({self.num_modes},); got {value.shape}."
             )
         return value.reshape(self.modal_shape + value.shape[1:])
 
@@ -858,7 +860,9 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         for axis_index, (axis, prepared) in enumerate(
             zip(axis_discretizations, self.axes, strict=True)
         ):
-            requested = np.asarray([index[axis_index] for index in selected], dtype=int)
+            requested = np.asarray(
+                [index[axis_index] for index in selected], dtype=np.int64
+            )
             axis_modes = jnp.asarray(
                 _axis_modes(axis, prepared.family, requested),
                 dtype=modes.dtype,

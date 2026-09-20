@@ -65,7 +65,7 @@ def main() -> None:
     replay_force, replay_scores = _trial(
         prepared, seed=arguments.seed, steps=arguments.steps
     )
-    sample_mask = jnp.ones_like(scores, dtype=bool)
+    sample_mask = jnp.ones_like(scores, dtype="bool")
     evidence = FuglevandWinterPatla1993QualificationPlan().evaluate(
         prepared,
         scores,
@@ -83,9 +83,7 @@ def main() -> None:
             evidence.normal_score_standard_deviation
         ),
         "force_mean_arbitrary": float(evidence.force_mean_arbitrary),
-        "force_coefficient_of_variation": float(
-            evidence.force_coefficient_of_variation
-        ),
+        "force_coefficient_of_variation": float(evidence.force_coefficient_of_variation),
         "event_topology_gradient_supported": False,
         "valid": bool(evidence.valid),
     }

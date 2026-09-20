@@ -12,6 +12,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from phydrax._strict import StrictModule
+
 from .._tree_math import tree_allfinite
 from ..linalg import (
     IdentityLinearOperator,
@@ -35,7 +37,7 @@ from ._types import (
 )
 
 
-class _PseudoRun(eqx.Module):
+class _PseudoRun(StrictModule):
     state: PyTree[Array]
     residual: PyTree[Array]
     auxiliary: Any

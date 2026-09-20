@@ -111,11 +111,11 @@ class PreparedHolomorphicFlowQuadrature(StrictModule, NonTrainableState):
 
     @property
     def node_count(self) -> int:
-        return int(self.nodes.shape[0])
+        return self.nodes.shape[0]
 
     @property
     def dimension(self) -> int:
-        return int(self.nodes.shape[1])
+        return self.nodes.shape[1]
 
 
 class HolomorphicFlowGeometry(StrictModule):
@@ -180,7 +180,7 @@ def prepare_holomorphic_flow_quadrature(
     weights_host = np.asarray(weights)
     if nodes_host.ndim != 2 or nodes_host.shape[0] < 1 or nodes_host.shape[1] < 1:
         raise ValueError("nodes must have shape (node_count, dimension).")
-    count, dimension = (int(size) for size in nodes_host.shape)
+    count, dimension = (size for size in nodes_host.shape)
     if weights_host.shape != (count,):
         raise ValueError("weights must match the quadrature node axis.")
     if nodes_host.dtype.kind != "f" or weights_host.dtype.kind != "f":

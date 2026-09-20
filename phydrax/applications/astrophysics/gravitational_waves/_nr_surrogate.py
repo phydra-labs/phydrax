@@ -40,7 +40,7 @@ _ALIGNED_PARAMETERIZATION_ID = (
 _SPIN_WEIGHT_ID = "spin:-2"
 _STRAIN_CONVENTION = "h=plus-i*cross"
 _MODE_AMPLITUDE_NORMALIZATION = "r*h/M"
-_NORMALIZED_SURROGATE_FORMAT = "phydrax-aligned-nr-polynomial-eim-v1"
+_NORMALIZED_SURROGATE_FORMAT = "phydrax-aligned-nr-polynomial-eim"
 _GEOMETRIC_TIME_UNIT = "total-mass-geometric"
 
 
@@ -53,7 +53,7 @@ def _positive_capacity(value: int, name: str, /) -> int:
 def _array_metadata(value: ArrayLike, name: str, /) -> tuple[tuple[int, ...], int]:
     if not isinstance(value, (jax.Array, np.ndarray)):
         raise TypeError(f"{name} must be a concrete NumPy or JAX array.")
-    shape = tuple(int(size) for size in value.shape)
+    shape = tuple(value.shape)
     entries = math.prod(shape)
     return shape, entries * np.dtype(value.dtype).itemsize
 
@@ -148,7 +148,7 @@ class NRSurrogateResourcePolicy(StrictModule, NonTrainableState):
         ) = values
         self.policy_id = canonical_fingerprint(
             {
-                "kind": "nr-surrogate-resource-policy-v1",
+                "kind": "nr-surrogate-resource-policy",
                 **dict(zip(names, values, strict=True)),
             }
         )
@@ -329,19 +329,19 @@ class PolynomialEmpiricalField(StrictModule, NonTrainableState):
             raise ValueError("Polynomial empirical field data are invalid or unmasked.")
         if np.any(order_host > policy.maximum_polynomial_order):
             raise ValueError("Polynomial orders exceed the resource policy.")
-        reconstruction_real = np.asarray(reconstruction_host, dtype=float)
-        coefficient_real = np.asarray(coefficient_host, dtype=float)
+        reconstruction_real = np.asarray(reconstruction_host, dtype=np.float64)
+        coefficient_real = np.asarray(coefficient_host, dtype=np.float64)
         order_integer = np.asarray(order_host, dtype=np.int32)
-        active_boolean = np.asarray(active_host, dtype=bool)
+        active_boolean = np.asarray(active_host, dtype=np.bool_)
         self.reconstruction_matrix = jnp.asarray(reconstruction_real)
         self.coefficients = jnp.asarray(coefficient_real)
         self.orders = jnp.asarray(order_integer)
         self.active_terms = jnp.asarray(active_boolean)
         self.resource_policy = policy
-        self.parameter_count = int(order_integer.shape[2])
+        self.parameter_count = order_integer.shape[2]
         self.node_count = int(node_count)
         self.term_count = int(term_count)
-        self.sample_count = int(reconstruction_real.shape[0])
+        self.sample_count = reconstruction_real.shape[0]
         self.array_bytes = field_bytes
         self.resource_policy_id = policy.policy_id
         content_sha256 = array_tree_fingerprint(
@@ -355,7 +355,7 @@ class PolynomialEmpiricalField(StrictModule, NonTrainableState):
         self.content_sha256 = content_sha256
         self.field_id = canonical_fingerprint(
             {
-                "kind": "polynomial-empirical-field-v1",
+                "kind": "polynomial-empirical-field",
                 "label": identifier,
                 "content": content_sha256,
                 "resource_policy": policy.policy_id,
@@ -406,7 +406,7 @@ def _normalized_surrogate_content_sha256(
 ) -> str:
     return canonical_fingerprint(
         {
-            "kind": "aligned-nr-polynomial-surrogate-content-v1",
+            "kind": "aligned-nr-polynomial-surrogate-content",
             "time": array_tree_fingerprint(geometric_time),
             "modes": [list(mode) for mode in modes],
             "real_fields": [field.content_sha256 for field in real_fields],
@@ -472,9 +472,9 @@ def aligned_nr_surrogate_semantic_bindings(
         ell < 2 or order < 0 or order > ell for ell, order in mode_values
     ):
         raise ValueError("Surrogate semantic mode set is invalid.")
-    time_host = np.asarray(geometric_time, dtype=float)
-    lower_host = np.asarray(fit_coordinate_lower, dtype=float)
-    upper_host = np.asarray(fit_coordinate_upper, dtype=float)
+    time_host = np.asarray(geometric_time, dtype=np.float64)
+    lower_host = np.asarray(fit_coordinate_lower, dtype=np.float64)
+    upper_host = np.asarray(fit_coordinate_upper, dtype=np.float64)
     ratio_limit = float(maximum_mass_ratio)
     spin_limit = float(maximum_spin_magnitude)
     frame = str(frame_id).strip()
@@ -500,14 +500,14 @@ def aligned_nr_surrogate_semantic_bindings(
         raise ValueError("Surrogate semantic support or identity is invalid.")
     mode_set_id = canonical_fingerprint(
         {
-            "kind": "spin-weighted-mode-set-v1",
+            "kind": "spin-weighted-mode-set",
             "spin_weight": -2,
             "modes": [list(mode) for mode in mode_values],
         }
     )
     physical_support_id = canonical_fingerprint(
         {
-            "kind": "aligned-nr-physical-support-v1",
+            "kind": "aligned-nr-physical-support",
             "parameterization": _ALIGNED_PARAMETERIZATION_ID,
             "mass_ratio": [1.0, ratio_limit],
             "primary_spin": [-spin_limit, spin_limit],
@@ -516,7 +516,7 @@ def aligned_nr_surrogate_semantic_bindings(
     )
     fit_support_id = canonical_fingerprint(
         {
-            "kind": "aligned-nr-fit-support-v1",
+            "kind": "aligned-nr-fit-support",
             "coordinate_names": list(_ALIGNED_FIT_COORDINATES),
             "lower": lower_host.tolist(),
             "upper": upper_host.tolist(),
@@ -524,7 +524,7 @@ def aligned_nr_surrogate_semantic_bindings(
     )
     time_support_id = canonical_fingerprint(
         {
-            "kind": "aligned-nr-time-support-v1",
+            "kind": "aligned-nr-time-support",
             "time_origin": time_origin,
             "geometric_time": array_tree_fingerprint(time_host),
         }
@@ -620,9 +620,9 @@ class AlignedNRSurrogateArtifact(StrictModule, NonTrainableState):
             or upper_shape != (3,)
         ):
             raise ValueError("Surrogate grids or bounds exceed their resource policy.")
-        time_host = np.asarray(geometric_time, dtype=float)
-        lower_host = np.asarray(fit_coordinate_lower, dtype=float)
-        upper_host = np.asarray(fit_coordinate_upper, dtype=float)
+        time_host = np.asarray(geometric_time, dtype=np.float64)
+        lower_host = np.asarray(fit_coordinate_lower, dtype=np.float64)
+        upper_host = np.asarray(fit_coordinate_upper, dtype=np.float64)
         raw_modes = tuple(modes)
         if any(
             not isinstance(mode, tuple)
@@ -783,7 +783,7 @@ class AlignedNRSurrogateArtifact(StrictModule, NonTrainableState):
             raise ValueError("Surrogate normalization report is not valid.")
         source_binding_id = canonical_fingerprint(
             {
-                "kind": "caller-asserted-nr-surrogate-source-binding-v1",
+                "kind": "caller-asserted-nr-surrogate-source-binding",
                 "provenance": provenance.provenance_id,
                 "normalization_report": normalization_report.report_id,
                 "normalized_content_sha256": normalized_content,
@@ -792,7 +792,7 @@ class AlignedNRSurrogateArtifact(StrictModule, NonTrainableState):
         )
         trust_id = canonical_fingerprint(
             {
-                "kind": "nr-surrogate-caller-asserted-trust-v1",
+                "kind": "nr-surrogate-caller-asserted-trust",
                 "source_authenticated": False,
             }
         )
@@ -827,7 +827,7 @@ class AlignedNRSurrogateArtifact(StrictModule, NonTrainableState):
         self.array_bytes = aggregate_bytes
         self.artifact_id = canonical_fingerprint(
             {
-                "kind": "aligned-nr-polynomial-surrogate-artifact-v2",
+                "kind": "aligned-nr-polynomial-surrogate-artifact",
                 "label": label,
                 "normalized_content_sha256": normalized_content,
                 "source_binding": source_binding_id,
@@ -923,8 +923,8 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Artifact mode normalization does not match the angular basis."
             )
-        modal_entries = math.prod(angular.layout.coefficient_shape) * int(
-            artifact.geometric_time.size
+        modal_entries = (
+            math.prod(angular.layout.coefficient_shape) * artifact.geometric_time.size
         )
         if (
             angular.layout.bandlimit > artifact.resource_policy.maximum_angular_bandlimit
@@ -943,8 +943,7 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
             raise TypeError("scale must be RelativityScaleContract.")
         if scale.scale_id != RelativityScaleContract.si().scale_id:
             raise ValueError(
-                "Physical NR surrogate evaluation currently requires the exact SI "
-                "relativity scale."
+                "Physical NR surrogate evaluation currently requires the exact SI relativity scale."
             )
         tolerance = float(symmetry_tolerance)
         if not math.isfinite(tolerance) or tolerance < 0.0:
@@ -955,7 +954,7 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
         self.symmetry_tolerance = tolerance
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "aligned-nr-surrogate-plan-v1",
+                "kind": "aligned-nr-surrogate-plan",
                 "artifact": artifact.artifact_id,
                 "angular": angular.prepared_id,
                 "scale": scale.scale_id,
@@ -978,8 +977,7 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
             _ALIGNED_PARAMETER_KEYS
         ):
             raise ValueError(
-                "Aligned NR surrogate parameters must be exactly "
-                f"{list(_ALIGNED_PARAMETER_KEYS)}."
+                f"Aligned NR surrogate parameters must be exactly {list(_ALIGNED_PARAMETER_KEYS)}."
             )
         dtype = self.artifact.geometric_time.dtype
         ratio = _real_scalar(parameters["mass_ratio"], dtype, "mass_ratio")
@@ -1118,8 +1116,8 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
         if jnp.iscomplexobj(query_raw) or jnp.issubdtype(query_raw.dtype, jnp.bool_):
             raise TypeError("Surrogate evaluation time must be a real numeric vector.")
         query = query_raw.astype(self.artifact.geometric_time.dtype)
-        output_modal_entries = math.prod(self.angular.layout.coefficient_shape) * int(
-            query.size
+        output_modal_entries = (
+            math.prod(self.angular.layout.coefficient_shape) * query.size
         )
         if (
             query.ndim != 1
@@ -1128,8 +1126,7 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
             or output_modal_entries > self.artifact.resource_policy.maximum_modal_entries
         ):
             raise ValueError(
-                "Surrogate evaluation time must be a non-empty vector within "
-                "the output-sample capacity."
+                "Surrogate evaluation time must be a non-empty vector within the output-sample capacity."
             )
         dtype = self.artifact.geometric_time.dtype
         inclination_ = _real_scalar(inclination, dtype, "inclination")

@@ -172,7 +172,7 @@ def _fixed_injections(
         if not np.all(np.isfinite(np.asarray(values))):
             raise ValueError("Polynomial power-flow injections must be finite.")
         return values
-    values = np.asarray(compiled.specified_power, dtype=complex).copy()
+    values = np.asarray(compiled.specified_power, dtype=np.complex128).copy()
     generators = compiled.network.generators
     for bus, mode in enumerate(modes):
         if mode not in ("q_min", "q_max"):
@@ -616,14 +616,14 @@ def enumerate_prepared_fixed_mode_power_flow_roots(
     capacity = prepared.isolated.plan.policy.path_capacity
     bus_count = prepared.polynomial.bus_count
     voltage = np.full((capacity, bus_count), complex(np.nan, np.nan))
-    candidate_mask = np.asarray(algebraic.root_mask, dtype=bool)
-    near_real_mask = np.zeros((capacity,), dtype=bool)
-    residual_mask = np.zeros((capacity,), dtype=bool)
-    mode_mask = np.zeros((capacity,), dtype=bool)
-    generator_mask = np.zeros((capacity,), dtype=bool)
-    voltage_mask = np.zeros((capacity,), dtype=bool)
-    branch_mask = np.zeros((capacity,), dtype=bool)
-    physical_mask = np.zeros((capacity,), dtype=bool)
+    candidate_mask = np.asarray(algebraic.root_mask, dtype=np.bool_)
+    near_real_mask = np.zeros((capacity,), dtype=np.bool_)
+    residual_mask = np.zeros((capacity,), dtype=np.bool_)
+    mode_mask = np.zeros((capacity,), dtype=np.bool_)
+    generator_mask = np.zeros((capacity,), dtype=np.bool_)
+    voltage_mask = np.zeros((capacity,), dtype=np.bool_)
+    branch_mask = np.zeros((capacity,), dtype=np.bool_)
+    physical_mask = np.zeros((capacity,), dtype=np.bool_)
     candidates = []
     for root_index in np.flatnonzero(candidate_mask):
         evidence = _physical_evidence(prepared, algebraic, int(root_index))

@@ -58,9 +58,7 @@ class RKCMethod:
         for stage in range(2, stages + 1):
             stage_time = time + ((stage - 1) / stages) ** 2 * step
             following = (
-                2.0 * current
-                - previous
-                + 2.0 * scaled * rhs(stage_time, current, args)
+                2.0 * current - previous + 2.0 * scaled * rhs(stage_time, current, args)
             )
             previous, current = current, following
         return current
@@ -112,7 +110,7 @@ class AdamsBashforthMoultonMethod:
         _uniform_times(times_)
         states = [state]
         derivatives = [jnp.asarray(rhs(times_[0], state, args))]
-        for index in range(1, int(times_.size)):
+        for index in range(1, times_.size):
             step = times_[index] - times_[index - 1]
             if len(derivatives) < self.order:
                 state = self._rk4(rhs, times_[index - 1], state, step, args)
@@ -204,17 +202,21 @@ class RadauIIAIntegrator:
 
         def residual(values):
             states = state + step * jnp.tensordot(self.tableau.matrix, values, axes=1)
-            evaluated = jax.vmap(lambda node, value: rhs(time + step * node, value, args))(
-                self.tableau.nodes, states
-            )
+            evaluated = jax.vmap(
+                lambda node, value: rhs(time + step * node, value, args)
+            )(self.tableau.nodes, states)
             return values - evaluated
 
         for _ in range(self.maximum_newton_steps):
             defect = residual(stage_values)
             flat_defect = defect.reshape((-1,))
-            jacobian = jax.jacfwd(lambda value: residual(value).reshape((-1,)))(stage_values)
+            jacobian = jax.jacfwd(lambda value: residual(value).reshape((-1,)))(
+                stage_values
+            )
             jacobian = jacobian.reshape((flat_defect.size, flat_defect.size))
-            correction = jnp.linalg.solve(jacobian, -flat_defect).reshape(stage_values.shape)
+            correction = jnp.linalg.solve(jacobian, -flat_defect).reshape(
+                stage_values.shape
+            )
             stage_values = stage_values + correction
         defect_norm = jnp.linalg.norm(residual(stage_values))
         next_state = state + step * jnp.tensordot(
@@ -270,7 +272,9 @@ class IMEXBDF2Integrator:
         candidate = base + 2.0 * step * implicit_rhs(time + step, current, args) / 3.0
 
         def residual(value):
-            return value - base - 2.0 * step * implicit_rhs(time + step, value, args) / 3.0
+            return (
+                value - base - 2.0 * step * implicit_rhs(time + step, value, args) / 3.0
+            )
 
         for _ in range(self.maximum_newton_steps):
             defect = residual(candidate)
@@ -297,7 +301,7 @@ def parareal(
 
     times_ = jnp.asarray(times)
     _increasing_times(times_)
-    count = int(times_.size) - 1
+    count = times_.size - 1
     iteration_count = int(iterations)
     if iteration_count < 0:
         raise ValueError("Parareal iterations must be non-negative.")

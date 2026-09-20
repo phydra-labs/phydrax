@@ -651,8 +651,7 @@ def _qualification(
                 "production-readiness claims",
             ],
             "claim": (
-                "conservation/work-consistent body acceleration and volumetric "
-                "heating only"
+                "conservation/work-consistent body acceleration and volumetric heating only"
             ),
         },
         "contracts": {
@@ -666,8 +665,7 @@ def _qualification(
             "volumetric_heating": "direct total-energy density increment",
             "transport": "exact periodic pull after accepted source transaction",
             "transaction": (
-                "candidate is accepted atomically or the complete state and accepted "
-                "conserved increment roll back"
+                "candidate is accepted atomically or the complete state and accepted conserved increment roll back"
             ),
         },
         "configuration": {

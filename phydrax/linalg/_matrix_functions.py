@@ -305,7 +305,7 @@ def _unflatten_promoted(template: PyTree[Any], coordinates: Array, /) -> PyTree[
     offset = 0
     for leaf in leaves:
         array = jnp.asarray(leaf)
-        size = int(array.size)
+        size = array.size
         rebuilt.append(value[offset : offset + size].reshape(array.shape))
         offset += size
     if value.shape != (offset,):
@@ -537,8 +537,7 @@ def matrix_function_action(
         spectral is None and not positive_definite and spectral_bounds is None
     ):
         raise ValueError(
-            f"{kind} requires positive-definite evidence, spectral bounds, or an "
-            "explicit spectral representation."
+            f"{kind} requires positive-definite evidence, spectral bounds, or an explicit spectral representation."
         )
     selected = MatrixFunctionPolicy() if policy is None else policy
     if not isinstance(selected, MatrixFunctionPolicy):
@@ -551,8 +550,7 @@ def matrix_function_action(
             )
         if spectral is not None or decomposition is not None:
             raise ValueError(
-                "Batched dense actions do not accept unbatched spectral/projection "
-                "artifacts."
+                "Batched dense actions do not accept unbatched spectral/projection artifacts."
             )
         return _batched_dense_matrix_function_action(
             operator,
@@ -712,8 +710,7 @@ def matrix_function_action(
     elif decomposition is not None:
         if not isinstance(decomposition, KrylovDecomposition):
             raise TypeError(
-                "decomposition must be a PreparedKrylovProjection, "
-                "KrylovDecomposition, or None."
+                "decomposition must be a PreparedKrylovProjection, KrylovDecomposition, or None."
             )
         raise ValueError(
             "Unbound Krylov decompositions do not carry numerical operator and "

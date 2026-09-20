@@ -21,7 +21,7 @@ from phydrax.operators.differential import laplacian
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
 def test_deeponet_domain_model_coord_separable_output_shape(scan):
-    data = jnp.ones((3, 4), dtype=float)
+    data = jnp.ones((3, 4), dtype="float64")
     data_dom = DatasetDomain(data)
     geom = Interval1d(0.0, 1.0)
     domain = data_dom @ geom
@@ -68,7 +68,7 @@ def test_deeponet_domain_model_coord_separable_output_shape(scan):
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
 def test_fno_one_dimensional_domain_model_output_shape_and_basis_laplacian(scan):
     n = 16
-    data = jnp.ones((3, n), dtype=float)
+    data = jnp.ones((3, n), dtype="float64")
     data_dom = DatasetDomain(data)
     geom = Interval1d(0.0, 1.0)
     domain = data_dom @ geom
@@ -108,16 +108,16 @@ def test_fno_one_dimensional_domain_model_output_shape_and_basis_laplacian(scan)
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
 def test_fno_one_dimensional_rejects_point_like_input(scan):
     model = FNO(width=8, depth=2, n_modes=(6,), scan=scan, key=jr.key(0))
-    data = jnp.ones((8,), dtype=float)
+    data = jnp.ones((8,), dtype="float64")
     with pytest.raises(ValueError, match="coord-separable grid evaluation"):
-        _ = model((data, jnp.asarray([0.5], dtype=float)))
+        _ = model((data, jnp.asarray([0.5], dtype="float64")))
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
 def test_fno_two_dimensional_domain_model_output_shape_and_basis_laplacian(scan):
     nx = 12
     ny = 10
-    data = jnp.ones((3, nx, ny), dtype=float)
+    data = jnp.ones((3, nx, ny), dtype="float64")
     data_dom = DatasetDomain(data)
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
@@ -159,15 +159,19 @@ def test_fno_two_dimensional_domain_model_output_shape_and_basis_laplacian(scan)
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
 def test_fno_two_dimensional_rejects_point_like_input(scan):
     model = FNO(width=8, depth=2, n_modes=(6, 6), scan=scan, key=jr.key(0))
-    data = jnp.ones((8, 8), dtype=float)
+    data = jnp.ones((8, 8), dtype="float64")
     with pytest.raises(ValueError, match="coord-separable grid evaluation"):
         _ = model(
-            (data, jnp.asarray([0.5], dtype=float), jnp.asarray([0.25], dtype=float))
+            (
+                data,
+                jnp.asarray([0.5], dtype="float64"),
+                jnp.asarray([0.25], dtype="float64"),
+            )
         )
 
 
 def test_domain_model_explicit_binding_supports_plain_callable_blockwise_input():
-    data = jnp.ones((3, 2), dtype=float)
+    data = jnp.ones((3, 2), dtype="float64")
     data_dom = DatasetDomain(data)
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
@@ -177,9 +181,9 @@ def test_domain_model_explicit_binding_supports_plain_callable_blockwise_input()
     def plain_callable(inp, *, key=None, iter_=None):
         del key, iter_
         data_vec, x0, x1 = inp
-        base = jnp.sum(jnp.asarray(data_vec, dtype=float))
-        x0 = jnp.asarray(x0, dtype=float).reshape((-1, 1))
-        x1 = jnp.asarray(x1, dtype=float).reshape((1, -1))
+        base = jnp.sum(jnp.asarray(data_vec, dtype="float64"))
+        x0 = jnp.asarray(x0, dtype="float64").reshape((-1, 1))
+        x1 = jnp.asarray(x1, dtype="float64").reshape((1, -1))
         return base + 0.0 * x0 + 0.0 * x1
 
     component = domain.component()
@@ -210,7 +214,7 @@ def test_domain_model_explicit_binding_supports_plain_callable_blockwise_input()
 
 
 def test_separable_mlp_domain_model_defaults_to_flat_point_packing():
-    data = jnp.ones((3, 2), dtype=float)
+    data = jnp.ones((3, 2), dtype="float64")
     data_dom = DatasetDomain(data)
     geom = Interval1d(0.0, 1.0)
     domain = data_dom @ geom
@@ -309,7 +313,7 @@ def test_domain_model_explicit_key_none_reaches_model_export_path():
 
 
 def test_domain_model_rejects_binding_override_for_phydrax_model():
-    data = jnp.ones((3, 2), dtype=float)
+    data = jnp.ones((3, 2), dtype="float64")
     domain = DatasetDomain(data) @ Interval1d(0.0, 1.0)
     model = MLP(in_size=3, out_size=1, width_size=8, depth=2, key=jr.key(0))
 
@@ -319,7 +323,7 @@ def test_domain_model_rejects_binding_override_for_phydrax_model():
 
 
 def test_domain_model_axis_binding_requires_axis_model_evaluator():
-    data = jnp.ones((3, 2), dtype=float)
+    data = jnp.ones((3, 2), dtype="float64")
     domain = DatasetDomain(data) @ Interval1d(0.0, 1.0)
     binding = phx.domain.ModelBinding.axis()
 

@@ -1952,7 +1952,7 @@ semantics remain in `phydrax.finance.econometrics`.
 
 ## Scalable geophysical covariance and spatial inference
 
-The observation actions below share one labelled `CoordinateLayout`. A method is
+The observation actions below share one labeled `CoordinateLayout`. A method is
 exposed only when its representation supports it; for example, whitening is not
 invented for a generic precision operator.
 

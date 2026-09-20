@@ -58,7 +58,7 @@ numeric kernels are JAX transformations over one fixed epoch.
 
 ::: phydrax.discretization.BlockFieldTopologyTransitionResult
 
-## Cell-centred preparation and FillPatch
+## Cell-centered preparation and FillPatch
 
 `AMRAxisEntity` is the public literal axis-entity kind `"point"` or `"interval"` used by degree-aware transfer plans.
 

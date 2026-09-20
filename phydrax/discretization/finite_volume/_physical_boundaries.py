@@ -69,8 +69,7 @@ def _wall_velocity_value(
         return jnp.broadcast_to(velocity, shape)
     if velocity.shape != shape:
         raise ValueError(
-            "Wall velocity provider must return one vector or one vector per "
-            "boundary quadrature point."
+            "Wall velocity provider must return one vector or one vector per boundary quadrature point."
         )
     return velocity
 
@@ -226,8 +225,7 @@ class MovingSlipWallBoundary(AbstractConservationBoundary):
     ) -> Array:
         del system, time, interior, coordinates, outward_normal, axis, args
         raise ValueError(
-            "MovingSlipWallBoundary requires ale_exterior_state and explicit "
-            "wall/grid kinematics."
+            "MovingSlipWallBoundary requires ale_exterior_state and explicit wall/grid kinematics."
         )
 
     def ale_exterior_state(

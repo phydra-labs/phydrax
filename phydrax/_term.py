@@ -6,6 +6,7 @@ from abc import abstractmethod
 from collections.abc import Mapping
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
@@ -13,7 +14,7 @@ from phydrax.domain import DomainFunction
 
 from ._doc import DOC_KEY0
 from ._frozendict import frozendict
-from ._strict import AbstractAttribute, StrictModule
+from ._strict import StrictModule
 
 
 class TermEvaluation(StrictModule):
@@ -35,7 +36,7 @@ class TermEvaluation(StrictModule):
 class AbstractScalarTerm(StrictModule):
     """A real scalar term evaluated from the solver's current domain functions."""
 
-    label: AbstractAttribute[str | None]
+    label: eqx.AbstractVar[str | None]
 
     @abstractmethod
     def loss(

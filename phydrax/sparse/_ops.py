@@ -23,12 +23,9 @@ def _require_prefix(
     prefix: tuple[int, ...],
     /,
 ) -> tuple[int, ...]:
-    if (
-        array.ndim < len(prefix)
-        or tuple(int(size) for size in array.shape[: len(prefix)]) != prefix
-    ):
+    if array.ndim < len(prefix) or tuple(array.shape[: len(prefix)]) != prefix:
         raise ValueError(f"{name} must begin with shape {prefix}; got {array.shape}.")
-    return tuple(int(size) for size in array.shape[len(prefix) :])
+    return tuple(array.shape[len(prefix) :])
 
 
 def _expanded_mask(valid: Array, payload_ndim: int, /) -> Array:
@@ -196,11 +193,10 @@ def _coefficient_array(
         or tuple(values.shape[-route_ndim:]) != relation.route_shape
     ):
         raise ValueError(
-            f"Sparse coefficients must end in route shape {relation.route_shape}; "
-            f"got {values.shape}."
+            f"Sparse coefficients must end in route shape {relation.route_shape}; got {values.shape}."
         )
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
     batch_ndim = values.ndim - route_ndim
     valid = relation.valid.reshape((1,) * batch_ndim + relation.valid.shape)
     return jnp.where(valid, values, jnp.zeros((), dtype=values.dtype))
@@ -242,7 +238,7 @@ def linear_apply(
     """Apply a scalar-coefficient sparse linear map to source payloads."""
     weights = _coefficient_array(relation, coefficients)
     route_ndim = len(relation.route_shape)
-    batch_shape = tuple(int(size) for size in weights.shape[:-route_ndim])
+    batch_shape = tuple(weights.shape[:-route_ndim])
     if batch_shape:
         flattened_weights = weights.reshape((-1,) + relation.route_shape)
         flattened_values = _flatten_operator_batch(
@@ -302,7 +298,7 @@ def _linear_reverse_apply(
 ) -> Any:
     weights = _coefficient_array(relation, coefficients)
     route_ndim = len(relation.route_shape)
-    batch_shape = tuple(int(size) for size in weights.shape[:-route_ndim])
+    batch_shape = tuple(weights.shape[:-route_ndim])
     if batch_shape:
         flattened_weights = weights.reshape((-1,) + relation.route_shape)
         flattened_values = _flatten_operator_batch(

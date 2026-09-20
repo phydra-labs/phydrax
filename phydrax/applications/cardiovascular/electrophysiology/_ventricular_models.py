@@ -396,7 +396,7 @@ class TenTusscherPanfilov2006Model(_VentricularReactionBase):
                 values,
             ),
         )
-        object.__setattr__(self, "reaction_ir", _ohmic_ir("tp06-ohmic-current-v1"))
+        object.__setattr__(self, "reaction_ir", _ohmic_ir("tp06-ohmic-current"))
 
     def initialize(
         self,
@@ -963,7 +963,7 @@ class ORdVentricularModel(_VentricularReactionBase):
                 values,
             ),
         )
-        object.__setattr__(self, "reaction_ir", _ohmic_ir("ord-ohmic-current-v1"))
+        object.__setattr__(self, "reaction_ir", _ohmic_ir("ord-ohmic-current"))
 
     def initialize(
         self,

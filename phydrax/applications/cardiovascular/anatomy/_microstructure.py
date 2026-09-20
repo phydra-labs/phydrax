@@ -59,7 +59,7 @@ class VentricularLineField(StrictModule):
         line_id: str,
     ):
         direction_ = jnp.asarray(direction)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if direction_.ndim != 2 or direction_.shape[-1] != 3:
             raise ValueError("Line directions must have shape (cell_count, 3).")
         if valid_.shape != direction_.shape[:-1]:
@@ -92,7 +92,7 @@ class CardiacMaterialFrame(StrictModule):
         fiber_ = jnp.asarray(fiber)
         sheet_ = jnp.asarray(sheet, dtype=fiber_.dtype)
         normal_ = jnp.asarray(sheet_normal, dtype=fiber_.dtype)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if fiber_.ndim != 2 or fiber_.shape[-1] != 3:
             raise ValueError("Material-frame vectors must have shape (cell_count, 3).")
         if sheet_.shape != fiber_.shape or normal_.shape != fiber_.shape:
@@ -133,11 +133,11 @@ class VentricularMicrostructureEvidence(StrictModule, NonTrainableState):
         self.orientation_determinant = jnp.asarray(values["orientation_determinant"])
         self.tensor_symmetry_error = jnp.asarray(values["tensor_symmetry_error"])
         self.transmural_fraction_in_range = jnp.asarray(
-            values["transmural_fraction_in_range"], dtype=bool
+            values["transmural_fraction_in_range"], dtype=jnp.bool_
         )
-        self.finite = jnp.asarray(values["finite"], dtype=bool)
-        self.nondegenerate = jnp.asarray(values["nondegenerate"], dtype=bool)
-        self.successful = jnp.asarray(values["successful"], dtype=bool)
+        self.finite = jnp.asarray(values["finite"], dtype=jnp.bool_)
+        self.nondegenerate = jnp.asarray(values["nondegenerate"], dtype=jnp.bool_)
+        self.successful = jnp.asarray(values["successful"], dtype=jnp.bool_)
         shape = self.transmural_gradient_norm.shape
         fields = (
             self.projected_longitudinal_gradient_norm,

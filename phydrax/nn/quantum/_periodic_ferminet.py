@@ -445,7 +445,7 @@ def _determinant_mixture(
 
 def _pair_jastrow(model: PeriodicFermiNet, features: PeriodicCellFeatureResult, /):
     pair_mask = jnp.triu(
-        jnp.ones((model.electron_count, model.electron_count), dtype=bool),
+        jnp.ones((model.electron_count, model.electron_count), dtype=jnp.bool_),
         k=1,
     )
     return model.pair_jastrow_strength * jnp.sum(
@@ -644,7 +644,7 @@ class PeriodicFermiNet(AbstractPeriodicElectronicAmplitude):
             )
         if coordinates.ndim == 2:
             return self._single(coordinates)
-        batch_shape = tuple(int(size) for size in coordinates.shape[:-2])
+        batch_shape = tuple(coordinates.shape[:-2])
         count = math.prod(batch_shape)
         values = jax.vmap(self._single)(
             coordinates.reshape((count,) + self.configuration_shape)
@@ -727,8 +727,7 @@ def _propose_periodic_ferminet_cache(
         raise TypeError("cache must be a PeriodicFermiNetCache.")
     if not isinstance(payload, SingleCoordinateProposalPayload):
         raise TypeError(
-            "Periodic FermiNet incremental updates require "
-            "SingleCoordinateProposalPayload."
+            "Periodic FermiNet incremental updates require SingleCoordinateProposalPayload."
         )
     current = jnp.asarray(current_position)
     proposed = jnp.asarray(proposed_position)
@@ -737,8 +736,7 @@ def _propose_periodic_ferminet_cache(
         or proposed.shape != model.configuration_shape
     ):
         raise ValueError(
-            "Current and proposed periodic FermiNet positions must have shape "
-            f"{model.configuration_shape}."
+            f"Current and proposed periodic FermiNet positions must have shape {model.configuration_shape}."
         )
     flat_index = jnp.asarray(payload.index, dtype=jnp.int32)
     if flat_index.shape != ():

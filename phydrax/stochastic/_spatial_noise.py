@@ -99,7 +99,7 @@ def _basis_digest(
     field_space_id: str | None,
 ) -> str:
     digest = hashlib.sha256()
-    digest.update(b"spatial-noise-basis-v1\0")
+    digest.update(b"spatial-noise-basis\0")
     digest.update(repr(state_shape).encode("ascii"))
     digest.update((field_space_id or "").encode("utf-8"))
     for mode_id in mode_ids:
@@ -190,7 +190,7 @@ class SpatialNoiseApproximation(StrictModule):
         self.residual_estimate = residual
         self.absolute_residual_estimate = absolute
         self.tolerance = threshold
-        self.seed = None if seed is None else tuple(int(value) for value in seed)
+        self.seed = None if seed is None else tuple(seed)
         self.sketch_size = resolved_sketch
         self.converged = bool(residual <= threshold)
 
@@ -233,7 +233,7 @@ def _factor_eigenpairs(
 
 
 def _key_seed(key: ArrayLike, /) -> tuple[int, ...]:
-    return tuple(int(value) for value in np.asarray(jr.key_data(key)).reshape((-1,)))
+    return tuple(np.asarray(jr.key_data(key)).reshape((-1,)))
 
 
 class SpatialNoisePrecisionPolicy(StrictModule):
@@ -277,8 +277,7 @@ class SpatialNoisePrecisionPolicy(StrictModule):
             precision_itemsize(runtime),
         ):
             raise ValueError(
-                "Spatial-noise certification cannot be narrower than construction "
-                "or runtime."
+                "Spatial-noise certification cannot be narrower than construction or runtime."
             )
         request = PrecisionRequest(
             "spatial-noise",
@@ -377,19 +376,15 @@ class SpatialNoiseBasis(StrictModule):
         )
         if modes_array.ndim < 2:
             raise ValueError("modes must have shape state_shape + (rank,).")
-        inferred_shape = tuple(int(size) for size in modes_array.shape[:-1])
-        resolved_shape = (
-            inferred_shape
-            if state_shape is None
-            else tuple(int(size) for size in state_shape)
-        )
+        inferred_shape = tuple(modes_array.shape[:-1])
+        resolved_shape = inferred_shape if state_shape is None else tuple(state_shape)
         if not resolved_shape or any(size <= 0 for size in resolved_shape):
             raise ValueError("state_shape must contain positive dimensions.")
         if inferred_shape != resolved_shape:
             raise ValueError(
                 f"modes state shape must be {resolved_shape}; got {inferred_shape}."
             )
-        rank = int(modes_array.shape[-1])
+        rank = modes_array.shape[-1]
         if rank <= 0 or rank > int(prod(resolved_shape)):
             raise ValueError("Noise rank must lie between one and the state size.")
         eigenvalue_array = jnp.asarray(
@@ -404,8 +399,7 @@ class SpatialNoiseBasis(StrictModule):
         )
         if tuple(weights.shape) != resolved_shape:
             raise ValueError(
-                "quadrature_weights must have exact state_shape "
-                f"{resolved_shape}; got {weights.shape}."
+                f"quadrature_weights must have exact state_shape {resolved_shape}; got {weights.shape}."
             )
         modes_host = np.asarray(
             modes_array,
@@ -479,7 +473,7 @@ class SpatialNoiseBasis(StrictModule):
 
     @property
     def rank(self) -> int:
-        return int(self.eigenvalues.size)
+        return self.eigenvalues.size
 
     @property
     def noise_shape(self) -> tuple[int, ...]:
@@ -544,8 +538,7 @@ class SpatialNoiseBasis(StrictModule):
             (AbstractStrongFormDiscretization, TensorSpectralDiscretization),
         ):
             raise TypeError(
-                "discretization must provide strong-form or tensor-spectral "
-                "Laplacian modes."
+                "discretization must provide strong-form or tensor-spectral Laplacian modes."
             )
         retained = int(rank)
         if isinstance(discretization, TensorSpectralDiscretization):
@@ -624,7 +617,7 @@ class SpatialNoiseBasis(StrictModule):
         precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, SpatialNoisePrecisionPolicy):
             raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         count = int(prod(shape))
         retained = int(rank)
         if retained <= 0 or retained > count:
@@ -641,8 +634,7 @@ class SpatialNoiseBasis(StrictModule):
         )
         if covariance_host.shape != (count, count):
             raise ValueError(
-                f"covariance must have shape {(count, count)}; "
-                f"got {covariance_host.shape}."
+                f"covariance must have shape {(count, count)}; got {covariance_host.shape}."
             )
         if np.any(~np.isfinite(covariance_host)):
             raise ValueError("covariance must be finite.")
@@ -747,7 +739,7 @@ class SpatialNoiseBasis(StrictModule):
             resolved_points,
             dtype=precision_.construction_dtype,
         )
-        if point_array.ndim != 2 or int(point_array.shape[0]) != count:
+        if point_array.ndim != 2 or point_array.shape[0] != count:
             raise ValueError(
                 "points must have shape (discretization.num_points, coordinate_dim)."
             )

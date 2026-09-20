@@ -42,7 +42,7 @@ def _dataset(cases=4, resolution=8):
         jnp.linspace(0.0, 1.0, resolution),
         quadrature_weights=jnp.linspace(1.0, 2.0, resolution),
     )
-    values = jnp.arange(cases, dtype=float)[:, None] + axis.nodes[None, :]
+    values = jnp.arange(cases, dtype="float64")[:, None] + axis.nodes[None, :]
     return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},
         {"output": 2.0 * values},
@@ -285,7 +285,7 @@ def test_float16_fit_backs_off_and_keeps_float32_master_parameters():
             phx.nn.operator.training.OperatorLossTerm(
                 "overflow_first_batch",
                 _overflow_first_batch,
-                identity="tests.operator_precision.overflow-first.v1",
+                identity="tests.operator_precision.overflow-first",
             ),
         ),
         dtype_policy=phx.nn.operator.training.OperatorDTypePolicy(
@@ -391,7 +391,7 @@ def test_nonfinite_microbatch_discards_the_complete_accumulation_window():
     term = phx.nn.operator.training.OperatorLossTerm(
         "overflow_second_batch",
         _overflow_second_batch,
-        identity="tests.operator_precision.overflow-second.v1",
+        identity="tests.operator_precision.overflow-second",
         case_reduction="per_case",
     )
     mixed = phx.nn.operator.training.fit_operator(
@@ -426,13 +426,13 @@ def test_dynamic_loss_scale_resume_is_bitwise_exact(tmp_path):
     term = phx.nn.operator.training.OperatorLossTerm(
         "overflow_first_batch",
         _overflow_first_batch,
-        identity="tests.operator_precision.resume-overflow.v1",
+        identity="tests.operator_precision.resume-overflow",
     )
     common = {
         **_mixed_precision_fit_kwargs(),
         "loss_terms": (term,),
         "checkpoint_every": 1,
-        "configuration": {"test_contract": "operator-loss-scale-resume-v1"},
+        "configuration": {"test_contract": "operator-loss-scale-resume"},
     }
     uninterrupted = phx.nn.operator.training.fit_operator(
         _LinearOperator(),
@@ -509,7 +509,7 @@ def test_nonfinite_optimizer_candidate_is_not_treated_as_scale_overflow():
             steps=1,
             batch_size=1,
             optimizer=_nonfinite_optimizer(),
-            optimizer_id="tests.nonfinite-optimizer.v1",
+            optimizer_id="tests.nonfinite-optimizer",
         )
 
 
@@ -590,7 +590,7 @@ def test_sharded_overflow_produces_one_replicated_skip_decision():
             phx.nn.operator.training.OperatorLossTerm(
                 "overflow_first_shard",
                 overflow_first_shard,
-                identity="tests.operator_precision.sharded-overflow.v1",
+                identity="tests.operator_precision.sharded-overflow",
             ),
         ),
         sharding_policy=phx.nn.operator.OperatorShardingPolicy(),

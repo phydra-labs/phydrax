@@ -37,7 +37,7 @@ class StencilStateLayout(StrictModule):
         /,
     ):
         fields = tuple(str(name) for name in field_names)
-        shape = tuple(int(size) for size in spatial_shape)
+        shape = tuple(spatial_shape)
         if (
             not fields
             or any(not name for name in fields)

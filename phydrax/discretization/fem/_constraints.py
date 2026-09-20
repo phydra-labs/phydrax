@@ -65,7 +65,7 @@ def _validate_component_constraints(
     mask: np.ndarray,
     /,
 ) -> None:
-    vertex_count = int(discretization.mesh.coordinates.shape[0])
+    vertex_count = discretization.mesh.coordinates.shape[0]
     parents = np.arange(vertex_count, dtype=np.int32)
 
     def root(value: int) -> int:
@@ -134,9 +134,11 @@ def dirichlet_constraint(
             raise ValueError("Dirichlet boundary_selection must select mesh facets.")
         node_mask = np.asarray(
             discretization.dof_mask(field_name, boundary_selection),
-            dtype=bool,
+            dtype=np.bool_,
         )
-        selected_facets = np.flatnonzero(np.asarray(boundary_selection.mask, dtype=bool))
+        selected_facets = np.flatnonzero(
+            np.asarray(boundary_selection.mask, dtype=np.bool_)
+        )
         exterior_facets = np.asarray(
             discretization.exterior_facet_domain.entity_indices,
             dtype=np.int32,
@@ -147,12 +149,14 @@ def dirichlet_constraint(
             )
     else:
         node_mask = (
-            np.asarray(dof_map.boundary_dof_mask, dtype=bool)
+            np.asarray(dof_map.boundary_dof_mask, dtype=np.bool_)
             if boundary_mask is None
-            else np.asarray(boundary_mask, dtype=bool)
+            else np.asarray(boundary_mask, dtype=np.bool_)
         )
     full_shape = field_space.vector_space.shape
-    component_count = int(np.prod(full_shape[1:], dtype=int)) if full_shape[1:] else 1
+    component_count = (
+        int(np.prod(full_shape[1:], dtype=np.int64)) if full_shape[1:] else 1
+    )
     if node_mask.shape == full_shape:
         full_mask = node_mask.reshape((dof_map.global_dof_count, component_count))
         node_mask = np.any(full_mask, axis=1)
@@ -160,7 +164,7 @@ def dirichlet_constraint(
         selected_components = (
             np.arange(component_count, dtype=np.int32)
             if components is None
-            else np.asarray(tuple(int(value) for value in components), dtype=np.int32)
+            else np.asarray(tuple(components), dtype=np.int32)
         )
         if (
             selected_components.ndim != 1
@@ -172,7 +176,7 @@ def dirichlet_constraint(
             raise ValueError("components must select unique valid flattened components.")
         full_mask = np.zeros(
             (dof_map.global_dof_count, component_count),
-            dtype=bool,
+            dtype=np.bool_,
         )
         full_mask[:, selected_components] = node_mask[:, None]
     else:
@@ -188,7 +192,7 @@ def dirichlet_constraint(
     full_space = field_space.vector_space
     reduced_space = ArraySpace((free.size,), dtype=full_space.dtype)
     free_array = jnp.asarray(free)
-    full_size = int(np.prod(full_space.shape, dtype=int))
+    full_size = int(np.prod(full_space.shape, dtype=np.int64))
     relation = EdgeRelation(
         np.arange(free.size, dtype=np.int32),
         free,
@@ -268,7 +272,7 @@ def affine_dof_constraint(
             raise ValueError(
                 "Constraint prolongation must be finite and column-injective."
             )
-        reduced_space = ArraySpace((int(matrix.shape[1]),), dtype=matrix.dtype)
+        reduced_space = ArraySpace((matrix.shape[1],), dtype=matrix.dtype)
         operator = DenseLinearOperator(
             matrix,
             source=reduced_space,
@@ -317,7 +321,9 @@ def periodic_constraint(
         raise TypeError("Periodic constraints require ArraySpace coordinates.")
     node_count = dof_map.global_dof_count
     component_count = (
-        int(np.prod(full_space.shape[1:], dtype=int)) if len(full_space.shape) > 1 else 1
+        int(np.prod(full_space.shape[1:], dtype=np.int64))
+        if len(full_space.shape) > 1
+        else 1
     )
     parents = np.arange(node_count, dtype=np.int32)
 
@@ -342,16 +348,16 @@ def periodic_constraint(
     coordinates = np.asarray(dof_map.dof_coordinates)
     for pair in boundary.periodic_pairs:
         masks = []
-        for facet in (pair.owner_facet, pair.neighbour_facet):
-            mask = np.zeros((facet_entities.count,), dtype=bool)
+        for facet in (pair.owner_facet, pair.neighbor_facet):
+            mask = np.zeros((facet_entities.count,), dtype=np.bool_)
             mask[facet] = True
             selection = EntitySelection(facet_entities, mask)
             masks.append(
-                np.asarray(discretization.dof_mask(field_name, selection), dtype=bool)
+                np.asarray(discretization.dof_mask(field_name, selection), dtype=np.bool_)
             )
         owner = np.flatnonzero(masks[0])
-        neighbour = np.flatnonzero(masks[1])
-        if owner.size == 0 or owner.size != neighbour.size:
+        neighbor = np.flatnonzero(masks[1])
+        if owner.size == 0 or owner.size != neighbor.size:
             raise ValueError("Periodic facets expose incompatible field coordinates.")
         if pair.transform is None:
             mapped = coordinates[owner]
@@ -368,17 +374,16 @@ def periodic_constraint(
                 atol=transform.tolerance,
             ):
                 raise ValueError(
-                    "Phase-field periodic constraints currently require an "
-                    "identity component transform."
+                    "Phase-field periodic constraints currently require an identity component transform."
                 )
             mapped = coordinates[owner] @ np.asarray(
                 transform.coordinate_matrix
             ).T + np.asarray(transform.coordinate_offset)
             tolerance = transform.tolerance
-        neighbour_coordinates = coordinates[neighbour]
+        neighbor_coordinates = coordinates[neighbor]
         distances = np.sqrt(
             np.sum(
-                (mapped[:, None, :] - neighbour_coordinates[None, :, :]) ** 2,
+                (mapped[:, None, :] - neighbor_coordinates[None, :, :]) ** 2,
                 axis=-1,
             )
         )
@@ -387,7 +392,7 @@ def periodic_constraint(
             distances[np.arange(owner.size), matched] > tolerance
         ):
             raise ValueError("Periodic facet coordinates do not match bijectively.")
-        for left, right in zip(owner, neighbour[matched], strict=True):
+        for left, right in zip(owner, neighbor[matched], strict=True):
             union(int(left), int(right))
 
     roots = np.asarray([root(index) for index in range(node_count)], dtype=np.int32)
@@ -456,10 +461,10 @@ def finite_element_hp_constraint(
         raise TypeError("Adaptive hp trace constraints require ArraySpace fields.")
     if plan.full_dof_count != dof_map.global_dof_count:
         raise ValueError("hp trace plan and finite-element DOF map disagree.")
-    component_count = int(np.prod(full_space.shape[1:], dtype=int))
+    component_count = int(np.prod(full_space.shape[1:], dtype=np.int64))
     columns = np.asarray(plan.row_columns, dtype=np.int32)
     weights = np.asarray(plan.row_weights)
-    valid = np.asarray(plan.row_valid, dtype=bool)
+    valid = np.asarray(plan.row_valid, dtype=np.bool_)
     components = np.arange(component_count, dtype=np.int32)
     source_indices = (columns[..., None] * component_count + components).reshape((-1,))
     target_indices = np.broadcast_to(

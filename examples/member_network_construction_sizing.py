@@ -28,7 +28,7 @@ material = mn.LinearElasticMaterial(
 section = mn.BeamSection(1.0, 1.0, 1.0, 0.5, 1.0, 1.0)
 properties = mn.MemberPropertyMap((material,), (section,), (0,), (0,))
 reference = mn.MemberReferenceState(structure, positions)
-dofs = mn.MemberDOFLayout(structure, rotation_constrained=jnp.ones((2, 1), dtype=bool))
+dofs = mn.MemberDOFLayout(structure, rotation_constrained=jnp.ones((2, 1), dtype="bool"))
 definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
 assembly = mn.MemberNetworkAssembly((mn.AxialMemberBlock((0,)),))
 problem = mn.MemberNetworkProblem(definition, assembly)

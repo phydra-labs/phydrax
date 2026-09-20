@@ -73,14 +73,14 @@ class SpatialElectroViscoelasticWorkflow:
     ) -> SpatialElectroViscoelasticWorkflow:
         cells = ehd.cell_volumes_m3.size
         dimension = ehd.spatial_dimension
-        fraction = np.asarray(minus_phase_fraction, dtype=float)
-        stress_divergence = np.asarray(stress_divergence_operator_m_inv, dtype=float)
-        gradient = np.asarray(velocity_gradient_operator_m_inv, dtype=float)
+        fraction = np.asarray(minus_phase_fraction, dtype=np.float64)
+        stress_divergence = np.asarray(stress_divergence_operator_m_inv, dtype=np.float64)
+        gradient = np.asarray(velocity_gradient_operator_m_inv, dtype=np.float64)
         minus_cells = np.asarray(interface_minus_cells, dtype=np.int32)
         plus_cells = np.asarray(interface_plus_cells, dtype=np.int32)
-        normals = np.asarray(interface_normals, dtype=float)
-        areas = np.asarray(interface_areas_m2, dtype=float)
-        surface_generator = np.asarray(surface_charge_generator_s_inv, dtype=float)
+        normals = np.asarray(interface_normals, dtype=np.float64)
+        areas = np.asarray(interface_areas_m2, dtype=np.float64)
+        surface_generator = np.asarray(surface_charge_generator_s_inv, dtype=np.float64)
         surfaces = areas.size
         if fraction.shape != (cells,) or np.any((fraction < 0) | (fraction > 1)):
             raise ValueError("Electroviscoelastic phase fractions must lie in [0, 1].")

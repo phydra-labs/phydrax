@@ -38,7 +38,7 @@ def _operator():
         return phx.operators.ConnectedConfigurations(
             connected,
             jnp.zeros(shape),
-            jnp.zeros(shape, dtype=bool),
+            jnp.zeros(shape, dtype="bool"),
             configuration_shape=(1,),
         )
 

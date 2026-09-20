@@ -51,7 +51,7 @@ def run(*, side, bp_steps, chains, repeats):
     graph = phx.pgm.ising_factor_graph(
         jnp.linspace(-0.1, 0.1, variables),
         edges,
-        jnp.full((int(edges.shape[0]),), 0.15),
+        jnp.full((edges.shape[0],), 0.15),
         shape=(side, side),
     )
 
@@ -136,7 +136,7 @@ def run(*, side, bp_steps, chains, repeats):
         "side": side,
         "variables": variables,
         "factors": graph.num_factors,
-        "incidences": int(graph.topology.incidence_edges.shape[0]),
+        "incidences": graph.topology.incidence_edges.shape[0],
         "bp": {
             "messages": bp_plan.message_count,
             "prepare_seconds": bp_prepare_seconds,

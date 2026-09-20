@@ -48,8 +48,8 @@ class SecondaryJumpProcess(AbstractJumpProcess):
         if not jnp.issubdtype(raw_destinations.dtype, jnp.integer):
             raise ValueError("Secondary destination indices must be exact integers.")
         self.destinations = jnp.asarray(destinations, dtype=jnp.int32)
-        self.legal = jnp.asarray(legal, dtype=bool)
-        self.rates = jnp.asarray(rates, dtype=float)
+        self.legal = jnp.asarray(legal, dtype=jnp.bool_)
+        self.rates = jnp.asarray(rates, dtype=jnp.float64)
         if (
             self.destinations.shape != self.rates.shape
             or self.legal.shape != self.rates.shape
@@ -71,7 +71,7 @@ class SecondaryJumpProcess(AbstractJumpProcess):
             )
         if not isinstance(process_id, str) or not process_id:
             raise ValueError("A secondary jump process requires an explicit identity.")
-        self.num_channels = int(self.rates.shape[1])
+        self.num_channels = self.rates.shape[1]
         self.process_id = process_id
         self.state_shape = (1,)
         self.mark_shape = ()
@@ -252,7 +252,7 @@ class PreparedSecondaryKinetics:
         return jax.nn.softmax(-jnp.asarray(self.free_energies))
 
     def elementary_association_rate_constant(self, move: SecondaryMove) -> float:
-        """Return one labelled elementary join's dilute coefficient in m³/(mol·time_unit).
+        """Return one labeled elementary join's dilute coefficient in m³/(mol·time_unit).
 
         This is not a macroscopic first-passage-derived rate or a pseudo-first-
         order excess-bath approximation. The admitted finite-volume dilute
@@ -307,7 +307,7 @@ def prepare_secondary_kinetics(
     max_states: int = 10000,
     max_channels: int = 4096,
 ) -> PreparedSecondaryKinetics:
-    """Exhaustively compile a bounded ordered-planar labelled-strand CTMC.
+    """Exhaustively compile a bounded ordered-planar labeled-strand CTMC.
 
     Capacity is a preparation refusal, never a reflecting state truncation.
     Linear DNA/RNA/hybrid constructs are supported only with an independently

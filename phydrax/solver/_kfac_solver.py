@@ -113,7 +113,7 @@ def _armijo_search(
             initial_loss,
             jnp.asarray(
                 0.0,
-                dtype=jnp.result_type(initial_loss, directional_derivative, float),
+                dtype=jnp.result_type(initial_loss, directional_derivative, jnp.float64),
             ),
             jnp.asarray(0, dtype=jnp.int32),
         )
@@ -295,7 +295,7 @@ def solve_kfac(
                     if training.term_balance is None
                     else len(training.term_balance.blocks)
                 ),
-                dtype=float,
+                dtype=jnp.float64,
             ),
             progress=TrainingProgress(),
             run_id=training.plan_id,
@@ -420,11 +420,11 @@ def solve_kfac(
         else tuple(policy.initial_inverse_step for policy in training.pseudo_transient)
     )
     term_multipliers = (
-        jnp.zeros((0,), dtype=float)
+        jnp.zeros((0,), dtype=jnp.float64)
         if training is None or training.term_balance is None
         else resume_state.term_multipliers
         if resume_state is not None
-        else jnp.ones((len(training.term_balance.blocks),), dtype=float)
+        else jnp.ones((len(training.term_balance.blocks),), dtype=jnp.float64)
     )
     previous_gradient = None if resume_state is None else resume_state.previous_gradient
 
@@ -499,7 +499,7 @@ def solve_kfac(
                 break
             iteration_started = time.perf_counter()
             iteration = epoch + 1
-            term_iteration = jnp.asarray(iteration, dtype=float)
+            term_iteration = jnp.asarray(iteration, dtype=jnp.float64)
             iteration_key = jr.fold_in(root_key, epoch)
             functions_snapshot = combine_trainable(params, non_trainable)
             refresh_started = time.perf_counter()
@@ -769,9 +769,9 @@ def solve_kfac(
             session_step = session is not None and iteration % session_every_ == 0
             report_step = log_step or tensorboard_step or session_step
             elapsed = time.perf_counter() - iteration_started
-            train_terms = jnp.zeros((len(self.terms),), dtype=float)
+            train_terms = jnp.zeros((len(self.terms),), dtype=jnp.float64)
             train_data_metrics = tuple({} for _ in self.terms)
-            eval_terms = jnp.zeros((len(self.evaluation_terms),), dtype=float)
+            eval_terms = jnp.zeros((len(self.evaluation_terms),), dtype=jnp.float64)
             eval_data_metrics = tuple({} for _ in self.evaluation_terms)
             if log_terms and report_step:
                 evaluation_functions = combine_trainable(params, non_trainable)
@@ -858,7 +858,7 @@ def solve_kfac(
                     train_terms=train_terms,
                     train_data_metrics=train_data_metrics,
                     train_model_loss_names=(),
-                    train_model_loss_terms=jnp.zeros((0,), dtype=float),
+                    train_model_loss_terms=jnp.zeros((0,), dtype=jnp.float64),
                     evaluation_term_names=evaluation_term_names,
                     eval_terms=eval_terms,
                     eval_data_metrics=eval_data_metrics,

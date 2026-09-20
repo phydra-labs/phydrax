@@ -57,23 +57,23 @@ def supervised_data_metrics(
     accuracy = 1.0 - relative_l2
 
     return {
-        "data_accuracy": jnp.asarray(accuracy, dtype=float).reshape(()),
-        "data_relative_l2_error": jnp.asarray(relative_l2, dtype=float).reshape(()),
-        "data_rmse": jnp.asarray(rmse, dtype=float).reshape(()),
+        "data_accuracy": jnp.asarray(accuracy, dtype=jnp.float64).reshape(()),
+        "data_relative_l2_error": jnp.asarray(relative_l2, dtype=jnp.float64).reshape(()),
+        "data_rmse": jnp.asarray(rmse, dtype=jnp.float64).reshape(()),
     }
 
 
 def _align_data_metric_shapes(pred: Array, target: Array, /) -> tuple[Array, Array]:
-    pred_arr = jnp.asarray(pred, dtype=float)
-    target_arr = jnp.asarray(target, dtype=float)
+    pred_arr = jnp.asarray(pred, dtype=jnp.float64)
+    target_arr = jnp.asarray(target, dtype=jnp.float64)
 
     if pred_arr.shape == target_arr.shape:
         return pred_arr, target_arr
-    if pred_arr.ndim == 2 and target_arr.ndim == 1 and int(pred_arr.shape[1]) == 1:
+    if pred_arr.ndim == 2 and target_arr.ndim == 1 and pred_arr.shape[1] == 1:
         pred_arr = pred_arr[:, 0]
         if pred_arr.shape == target_arr.shape:
             return pred_arr, target_arr
-    if target_arr.ndim == 2 and pred_arr.ndim == 1 and int(target_arr.shape[1]) == 1:
+    if target_arr.ndim == 2 and pred_arr.ndim == 1 and target_arr.shape[1] == 1:
         target_arr = target_arr[:, 0]
         if pred_arr.shape == target_arr.shape:
             return pred_arr, target_arr
@@ -95,7 +95,7 @@ def supervised_per_sample_squared_error(
     squared = residual * residual
     if squared.ndim <= 1:
         return squared.reshape((-1,))
-    return jnp.sum(squared.reshape((int(squared.shape[0]), -1)), axis=1)
+    return jnp.sum(squared.reshape((squared.shape[0], -1)), axis=1)
 
 
 def reduce_supervised_loss(
@@ -106,12 +106,12 @@ def reduce_supervised_loss(
     sample_weight: ArrayLike | None = None,
 ) -> Array:
     """Reduce per-sample supervised losses with a common weighted policy."""
-    per_sample_arr = jnp.asarray(per_sample, dtype=float)
+    per_sample_arr = jnp.asarray(per_sample, dtype=jnp.float64)
     if sample_weight is None:
         weighted = per_sample_arr
         mass = jnp.asarray(per_sample_arr.size, dtype=per_sample_arr.dtype)
     else:
-        weights = jnp.asarray(sample_weight, dtype=float)
+        weights = jnp.asarray(sample_weight, dtype=jnp.float64)
         if weights.shape != per_sample_arr.shape:
             raise ValueError(
                 "sample_weight must match the per-sample loss shape; "
@@ -125,7 +125,7 @@ def reduce_supervised_loss(
         reduced = jnp.sum(weighted)
     else:
         raise ValueError("reduction must be either 'mean' or 'sum'.")
-    return jnp.asarray(reduced, dtype=float).reshape(())
+    return jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
 
 def validate_supervised_targets(
@@ -139,7 +139,7 @@ def validate_supervised_targets(
     arr = jnp.asarray(values)
     if arr.ndim == 0:
         raise ValueError(f"{name} values must have shape (N, ...).")
-    if int(arr.shape[0]) != int(leading_size):
+    if arr.shape[0] != int(leading_size):
         raise ValueError(
             f"{name} leading axis must be N={int(leading_size)}, got {arr.shape[0]}."
         )
@@ -159,7 +159,7 @@ def validate_case_indices(
     raw = jnp.asarray(indices)
     if raw.ndim != 1:
         raise ValueError(f"{name} must have shape (K,), got {raw.shape}.")
-    if int(raw.shape[0]) <= 0:
+    if raw.shape[0] <= 0:
         raise ValueError(f"{name} must be non-empty.")
     idx = raw.astype(jnp.int32)
     if bool(jnp.any(idx != raw)):
@@ -203,7 +203,7 @@ def configured_case_indices(
         return selected
     candidates = jnp.arange(int(size), dtype=jnp.int32) if selected is None else selected
     configured = candidates[valid[candidates]]
-    if int(configured.shape[0]) == 0:
+    if configured.shape[0] == 0:
         raise ValueError("The configured empirical case population must be non-empty.")
     return configured
 
@@ -219,7 +219,7 @@ def validate_case_weights(
     """Validate positive statistical weights on configured empirical cases."""
     if weights is None:
         return None
-    result = jnp.asarray(weights, dtype=float)
+    result = jnp.asarray(weights, dtype=jnp.float64)
     if result.shape != (int(size),):
         raise ValueError(f"{name} must have shape ({int(size)},), got {result.shape}.")
     configured = jnp.arange(int(size), dtype=jnp.int32) if indices is None else indices
@@ -245,7 +245,7 @@ def sample_case_indices(
     if indices is None:
         return _random_int(key, n=n, maxval=int(size))
     idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
-    positions = _random_int(key, n=n, maxval=int(idx.shape[0]))
+    positions = _random_int(key, n=n, maxval=idx.shape[0])
     return idx[positions]
 
 

@@ -430,7 +430,7 @@ def evaluate_qbx_2d(
     adaptive_plan: AdaptiveQuadraturePlan,
 ) -> QBXEvaluation2D:
     """Evaluate a layer field with coefficient quadrature and certified association."""
-    values = jnp.asarray(targets, dtype=float)
+    values = jnp.asarray(targets, dtype=jnp.float64)
     if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
         raise ValueError("QBX targets must have shape (target_count, 2).")
     expansion_order = int(order)
@@ -584,9 +584,9 @@ def evaluate_qbx_2d(
         )
     association_id = canonical_fingerprint(
         {
-            "kind": "qbx-target-association-2d-v1",
+            "kind": "qbx-target-association-2d",
             "panelization_id": panelization.panelization_id,
-            "target_count": int(values.shape[0]),
+            "target_count": values.shape[0],
             "target_side": target_side,
             "order": expansion_order,
             "radius_factor": factor,

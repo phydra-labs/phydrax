@@ -100,8 +100,7 @@ def nondimensionalize_targets(
         canonical_name = aliases.get(name, name)
         if canonical_name not in by_name or not by_name[canonical_name].is_target:
             raise KeyError(
-                f"Target alias {name!r} resolves to unknown task target "
-                f"{canonical_name!r}."
+                f"Target alias {name!r} resolves to unknown task target {canonical_name!r}."
             )
         specification = by_name[canonical_name]
         assert specification.query_name is not None
@@ -111,8 +110,7 @@ def nondimensionalize_targets(
             or field.spec.to_dict() != specification.output_spec.to_dict()
         ):
             raise ValueError(
-                f"Target field {name!r} does not match routed task field "
-                f"{canonical_name!r}."
+                f"Target field {name!r} does not match routed task field {canonical_name!r}."
             )
         values = specification.nondimensionalize(field.values)
         fields[name] = OperatorFieldBatch(
@@ -498,8 +496,7 @@ class OperatorExecutionPlan(StrictModule):
         unknown_fixed_queries = set(resolved_fixed_queries) - set(task.query_by_name)
         if unknown_fixed_queries:
             raise ValueError(
-                "Fixed query fingerprints reference unknown task queries: "
-                f"{tuple(sorted(unknown_fixed_queries))!r}."
+                f"Fixed query fingerprints reference unknown task queries: {tuple(sorted(unknown_fixed_queries))!r}."
             )
         if task.problem.query_is_fixed is True and set(resolved_fixed_queries) != set(
             task.query_by_name
@@ -569,9 +566,7 @@ class OperatorExecutionPlan(StrictModule):
                     else {
                         "mesh_axis": sharding.mesh_axis,
                         "case_axis": sharding.case_axis,
-                        "mesh_shape": tuple(
-                            int(size) for size in sharding.mesh.devices.shape
-                        ),
+                        "mesh_shape": tuple(sharding.mesh.devices.shape),
                     }
                 ),
             }
@@ -651,8 +646,7 @@ class OperatorExecutionPlan(StrictModule):
         values = jnp.asarray(physical_values)
         if values.shape != physical_sample.values.shape:
             raise ValueError(
-                f"Prepared source {source!r} expects shape "
-                f"{physical_sample.values.shape}, got {values.shape}."
+                f"Prepared source {source!r} expects shape {physical_sample.values.shape}, got {values.shape}."
             )
         physical_inputs = dict(prepared.physical_batch.inputs)
         physical_inputs[source] = function_samples_with_values(

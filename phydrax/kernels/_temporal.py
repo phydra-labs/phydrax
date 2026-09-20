@@ -136,7 +136,7 @@ class CARMAKernel(AbstractPositiveDefiniteKernel):
     ):
         ar = _coefficient_vector(ar_coefficients, name="ar_coefficients")
         ma = _coefficient_vector(ma_coefficients, name="ma_coefficients")
-        order = int(ar.shape[0])
+        order = ar.shape[0]
         if ma.shape[0] > order:
             raise ValueError("CARMA requires 0 <= q < p.")
         if not isinstance(stability_margin, Real) or isinstance(stability_margin, bool):
@@ -147,8 +147,7 @@ class CARMAKernel(AbstractPositiveDefiniteKernel):
         poles = np.roots(np.concatenate((np.ones((1,)), np.asarray(ar))))
         if np.any(~np.isfinite(poles)) or np.any(np.real(poles) >= -margin):
             raise ValueError(
-                "The continuous-time AR polynomial must be stable beyond "
-                "stability_margin."
+                "The continuous-time AR polynomial must be stable beyond stability_margin."
             )
         innovation = _positive_scalar(innovation_scale, name="innovation_scale")
         dtype = jnp.result_type(ar, ma, innovation)
@@ -156,7 +155,7 @@ class CARMAKernel(AbstractPositiveDefiniteKernel):
         if order > 1:
             drift = drift.at[jnp.arange(order - 1), jnp.arange(1, order)].set(1.0)
         drift = drift.at[-1, :].set(-ar[::-1])
-        observation = jnp.pad(ma.astype(dtype), (0, order - int(ma.shape[0])))
+        observation = jnp.pad(ma.astype(dtype), (0, order - ma.shape[0]))
         diffusion = (
             jnp.zeros((order, order), dtype=dtype).at[-1, -1].set(innovation * innovation)
         )
@@ -179,7 +178,7 @@ class CARMAKernel(AbstractPositiveDefiniteKernel):
         self.observation_row = observation
         self.stationary_covariance = stationary
         self.order = order
-        self.moving_average_order = int(ma.shape[0]) - 1
+        self.moving_average_order = ma.shape[0] - 1
         self.stability_margin = margin
 
     def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:
@@ -239,7 +238,7 @@ def _stationary_pairwise(
 
 
 def _positive_scalar(value: ArrayLike, /, *, name: str) -> Array:
-    scalar = jnp.asarray(value, dtype=float)
+    scalar = jnp.asarray(value, dtype=jnp.float64)
     if scalar.ndim != 0:
         raise ValueError(f"{name} must be scalar.")
     return eqx.error_if(
@@ -250,7 +249,7 @@ def _positive_scalar(value: ArrayLike, /, *, name: str) -> Array:
 
 
 def _nonnegative_scalar(value: ArrayLike, /, *, name: str) -> Array:
-    scalar = jnp.asarray(value, dtype=float)
+    scalar = jnp.asarray(value, dtype=jnp.float64)
     if scalar.ndim != 0:
         raise ValueError(f"{name} must be scalar.")
     return eqx.error_if(
@@ -261,7 +260,7 @@ def _nonnegative_scalar(value: ArrayLike, /, *, name: str) -> Array:
 
 
 def _coefficient_vector(value: Sequence[Real] | ArrayLike, /, *, name: str) -> Array:
-    vector = jnp.asarray(value, dtype=float)
+    vector = jnp.asarray(value, dtype=jnp.float64)
     if vector.ndim != 1 or vector.shape[0] <= 0:
         raise ValueError(f"{name} must be a nonempty vector.")
     if not bool(jnp.all(jnp.isfinite(vector))):

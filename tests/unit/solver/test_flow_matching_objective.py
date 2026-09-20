@@ -48,7 +48,7 @@ def _translated_endpoints(*, count=32, dimension=2, offset=None):
         target=source + displacement,
         source_indices=jnp.arange(count),
         target_indices=jnp.arange(count),
-        valid=jnp.ones((count,), dtype=bool),
+        valid=jnp.ones((count,), dtype="bool"),
         log_weights=jnp.zeros((count,)),
         coupling_id="paired-translation",
         provenance="unit-test",

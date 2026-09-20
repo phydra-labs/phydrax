@@ -33,7 +33,7 @@ def _finite_volume_geometry():
     return phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(
             ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, -1)),
-            dtype=float,
+            dtype="float64",
         ),
         tetrahedra=np.asarray(((0, 1, 2, 3), (0, 2, 1, 4))),
     ).prepare()
@@ -56,9 +56,9 @@ def _field_space(name, count):
 def test_governed_external_and_field_references_are_content_verified_and_evidenced(
     tmp_path,
 ):
-    payload = b"field-reference-v1"
+    payload = b"field-reference"
     manifest = ReferenceArtifactManifest(
-        "field-reference-v1",
+        "field-reference",
         checksum_algorithm="sha256",
         checksum=hashlib.sha256(payload).hexdigest(),
         size_bytes=len(payload),
@@ -117,7 +117,7 @@ def test_governed_external_and_field_references_are_content_verified_and_evidenc
     )
     assert evidence.passed
     with pytest.raises(ValueError, match="checksum"):
-        manifest.verify_bytes(b"field-reference-v2")
+        manifest.verify_bytes(b"field-reference")
     artifact_path = tmp_path / "external-oracle.npz"
     np.savez(
         artifact_path,
@@ -126,7 +126,7 @@ def test_governed_external_and_field_references_are_content_verified_and_evidenc
     )
     artifact_bytes = artifact_path.read_bytes()
     oracle_manifest = ReferenceArtifactManifest(
-        "external-oracle-v1",
+        "external-oracle",
         checksum_algorithm="sha256",
         checksum=hashlib.sha256(artifact_bytes).hexdigest(),
         size_bytes=len(artifact_bytes),
@@ -138,7 +138,7 @@ def test_governed_external_and_field_references_are_content_verified_and_evidenc
         export_classification="EAR99",
         nondimensionalization={"observable": 1.0},
         uncertainty=None,
-        lineage_ids=("oracle:independent-v1",),
+        lineage_ids=("oracle:independent",),
     )
     oracle_recipe = GeophysicalReferenceRecipe(
         "external-oracle",
@@ -374,7 +374,7 @@ def test_layered_mt_surface_wave_and_noise_processing_recover_known_responses():
     plan, expected = geo.MagnetotelluricResponsePlan.from_layered(
         layered, jnp.asarray([1.0, 10.0])
     )
-    magnetic = jnp.broadcast_to(jnp.eye(2, dtype=complex), (2, 2, 2))
+    magnetic = jnp.broadcast_to(jnp.eye(2, dtype="complex128"), (2, 2, 2))
     response = plan.evaluate(expected, magnetic)
     assert response.finite
     np.testing.assert_allclose(response.impedance_ohm, expected)
@@ -386,7 +386,7 @@ def test_layered_mt_surface_wave_and_noise_processing_recover_known_responses():
             [[1.0, 1.0], [1.0, -1.0]],
             [[1.0, -1.0], [-1.0, 1.0]],
         ],
-        dtype=complex,
+        dtype="complex128",
     )
     electric = phx.ein.contract("fij,wfj->wfi", expected, remote)
     estimated, coherence = geo.RemoteReferenceMTPlan().estimate(electric, remote, remote)
@@ -443,8 +443,8 @@ def test_native_map_ensemble_pcn_and_monitoring_workflows_execute():
         objective,
         hessian,
         1,
-        objective_id="quadratic-map-v1",
-        hessian_action_id="identity-hessian-v1",
+        objective_id="quadratic-map",
+        hessian_action_id="identity-hessian",
         maximum_iterations=4,
         gradient_tolerance=1e-10,
     )
@@ -466,7 +466,7 @@ def test_native_map_ensemble_pcn_and_monitoring_workflows_execute():
         lambda value: -0.5 * jnp.sum((value - 1.0) ** 2),
         0.2,
         8,
-        log_likelihood_id="unit-gaussian-shift-v1",
+        log_likelihood_id="unit-gaussian-shift",
     ).sample(jax.random.key(4), [0.0, 0.0])
     assert jnp.all(jnp.isfinite(pcn.samples))
     assert 0 <= pcn.acceptance_rate <= 1
@@ -482,8 +482,8 @@ def test_native_map_ensemble_pcn_and_monitoring_workflows_execute():
         ),
         (lambda value, time: value + 0.0 * time, lambda value, time: value + 0.0 * time),
         [0.0],
-        dynamics_id="identity-dynamics-v1",
-        prediction_ids=("identity-observer-0-v1", "identity-observer-1-v1"),
+        dynamics_id="identity-dynamics",
+        prediction_ids=("identity-observer-0", "identity-observer-1"),
     )
     monitored = monitoring.step(monitoring.initialize(ensemble, jax.random.key(5)))
     assert monitored.successful
@@ -581,8 +581,8 @@ def test_monolithic_reactive_spherical_fields_rays_and_geodynamics_close(tmp_pat
         buoyancy,
         lambda velocity, temperature: jnp.zeros_like(temperature),
         1.0,
-        momentum_factory_id="constant-viscosity-v1",
-        thermal_rate_id="zero-thermal-rate-v1",
+        momentum_factory_id="constant-viscosity",
+        thermal_rate_id="zero-thermal-rate",
     )
     geodynamic_step = geodynamics.step(geodynamics.initial_state([300.0]), 0.1)
     assert geodynamic_step.successful

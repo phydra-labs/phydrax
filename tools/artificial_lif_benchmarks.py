@@ -67,7 +67,7 @@ def benchmark_case(*, length: int, width: int, repetitions: int) -> dict:
     cell = eqx.tree_at(lambda current: current.bias, cell, jnp.full((width,), 0.8))
     model = phx.nn.models.RecurrentSequenceModel(cell)
     inputs = jr.normal(input_key, (length, width), dtype=jnp.float32)
-    valid = jnp.ones((length,), dtype=bool)
+    valid = jnp.ones((length,), dtype="bool")
     time = jnp.arange(length, dtype=jnp.float32)
 
     def forward(current, values):

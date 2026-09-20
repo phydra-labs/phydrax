@@ -37,7 +37,7 @@ class BoundedAcousticWavespeed(StrictModule):
             raise ValueError(
                 "Acoustic wavespeed bounds must be finite with 0 < minimum < maximum."
             )
-        value = jnp.asarray(raw, dtype=float)
+        value = jnp.asarray(raw, dtype=jnp.float64)
         self.raw = eqx.error_if(
             value, jnp.any(~jnp.isfinite(value)), "Raw acoustic wavespeed must be finite."
         )
@@ -97,7 +97,7 @@ class PreparedSeismicObservation(StrictModule, NonTrainableState):
         times = np.asarray(observed.support.broadcast_coordinates()) * float(
             conversion_factor(time_unit, SECOND)
         )
-        active = np.asarray(observed.sample_valid, dtype=bool)
+        active = np.asarray(observed.sample_valid, dtype=np.bool_)
         if not np.any(active):
             raise ValueError("Seismic observations require at least one valid sample.")
         clock = (
@@ -107,7 +107,7 @@ class PreparedSeismicObservation(StrictModule, NonTrainableState):
         epsilon = (
             np.finfo(coordinate_dtype).eps
             if np.issubdtype(coordinate_dtype, np.floating)
-            else np.finfo(float).eps
+            else np.finfo(np.float64).eps
         )
         tolerance = 32 * epsilon * max(1, plan.step_count)
         if np.any(
@@ -158,7 +158,7 @@ class PreparedSeismicObservation(StrictModule, NonTrainableState):
         return self.sample(values)
 
     def transpose(self, cotangent: ArrayLike, /) -> Array:
-        values = jnp.asarray(cotangent, dtype=float)
+        values = jnp.asarray(cotangent, dtype=jnp.float64)
         if values.shape != self.target.shape:
             raise ValueError(
                 "Seismic observation cotangent must match the observed trace shape."
@@ -214,7 +214,7 @@ class SeismicGaussianLikelihood(AbstractPosteriorTerm):
             time_unit=time_unit,
             time_reference=time_reference,
         )
-        rates = jnp.asarray(source_rates, dtype=float)
+        rates = jnp.asarray(source_rates, dtype=jnp.float64)
         if rates.shape != (plan.step_count, acquisition.sources.count):
             raise ValueError(
                 "Seismic likelihood source history must match the acoustic plan."
@@ -222,7 +222,7 @@ class SeismicGaussianLikelihood(AbstractPosteriorTerm):
         rates = eqx.error_if(
             rates, jnp.any(~jnp.isfinite(rates)), "Seismic source rates must be finite."
         )
-        scale = jnp.asarray(noise_scale, dtype=float) * float(
+        scale = jnp.asarray(noise_scale, dtype=jnp.float64) * float(
             conversion_factor(amplitude_unit, PASCAL)
         )
         if (

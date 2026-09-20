@@ -60,7 +60,7 @@ class SWCAdapterEvidence(StrictModule, NonTrainableState):
         self.morphology_id = morphology_id
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-swc-adapter-evidence-v1",
+                "kind": "electrophysiology-swc-adapter-evidence",
                 "node_count": node_count,
                 "segment_count": segment_count,
                 "branch_count": branch_count,
@@ -219,7 +219,7 @@ def parse_swc_text(
     )
     source_id = canonical_fingerprint(
         {
-            "kind": "swc-source-v1",
+            "kind": "swc-source",
             "records": [[node_id, *records[node_id]] for node_id in ordered_ids],
             "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
         }
@@ -231,8 +231,8 @@ def parse_swc_text(
         source_id=source_id,
         target_id=morphology.plan_id,
         coordinate_mapping=(
-            "SWC xyz micrometres -> Euclidean compartment length_um",
-            "SWC radius micrometres -> compartment diameter_um = 2 * radius",
+            "SWC xyz micrometers -> Euclidean compartment length_um",
+            "SWC radius micrometers -> compartment diameter_um = 2 * radius",
         ),
         preserved_fields=(
             "node identifiers",
@@ -241,7 +241,7 @@ def parse_swc_text(
             "node radii as compartment diameters",
         ),
         assumptions=(
-            "SWC coordinates and radii are expressed in micrometres",
+            "SWC coordinates and radii are expressed in micrometers",
             f"membrane capacitance density is {float(capacitance_density_uF_cm2)} uF/cm2",
             f"axial resistivity is {float(axial_resistivity_ohm_cm)} ohm*cm",
         ),

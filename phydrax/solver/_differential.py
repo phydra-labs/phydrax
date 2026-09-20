@@ -62,7 +62,7 @@ class WienerTerm(StrictModule):
             raise ValueError("WienerTerm name must be a non-empty string.")
         if not callable(coefficient):
             raise TypeError("WienerTerm coefficient must be callable.")
-        shape = tuple(int(size) for size in noise_shape)
+        shape = tuple(noise_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("WienerTerm noise dimensions must be positive.")
         if structure not in ("additive", "commutative", "general"):
@@ -104,9 +104,7 @@ class WienerTerm(StrictModule):
         time_array = jnp.asarray(time)
         state_array = jnp.asarray(state)
         value_shape = (
-            tuple(state_array.shape)
-            if output_shape is None
-            else tuple(int(size) for size in output_shape)
+            tuple(state_array.shape) if output_shape is None else tuple(output_shape)
         )
         expected_shape = (
             value_shape + self.noise_shape
@@ -116,8 +114,7 @@ class WienerTerm(StrictModule):
         coefficient = jnp.asarray(self.coefficient(time_array, state_array, args))
         if tuple(coefficient.shape) != expected_shape:
             raise ValueError(
-                f"WienerTerm {self.name!r} coefficient must return shape "
-                f"{expected_shape}; got {coefficient.shape}."
+                f"WienerTerm {self.name!r} coefficient must return shape {expected_shape}; got {coefficient.shape}."
             )
         return coefficient
 
@@ -150,9 +147,7 @@ class WienerTerm(StrictModule):
                 "Operator Wiener input structure must match the declared noise shape."
             )
         expected_output = (
-            tuple(state_array.shape)
-            if output_shape is None
-            else tuple(int(size) for size in output_shape)
+            tuple(state_array.shape) if output_shape is None else tuple(output_shape)
         )
         if tuple(output_structure.shape) != expected_output:
             raise ValueError(
@@ -177,9 +172,7 @@ class WienerTerm(StrictModule):
             )
         state_array = jnp.asarray(state)
         value_shape = (
-            tuple(state_array.shape)
-            if output_shape is None
-            else tuple(int(size) for size in output_shape)
+            tuple(state_array.shape) if output_shape is None else tuple(output_shape)
         )
         coefficient = self.coefficient_array(
             time,
@@ -299,8 +292,8 @@ class DifferentialProblem(StrictModule):
     ):
         if not callable(drift):
             raise TypeError("DifferentialProblem drift must be callable.")
-        start = jnp.asarray(t0, dtype=float)
-        end = jnp.asarray(t1, dtype=float)
+        start = jnp.asarray(t0, dtype=jnp.float64)
+        end = jnp.asarray(t1, dtype=jnp.float64)
         if start.shape != () or end.shape != ():
             raise ValueError("DifferentialProblem t0 and t1 must be scalar.")
         start = eqx.error_if(
@@ -326,15 +319,14 @@ class DifferentialProblem(StrictModule):
             raise ValueError("DifferentialProblem PyTree state must contain leaves.")
         if not state_is_array and state_geometry is not None:
             raise ValueError(
-                "PyTree differential states require explicit real-coordinate maps "
-                "rather than one array state_geometry."
+                "PyTree differential states require explicit real-coordinate maps rather than one array state_geometry."
             )
         if state_geometry is not None:
             if not isinstance(state_geometry, AbstractStateGeometry):
                 raise TypeError(
                     "state_geometry must be an AbstractStateGeometry or None."
                 )
-            membership = jnp.asarray(state_geometry.contains(state), dtype=bool)
+            membership = jnp.asarray(state_geometry.contains(state), dtype=jnp.bool_)
             if membership.shape != ():
                 raise ValueError(
                     "State geometry contains() must return a scalar boolean."
@@ -344,25 +336,22 @@ class DifferentialProblem(StrictModule):
                 ~membership,
                 "DifferentialProblem initial_state is outside state_geometry.",
             )
-        point_shape = (
-            None if not state_is_array else tuple(int(size) for size in state.shape)
-        )
+        point_shape = None if not state_is_array else tuple(state.shape)
         tangent_shape = point_shape
         local_shape = point_shape
         if state_geometry is not None:
             if not state_geometry.supports_exact_differential:
                 raise ValueError(
-                    "DifferentialProblem state_geometry must provide exact "
-                    "retraction differentials."
+                    "DifferentialProblem state_geometry must provide exact retraction differentials."
                 )
             tangent_zero = jnp.asarray(
                 state_geometry.project_tangent(state, jnp.zeros_like(state))
             )
-            tangent_shape = tuple(int(size) for size in tangent_zero.shape)
+            tangent_shape = tuple(tangent_zero.shape)
             local_zero = jnp.asarray(
                 state_geometry.retraction_inverse_jvp(state, state, tangent_zero)
             )
-            local_shape = tuple(int(size) for size in local_zero.shape)
+            local_shape = tuple(local_zero.shape)
             retracted_zero = jnp.asarray(state_geometry.retract(state, local_zero))
             if retracted_zero.shape != state.shape:
                 raise ValueError(
@@ -390,8 +379,7 @@ class DifferentialProblem(StrictModule):
             raise ValueError("WienerTerm names must be unique within a problem.")
         if not state_is_array and terms:
             raise ValueError(
-                "PyTree DifferentialProblem stochastic terms require an explicit "
-                "tree-valued noise layout."
+                "PyTree DifferentialProblem stochastic terms require an explicit tree-valued noise layout."
             )
         structured = tuple(
             term for term in terms if term.representation in ("diagonal", "operator")
@@ -405,8 +393,7 @@ class DifferentialProblem(StrictModule):
                 or term.noise_shape != tuple(state.shape)
             ):
                 raise ValueError(
-                    "Diagonal Wiener terms require equal point, tangent, and noise "
-                    "shapes."
+                    "Diagonal Wiener terms require equal point, tangent, and noise shapes."
                 )
 
         offset = 0
@@ -565,7 +552,7 @@ class DifferentialSolution(StrictModule):
                     "PyTree DifferentialSolution currently requires scalar sample shape."
                 )
             times_array = jnp.asarray(times)
-            valid_array = jnp.asarray(valid, dtype=bool)
+            valid_array = jnp.asarray(valid, dtype=jnp.bool_)
             if times_array.ndim != 1 or valid_array.shape != times_array.shape:
                 raise ValueError(
                     "PyTree solution times/valid must share one rank-one shape."
@@ -668,12 +655,11 @@ class DifferentialSolution(StrictModule):
             raise ValueError(
                 "Realized temporal meshes currently require scalar sample shape."
             )
-        backend_ok = jnp.asarray(backend_successful, dtype=bool)
-        event_stop = jnp.asarray(event_terminated, dtype=bool)
+        backend_ok = jnp.asarray(backend_successful, dtype=jnp.bool_)
+        event_stop = jnp.asarray(event_terminated, dtype=jnp.bool_)
         if backend_ok.shape not in ((), samples) or event_stop.shape not in ((), samples):
             raise ValueError(
-                "backend_successful and event_terminated must be scalar or have "
-                f"sample shape {samples}."
+                f"backend_successful and event_terminated must be scalar or have sample shape {samples}."
             )
         backend_ok = jnp.broadcast_to(backend_ok, samples)
         event_stop = jnp.broadcast_to(event_stop, samples)
@@ -720,7 +706,7 @@ class DifferentialSolution(StrictModule):
 
     @property
     def num_times(self) -> int:
-        return int(self.times.shape[-1])
+        return self.times.shape[-1]
 
     @property
     def successful(self) -> Array:
@@ -815,8 +801,7 @@ class DifferentialSolution(StrictModule):
             resolved_state_dims = tuple(state_dims)
             if len(resolved_state_dims) != state_ndim:
                 raise ValueError(
-                    f"state_dims must contain {state_ndim} entries; "
-                    f"got {len(resolved_state_dims)}."
+                    f"state_dims must contain {state_ndim} entries; got {len(resolved_state_dims)}."
                 )
         from ..uq._predictive import PredictiveField, SampleAxis
 

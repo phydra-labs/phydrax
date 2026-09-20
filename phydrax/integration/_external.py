@@ -92,10 +92,10 @@ def _evaluate_external(
 
 def _mask_data(mask: Array | cx.AxisArray | None, weights: cx.AxisArray, /) -> Array:
     if mask is None:
-        return jnp.ones(weights.shape, dtype=bool)
+        return jnp.ones(weights.shape, dtype=jnp.bool_)
     if isinstance(mask, cx.AxisArray):
-        return jnp.asarray(mask.broadcast_like(weights).data, dtype=bool)
-    return jnp.broadcast_to(jnp.asarray(mask, dtype=bool), weights.shape)
+        return jnp.asarray(mask.broadcast_like(weights).data, dtype=jnp.bool_)
+    return jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), weights.shape)
 
 
 def _as_weight_field(value: Any, weights: cx.AxisArray, /) -> cx.AxisArray:
@@ -163,7 +163,7 @@ def _canonical_raw(
     mask: Array | cx.AxisArray | None,
     /,
 ) -> tuple[Array, Array, Array, tuple[Any, ...]]:
-    weights_ = jnp.asarray(weights, dtype=float)
+    weights_ = jnp.asarray(weights, dtype=jnp.float64)
     if isinstance(value, cx.AxisArray):
         data = jnp.asarray(value.data)
         dims = value.dims
@@ -186,11 +186,11 @@ def _canonical_raw(
     weight_permutation = sample_axes + retained_positions
     weight_data = jnp.transpose(weights_, weight_permutation)
     if isinstance(mask, cx.AxisArray):
-        mask_array = jnp.asarray(mask.data, dtype=bool)
+        mask_array = jnp.asarray(mask.data, dtype=jnp.bool_)
     elif mask is None:
-        mask_array = jnp.ones(weights_.shape, dtype=bool)
+        mask_array = jnp.ones(weights_.shape, dtype=jnp.bool_)
     else:
-        mask_array = jnp.asarray(mask, dtype=bool)
+        mask_array = jnp.asarray(mask, dtype=jnp.bool_)
     mask_array = jnp.broadcast_to(mask_array, weights_.shape)
     mask_data = jnp.transpose(mask_array, weight_permutation)
     sample_shape = tuple(weights_.shape[position] for position in sample_axes)
@@ -297,7 +297,7 @@ def integrate_weighted_samples(
     values, log_weights, included, output_dims = _canonical_weighted(evaluated, batch)
     values = _cast_precision(values, evaluation_dtype)
     output_ndim = values.ndim - log_weights.ndim
-    sample_count = int(log_weights.shape[0])
+    sample_count = log_weights.shape[0]
     accumulator = LogWeightedAccumulator.from_values(
         values,
         log_weights,
@@ -371,7 +371,7 @@ def integrate_weighted_samples(
     )
     if batch.support_valid is not None:
         support_valid = jnp.broadcast_to(
-            jnp.asarray(batch.support_valid, dtype=bool), status.shape
+            jnp.asarray(batch.support_valid, dtype=jnp.bool_), status.shape
         )
         status = jnp.where(
             support_valid,
@@ -484,7 +484,7 @@ def _integrate_separable_discrete(
         if axis not in included.named_dims:
             weight = batch.weights_by_axis[axis]
             included = included * cx.AxisArray(
-                jnp.ones(weight.shape, dtype=bool),
+                jnp.ones(weight.shape, dtype=jnp.bool_),
                 dims=(axis,),
             )
     admissible = cx.AxisArray(jnp.asarray(True), dims=())
@@ -525,7 +525,7 @@ def _integrate_separable_discrete(
                 dims=(axis,),
             )
     active_field = active * cx.AxisArray(
-        jnp.ones_like(expanded.data, dtype=bool),
+        jnp.ones_like(expanded.data, dtype=jnp.bool_),
         dims=expanded.dims,
     )
     expanded_field = expanded * cx.AxisArray(
@@ -533,7 +533,7 @@ def _integrate_separable_discrete(
         dims=active.dims,
     )
     expanded_field = cx.align_to(expanded_field, active_field.layout)
-    active_values = jnp.asarray(active_field.data, dtype=bool)
+    active_values = jnp.asarray(active_field.data, dtype=jnp.bool_)
     expanded_data = _cast_precision(
         expanded_field.data,
         accumulation_dtype,
@@ -584,14 +584,14 @@ def _integrate_separable_discrete(
     mass_data = jnp.asarray(mass.data)
     estimate_field = numerator / mass if target.normalized else numerator
     estimate = jnp.asarray(estimate_field.data)
-    included_data = jnp.asarray(included.data, dtype=bool)
+    included_data = jnp.asarray(included.data, dtype=jnp.bool_)
     included_count = jnp.sum(included_data, dtype=jnp.int32)
     admissible_data = jnp.asarray(
         admissible.broadcast_like(included).data,
-        dtype=bool,
+        dtype=jnp.bool_,
     )
     weight_inputs_valid = jnp.all(~included_data | admissible_data)
-    positive_weight = jnp.any(jnp.asarray(active.data, dtype=bool))
+    positive_weight = jnp.any(jnp.asarray(active.data, dtype=jnp.bool_))
     value_inputs_valid = jnp.all(~active_values | jnp.isfinite(expanded_data))
     status = jnp.where(
         included_count == 0,
@@ -612,7 +612,7 @@ def _integrate_separable_discrete(
         int(IntegrationStatus.NONFINITE_INTEGRAND),
     )
     estimate = _mask_empty_values(estimate, status)
-    sample_count = prod(int(batch.weights_by_axis[axis].shape[0]) for axis in batch.axes)
+    sample_count = prod(batch.weights_by_axis[axis].shape[0] for axis in batch.axes)
     evaluations = jnp.asarray(sample_count, dtype=jnp.int32)
     target_mass = batch.target_mass
     if target_mass is None:
@@ -672,7 +672,7 @@ def integrate_discrete_measure(
     canonical_weights = _cast_precision(canonical_weights, accumulation_dtype)
     values = _cast_precision(values, accumulation_dtype)
     output_ndim = values.ndim - canonical_weights.ndim
-    sample_count = int(canonical_weights.shape[0])
+    sample_count = canonical_weights.shape[0]
     admissible = jnp.isfinite(canonical_weights) & (canonical_weights >= 0.0)
     active = included & admissible & (canonical_weights > 0.0)
     safe_weights = jnp.where(active, canonical_weights, 0.0)

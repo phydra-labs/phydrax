@@ -86,7 +86,7 @@ class ExtendedPersistenceComponent(StrictModule, NonTrainableState):
 
     @property
     def interval_count(self) -> int:
-        return int(self.degrees.shape[0])
+        return self.degrees.shape[0]
 
 
 class ExtendedPersistenceResult(StrictModule, NonTrainableState):
@@ -135,7 +135,7 @@ class ExtendedPersistenceResult(StrictModule, NonTrainableState):
 def _empty_subcomplex(complex: CellSubcomplex, /) -> CellSubcomplex:
     return CellSubcomplex(
         complex.topology,
-        tuple(np.zeros_like(np.asarray(mask), dtype=bool) for mask in complex.masks),
+        tuple(np.zeros_like(np.asarray(mask), dtype=np.bool_) for mask in complex.masks),
         subcomplex_id=f"{complex.subcomplex_id}:empty",
     )
 
@@ -147,7 +147,7 @@ def _prefixes(filtration: CellFiltration, /):
     )
     selected_values = np.concatenate(
         tuple(
-            values[np.asarray(mask, dtype=bool)]
+            values[np.asarray(mask, dtype=np.bool_)]
             for values, mask in zip(canonical, filtration.complex.masks, strict=True)
         )
     )
@@ -155,7 +155,7 @@ def _prefixes(filtration: CellFiltration, /):
     prefixes = [_empty_subcomplex(filtration.complex)]
     for level in levels:
         masks = tuple(
-            np.asarray(base, dtype=bool) & (values <= level)
+            np.asarray(base, dtype=np.bool_) & (values <= level)
             for base, values in zip(filtration.complex.masks, canonical, strict=True)
         )
         prefixes.append(CellSubcomplex(filtration.complex.topology, masks))

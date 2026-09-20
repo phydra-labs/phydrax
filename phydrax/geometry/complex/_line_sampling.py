@@ -41,7 +41,7 @@ class ProjectiveLineSamples(StrictModule):
         self.pivot_indices = jnp.asarray(pivot_indices, dtype=jnp.int32)
         self.polynomial_residuals = jnp.asarray(polynomial_residuals)
         self.smoothness_margins = jnp.asarray(smoothness_margins)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.line_ids = jnp.asarray(line_ids, dtype=jnp.int32)
         self.root_ids = jnp.asarray(root_ids, dtype=jnp.int32)
 
@@ -70,7 +70,7 @@ def intersect_projective_line(
         dtype=np.complex128,
     )
     coefficients = np.fft.fft(values) / count
-    threshold = np.finfo(float).eps * max(1.0, np.max(np.abs(coefficients))) * 100
+    threshold = np.finfo(np.float64).eps * max(1.0, np.max(np.abs(coefficients))) * 100
     while coefficients.size > 1 and abs(coefficients[-1]) <= threshold:
         coefficients = coefficients[:-1]
     roots = np.roots(coefficients[::-1])

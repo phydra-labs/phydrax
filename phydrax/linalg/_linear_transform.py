@@ -16,7 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._spaces import ArraySpace
 
@@ -27,9 +27,9 @@ TrigonometricTransformKind: TypeAlias = Literal["dct", "dst"]
 class AbstractLinearTransform(StrictModule, NonTrainableState):
     """Invertible linear map between declared physical and modal spaces."""
 
-    physical_space: AbstractAttribute[ArraySpace]
-    modal_space: AbstractAttribute[ArraySpace]
-    transform_id: AbstractAttribute[str]
+    physical_space: eqx.AbstractVar[ArraySpace]
+    modal_space: eqx.AbstractVar[ArraySpace]
+    transform_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def analyze(self, values: ArrayLike, /) -> Array:
@@ -64,10 +64,8 @@ class DenseLinearTransform(AbstractLinearTransform):
             analysis_.shape[0],
         ):
             raise ValueError("Dense transform matrices must have transposed shapes.")
-        self.physical_space = ArraySpace(
-            (int(analysis_.shape[1]),), dtype=synthesis_.dtype
-        )
-        self.modal_space = ArraySpace((int(analysis_.shape[0]),), dtype=analysis_.dtype)
+        self.physical_space = ArraySpace((analysis_.shape[1],), dtype=synthesis_.dtype)
+        self.modal_space = ArraySpace((analysis_.shape[0],), dtype=analysis_.dtype)
         self.analysis = analysis_
         self.synthesis = synthesis_
         self.transform_id = (
@@ -98,7 +96,7 @@ class FFTLinearTransform(AbstractLinearTransform):
     modal_space: ArraySpace
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, count: int, /, *, dtype: Any = complex):
+    def __init__(self, count: int, /, *, dtype: Any = jnp.complex128):
         size = int(count)
         dtype_ = np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(dtype)))
         if size <= 0:
@@ -146,7 +144,7 @@ class RealTrigonometricTransform(AbstractLinearTransform):
         count: int,
         /,
         *,
-        dtype: Any = float,
+        dtype: Any = jnp.float64,
     ):
         size = int(count)
         type_ = int(transform_type)

@@ -126,10 +126,7 @@ def _ep_discretization(prepared_geometry, label: str):
     )
     field = phx.discretization.FiniteElementFieldSpec("voltage_mV", element_by_block)
     epoch = prepared_geometry.plan.prepared_epoch
-    numeric_version = (
-        f"{label}-geometry-{int(np.asarray(epoch.geometry))}"
-        f"-reference-{int(np.asarray(epoch.reference))}"
-    )
+    numeric_version = f"{label}-geometry-{int(np.asarray(epoch.geometry))}-reference-{int(np.asarray(epoch.reference))}"
     return phx.discretization.FiniteElementPlan(
         prepared_geometry.plan.mesh,
         field,
@@ -218,10 +215,7 @@ def _cardiac_transfer(
 ):
     source_space = source_discretization.field_spaces[0]
     target_space = target_discretization.field_spaces[0]
-    route_id = (
-        f"{source_discretization.prepared_id}-to-"
-        f"{target_discretization.prepared_id}-{quantity_id}"
-    )
+    route_id = f"{source_discretization.prepared_id}-to-{target_discretization.prepared_id}-{quantity_id}"
     primal = phx.linalg.IdentityLinearOperator(
         source_space.vector_space,
         operator_id=f"high-order-primal-{route_id}",

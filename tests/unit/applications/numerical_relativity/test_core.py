@@ -108,24 +108,22 @@ def test_fourth_order_polynomial_identities_include_nonperiodic_edges():
         (8, 8, 8), (1.0, 1.0, 1.0), dissipation_strength=0.2
     )
     checkerboard = (-1.0) ** sum(
-        jnp.meshgrid(
-            jnp.arange(8), jnp.arange(8), jnp.arange(8), indexing="ij"
-        )
+        jnp.meshgrid(jnp.arange(8), jnp.arange(8), jnp.arange(8), indexing="ij")
     )
     damping = dissipative.dissipation(checkerboard)
     assert float(jnp.sum(damping * checkerboard)) < 0.0
 
 
 def test_flat_vacuum_rhs_constraints_and_jit_shape():
-    grid = FixedGridGeometry((5, 5, 5), (-2.0, -2.0, -2.0), (1.0, 1.0, 1.0), periodic=True)
+    grid = FixedGridGeometry(
+        (5, 5, 5), (-2.0, -2.0, -2.0), (1.0, 1.0, 1.0), periodic=True
+    )
     derivatives = FourthOrderDerivatives(grid.shape, grid.spacing)
     system = _system(tolerance=1.0e-6)
     gauge = GeodesicGauge()
     state = flat_z4c_state(grid.shape, grid_id=grid.grid_id)
 
-    result = evaluate_z4c_rhs(
-        system, grid, derivatives, gauge, state, snapshot_token=0
-    )
+    result = evaluate_z4c_rhs(system, grid, derivatives, gauge, state, snapshot_token=0)
     np.testing.assert_allclose(result.rates.values, 0.0, atol=2e-6)
     np.testing.assert_allclose(result.constraints.maximum_norm, 0.0, atol=2e-6)
     assert bool(result.finite)
@@ -133,14 +131,16 @@ def test_flat_vacuum_rhs_constraints_and_jit_shape():
     assert bool(result.constraints.qualified)
 
     compiled = jax.jit(
-        lambda values: evaluate_z4c_rhs(
-            system,
-            grid,
-            derivatives,
-            gauge,
-            state.with_values(values),
-            snapshot_token=0,
-        ).rates.values
+        lambda values: (
+            evaluate_z4c_rhs(
+                system,
+                grid,
+                derivatives,
+                gauge,
+                state.with_values(values),
+                snapshot_token=0,
+            ).rates.values
+        )
     )(state.values)
     assert compiled.shape == state.values.shape
     np.testing.assert_allclose(compiled, 0.0, atol=2e-6)
@@ -204,9 +204,7 @@ def test_harmonic_and_linearized_tensor_wave_rates():
         driver,
         grid_id=grid.grid_id,
     )
-    puncture_rates = MovingPunctureGauge(
-        driver_damping=1.5, advective=False
-    ).rates(
+    puncture_rates = MovingPunctureGauge(driver_damping=1.5, advective=False).rates(
         puncture_state,
         derivatives,
         jnp.zeros_like(flat.conformal_connection),
@@ -217,7 +215,9 @@ def test_harmonic_and_linearized_tensor_wave_rates():
 
 
 def test_stress_energy_and_constraint_damping_are_explicit():
-    grid = FixedGridGeometry((5, 5, 5), (-2.0, -2.0, -2.0), (1.0, 1.0, 1.0), periodic=True)
+    grid = FixedGridGeometry(
+        (5, 5, 5), (-2.0, -2.0, -2.0), (1.0, 1.0, 1.0), periodic=True
+    )
     derivatives = FourthOrderDerivatives(grid.shape, grid.spacing)
     system = _system(constraint_damping=0.3, tolerance=1.0)
     gauge = GeodesicGauge()
@@ -228,8 +228,8 @@ def test_stress_energy_and_constraint_damping_are_explicit():
         density,
         jnp.zeros(grid.shape + (3,)),
         jnp.zeros(grid.shape + (3, 3)),
-        jnp.ones(grid.shape, dtype=bool),
-        jnp.ones(grid.shape, dtype=bool),
+        jnp.ones(grid.shape, dtype="bool"),
+        jnp.ones(grid.shape, dtype="bool"),
         jnp.zeros(grid.shape),
         jnp.zeros(grid.shape),
         snapshot_token=geometry.snapshot_token,
@@ -299,7 +299,9 @@ def test_stress_energy_and_constraint_damping_are_explicit():
 
 
 def test_boundary_evidence_enforcement_and_atomic_flat_step():
-    grid = FixedGridGeometry((6, 6, 6), (-2.5, -2.5, -2.5), (1.0, 1.0, 1.0), periodic=False)
+    grid = FixedGridGeometry(
+        (6, 6, 6), (-2.5, -2.5, -2.5), (1.0, 1.0, 1.0), periodic=False
+    )
     derivatives = FourthOrderDerivatives(grid.shape, grid.spacing, boundary="one_sided")
     flat = flat_z4c_state(grid.shape, grid_id=grid.grid_id)
 
@@ -342,7 +344,9 @@ def test_boundary_evidence_enforcement_and_atomic_flat_step():
     np.testing.assert_allclose(enforced.evidence.determinant_defect_after, 0.0, atol=2e-5)
     np.testing.assert_allclose(enforced.evidence.trace_defect_after, 0.0, atol=2e-6)
 
-    periodic_grid = FixedGridGeometry((5, 5, 5), (-2.0, -2.0, -2.0), (1.0, 1.0, 1.0), periodic=True)
+    periodic_grid = FixedGridGeometry(
+        (5, 5, 5), (-2.0, -2.0, -2.0), (1.0, 1.0, 1.0), periodic=True
+    )
     runtime = FixedGridZ4cRuntime(
         _system(tolerance=1.0e-5),
         periodic_grid,
@@ -366,8 +370,8 @@ def test_boundary_evidence_enforcement_and_atomic_flat_step():
             jnp.zeros(shape, dtype=dtype),
             jnp.zeros(shape + (3,), dtype=dtype),
             jnp.zeros(shape + (3, 3), dtype=dtype),
-            jnp.ones(shape, dtype=bool),
-            jnp.ones(shape, dtype=bool),
+            jnp.ones(shape, dtype="bool"),
+            jnp.ones(shape, dtype="bool"),
             jnp.zeros(shape, dtype=dtype),
             jnp.zeros(shape, dtype=dtype),
             snapshot_token=geometry.snapshot_token,
@@ -378,9 +382,7 @@ def test_boundary_evidence_enforcement_and_atomic_flat_step():
             projection_id="zero-stage-source",
         )
 
-    proposal = runtime.evaluate(
-        initial, stress_energy_provider=zero_stress_energy
-    )
+    proposal = runtime.evaluate(initial, stress_energy_provider=zero_stress_energy)
     assert observed_tokens == [1, 2, 3, 7]
     assert bool(proposal.successful)
     accepted = runtime.accept(proposal)

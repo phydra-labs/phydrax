@@ -18,7 +18,11 @@ from .._fingerprint import canonical_fingerprint
 def _probabilities(values: ArrayLike, name: str, /, *, minimum: float) -> Array:
     result = jnp.asarray(values)
     host = np.asarray(result)
-    if not np.all(np.isfinite(host)) or np.any(host < minimum) or np.any(host > 1.0 - minimum):
+    if (
+        not np.all(np.isfinite(host))
+        or np.any(host < minimum)
+        or np.any(host > 1.0 - minimum)
+    ):
         raise ValueError(f"{name} violates the declared positivity margin.")
     return result
 
@@ -48,7 +52,7 @@ def fit_marginal_structural_model(
 
     matrix = jnp.asarray(design)
     response = jnp.asarray(outcome)
-    treatment = jnp.asarray(treatments, dtype=bool)
+    treatment = jnp.asarray(treatments, dtype=jnp.bool_)
     if matrix.ndim != 2 or response.shape != (matrix.shape[0],):
         raise ValueError("MSM design and outcome shapes do not align.")
     if treatment.ndim != 2 or treatment.shape[0] != matrix.shape[0]:
@@ -63,9 +67,11 @@ def fit_marginal_structural_model(
         raise ValueError("MSM propensity arrays must match treatments.")
     selected_numerator = jnp.where(treatment, numerator, 1.0 - numerator)
     selected_denominator = jnp.where(treatment, denominator, 1.0 - denominator)
-    log_weights = jnp.sum(jnp.log(selected_numerator) - jnp.log(selected_denominator), axis=1)
+    log_weights = jnp.sum(
+        jnp.log(selected_numerator) - jnp.log(selected_denominator), axis=1
+    )
     if uncensored is not None:
-        censoring = jnp.asarray(uncensored, dtype=bool)
+        censoring = jnp.asarray(uncensored, dtype=jnp.bool_)
         if censoring.shape != treatment.shape:
             raise ValueError("uncensored must match treatments.")
         log_weights = jnp.where(jnp.all(censoring, axis=1), log_weights, -jnp.inf)
@@ -77,9 +83,7 @@ def fit_marginal_structural_model(
     sum_weights = jnp.sum(weights)
     ess = sum_weights**2 / jnp.sum(weights**2)
     successful = (
-        jnp.all(jnp.isfinite(coefficients))
-        & jnp.isfinite(ess)
-        & (ess > matrix.shape[1])
+        jnp.all(jnp.isfinite(coefficients)) & jnp.isfinite(ess) & (ess > matrix.shape[1])
     )
     payload = {
         "kind": "marginal-structural-model",
@@ -122,14 +126,18 @@ def tmle_ate(
     """One-step continuous-outcome TMLE for an average treatment effect."""
 
     outcome_ = jnp.asarray(outcome)
-    treatment_ = jnp.asarray(treatment, dtype=bool)
+    treatment_ = jnp.asarray(treatment, dtype=jnp.bool_)
     treated = jnp.asarray(initial_treated)
     control = jnp.asarray(initial_control)
     probability = _probabilities(
         propensity, "treatment propensity", minimum=minimum_probability
     )
     if not (
-        outcome_.shape == treatment_.shape == treated.shape == control.shape == probability.shape
+        outcome_.shape
+        == treatment_.shape
+        == treated.shape
+        == control.shape
+        == probability.shape
     ):
         raise ValueError("TMLE inputs must be aligned case vectors.")
     observed = jnp.where(treatment_, treated, control)
@@ -140,7 +148,12 @@ def tmle_ate(
     updated_control = control - fluctuation / (1.0 - probability)
     effect = jnp.mean(updated_treated - updated_control)
     updated_observed = jnp.where(treatment_, updated_treated, updated_control)
-    influence = clever * (outcome_ - updated_observed) + updated_treated - updated_control - effect
+    influence = (
+        clever * (outcome_ - updated_observed)
+        + updated_treated
+        - updated_control
+        - effect
+    )
     standard_error = jnp.std(influence, ddof=1) / jnp.sqrt(outcome_.size)
     successful = jnp.all(jnp.isfinite(influence)) & jnp.isfinite(standard_error)
     return TMLEResult(
@@ -174,7 +187,7 @@ def binary_instrument_late(
 
     outcome_ = jnp.asarray(outcome)
     treatment_ = jnp.asarray(treatment)
-    instrument_ = jnp.asarray(instrument, dtype=bool)
+    instrument_ = jnp.asarray(instrument, dtype=jnp.bool_)
     if outcome_.shape != treatment_.shape or outcome_.shape != instrument_.shape:
         raise ValueError("IV inputs must be aligned vectors.")
     treated_outcome = jnp.mean(outcome_[instrument_])
@@ -204,8 +217,8 @@ def aalen_johansen(
 ) -> CompetingRiskResult:
     """Aalen–Johansen survival and cause-specific cumulative incidence."""
 
-    times = np.asarray(event_times, dtype=float)
-    types = np.asarray(event_types, dtype=int)
+    times = np.asarray(event_times, dtype=np.float64)
+    types = np.asarray(event_types, dtype=np.int64)
     if times.ndim != 1 or types.shape != times.shape or not np.all(np.isfinite(times)):
         raise ValueError("Competing-risk times/types must be aligned finite vectors.")
     causes = int(cause_count)
@@ -213,12 +226,17 @@ def aalen_johansen(
         raise ValueError("Event types must use zero for censoring and declared causes.")
     unique = np.unique(times[types > 0])
     survival = 1.0
-    incidence = np.zeros((causes,), dtype=float)
+    incidence = np.zeros((causes,), dtype=np.float64)
     survivals = []
     incidences = []
     for time in unique:
         at_risk = np.count_nonzero(times >= time)
-        events = np.asarray([np.count_nonzero((times == time) & (types == cause)) for cause in range(1, causes + 1)])
+        events = np.asarray(
+            [
+                np.count_nonzero((times == time) & (types == cause))
+                for cause in range(1, causes + 1)
+            ]
+        )
         incidence += survival * events / at_risk
         survival *= 1.0 - np.sum(events) / at_risk
         survivals.append(survival)
@@ -239,8 +257,12 @@ def transportability_weights(
 ) -> Array:
     """Return target/source odds weights under an explicit sampling model."""
 
-    target = _probabilities(target_probability, "target probability", minimum=minimum_probability)
-    source = _probabilities(source_probability, "source probability", minimum=minimum_probability)
+    target = _probabilities(
+        target_probability, "target probability", minimum=minimum_probability
+    )
+    source = _probabilities(
+        source_probability, "source probability", minimum=minimum_probability
+    )
     if target.shape != source.shape:
         raise ValueError("Transport probabilities must align.")
     return target * (1.0 - source) / (source * (1.0 - target))
@@ -266,9 +288,11 @@ def dynamic_regime_value(
     """IPW value of a deterministic longitudinal treatment regime."""
 
     outcome_ = jnp.asarray(outcome)
-    observed = jnp.asarray(observed_treatment, dtype=bool)
-    recommended = jnp.asarray(recommended_treatment, dtype=bool)
-    probability = _probabilities(propensity, "regime propensity", minimum=minimum_probability)
+    observed = jnp.asarray(observed_treatment, dtype=jnp.bool_)
+    recommended = jnp.asarray(recommended_treatment, dtype=jnp.bool_)
+    probability = _probabilities(
+        propensity, "regime propensity", minimum=minimum_probability
+    )
     if observed.shape != recommended.shape or observed.shape != probability.shape:
         raise ValueError("Regime treatment and propensity arrays must align.")
     if outcome_.shape != (observed.shape[0],):

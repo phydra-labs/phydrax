@@ -1468,8 +1468,8 @@ The canonical precision plane includes scalar FP8 plus
 fixed zero padding, packed payloads, and explicit error-or-saturation overflow
 policy. Accumulation, residual, and certification roles reject FP8/MX.
 `contract_block_scaled` is the portable correctness path: it dequantizes to
-float32 or wider and contracts through `opt_einsum`; fused execution fails
-closed unless a concrete provider contract is added.
+float32 or wider and contracts through `phydrax.ein.contract`; fused execution
+fails closed unless a concrete provider contract is added.
 
 `prepare_precision_rewrite` inspects a finite public-JAX primitive set and binds
 input/output avals, equation fingerprints, rules, and public device identity.

@@ -158,12 +158,12 @@ def _kernel_basis(name: MACMarkerKernelName, coordinate: Array, /) -> tuple[Arra
 
 
 def _uniform_spacing(coordinates, bounds, periodic, /) -> float | None:
-    values = np.asarray(coordinates, dtype=float)
+    values = np.asarray(coordinates, dtype=np.float64)
     if values.ndim != 1 or values.size < 4 or np.any(~np.isfinite(values)):
         raise ValueError("Marker assignment requires four finite axis entities.")
     differences = np.diff(values)
     spacing = float(differences[0])
-    tolerance = np.finfo(float).eps * max(32.0, abs(spacing) * values.size)
+    tolerance = np.finfo(np.float64).eps * max(32.0, abs(spacing) * values.size)
     uniform = spacing > 0.0 and np.allclose(
         differences, spacing, rtol=1.0e-10, atol=tolerance
     )
@@ -194,7 +194,7 @@ def _nonuniform_affine_weights(
 
 
 def _axis_stencil(coordinates, bounds, periodic, position, active, kernel, /):
-    count = int(coordinates.size)
+    count = coordinates.size
     width = kernel.width
     if count < width:
         raise ValueError("Marker kernel width exceeds an axis entity count.")
@@ -265,7 +265,7 @@ def _tensor_routes(layout, axes, bounds, position, active, kernel, /):
         )
     )
     dimension = len(axis_stencils)
-    source_count = int(position.shape[0])
+    source_count = position.shape[0]
     width = kernel.width
     route_indices = []
     route_weights = []
@@ -484,7 +484,7 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
         self.kernel = plan.kernel
         self.markers = plan.markers
         self.route_width = plan.route_width
-        self.target_sizes = tuple(int(value.shape[0]) for value in centers)
+        self.target_sizes = tuple(value.shape[0] for value in centers)
         self.axis_bounds = bounds
         self.flattened_face_centers = centers
         self.flattened_dual_measures = measures
@@ -527,8 +527,8 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
         partitions = []
         first_moments = []
         gradient_sums = []
-        truncated = jnp.zeros((self.markers.active_count,), dtype=bool)
-        periodic_used = jnp.zeros((self.markers.active_count,), dtype=bool)
+        truncated = jnp.zeros((self.markers.active_count,), dtype=jnp.bool_)
+        periodic_used = jnp.zeros((self.markers.active_count,), dtype=jnp.bool_)
         for layout in self.operators.discretization.face_layouts:
             route = _tensor_routes(
                 layout,
@@ -704,7 +704,7 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
                 relation.weights[axis] * active_values[:, axis, None],
                 0.0,
             )
-            width = int(indices.shape[1])
+            width = indices.shape[1]
             edge = EdgeRelation(
                 jnp.arange(indices.size, dtype=jnp.int32),
                 indices.reshape((-1,)),

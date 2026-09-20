@@ -58,9 +58,7 @@ def qualify(step: float) -> dict[str, object]:
             )
         )
     )
-    _, power = route.tensile_force_pullback(
-        configuration, velocity, jnp.asarray([750.0])
-    )
+    _, power = route.tensile_force_pullback(configuration, velocity, jnp.asarray([750.0]))
     power_error = float(np.abs(np.asarray(power.power_residual_W)))
     tolerance = max(1.0e-8, 10.0 * step * step)
     return {

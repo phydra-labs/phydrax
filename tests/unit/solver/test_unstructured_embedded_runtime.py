@@ -13,7 +13,7 @@ import phydrax as phx
 def _strip_plan(system, nx=2):
     vertices = np.asarray(
         [(i / nx, j) for j in range(2) for i in range(nx + 1)],
-        dtype=float,
+        dtype="float64",
     )
     cells = []
     for i in range(nx):
@@ -313,9 +313,9 @@ def test_mixed_hllc_routes_and_content_never_assign_solid_ownership():
     for stage in result.embedded.stage_metrics:
         for face in stage.face_blocks:
             owners = np.asarray(face.layout.owner_cells)
-            neighbours = np.asarray(face.layout.neighbour_cells)
+            neighbors = np.asarray(face.layout.neighbor_cells)
             assert np.all(active[owners])
-            assert np.all(active[neighbours[neighbours >= 0]])
+            assert np.all(active[neighbors[neighbors >= 0]])
 
 
 def test_sliver_redistribution_is_conservative_and_cfl_uses_stabilized_volume():
@@ -356,9 +356,9 @@ def test_sliver_redistribution_is_conservative_and_cfl_uses_stabilized_volume():
     redistribution_scatter = redistribution_scatter.at[redistribution.owner_cells].add(
         -redistribution.flux_integral
     )
-    redistribution_scatter = redistribution_scatter.at[
-        redistribution.neighbour_cells
-    ].add(redistribution.flux_integral)
+    redistribution_scatter = redistribution_scatter.at[redistribution.neighbor_cells].add(
+        redistribution.flux_integral
+    )
     np.testing.assert_allclose(
         jnp.sum(redistribution_scatter, axis=0),
         0.0,
@@ -383,10 +383,10 @@ def test_sliver_redistribution_is_conservative_and_cfl_uses_stabilized_volume():
     for face, speeds in zip(metrics.face_blocks, evaluation.relative_signal_speeds):
         face_speed = jnp.sum(face.quadrature_weights * speeds, axis=1)
         owners = face.layout.owner_cells
-        neighbours = face.layout.neighbour_cells
+        neighbors = face.layout.neighbor_cells
         speed_sum = speed_sum.at[owners].add(face_speed)
-        speed_sum = speed_sum.at[jnp.maximum(neighbours, 0)].add(
-            jnp.where(neighbours >= 0, face_speed, 0.0)
+        speed_sum = speed_sum.at[jnp.maximum(neighbors, 0)].add(
+            jnp.where(neighbors >= 0, face_speed, 0.0)
         )
     stabilized_volume = jnp.maximum(
         metrics.effective_cell_volumes,

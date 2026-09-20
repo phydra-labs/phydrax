@@ -91,7 +91,7 @@ class BehavioralCurrentLaw(AbstractImplicitCircuitLaw):
         names = tuple(sorted(str(name) for name in parameter_map))
         if any(not name for name in names):
             raise ValueError("Behavioral parameter names must be nonempty.")
-        values = jnp.asarray([parameter_map[name] for name in names], dtype=float)
+        values = jnp.asarray([parameter_map[name] for name in names], dtype=jnp.float64)
         inputs = tuple(str(name) for name in input_names)
         if len(set(inputs)) != len(inputs) or any(not name for name in inputs):
             raise ValueError("Behavioral input names must be unique and nonempty.")

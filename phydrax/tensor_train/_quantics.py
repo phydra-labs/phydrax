@@ -63,7 +63,7 @@ class TensorizedGrid(StrictModule):
             raise TypeError("TensorizedGrid nodes must use one dtype.")
         self.axis_nodes = nodes
         self.axis_weights = weights
-        self.mode_sizes = tuple(int(axis.size) for axis in nodes)
+        self.mode_sizes = tuple(axis.size for axis in nodes)
         self.grid_id = canonical_fingerprint(
             {
                 "kind": "tensorized-grid",
@@ -82,7 +82,7 @@ class TensorizedGrid(StrictModule):
         rule: GridRule = "trapezoid",
         dtype=jnp.float32,
     ) -> TensorizedGrid:
-        sizes = tuple(int(size) for size in mode_sizes)
+        sizes = tuple(mode_sizes)
         intervals = tuple((float(lower), float(upper)) for lower, upper in bounds)
         if not sizes or len(sizes) != len(intervals) or any(size <= 0 for size in sizes):
             raise ValueError("Uniform grid bounds and positive mode sizes must agree.")
@@ -170,8 +170,8 @@ class QuanticsLayout(StrictModule):
         *,
         ordering: DigitOrdering = "interleaved",
     ):
-        sizes = tuple(int(size) for size in axis_sizes)
-        digits = tuple(tuple(int(base) for base in axis) for axis in axis_digit_sizes)
+        sizes = tuple(axis_sizes)
+        digits = tuple(tuple(axis) for axis in axis_digit_sizes)
         if not sizes or len(sizes) != len(digits) or any(size <= 0 for size in sizes):
             raise ValueError(
                 "QuanticsLayout needs positive axes and one digitization each."
@@ -217,7 +217,7 @@ class QuanticsLayout(StrictModule):
         *,
         ordering: DigitOrdering = "interleaved",
     ) -> QuanticsLayout:
-        sizes = tuple(int(size) for size in axis_sizes)
+        sizes = tuple(axis_sizes)
         digit_sizes: list[tuple[int, ...]] = []
         for size in sizes:
             if size <= 0 or size & (size - 1):

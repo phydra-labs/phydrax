@@ -49,7 +49,7 @@ def _orbital_basis(labels, *, rank=2):
 
 
 def _matrix_family(matrix, rank, *, hermitian):
-    matrix = np.asarray(matrix, dtype=complex)
+    matrix = np.asarray(matrix, dtype="complex128")
     count = matrix.shape[0]
     target = np.repeat(np.arange(count), count)
     source = np.tile(np.arange(count), count)
@@ -57,7 +57,7 @@ def _matrix_family(matrix, rank, *, hermitian):
     relation = EdgeRelation(source, target, source_size=count, target_size=count)
     plan = PeriodicTranslationFamilyPlan(
         relation,
-        np.zeros((count * count, rank), dtype=int),
+        np.zeros((count * count, rank), dtype="int64"),
         reverse,
         hermitian=hermitian,
         maximum_dense_entries=1_000_000,
@@ -84,7 +84,7 @@ def test_supplied_p_orbital_l_dot_s_splitting_and_spin_projection():
             [[0, 0, 1j], [0, 0, 0], [-1j, 0, 0]],
             [[0, -1j, 0], [1j, 0, 0], [0, 0, 0]],
         ],
-        dtype=complex,
+        dtype="complex128",
     )
     prepared = prepare_spin_orbit_operator(
         SpinOrbitCouplingPlan(
@@ -101,7 +101,7 @@ def test_supplied_p_orbital_l_dot_s_splitting_and_spin_projection():
     assert prepared.family.output_size == 6
     assert prepared.hermiticity_residual < 1.0e-12
 
-    coefficients = jnp.eye(6, dtype=complex)[None, :, :]
+    coefficients = jnp.eye(6, dtype="complex128")[None, :, :]
     observable = evaluate_spin_resolved_bands(
         SpinResolvedBandObservablePlan(convention),
         jnp.arange(6.0)[None, :],
@@ -154,7 +154,7 @@ def test_finite_channel_gap_closure_and_trivial_class_d_chern_composition():
 
     connectivity = ReciprocalConnectivityPlan.regular(mesh).prepare()
     nambu_connection = np.broadcast_to(
-        np.eye(4, dtype=complex), (connectivity.edge_count, 4, 4)
+        np.eye(4, dtype="complex128"), (connectivity.edge_count, 4, 4)
     ).copy()
     topology = evaluate_bdg_chern(
         BdGChernPlan(

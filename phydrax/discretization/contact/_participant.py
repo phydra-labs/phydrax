@@ -283,8 +283,7 @@ class FunctionContactParticipant(AbstractContactParticipant):
             velocity_action is None or effort_pullback_action is None
         ):
             raise ValueError(
-                "Distinct configuration and tangent spaces require explicit "
-                "velocity_action and effort_pullback_action."
+                "Distinct configuration and tangent spaces require explicit velocity_action and effort_pullback_action."
             )
         position_structure = jax.eval_shape(position_action, source_space.structure())
         expected_shape = (plan.vertex_count, plan.ambient_dimension)
@@ -475,8 +474,7 @@ class ContactParticipantScene(StrictModule, NonTrainableState):
             )
             if np.unique(identifiers).size != identifiers.size:
                 raise ValueError(
-                    "Contact participant scene "
-                    f"{kind_name} feature IDs must be globally unique."
+                    f"Contact participant scene {kind_name} feature IDs must be globally unique."
                 )
         vertex_offsets = [0]
         edge_offsets = [0]

@@ -84,7 +84,7 @@ class LSMProblem(StrictModule):
             raise ValueError("LSM requires a one-asset MonteCarloPathBatch.")
         if not isinstance(payoff, BermudanPayoff):
             raise TypeError("payoff must be BermudanPayoff.")
-        mask = jnp.asarray(exercise_mask, dtype=bool)
+        mask = jnp.asarray(exercise_mask, dtype=jnp.bool_)
         if mask.shape != (paths.time_count,):
             raise ValueError("exercise_mask must contain one flag per path time.")
         mask = eqx.error_if(
@@ -92,7 +92,7 @@ class LSMProblem(StrictModule):
             ~mask[-1] | (jnp.sum(mask) < 2),
             "Bermudan LSM requires maturity and at least one earlier exercise date.",
         )
-        rate_ = jnp.asarray(rate, dtype=float)
+        rate_ = jnp.asarray(rate, dtype=jnp.float64)
         if rate_.shape != ():
             raise ValueError("rate must be scalar.")
         rate_ = eqx.error_if(rate_, ~jnp.isfinite(rate_), "rate must be finite.")

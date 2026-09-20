@@ -47,7 +47,7 @@ class DiffusionBridgeControlDataset(StrictModule):
         reference = jnp.asarray(reference_drift)
         targets = jnp.asarray(controlled_drift_targets)
         weights_ = jnp.asarray(weights)
-        mask_ = jnp.asarray(mask, dtype=bool)
+        mask_ = jnp.asarray(mask, dtype=jnp.bool_)
         if states_.shape != reference.shape or states_.shape != targets.shape:
             raise ValueError("state and drift target arrays must share one shape.")
         if (

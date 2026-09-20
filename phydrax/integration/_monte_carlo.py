@@ -204,10 +204,10 @@ def _fixed_point(factor: Any, selector: Any, /) -> cx.AxisArray:
             value = selector.value
         else:
             raise TypeError("Expected a fixed scalar selector.")
-        return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
+        return cx.AxisArray(jnp.asarray(value, dtype=jnp.float64).reshape(()), dims=())
     if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
         return cx.AxisArray(
-            jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
+            jnp.asarray(selector.value, dtype=jnp.float64).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
     raise TypeError("Unsupported fixed factor in sample design.")
@@ -274,7 +274,7 @@ def _materialize_antithetic(
     if design.involution is None:
         reflected = 1.0 - unit
     else:
-        reflected = jnp.asarray(design.involution(unit), dtype=float)
+        reflected = jnp.asarray(design.involution(unit), dtype=jnp.float64)
         if reflected.shape != unit.shape:
             raise ValueError("Antithetic involution must preserve the design shape.")
     paired = jnp.concatenate((unit, reflected), axis=0)
@@ -399,7 +399,7 @@ def materialize_stratified(
     elif plan.design.allocation == "equal":
         allocation_weights = 1.0 / target_mass
     else:
-        requested = jnp.asarray(plan.design.allocation_weights, dtype=float)
+        requested = jnp.asarray(plan.design.allocation_weights, dtype=jnp.float64)
         if requested.shape != target_mass.shape:
             raise ValueError("Explicit allocation weights must match num_strata.")
         allocation_weights = requested / target_mass
@@ -789,7 +789,6 @@ def _integrate_antithetic_samples(
     pairs = count // 2
     factor_shape = (-1,) + (1,) * (values.ndim - 1)
     effective = factors.reshape(factor_shape) * values
-    normalized = normalizer_factors is not None
     if normalizer_factors is not None:
         denominator = jnp.mean(normalizer_factors)
         estimate = jnp.mean(effective, axis=0) / denominator
@@ -1143,7 +1142,7 @@ def materialize_importance(
     probability = base.probability
     support_valid = _proposal_covers_probability(probability, plan.proposal)
     samples = jnp.asarray(
-        plan.proposal.sample(key, sample_shape=(plan.num_samples,)), dtype=float
+        plan.proposal.sample(key, sample_shape=(plan.num_samples,)), dtype=jnp.float64
     ).reshape((plan.num_samples,))
     structure = SampleLayout(((probability.label,),)).canonicalize((probability.label,))
     axis = structure.axis_for(probability.label)

@@ -71,8 +71,8 @@ def correlate_windows(
     fraction = float(minimum_valid_fraction)
     if not 0.0 < fraction <= 1.0:
         raise ValueError("minimum_valid_fraction must be in (0, 1].")
-    first_shape = tuple(int(value) for value in first.values.shape[-2:])
-    second_shape = tuple(int(value) for value in second.values.shape[-2:])
+    first_shape = tuple(first.values.shape[-2:])
+    second_shape = tuple(second.values.shape[-2:])
     if mode_ == "circular" and first_shape != second_shape:
         raise ValueError("Circular correlation requires equal window shapes.")
     if mode_ == "extended":
@@ -104,10 +104,10 @@ def correlate_windows(
     second_values = pad(jnp.asarray(second.values, dtype=dtype), 0.0).reshape(
         (-1, chunk) + second_shape
     )
-    first_mask = pad(jnp.asarray(first.mask, dtype=bool), False).reshape(
+    first_mask = pad(jnp.asarray(first.mask, dtype=jnp.bool_), False).reshape(
         (-1, chunk) + first_shape
     )
-    second_mask = pad(jnp.asarray(second.mask, dtype=bool), False).reshape(
+    second_mask = pad(jnp.asarray(second.mask, dtype=jnp.bool_), False).reshape(
         (-1, chunk) + second_shape
     )
 

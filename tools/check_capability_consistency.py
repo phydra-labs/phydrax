@@ -82,8 +82,7 @@ def capability_consistency_errors(
                     _resolve_symbol(symbol)
                 except (AttributeError, ModuleNotFoundError) as error:
                     errors.append(
-                        f"missing-closure-symbol:{matrix.family}:{symbol}:"
-                        f"{type(error).__name__}"
+                        f"missing-closure-symbol:{matrix.family}:{symbol}:{type(error).__name__}"
                     )
             for source_id in set(requirement.source_ids).difference(source_ids):
                 errors.append(f"missing-closure-source:{matrix.family}:{source_id}")
@@ -148,8 +147,7 @@ def capability_consistency_errors(
                 _resolve_symbol(symbol)
             except (AttributeError, ModuleNotFoundError) as error:
                 errors.append(
-                    f"missing-symbol:{declaration.capability}:{symbol}:"
-                    f"{type(error).__name__}"
+                    f"missing-symbol:{declaration.capability}:{symbol}:{type(error).__name__}"
                 )
     return tuple(sorted(errors))
 

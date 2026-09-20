@@ -138,23 +138,25 @@ def factor_graph_moments(
     if states.ndim == 1:
         states = states[None, :]
     samples = states.reshape((-1, graph.num_variables))
-    count = int(samples.shape[0])
+    count = samples.shape[0]
     outputs: list[Array] = []
     for group_index, scope in enumerate(graph.factor_scopes):
         signature = factor_group_cardinality_signature(graph, group_index)
         config_count = prod(signature)
         scope_states = samples[:, scope]
         factors: list[Array] = []
-        for factor in range(int(scope.shape[0])):
+        for factor in range(scope.shape[0]):
             indices = _configuration_indices(scope_states[:, factor, :], signature)
             occurrences = jax.ops.segment_sum(
-                jnp.ones((count,), dtype=float),
+                jnp.ones((count,), dtype=jnp.float64),
                 indices,
                 num_segments=config_count,
             )
             factors.append((occurrences / max(count, 1)).reshape(signature))
         outputs.append(
-            jnp.stack(factors) if factors else jnp.zeros((0,) + signature, dtype=float)
+            jnp.stack(factors)
+            if factors
+            else jnp.zeros((0,) + signature, dtype=jnp.float64)
         )
     return tuple(outputs)
 

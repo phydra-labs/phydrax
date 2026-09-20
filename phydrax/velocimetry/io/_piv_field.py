@@ -25,11 +25,11 @@ def field_from_columns(
     source_id: str,
 ) -> DenseDisplacementField2D:
     """Build one exact rectilinear native field from unordered table columns."""
-    row_ = np.asarray(row, dtype=float).reshape((-1,))
-    column_ = np.asarray(column, dtype=float).reshape((-1,))
-    dr = np.asarray(displacement_row, dtype=float).reshape((-1,))
-    dc = np.asarray(displacement_column, dtype=float).reshape((-1,))
-    valid_ = np.asarray(valid, dtype=bool).reshape((-1,))
+    row_ = np.asarray(row, dtype=np.float64).reshape((-1,))
+    column_ = np.asarray(column, dtype=np.float64).reshape((-1,))
+    dr = np.asarray(displacement_row, dtype=np.float64).reshape((-1,))
+    dc = np.asarray(displacement_column, dtype=np.float64).reshape((-1,))
+    valid_ = np.asarray(valid, dtype=np.bool_).reshape((-1,))
     size = row_.size
     if size == 0 or any(array.size != size for array in (column_, dr, dc, valid_)):
         raise AdapterError(
@@ -62,9 +62,9 @@ def field_from_columns(
             "PIV table contains duplicate grid coordinates.",
         )
     shape = (rows.size, columns.size)
-    positions = np.empty(shape + (2,), dtype=float)
-    displacement = np.zeros(shape + (2,), dtype=np.result_type(dr, dc, float))
-    validity = np.zeros(shape, dtype=bool)
+    positions = np.empty(shape + (2,), dtype=np.float64)
+    displacement = np.zeros(shape + (2,), dtype=np.result_type(dr, dc, np.float64))
+    validity = np.zeros(shape, dtype=np.bool_)
     positions[..., 0] = rows[:, None]
     positions[..., 1] = columns[None, :]
     displacement[row_index, column_index, 0] = np.where(valid_, dr, 0.0)
@@ -103,7 +103,7 @@ def field_columns(
         raise TypeError("field must be DenseDisplacementField2D.")
     positions = np.asarray(field.positions_rc)
     displacement = np.asarray(field.displacement_rc)
-    valid = np.asarray(field.valid, dtype=bool)
+    valid = np.asarray(field.valid, dtype=np.bool_)
     if (
         positions.ndim != 3
         or positions.shape[-1] != 2

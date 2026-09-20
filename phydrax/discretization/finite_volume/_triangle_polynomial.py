@@ -43,15 +43,15 @@ def evaluate_triangle_second_moments(
     return jnp.stack((second_xx, second_xy, second_yy), axis=-1)
 
 
-def _design_rows(delta, neighbour_moments, target_moment, scale):
+def _design_rows(delta, neighbor_moments, target_moment, scale):
     return np.stack(
         (
             delta[:, 0] / scale,
             delta[:, 1] / scale,
-            (neighbour_moments[:, 0] + delta[:, 0] ** 2 - target_moment[0]) / scale**2,
-            (neighbour_moments[:, 1] + delta[:, 0] * delta[:, 1] - target_moment[1])
+            (neighbor_moments[:, 0] + delta[:, 0] ** 2 - target_moment[0]) / scale**2,
+            (neighbor_moments[:, 1] + delta[:, 0] * delta[:, 1] - target_moment[1])
             / scale**2,
-            (neighbour_moments[:, 2] + delta[:, 1] ** 2 - target_moment[2]) / scale**2,
+            (neighbor_moments[:, 2] + delta[:, 1] ** 2 - target_moment[2]) / scale**2,
         ),
         axis=-1,
     )
@@ -60,10 +60,10 @@ def _design_rows(delta, neighbour_moments, target_moment, scale):
 def _quadratic_stencils(discretization, moments, scales):
     count = discretization.cell_count
     owner = np.asarray(discretization.owner_cells, dtype=np.int32)
-    neighbour = np.asarray(discretization.neighbour_cells, dtype=np.int32)
+    neighbor = np.asarray(discretization.neighbor_cells, dtype=np.int32)
     centers = np.asarray(discretization.cell_centers)
     adjacency = [set() for _ in range(count)]
-    for left, right in zip(owner, neighbour, strict=True):
+    for left, right in zip(owner, neighbor, strict=True):
         if right >= 0:
             adjacency[int(left)].add(int(right))
             adjacency[int(right)].add(int(left))
@@ -100,7 +100,7 @@ def _quadratic_stencils(discretization, moments, scales):
         designs.append(design)
     capacity = max(len(stencil) for stencil in stencils)
     indices = np.zeros((count, capacity), dtype=np.int32)
-    valid = np.zeros((count, capacity), dtype=bool)
+    valid = np.zeros((count, capacity), dtype=np.bool_)
     matrix = np.zeros((count, capacity, 5))
     for cell, (stencil, design) in enumerate(zip(stencils, designs, strict=True)):
         indices[cell, : len(stencil)] = stencil
@@ -120,7 +120,7 @@ class PreparedTriangleQuadratic(StrictModule, NonTrainableState):
     discretization: TriangleFiniteVolumeDiscretization
     moments: Array
     characteristic_lengths: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     valid: Array
     factors: Array
     report: TriangleQuadraticReport
@@ -164,12 +164,12 @@ class PreparedTriangleQuadratic(StrictModule, NonTrainableState):
                 "Triangle quadratic reconstruction is singular or ill-conditioned."
             )
         right = np.swapaxes(right_t, -1, -2)
-        pseudoinverse = np.einsum("cij,cnj->cin", right / singular[:, None, :], left)
+        pseudoinverse = ein.contract("cij,cnj->cin", right / singular[:, None, :], left)
         factors = pseudoinverse * root_weight[:, None, :]
         self.discretization = discretization
         self.moments = jnp.asarray(moments)
         self.characteristic_lengths = jnp.asarray(scales)
-        self.neighbour_cells = jnp.asarray(indices)
+        self.neighbor_cells = jnp.asarray(indices)
         self.valid = jnp.asarray(valid)
         self.factors = jnp.asarray(factors)
         self.report = TriangleQuadraticReport(
@@ -192,7 +192,7 @@ class PreparedTriangleQuadratic(StrictModule, NonTrainableState):
         value = jnp.asarray(values)
         if value.shape[0] != self.discretization.cell_count:
             raise ValueError("Quadratic values must begin with triangle cell count.")
-        difference = value[self.neighbour_cells] - value[:, None, ...]
+        difference = value[self.neighbor_cells] - value[:, None, ...]
         mask = self.valid.reshape(self.valid.shape + (1,) * (difference.ndim - 2))
         return ein.contract(
             "cin,cn...->c...i",
@@ -223,8 +223,8 @@ class TriangleKExactReconstructionPlan(StrictModule, NonTrainableState):
             )
         coefficients = self.prepared.coefficients(value)
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
 
         def basis(cell_indices):
             centers = discretization.cell_centers.astype(value.dtype)
@@ -247,12 +247,12 @@ class TriangleKExactReconstructionPlan(StrictModule, NonTrainableState):
         left_delta = ein.contract("f...i,fqi->fq...", coefficients[owner], basis(owner))
         right_delta = ein.contract(
             "f...i,fqi->fq...",
-            coefficients[safe_neighbour],
-            basis(safe_neighbour),
+            coefficients[safe_neighbor],
+            basis(safe_neighbor),
         )
         return (
             value[owner, None, ...] + left_delta,
-            value[safe_neighbour, None, ...] + right_delta,
+            value[safe_neighbor, None, ...] + right_delta,
         )
 
     def reconstruct(self, state: Array, /) -> tuple[Array, Array]:

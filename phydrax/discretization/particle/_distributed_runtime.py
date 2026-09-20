@@ -111,8 +111,7 @@ class DistributedParticleRuntimePlan(StrictModule, NonTrainableState):
         width = float(ghost_width)
         if send <= 0 or receive <= 0 or receive != layout.capacity_per_device:
             raise ValueError(
-                "Particle receive capacity must equal layout.capacity_per_device and "
-                "send capacity must be positive."
+                "Particle receive capacity must equal layout.capacity_per_device and send capacity must be positive."
             )
         boundaries = np.asarray(layout.key_boundaries, dtype=np.uint64)
         minimum_key_width = int(np.min(np.diff(boundaries)))
@@ -174,7 +173,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         axis = str(axis_name)
         if axis not in mesh.axis_names or len(mesh.axis_names) != 1:
             raise ValueError("Particle runtime requires one named mesh axis.")
-        if int(mesh.shape[axis]) != plan.layout.device_count:
+        if mesh.shape[axis] != plan.layout.device_count:
             raise ValueError("Particle layout and execution mesh device counts differ.")
         self.plan = plan
         self.mesh = mesh
@@ -187,7 +186,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
                 "kind": "prepared-distributed-particle-runtime",
                 "plan": plan.plan_id,
                 "axis_name": axis,
-                "mesh_shape": int(mesh.shape[axis]),
+                "mesh_shape": mesh.shape[axis],
                 "device_keys": [
                     [int(device.process_index), int(device.id)]
                     for device in mesh.devices.flat
@@ -223,7 +222,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         momentum = jnp.asarray(momenta, dtype=position.dtype)
         mass = jnp.asarray(masses, dtype=position.dtype)
         ids = jnp.asarray(stable_ids, dtype=jnp.int64)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         expected = (self.total_capacity, len(self.plan.box_size))
         if position.shape != expected or momentum.shape != expected:
             raise ValueError(
@@ -296,8 +295,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         packed_positions = eqx.error_if(
             packed_positions,
             ~capacity_ok | ~finite | ~ids_unique,
-            "Initial distributed particle ownership exceeds capacity, contains "
-            "duplicate stable IDs, or is non-finite.",
+            "Initial distributed particle ownership exceeds capacity, contains duplicate stable IDs, or is non-finite.",
         )
         return DistributedParticleState(
             jax.device_put(packed_positions, self.vector_sharding),
@@ -432,7 +430,9 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
             received_valid = route(send_valid).reshape((-1,))
             received_count = jnp.sum(received_valid, dtype=jnp.int32)
             receive_ok = received_count <= c
-            padded_valid = jnp.concatenate((received_valid, jnp.zeros((c,), dtype=bool)))
+            padded_valid = jnp.concatenate(
+                (received_valid, jnp.zeros((c,), dtype=jnp.bool_))
+            )
             padded_ids = jnp.concatenate(
                 (received_ids, jnp.full((c,), -1, dtype=received_ids.dtype))
             )

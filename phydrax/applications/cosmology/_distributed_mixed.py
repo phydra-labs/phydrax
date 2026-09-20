@@ -302,7 +302,7 @@ class DistributedMixedExecutionPlan(StrictModule, NonTrainableState):
             + mass_dtype.itemsize
             + np.dtype(np.int64).itemsize
             + 2 * np.dtype(np.int32).itemsize
-            + np.dtype(bool).itemsize
+            + np.dtype(np.bool_).itemsize
             + np.dtype(np.uint64).itemsize
         )
         gas_bytes = 0
@@ -316,7 +316,7 @@ class DistributedMixedExecutionPlan(StrictModule, NonTrainableState):
             gas_bytes = prod(gas_shape) * gas_components * gas_dtype.itemsize
             scale_bytes += gas_dtype.itemsize
         checkpoint_unpadded = wave_bytes + particle_bytes + gas_bytes + scale_bytes
-        physical_shape = tuple(int(value) for value in wave.discretization.physical_shape)
+        physical_shape = tuple(wave.discretization.physical_shape)
         checkpoint_alignment = (
             gcd(physical_shape[0], physical_shape[1]) if len(physical_shape) >= 2 else 1
         )
@@ -523,7 +523,7 @@ class DistributedMixedExecutionPlan(StrictModule, NonTrainableState):
             + np.dtype(np.int64).itemsize
             + np.dtype(np.int32).itemsize
             + np.dtype(np.uint64).itemsize
-            + np.dtype(bool).itemsize
+            + np.dtype(np.bool_).itemsize
         )
         exchange_bytes = (
             2
@@ -534,7 +534,7 @@ class DistributedMixedExecutionPlan(StrictModule, NonTrainableState):
             + 2
             * topology.device_count
             * self.particles.capacity_per_device
-            * (np.dtype(np.int64).itemsize + np.dtype(bool).itemsize)
+            * (np.dtype(np.int64).itemsize + np.dtype(np.bool_).itemsize)
         )
         collective_id = canonical_fingerprint(
             {
@@ -809,7 +809,7 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
         checkpoint_physics_id = plan.mixed.prepared_id
         checkpoint_schema_id = canonical_fingerprint(
             {
-                "kind": "distributed-mixed-checkpoint-schema-v1",
+                "kind": "distributed-mixed-checkpoint-schema",
                 "wave_shape": list(wave.discretization.physical_shape),
                 "particle_capacity": support.capacity,
                 "particle_dimension": support.ambient_dimension,
@@ -832,7 +832,7 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
         )
         checkpoint_numeric_id = canonical_fingerprint(
             {
-                "kind": "distributed-mixed-checkpoint-numeric-v1",
+                "kind": "distributed-mixed-checkpoint-numeric",
                 "wave_coefficient_dtype": np.dtype(plan.spectral.coefficient_dtype).str,
                 "wave_accumulation_dtype": np.dtype(plan.spectral.accumulation_dtype).str,
                 "particle_dtype": np.dtype(support.plan.coordinate_dtype).str,
@@ -842,7 +842,7 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
         )
         checkpoint_execution_id = canonical_fingerprint(
             {
-                "kind": "distributed-mixed-topology-neutral-checkpoint-v1",
+                "kind": "distributed-mixed-topology-neutral-checkpoint",
                 "physics": checkpoint_physics_id,
                 "schema": checkpoint_schema_id,
                 "numeric": checkpoint_numeric_id,
@@ -950,8 +950,7 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
         )
         if component_dtypes != (coefficient_dtype, real_dtype, real_dtype):
             raise TypeError(
-                "Distributed mixed state dtypes must exactly match the prepared "
-                "wave/particle precision ABI."
+                "Distributed mixed state dtypes must exactly match the prepared wave/particle precision ABI."
             )
         scales = [
             jnp.asarray(state.wave.scale_factor, dtype=jnp.dtype(real_dtype)),
@@ -985,8 +984,7 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
         expected_scale = eqx.error_if(
             expected_scale,
             scale_invalid,
-            "Distributed mixed components must be finite, positive, aligned, and "
-            "at the first scheduled scale factor.",
+            "Distributed mixed components must be finite, positive, aligned, and at the first scheduled scale factor.",
         )
         support = self.plan.mixed.plan.particles.particles
         particles = self.particle_runtime.initialize(
@@ -1537,7 +1535,7 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
         maximum_defect = jnp.asarray(0.0, dtype=state.wave.psi.real.dtype)
         initial_mass = self.solve_gravity(state).density.total_mass
         final_mass = initial_mass
-        for index in range(1, int(scale_factors.size)):
+        for index in range(1, scale_factors.size):
             result = self.advance(current, scale_factors[index], args)
             step_success = active & result.successful
             current = jax.tree.map(
@@ -1553,7 +1551,7 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
                 maximum_defect, jnp.abs(result.mass_balance_defect)
             )
             final_mass = jnp.where(step_success, result.final_mass, final_mass)
-        successful = active & (accepted == int(scale_factors.size) - 1)
+        successful = active & (accepted == scale_factors.size - 1)
         return DistributedMixedEvolutionResult(
             current,
             accepted,
@@ -1588,7 +1586,7 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
             return jnp.asarray(value).reshape((-1,)).view(jnp.uint8)
 
         payload = jnp.concatenate(tuple(encode(value) for value in arrays), axis=0)
-        if int(payload.size) != self.checkpoint_unpadded_bytes:
+        if payload.size != self.checkpoint_unpadded_bytes:
             raise RuntimeError(
                 "Distributed mixed checkpoint schema byte accounting changed."
             )
@@ -1598,8 +1596,8 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
                 (payload, jnp.zeros((padding,), dtype=jnp.uint8)), axis=0
             )
         if (
-            int(payload.size) != self.checkpoint_payload_bytes
-            or int(payload.size) % self.plan.spectral.topology.device_count
+            payload.size != self.checkpoint_payload_bytes
+            or payload.size % self.plan.spectral.topology.device_count
         ):
             raise RuntimeError(
                 "Topology-neutral checkpoint alignment does not admit this mesh."
@@ -1628,8 +1626,7 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
             or manifest.diagnostic_ids != (self.checkpoint_physics_id,)
         ):
             raise ValueError(
-                "Distributed mixed checkpoint is incomplete or its "
-                "physics/schema/numeric identity does not match."
+                "Distributed mixed checkpoint is incomplete or its physics/schema/numeric identity does not match."
             )
         self._require_state(prototype)
         payload_sharding = NamedSharding(
@@ -1641,10 +1638,9 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
             "['payload']",
             payload_sharding,
         )
-        if int(payload.size) != self.checkpoint_payload_bytes:
+        if payload.size != self.checkpoint_payload_bytes:
             raise ValueError(
-                "Distributed mixed checkpoint payload has the wrong topology-neutral "
-                "archive length."
+                "Distributed mixed checkpoint payload has the wrong topology-neutral archive length."
             )
         payload = eqx.error_if(
             payload,
@@ -1655,7 +1651,7 @@ class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
 
         def take(template):
             nonlocal offset
-            shape = tuple(int(size) for size in template.shape)
+            shape = tuple(template.shape)
             dtype = np.dtype(template.dtype)
             count = prod(shape) if shape else 1
             byte_count = count * dtype.itemsize

@@ -100,15 +100,14 @@ def _input_coordinates(
         raise TypeError("factor must be a GaussianFactor.")
     if factor.factor.ndim != 2:
         raise ValueError(
-            "Nonlinear Gaussian transforms accept one unbatched GaussianFactor; "
-            "use jax.vmap for batched factors."
+            "Nonlinear Gaussian transforms accept one unbatched GaussianFactor; use jax.vmap for batched factors."
         )
     arrays = jax.tree_util.tree_map(jnp.asarray, mean)
     leaves = jax.tree_util.tree_leaves(arrays)
     if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
         raise TypeError("Gaussian means must contain inexact array leaves.")
     flat_mean, unravel = ravel_pytree(arrays)
-    if int(flat_mean.size) != factor.event_size:
+    if flat_mean.size != factor.event_size:
         raise ValueError(
             "GaussianFactor event size must match the flattened mean; "
             f"expected {flat_mean.size}, got {factor.event_size}."
@@ -140,7 +139,7 @@ def _evaluate_points(
 def _append_regularization_factor(factor: Array, regularization: float, /) -> Array:
     if regularization == 0.0:
         return factor
-    event_size = int(factor.shape[0])
+    event_size = factor.shape[0]
     scale = jnp.sqrt(jnp.asarray(regularization, dtype=jnp.real(factor).dtype))
     identity = jnp.eye(event_size, dtype=factor.dtype)
     return jnp.concatenate((factor, scale * identity), axis=1)
@@ -152,9 +151,9 @@ def _status(
     output_valid: Array,
     /,
 ) -> tuple[Array, Array]:
-    input_valid_ = jnp.asarray(input_valid, dtype=bool)
-    evaluations_finite_ = jnp.asarray(evaluations_finite, dtype=bool)
-    output_valid_ = jnp.asarray(output_valid, dtype=bool)
+    input_valid_ = jnp.asarray(input_valid, dtype=jnp.bool_)
+    evaluations_finite_ = jnp.asarray(evaluations_finite, dtype=jnp.bool_)
+    output_valid_ = jnp.asarray(output_valid, dtype=jnp.bool_)
     valid = input_valid_ & evaluations_finite_ & output_valid_
     status = jnp.where(
         ~input_valid_,
@@ -214,10 +213,7 @@ def _weighted_transform(
             resolved_method="weighted-sigma-point-factor",
         )
     else:
-        if (
-            max_dense_dimension is not None
-            and int(output_mean.size) > max_dense_dimension
-        ):
+        if max_dense_dimension is not None and output_mean.size > max_dense_dimension:
             raise ValueError(
                 "Scaled unscented dense covariance exceeds max_output_dimension; "
                 f"got {output_mean.size}, cap {max_dense_dimension}."
@@ -250,10 +246,10 @@ def _weighted_transform(
         valid=valid,
         status=status,
         method_id=method_id,
-        point_count=int(canonical_points.shape[0]),
+        point_count=canonical_points.shape[0],
         regularization=regularization,
-        input_dimension=int(flat_mean.size),
-        output_dimension=int(output_mean.size),
+        input_dimension=flat_mean.size,
+        output_dimension=output_mean.size,
         method_parameters=method_parameters,
     )
 
@@ -319,14 +315,12 @@ def _gauss_hermite_rule(
 ) -> tuple[Array, Array]:
     if rank > max_dimension:
         raise ValueError(
-            "Gauss-Hermite latent dimension exceeds max_dimension; "
-            f"got {rank}, cap {max_dimension}."
+            f"Gauss-Hermite latent dimension exceeds max_dimension; got {rank}, cap {max_dimension}."
         )
     point_count = order**rank
     if point_count > max_points:
         raise ValueError(
-            "Gauss-Hermite tensor rule exceeds max_points; "
-            f"requires {point_count}, cap {max_points}."
+            f"Gauss-Hermite tensor rule exceeds max_points; requires {point_count}, cap {max_points}."
         )
     if rank == 0:
         return jnp.zeros((1, 0), dtype=dtype), jnp.ones((1,), dtype=dtype)
@@ -370,9 +364,9 @@ def _weighted_expectation(
         valid=valid,
         status=status,
         method_id=method_id,
-        point_count=int(canonical_points.shape[0]),
-        input_dimension=int(flat_mean.size),
-        output_dimension=int(value.size),
+        point_count=canonical_points.shape[0],
+        input_dimension=flat_mean.size,
+        output_dimension=value.size,
         method_parameters=method_parameters,
     )
 
@@ -625,7 +619,7 @@ def first_order_gaussian_transform(
     flat_output_mean, _ = ravel_pytree(output_mean)
     if not jnp.issubdtype(flat_output_mean.dtype, jnp.inexact):
         raise TypeError("Nonlinear Gaussian outputs must be inexact arrays.")
-    output_dimension = int(flat_output_mean.size)
+    output_dimension = flat_output_mean.size
 
     if factor.rank == 0:
         output_directions = jnp.zeros(
@@ -633,7 +627,7 @@ def first_order_gaussian_transform(
             dtype=flat_output_mean.dtype,
         )
         cross_covariance = jnp.zeros(
-            (int(flat_mean.size), output_dimension),
+            (flat_mean.size, output_dimension),
             dtype=jnp.result_type(flat_mean, flat_output_mean),
         )
     else:
@@ -668,7 +662,7 @@ def first_order_gaussian_transform(
         method_id="first-order-jvp-vjp",
         point_count=1,
         regularization=regularization_,
-        input_dimension=int(flat_mean.size),
+        input_dimension=flat_mean.size,
         output_dimension=output_dimension,
         method_parameters=(),
     )

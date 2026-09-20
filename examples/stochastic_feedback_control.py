@@ -27,10 +27,10 @@ def full_state_policy(context, state, args):
 
 
 def prepared_noise(prefix, coupling_id, increments, labels):
-    path_count = int(increments.shape[0])
+    path_count = increments.shape[0]
     return phx.control.stochastic.PreparedControlledNoise(
         increments,
-        valid=jnp.ones((path_count,), dtype=bool),
+        valid=jnp.ones((path_count,), dtype="bool"),
         realization_ids=tuple(f"{prefix}:{index}" for index in range(path_count)),
         coupling_id=coupling_id,
         independence_labels=labels,

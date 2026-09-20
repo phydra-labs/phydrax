@@ -97,8 +97,8 @@ def _sparse_map(matrix, /, *, properties=None):
     relation = EdgeRelation(
         jnp.asarray(coo.col, dtype=jnp.int32),
         jnp.asarray(coo.row, dtype=jnp.int32),
-        source_size=int(matrix.shape[1]),
-        target_size=int(matrix.shape[0]),
+        source_size=matrix.shape[1],
+        target_size=matrix.shape[0],
     )
     return SparseLinearMap(
         relation,
@@ -127,7 +127,7 @@ def _parameter_topology(problem) -> str:
         {
             "kind": "cvxpy-parameter-topology",
             "parameters": [
-                (int(parameter.id), tuple(int(size) for size in parameter.shape))
+                (int(parameter.id), tuple(parameter.shape))
                 for parameter in problem.parameters()
             ],
         }
@@ -210,7 +210,7 @@ def import_cvxpy_problem(problem: Any, /) -> CVXPYProgramBinding:
         columns = parameter_problem.var_id_to_col
         for variable in problem.variables():
             start = int(columns[variable.id])
-            size = int(variable.size)
+            size = variable.size
             slices.append(
                 CVXPYVariableSlice(
                     int(variable.id), start, start + size, tuple(variable.shape)
@@ -222,7 +222,7 @@ def import_cvxpy_problem(problem: Any, /) -> CVXPYProgramBinding:
         canonical_variable_id = int(parameter_problem.x.id)
         offset = 0
         for constraint in parameter_problem.constraints:
-            size = int(constraint.size)
+            size = constraint.size
             constraint_slices.append(
                 CVXPYConstraintSlice(
                     int(constraint.id),

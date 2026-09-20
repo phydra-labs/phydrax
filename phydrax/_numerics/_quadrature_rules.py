@@ -314,12 +314,12 @@ def gauss_kronrod_data(order: int) -> QuadratureRuleData:
         allowed = tuple(_GAUSS_KRONROD_POSITIVE)
         raise ValueError(f"Gauss--Kronrod order must be one of {allowed}.")
     positive_nodes, positive_weights = _GAUSS_KRONROD_POSITIVE[order_]
-    nodes_np = _symmetric(np.asarray(positive_nodes, dtype=float))
-    weights_np = _symmetric_weights(np.asarray(positive_weights, dtype=float))
+    nodes_np = _symmetric(np.asarray(positive_nodes, dtype=np.float64))
+    weights_np = _symmetric_weights(np.asarray(positive_weights, dtype=np.float64))
     gauss_rule = legendre_rule_data((order_ - 1) // 2, "gauss")
     gauss_nodes = np.asarray(gauss_rule.nodes)
     gauss_weights = np.asarray(gauss_rule.weights)
-    embedded = np.zeros(order_, dtype=float)
+    embedded = np.zeros(order_, dtype=np.float64)
     for node, weight in zip(gauss_nodes, gauss_weights, strict=True):
         index = int(np.argmin(np.abs(nodes_np - node)))
         if abs(float(nodes_np[index] - node)) > 5e-14:
@@ -346,11 +346,11 @@ def clenshaw_curtis_data(order: int) -> QuadratureRuleData:
             1,
         )
     n = order_ - 1
-    theta = np.pi * np.arange(order_, dtype=float) / float(n)
+    theta = np.pi * np.arange(order_, dtype=np.float64) / float(n)
     nodes = np.cos(theta)
-    weights = np.zeros(order_, dtype=float)
+    weights = np.zeros(order_, dtype=np.float64)
     interior = np.arange(1, n)
-    values = np.ones(max(n - 1, 0), dtype=float)
+    values = np.ones(max(n - 1, 0), dtype=np.float64)
     if n % 2 == 0:
         weights[0] = weights[-1] = 1.0 / (n * n - 1.0)
         for k in range(1, n // 2):
@@ -371,9 +371,11 @@ def fejer_first_data(order: int) -> QuadratureRuleData:
     order_ = int(order)
     if order_ < 1:
         raise ValueError("First Fejér order must be positive.")
-    theta = (2.0 * np.arange(order_, dtype=float) + 1.0) * np.pi / (2.0 * float(order_))
+    theta = (
+        (2.0 * np.arange(order_, dtype=np.float64) + 1.0) * np.pi / (2.0 * float(order_))
+    )
     nodes = np.cos(theta)
-    values = np.ones((order_,), dtype=float)
+    values = np.ones((order_,), dtype=np.float64)
     for mode in range(1, order_ // 2 + 1):
         values -= 2.0 * np.cos(2.0 * mode * theta) / (4.0 * mode * mode - 1.0)
     weights = 2.0 * values / float(order_)
@@ -392,7 +394,7 @@ def tanh_sinh_data(order: int) -> QuadratureRuleData:
         raise ValueError("Tanh--sinh order must be an odd integer of at least three.")
     half = order_ // 2
     step = 3.5 / float(half)
-    t = step * np.arange(-half, half + 1, dtype=float)
+    t = step * np.arange(-half, half + 1, dtype=np.float64)
     sinh_t = np.sinh(t)
     argument = 0.5 * np.pi * sinh_t
     nodes = np.tanh(argument)

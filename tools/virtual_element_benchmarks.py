@@ -45,7 +45,7 @@ def benchmark(degree: int) -> dict[str, float | int | bool]:
             realization="sparse"
         ),
     ).affine_operator()
-    state = jnp.arange(space.dof_map.global_dof_count, dtype=float)
+    state = jnp.arange(space.dof_map.global_dof_count, dtype="float64")
     matrix_free_value = matrix_free.mv(state)
     sparse_value = sparse.mv(state)
     parity = float(jnp.max(jnp.abs(matrix_free_value - sparse_value)))

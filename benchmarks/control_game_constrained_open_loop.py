@@ -102,8 +102,8 @@ def _problem(
         )
     constraints = phx.control.games.OpenLoopGameConstraints(partition, tuple(blocks))
 
-    state_index = jnp.arange(state_size, dtype=float)
-    control_index = jnp.arange(control_size, dtype=float)
+    state_index = jnp.arange(state_size, dtype="float64")
+    control_index = jnp.arange(control_size, dtype="float64")
     a = 0.83 * jnp.eye(state_size)
     b = 0.04 * jnp.sin((state_index[:, None] + 1.0) * (control_index[None, :] + 1.0))
 
@@ -156,7 +156,7 @@ def _problem(
     problem = NonlinearOpenLoopGameProblem(
         phx.control.DiscreteControlDynamics(system),
         phx.dynamics.TimeGrid(
-            jnp.arange(horizon + 1, dtype=float),
+            jnp.arange(horizon + 1, dtype="float64"),
             time_id=f"{problem_id}:time",
         ),
         initial,
@@ -247,7 +247,7 @@ def _case(
         "original_kkt_residual_max": float(jnp.max(result.original_kkt_residual)),
         "active_constraint_count_max": int(jnp.max(result.active_constraint_count)),
         "private_multiplier_counts": [
-            int(value.shape[-1]) for value in result.private_multipliers
+            value.shape[-1] for value in result.private_multipliers
         ],
     }
     return {

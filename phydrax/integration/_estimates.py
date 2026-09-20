@@ -148,7 +148,7 @@ class AdaptiveQuadratureDiagnostics(StrictModule):
         self.partition = partition
         self.discovery = discovery
         self.discovery_count = jnp.asarray(discovery_count, dtype=jnp.int32)
-        self.discovery_overflow = jnp.asarray(discovery_overflow, dtype=bool)
+        self.discovery_overflow = jnp.asarray(discovery_overflow, dtype=jnp.bool_)
         self.rule = str(rule)
 
 

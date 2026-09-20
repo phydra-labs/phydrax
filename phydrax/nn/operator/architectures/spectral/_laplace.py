@@ -87,7 +87,7 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
         self.direct_weight = jr.normal(
             direct_key, shape=(in_count, out_count)
         ) / jnp.sqrt(float(in_count))
-        self.bias = jnp.zeros((out_count,), dtype=float)
+        self.bias = jnp.zeros((out_count,), dtype=jnp.float64)
 
     def poles(self, /) -> Array:
         """Return the constrained poles; every real part is strictly negative."""
@@ -111,7 +111,7 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
         if samples.axes and len(samples.axes) != 1:
             raise ValueError(f"{name} must have exactly one temporal axis.")
         if not samples.axes and (
-            samples.coordinates is None or int(samples.coordinates.shape[-1]) != 1
+            samples.coordinates is None or samples.coordinates.shape[-1] != 1
         ):
             raise ValueError(f"{name} must provide one-dimensional time coordinates.")
         coordinates = samples.coordinates_array(
@@ -134,10 +134,10 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
         sample_shape = source.sample_shape
         if len(sample_shape) != 1:
             raise ValueError("Laplace operator source must have one sample axis.")
-        if int(values.shape[case_ndim]) != sample_shape[0]:
+        if values.shape[case_ndim] != sample_shape[0]:
             raise ValueError("Source values do not align with the temporal sample axis.")
-        case_shape = tuple(int(size) for size in values.shape[:case_ndim])
-        trailing = tuple(int(size) for size in values.shape[case_ndim + 1 :])
+        case_shape = tuple(values.shape[:case_ndim])
+        trailing = tuple(values.shape[case_ndim + 1 :])
         if not trailing:
             values = values[..., None]
         elif trailing != (_get_size(self.in_size),):
@@ -163,7 +163,7 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
         source = self._source(batch)
         source_time = self._times(source, "source", batch.case_shape)
         query_time = self._times(batch.require_single_query(), "query", batch.case_shape)
-        if int(source_time.shape[1]) < 2:
+        if source_time.shape[1] < 2:
             raise ValueError("Laplace operator requires at least two source times.")
         values, case_shape = self._values(source, case_ndim=len(batch.case_axes))
         source_mask = source.mask_array(case_shape=case_shape).reshape(source_time.shape)

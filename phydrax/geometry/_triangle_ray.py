@@ -38,7 +38,7 @@ class TriangleRayQueryPlan(StrictModule, NonTrainableState):
 
     ``entity_ids`` identify triangles belonging to the same physical interface.
     A nearest-distance tie is valid only when every tied triangle has the same
-    entity ID. This permits a consistently labelled triangulated face to share
+    entity ID. This permits a consistently labeled triangulated face to share
     edges without hiding coincident interfaces.
     """
 
@@ -273,7 +273,7 @@ def prepare_triangle_ray_query(
         {
             "kind": "prepared-triangle-ray-query",
             "plan": plan.plan_id,
-            "node_count": int(bvh.left.shape[0]),
+            "node_count": bvh.left.shape[0],
             "required_stack_capacity": required_stack_capacity,
         }
     )
@@ -293,9 +293,9 @@ def prepare_triangle_ray_query(
         plan.barycentric_tolerance,
         plan.forward_tolerance,
         plan.tie_tolerance,
-        int(triangle_vertices.shape[0]),
-        int(vertices_host.shape[0]),
-        int(bvh.left.shape[0]),
+        triangle_vertices.shape[0],
+        vertices_host.shape[0],
+        bvh.left.shape[0],
         required_stack_capacity,
         True,
         plan.acceleration == "exhaustive",

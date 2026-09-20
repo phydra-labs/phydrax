@@ -110,7 +110,7 @@ class SpectralStateArtifact(StrictModule):
         )
         if any(not value for value in identifiers):
             raise ValueError("Artifact provenance identifiers must be non-empty.")
-        full_bytes = int(state_.nbytes)
+        full_bytes = state_.nbytes
         stored_bytes = (
             full_bytes if stored_state_bytes is None else int(stored_state_bytes)
         )
@@ -183,8 +183,8 @@ def _hermitian_counts(
     if not isinstance(state_coordinates, HermitianSpectralCoordinates):
         return None, None
     return (
-        int(state_coordinates.fixed_indices.size),
-        int(state_coordinates.representative_indices.size),
+        state_coordinates.fixed_indices.size,
+        state_coordinates.representative_indices.size,
     )
 
 
@@ -229,8 +229,8 @@ def write_spectral_state_artifact(
         "public_state_dtype": np.dtype(artifact.state.dtype).str,
         "stored_state_shape": list(stored.shape),
         "stored_state_dtype": np.dtype(stored.dtype).str,
-        "full_state_bytes": int(artifact.state.nbytes),
-        "stored_state_bytes": int(stored.nbytes),
+        "full_state_bytes": artifact.state.nbytes,
+        "stored_state_bytes": stored.nbytes,
         "fixed_coordinate_count": fixed,
         "conjugate_pair_count": pairs,
         "real_coordinate_evidence": evidence_manifest,

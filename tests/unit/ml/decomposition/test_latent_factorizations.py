@@ -38,8 +38,8 @@ def _supervised_data():
 
 def test_cca_weighted_masked_scores_inverse_complex_policy_and_gradients():
     x, y = _supervised_data()
-    feature_mask = jnp.ones_like(x, dtype=bool).at[2, 2].set(False)
-    target_mask = jnp.ones_like(y, dtype=bool).at[4, 1].set(False)
+    feature_mask = jnp.ones_like(x, dtype="bool").at[2, 2].set(False)
+    target_mask = jnp.ones_like(y, dtype="bool").at[4, 1].set(False)
     weights = jnp.arange(1.0, 9.0)
     result = CCA(2, regularization=1e-4).fit_batch(
         MLBatch(
@@ -217,7 +217,7 @@ def _nonnegative_data():
 
 def test_nmf_key_mask_nonconvergence_inverse_jit_and_unrolled_gradients():
     values = _nonnegative_data()
-    mask = jnp.ones_like(values, dtype=bool).at[1, 2].set(False)
+    mask = jnp.ones_like(values, dtype="bool").at[1, 2].set(False)
     with pytest.raises(ValueError, match="explicit JAX key"):
         NMF(2).fit_batch(MLBatch(values))
     with pytest.raises(TypeError, match="real nonnegative"):
@@ -264,7 +264,7 @@ def test_nmf_key_mask_nonconvergence_inverse_jit_and_unrolled_gradients():
 def test_sparse_coding_and_dictionary_learning_masks_complex_keys_and_gradients():
     values = _nonnegative_data()
     dictionary = jnp.array([[1.0, 0.2, 0.5], [0.1, 1.0, 0.4]])
-    mask = jnp.ones_like(values, dtype=bool).at[0, 1].set(False)
+    mask = jnp.ones_like(values, dtype="bool").at[0, 1].set(False)
     sparse = SparseCoding(
         dictionary, regularization=1e-3, transform_iterations=12
     ).fit_batch(MLBatch(values, feature_mask=mask))

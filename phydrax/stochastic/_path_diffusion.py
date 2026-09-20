@@ -42,14 +42,14 @@ class TrajectoryEventLayout(StrictModule):
         valid_time: ArrayLike | None = None,
         layout_id: str | None = None,
     ):
-        grid = jnp.asarray(times, dtype=float)
-        shape = tuple(int(size) for size in state_shape)
-        if grid.ndim != 1 or int(grid.size) < 2 or bool(jnp.any(jnp.diff(grid) <= 0.0)):
+        grid = jnp.asarray(times, dtype=jnp.float64)
+        shape = tuple(state_shape)
+        if grid.ndim != 1 or grid.size < 2 or bool(jnp.any(jnp.diff(grid) <= 0.0)):
             raise ValueError("Trajectory times must be a strictly increasing vector.")
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("state_shape must contain positive dimensions.")
         state_size = prod(shape)
-        event_shape = (int(grid.size),) + shape
+        event_shape = (grid.size,) + shape
         raw_matrix = jnp.asarray(basis)
         raw_center = (
             jnp.zeros(event_shape, dtype=raw_matrix.dtype)
@@ -60,15 +60,15 @@ class TrajectoryEventLayout(StrictModule):
             raise TypeError("Trajectory coefficient layouts require real coordinates.")
         dtype = jnp.result_type(raw_center.dtype, raw_matrix.dtype)
         if not jnp.issubdtype(dtype, jnp.inexact):
-            dtype = jnp.dtype(float)
+            dtype = jnp.dtype(jnp.float64)
         center = raw_center.astype(dtype)
         matrix = raw_matrix.astype(dtype)
-        if matrix.ndim != 2 or matrix.shape[0] != int(grid.size) * state_size:
+        if matrix.ndim != 2 or matrix.shape[0] != grid.size * state_size:
             raise ValueError("Trajectory basis has an incompatible flattened event size.")
         mask = (
-            jnp.ones(grid.shape, dtype=bool)
+            jnp.ones(grid.shape, dtype=jnp.bool_)
             if valid_time is None
-            else jnp.asarray(valid_time, dtype=bool)
+            else jnp.asarray(valid_time, dtype=jnp.bool_)
         )
         if mask.shape != grid.shape or not bool(mask[0]):
             raise ValueError("valid_time must match times and include the initial node.")
@@ -86,7 +86,7 @@ class TrajectoryEventLayout(StrictModule):
                 "kind": "trajectory-event-layout",
                 "times": grid.tolist(),
                 "state_shape": list(shape),
-                "rank": int(matrix.shape[1]),
+                "rank": matrix.shape[1],
             }
         )
         self.times = grid
@@ -99,22 +99,18 @@ class TrajectoryEventLayout(StrictModule):
             layout_id=identifier,
         )
         self.state_shape = shape
-        self.num_times = int(grid.size)
+        self.num_times = grid.size
         self.state_size = state_size
         self.layout_id = identifier
 
     @classmethod
     def from_increments(cls, times: ArrayLike, state_shape, /):
-        grid = jnp.asarray(times, dtype=float)
-        if (
-            grid.ndim != 1
-            or int(grid.size) < 2
-            or bool(jnp.any(jnp.diff(grid) <= 0.0))
-        ):
+        grid = jnp.asarray(times, dtype=jnp.float64)
+        if grid.ndim != 1 or grid.size < 2 or bool(jnp.any(jnp.diff(grid) <= 0.0)):
             raise ValueError("Trajectory times must be a strictly increasing vector.")
         size = prod(tuple(state_shape))
-        intervals = int(grid.size) - 1
-        cumulative = jnp.tril(jnp.ones((int(grid.size), intervals)), k=-1)
+        intervals = grid.size - 1
+        cumulative = jnp.tril(jnp.ones((grid.size, intervals)), k=-1)
         scale = jnp.sqrt(jnp.diff(grid))
         temporal = cumulative * scale[None, :]
         basis = jnp.kron(temporal, jnp.eye(size))
@@ -132,7 +128,7 @@ def _time_weights(times: Array) -> Array:
     weights = jnp.zeros_like(times)
     weights = weights.at[0].set(0.5 * intervals[0])
     weights = weights.at[-1].set(0.5 * intervals[-1])
-    if int(times.size) > 2:
+    if times.size > 2:
         weights = weights.at[1:-1].set(0.5 * (intervals[:-1] + intervals[1:]))
     return weights
 
@@ -157,7 +153,9 @@ class PathCoefficientDiffusion(StrictModule):
         if not isinstance(layout, TrajectoryEventLayout):
             raise TypeError("layout must be a TrajectoryEventLayout.")
         if coefficient_process.state_shape != (layout.coefficient_layout.rank,):
-            raise ValueError("Coefficient process dimension must equal trajectory basis rank.")
+            raise ValueError(
+                "Coefficient process dimension must equal trajectory basis rank."
+            )
         if score_dependency not in ("global", "causal"):
             raise ValueError("score_dependency must be 'global' or 'causal'.")
         identifier = canonical_fingerprint(
@@ -189,12 +187,14 @@ class PathCoefficientDiffusion(StrictModule):
         )
 
     def require_causal_mask(self, dependency_mask: ArrayLike, /) -> None:
-        mask = jnp.asarray(dependency_mask, dtype=bool)
+        mask = jnp.asarray(dependency_mask, dtype=jnp.bool_)
         expected = (self.layout.num_times, self.layout.num_times)
         if mask.shape != expected:
             raise ValueError(f"dependency_mask must have shape {expected}.")
         if self.score_dependency == "causal" and bool(jnp.any(jnp.triu(mask, k=1))):
-            raise ValueError("Causal path scores cannot depend on future trajectory nodes.")
+            raise ValueError(
+                "Causal path scores cannot depend on future trajectory nodes."
+            )
 
 
 __all__ = ["PathCoefficientDiffusion", "PathScoreDependency", "TrajectoryEventLayout"]

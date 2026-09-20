@@ -18,7 +18,7 @@ from tools.block_amr_advanced_qualification import _configuration
 def benchmark(*, smoke: bool) -> dict[str, object]:
     compiled, entities, geometry_plan, _ = _configuration()
     compiler = phx.discretization.VariablePatchTopologyCompiler(compiled.topology.plan)
-    tags = ((jnp.zeros((1, 4, 4), dtype=bool).at[0, 1, 1].set(True),),)
+    tags = ((jnp.zeros((1, 4, 4), dtype="bool").at[0, 1, 1].set(True),),)
     _, topology_seconds = measure_host(
         lambda: compiler.compile(compiler.initial_topology(), tags)
     )

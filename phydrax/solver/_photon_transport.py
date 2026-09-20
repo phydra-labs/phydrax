@@ -224,7 +224,7 @@ class PhotonTransportPlan(StrictModule, NonTrainableState):
             jnp.zeros((self.maximum_events,), dtype=energy.dtype),
             -jnp.ones((self.maximum_events,), dtype=jnp.int32),
             -jnp.ones((self.maximum_events,), dtype=jnp.int32),
-            jnp.zeros((self.maximum_events,), dtype=bool),
+            jnp.zeros((self.maximum_events,), dtype=jnp.bool_),
         )
 
         def event_step(event, carry):

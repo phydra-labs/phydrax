@@ -566,7 +566,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         tangent: Array,
         /,
     ) -> Array:
-        """Apply ``R^-1 M`` without relabelling an effort as a tangent."""
+        """Apply ``R^-1 M`` without relabeling an effort as a tangent."""
         effort = self.reduction.reduced_effort_space.validate(operator.mv(tangent))
         return self.reduction.coefficient_space.inverse_riesz(effort)
 
@@ -1248,7 +1248,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         time: ArrayLike = 0.0,
         step_size: ArrayLike = 1.0,
     ) -> ReducedRodDenseReferenceResult:
-        """Evaluate the explicitly labelled dense AD authority for parity tests."""
+        """Evaluate the explicitly labeled dense AD authority for parity tests."""
         q = state.coefficients
         v = state.coefficient_velocities
 

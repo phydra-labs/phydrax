@@ -61,9 +61,9 @@ class DivisorClearanceEvidence(StrictModule):
         clear: ArrayLike,
     ):
         self.lower_bounds = jnp.asarray(lower_bounds)
-        self.sampled = jnp.asarray(sampled, dtype=bool)
-        self.certified = jnp.asarray(certified, dtype=bool)
-        self.clear = jnp.asarray(clear, dtype=bool)
+        self.sampled = jnp.asarray(sampled, dtype=jnp.bool_)
+        self.certified = jnp.asarray(certified, dtype=jnp.bool_)
+        self.clear = jnp.asarray(clear, dtype=jnp.bool_)
 
 
 class DivisorIntersection(StrictModule):
@@ -85,8 +85,8 @@ class DivisorIntersection(StrictModule):
         self.point = jnp.asarray(point)
         self.jacobian_rank = jnp.asarray(jacobian_rank, dtype=jnp.int32)
         self.expected_rank = int(expected_rank)
-        self.transverse = jnp.asarray(transverse, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.transverse = jnp.asarray(transverse, dtype=jnp.bool_)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 class CartierDivisor(StrictModule):

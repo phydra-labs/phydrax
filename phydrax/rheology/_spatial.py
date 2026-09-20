@@ -46,8 +46,8 @@ class SpatialConformationSolver:
         eigenvalue_floor: float = 1e-10,
         conservation_tolerance: float = 1e-10,
     ) -> SpatialConformationSolver:
-        weights = np.asarray(measure_weights, dtype=float)
-        generator = np.asarray(transport_generator_s_inv, dtype=float)
+        weights = np.asarray(measure_weights, dtype=np.float64)
+        generator = np.asarray(transport_generator_s_inv, dtype=np.float64)
         if weights.ndim != 1 or weights.size == 0 or np.any(weights <= 0):
             raise ValueError("Rheology measures must be a positive vector.")
         if generator.shape != (weights.size, weights.size):

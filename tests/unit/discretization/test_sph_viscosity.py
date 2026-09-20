@@ -16,9 +16,12 @@ def _compiled(viscosity, *, backend="dense"):
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
     ).prepare()
     box = phx.discretization.ParticleBox([0.0], [1.0])
-    method = phx.discretization.WeaklyCompressibleSPHMethodPlan(phx.discretization.WendlandC2SPHKernel(1),
-    1.25 * spacing,
-    density=phx.discretization.SummationDensityPlan(), physical_viscosity=phx.discretization.MorrisViscosityPlan(viscosity), )
+    method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
+        phx.discretization.WendlandC2SPHKernel(1),
+        1.25 * spacing,
+        density=phx.discretization.SummationDensityPlan(),
+        physical_viscosity=phx.discretization.MorrisViscosityPlan(viscosity),
+    )
     neighborhood = (
         phx.discretization.DenseParticleNeighborhoodPlan(
             count * (count - 1) // 2, box=box
@@ -43,7 +46,7 @@ def _compiled(viscosity, *, backend="dense"):
 
 def _state(compiled, velocity):
     count = compiled.dynamics.particles.capacity
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] / count
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] / count
     return compiled.initialize_state(position, velocity(position))
 
 

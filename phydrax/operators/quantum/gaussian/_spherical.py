@@ -48,7 +48,7 @@ def _same_center_overlap(
 
 
 def _sphere_points(count: int, /) -> np.ndarray:
-    index = np.arange(count, dtype=float)
+    index = np.arange(count, dtype=np.float64)
     golden = np.pi * (3.0 - np.sqrt(5.0))
     z = 1.0 - 2.0 * (index + 0.5) / count
     radius = np.sqrt(np.maximum(1.0 - z * z, 0.0))

@@ -4,7 +4,7 @@
 
 """Conservative one-dimensional blood-vessel dynamics and couplers.
 
-The kernel units are millimetres, milliseconds, milligrams, and kilopascals.
+The kernel units are millimeters, milliseconds, milligrams, and kilopascals.
 The finite-volume state is cross-sectional area and signed volume flow.  Every
 runtime object has fixed topology and every step is transactional: invalid
 candidates are returned as evidence while the accepted state remains unchanged.
@@ -223,7 +223,7 @@ class Vascular1DPlan(StrictModule, NonTrainableState):
         self.maximum_courant = courant
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "vascular-1d-plan-v1",
+                "kind": "vascular-1d-plan",
                 "vessel_id": identifier,
                 "cell_count": count,
                 "length_mm": length,
@@ -243,7 +243,7 @@ class Vascular1DPlan(StrictModule, NonTrainableState):
             cell_length_mm=self.length_mm / self.cell_count,
             runtime_id=canonical_fingerprint(
                 {
-                    "kind": "prepared-vascular-1d-v1",
+                    "kind": "prepared-vascular-1d",
                     "plan": self.plan_id,
                     "tube_law": tube_law.law_id,
                 }
@@ -537,7 +537,7 @@ class CharacteristicTerminal(StrictModule, NonTrainableState):
         self.load_impedance_kPa_ms_per_mm3 = impedance
         self.terminal_id_hash = canonical_fingerprint(
             {
-                "kind": "characteristic-terminal-v1",
+                "kind": "characteristic-terminal",
                 "terminal_id": identifier,
                 "reference_pressure_kPa": pressure,
                 "load_impedance_kPa_ms_per_mm3": impedance,
@@ -605,7 +605,7 @@ class VascularJunctionPlan(StrictModule, NonTrainableState):
         self.branch_count = len(branches)
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "vascular-junction-v1",
+                "kind": "vascular-junction",
                 "junction_id": identifier,
                 "branches": branches,
             }

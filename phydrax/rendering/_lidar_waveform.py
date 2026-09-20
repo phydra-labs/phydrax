@@ -97,7 +97,7 @@ class HardSurfaceLidarWaveformPlan(StrictModule, NonTrainableState):
         gains = (
             np.ones((len(support.receiver_ids),))
             if receiver_gains is None
-            else np.asarray(receiver_gains, dtype=float)
+            else np.asarray(receiver_gains, dtype=np.float64)
         )
         if (
             gains.shape != (len(support.receiver_ids),)
@@ -222,7 +222,7 @@ class LidarReturnExtractionPlan:
                 scores,
                 jnp.full((self.return_capacity,), -1, dtype=jnp.int32),
                 jnp.zeros((self.return_capacity,), dtype=scores.dtype),
-                jnp.zeros((self.return_capacity,), dtype=bool),
+                jnp.zeros((self.return_capacity,), dtype=jnp.bool_),
             )
 
             def choose(index, state):
@@ -278,8 +278,8 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
         wave_speed: float,
         overlap: ArrayLike = 1.0,
     ):
-        ranges = np.asarray(range_samples, dtype=float)
-        lengths = np.asarray(segment_lengths, dtype=float)
+        ranges = np.asarray(range_samples, dtype=np.float64)
+        lengths = np.asarray(segment_lengths, dtype=np.float64)
         if (
             ranges.ndim != 2
             or ranges.shape != lengths.shape
@@ -290,7 +290,9 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "range_samples and segment_lengths must share shape (ray_count, segment_count)."
             )
-        overlap_ = np.broadcast_to(np.asarray(overlap, dtype=float), ranges.shape).copy()
+        overlap_ = np.broadcast_to(
+            np.asarray(overlap, dtype=np.float64), ranges.shape
+        ).copy()
         if np.any(overlap_ < 0.0) or not np.all(np.isfinite(overlap_)):
             raise ValueError("overlap must be finite and nonnegative.")
         self.support = support
@@ -402,7 +404,7 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
         lengths, powers, valid = (
             jnp.asarray(path_lengths),
             jnp.asarray(path_powers),
-            jnp.asarray(path_valid, dtype=bool),
+            jnp.asarray(path_valid, dtype=jnp.bool_),
         )
         expected = (self.support.rays.sample_shape[0], self.path_capacity)
         if (

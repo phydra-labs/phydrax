@@ -44,12 +44,12 @@ class FLRWModePlan(StrictModule):
         curvature_coupling: float = 0.0,
         maximum_mode_steps: int = 1_000_000,
     ):
-        times = np.asarray(conformal_times, dtype=float)
-        scale = np.asarray(scale_factors, dtype=float)
-        prime = np.asarray(scale_factor_primes, dtype=float)
-        second = np.asarray(scale_factor_seconds, dtype=float)
-        wavenumbers = np.asarray(comoving_wavenumbers, dtype=float)
-        weights = np.asarray(momentum_weights, dtype=float)
+        times = np.asarray(conformal_times, dtype=np.float64)
+        scale = np.asarray(scale_factors, dtype=np.float64)
+        prime = np.asarray(scale_factor_primes, dtype=np.float64)
+        second = np.asarray(scale_factor_seconds, dtype=np.float64)
+        wavenumbers = np.asarray(comoving_wavenumbers, dtype=np.float64)
+        weights = np.asarray(momentum_weights, dtype=np.float64)
         mass_ = float(mass)
         coupling = float(curvature_coupling)
         maximum = int(maximum_mode_steps)

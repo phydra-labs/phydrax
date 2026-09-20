@@ -43,7 +43,7 @@ class SphereLaplacianLevels(StrictModule, NonTrainableState):
             for level in levels
         )
         self.levels = jnp.asarray(levels, dtype=jnp.int32)
-        self.eigenvalues = jnp.asarray(eigenvalues, dtype=float)
+        self.eigenvalues = jnp.asarray(eigenvalues, dtype=jnp.float64)
         self.multiplicities = multiplicities
         self.dimension = resolved_dimension
         self.max_level = resolved_level

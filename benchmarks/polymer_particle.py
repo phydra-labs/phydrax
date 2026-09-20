@@ -13,10 +13,10 @@ from benchmarks._runtime import capture_environment, logical_array_bytes, measur
 def main() -> int:
     count = 1024
     layout = phx.atomistic.PolymerChainLayoutPlan(
-        np.arange(count)[None, :], np.ones((1, count), dtype=bool), maximum_frames=1
+        np.arange(count)[None, :], np.ones((1, count), dtype="bool"), maximum_frames=1
     )
     positions = jnp.stack(
-        (jnp.arange(count, dtype=float), jnp.zeros(count), jnp.zeros(count)), axis=-1
+        (jnp.arange(count, dtype="float64"), jnp.zeros(count), jnp.zeros(count)), axis=-1
     )[None, ...]
     operation = jax.jit(lambda value: phx.atomistic.polymer_conformation(layout, value))
     result, timing = measure_repeated(lambda: operation(positions), warmup=1, repeats=3)

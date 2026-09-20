@@ -107,8 +107,7 @@ class Domain(StrictModule):
             overlap = requested_set.intersection(factor.labels)
             if overlap and overlap != set(factor.labels):
                 raise ValueError(
-                    "Cannot implicitly restrict part of coupled factor "
-                    f"{factor.labels}; requested {requested}."
+                    f"Cannot implicitly restrict part of coupled factor {factor.labels}; requested {requested}."
                 )
             if overlap:
                 selected.append(factor)
@@ -213,8 +212,7 @@ class Domain(StrictModule):
                 declared_binding = model.input_binding()
                 if binding is not None and binding != declared_binding:
                     raise ValueError(
-                        "Phydrax models declare their ModelBinding; caller overrides "
-                        "must match that declaration."
+                        "Phydrax models declare their ModelBinding; caller overrides must match that declaration."
                     )
                 resolved_binding = declared_binding
             else:
@@ -264,7 +262,7 @@ class Domain(StrictModule):
 
         raw = jnp.asarray(init)
         if not jnp.issubdtype(raw.dtype, jnp.inexact):
-            raw = raw.astype(float)
+            raw = raw.astype("float64")
 
         if transform is None:
             return DomainFunction(
@@ -342,8 +340,7 @@ class JointFactor(Domain):
             unknown = tuple(label for label in labels if label not in self.labels)
             if unknown:
                 raise KeyError(
-                    f"Relabel mapping contains unknown labels {unknown}; "
-                    f"expected a subset of {self.labels}."
+                    f"Relabel mapping contains unknown labels {unknown}; expected a subset of {self.labels}."
                 )
             replacement = tuple(labels.get(label, label) for label in self.labels)
         if len(set(replacement)) != len(replacement):

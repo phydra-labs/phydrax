@@ -153,7 +153,7 @@ class Pennes1948Parameters(StrictModule):
         /,
     ):
         values = tuple(
-            jnp.asarray(x, dtype=float)
+            jnp.asarray(x, dtype=jnp.float64)
             for x in (
                 conductivity_W_per_m_K,
                 capacity_J_per_m3_K,
@@ -226,7 +226,7 @@ class RetainedHeatProjection(StrictModule, NonTrainableState):
         ids = tuple(source_ids)
         source = np.asarray(source_indices)
         target = np.asarray(cell_indices)
-        weight = np.asarray(weights, dtype=float)
+        weight = np.asarray(weights, dtype=np.float64)
         if not ids or len(set(ids)) != len(ids) or any(not x.strip() for x in ids):
             raise ValueError("Projection source IDs must be nonempty and unique.")
         if any(not x.strip() for x in (source_model_id, retention_evidence_id, asset_id)):
@@ -321,7 +321,7 @@ class Pennes1948Boundary(StrictModule):
             raise ValueError(
                 "Boundary facet IDs must be integers, not rounded coordinates."
             )
-        ids = tuple(int(x) for x in facet_ids)
+        ids = tuple(facet_ids)
         if not ids or len(set(ids)) != len(ids) or any(x < 0 for x in ids):
             raise ValueError("Boundary facets must be nonempty unique IDs.")
         if (
@@ -331,8 +331,8 @@ class Pennes1948Boundary(StrictModule):
             raise ValueError(
                 "A sourced insulated/flux/convection/Dirichlet patch is required."
             )
-        value_ = jnp.asarray(value, dtype=float)
-        transfer = jnp.asarray(heat_transfer_W_per_m2_K, dtype=float)
+        value_ = jnp.asarray(value, dtype=jnp.float64)
+        transfer = jnp.asarray(heat_transfer_W_per_m2_K, dtype=jnp.float64)
         if value_.shape != () or transfer.shape != ():
             raise ValueError("Each boundary patch has scalar constant values.")
         self.value = value_
@@ -374,9 +374,9 @@ def _subdomain(base, ids):
         base.support_id,
         base.entity_set_id,
         owner_cells=np.asarray(base.owner_cells)[positions],
-        neighbour_cells=np.asarray(base.neighbour_cells)[positions],
+        neighbor_cells=np.asarray(base.neighbor_cells)[positions],
         owner_local_entities=np.asarray(base.owner_local_entities)[positions],
-        neighbour_local_entities=np.asarray(base.neighbour_local_entities)[positions],
+        neighbor_local_entities=np.asarray(base.neighbor_local_entities)[positions],
     )
 
 
@@ -426,7 +426,7 @@ class Pennes1948Plan(StrictModule):
             )
         if not np.issubdtype(np.asarray(region_indices).dtype, np.integer):
             raise ValueError("Cell region indices must be integers.")
-        regions = tuple(int(x) for x in region_indices)
+        regions = tuple(region_indices)
         ids = tuple(region_ids)
         count = sum(block.cell_count for block in mesh.blocks)
         if (
@@ -623,7 +623,7 @@ class Pennes1948Plan(StrictModule):
                 if boundary.kind == "convection"
                 else None
             )
-            mask = np.zeros(zero.shape, dtype=bool)
+            mask = np.zeros(zero.shape, dtype=np.bool_)
             if boundary.kind == "dirichlet":
                 mask[np.unique(faces[np.asarray(boundary.facet_ids)].reshape(-1))] = True
                 conflict = (
@@ -743,7 +743,7 @@ class Pennes1948Candidate(StrictModule, NonTrainableState):
             raise ValueError(
                 "Cannot commit a foreign prepared or source-state thermal candidate."
             )
-        accepted = jnp.asarray(accept, dtype=bool)
+        accepted = jnp.asarray(accept, dtype=jnp.bool_)
         if accepted.shape != ():
             raise ValueError("Thermal commit acceptance must be scalar.")
         valid = (
@@ -981,7 +981,9 @@ class PreparedPennes1948(StrictModule):
                     * jnp.sum(mass.mv(temperature) - boundary.value * load)
                 )
         full_residual = full_action(temperature) - rhs
-        constrained = jnp.ones(state.temperature_K.shape, dtype=bool).at[free].set(False)
+        constrained = (
+            jnp.ones(state.temperature_K.shape, dtype=jnp.bool_).at[free].set(False)
+        )
         dirichlet_out = -jnp.sum(jnp.where(constrained, full_residual, 0))
         category = safe_dt * jnp.sum(source.category_power_W, axis=1)
         balance = (

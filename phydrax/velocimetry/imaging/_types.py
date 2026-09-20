@@ -55,21 +55,21 @@ class ImagePair2D(StrictModule, NonTrainableState):
         ):
             raise TypeError("Images must have real numeric dtypes.")
         first_mask_ = (
-            jnp.ones(geometry.image_shape, dtype=bool)
+            jnp.ones(geometry.image_shape, dtype=jnp.bool_)
             if first_mask is None
-            else jnp.asarray(first_mask, dtype=bool)
+            else jnp.asarray(first_mask, dtype=jnp.bool_)
         )
         second_mask_ = (
-            jnp.ones(geometry.image_shape, dtype=bool)
+            jnp.ones(geometry.image_shape, dtype=jnp.bool_)
             if second_mask is None
-            else jnp.asarray(second_mask, dtype=bool)
+            else jnp.asarray(second_mask, dtype=jnp.bool_)
         )
         if (
             first_mask_.shape != geometry.image_shape
             or second_mask_.shape != geometry.image_shape
         ):
             raise ValueError("Image masks must match geometry.image_shape.")
-        delta_t_ = jnp.asarray(delta_t, dtype=float)
+        delta_t_ = jnp.asarray(delta_t, dtype=jnp.float64)
         if delta_t_.shape != ():
             raise ValueError("delta_t must be scalar.")
         provenance_ = tuple(str(item) for item in provenance)
@@ -125,10 +125,10 @@ class DenseDisplacementField2D(StrictModule, NonTrainableState):
         ):
             raise TypeError("Displacement fields must contain real values.")
         if not jnp.issubdtype(positions.dtype, jnp.inexact):
-            positions = positions.astype(float)
+            positions = positions.astype("float64")
         if not jnp.issubdtype(displacement.dtype, jnp.inexact):
-            displacement = displacement.astype(float)
-        valid_ = jnp.asarray(valid, dtype=bool)
+            displacement = displacement.astype("float64")
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if positions.ndim < 2 or positions.shape[-1] != 2:
             raise ValueError("positions_rc must have shape (..., 2).")
         if displacement.shape != positions.shape:

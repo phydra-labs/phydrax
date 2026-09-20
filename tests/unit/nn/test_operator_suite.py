@@ -40,12 +40,12 @@ class _ConstantDifferentialKernel(eqx.Module):
 
     def __call__(self, value, *, key=None):
         del value, key
-        return jnp.ones((1,), dtype=float)
+        return jnp.ones((1,), dtype="float64")
 
 
 def _axis(size, *, name="x", endpoint=True):
     nodes = jnp.linspace(0.0, 1.0, size, endpoint=endpoint)
-    weights = jnp.ones((size,), dtype=float) / size
+    weights = jnp.ones((size,), dtype="float64") / size
     return phx.nn.operator.OperatorAxis(
         name,
         nodes,
@@ -67,7 +67,7 @@ def _grid_batch(values, axes, *, source="u", case_axes=()):
 
 def _parameter_count(model):
     return sum(
-        int(leaf.size)
+        leaf.size
         for leaf in jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_inexact_array))
     )
 
@@ -609,8 +609,8 @@ def test_operator_attention_shapes_and_measure_aware_slice_pooling():
 
 @pytest.mark.parametrize("model_name", ("cno", "uno"))
 def test_cno_family_handles_odd_grids_and_native_batches(model_name):
-    x_axis = jnp.arange(15, dtype=float) / 15
-    y_axis = jnp.arange(17, dtype=float) / 17
+    x_axis = jnp.arange(15, dtype="float64") / 15
+    y_axis = jnp.arange(17, dtype="float64") / 17
     values = jr.normal(jr.key(0), (2, 15, 17))
     if model_name == "cno":
         model = phx.nn.operator.architectures.CNO(

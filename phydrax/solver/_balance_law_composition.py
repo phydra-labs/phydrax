@@ -30,10 +30,10 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
         nodes: ArrayLike,
         /,
     ):
-        explicit = np.asarray(explicit_matrix, dtype=float)
-        implicit = np.asarray(implicit_matrix, dtype=float)
-        weights_ = np.asarray(weights, dtype=float)
-        nodes_ = np.asarray(nodes, dtype=float)
+        explicit = np.asarray(explicit_matrix, dtype=np.float64)
+        implicit = np.asarray(implicit_matrix, dtype=np.float64)
+        weights_ = np.asarray(weights, dtype=np.float64)
+        nodes_ = np.asarray(nodes, dtype=np.float64)
         if (
             explicit.ndim != 2
             or explicit.shape[0] != explicit.shape[1]
@@ -66,7 +66,7 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
 
     @property
     def stage_count(self) -> int:
-        return int(self.weights.size)
+        return self.weights.size
 
     def step(
         self,
@@ -159,7 +159,7 @@ class BalanceLawCompositionPlan(StrictModule, NonTrainableState):
         process_subcycles: tuple[int, ...],
         /,
     ):
-        subcycles = tuple(int(value) for value in process_subcycles)
+        subcycles = tuple(process_subcycles)
         if not subcycles or any(value <= 0 for value in subcycles):
             raise ValueError("Balance-law multirate composition is invalid.")
         self.process_subcycles = subcycles

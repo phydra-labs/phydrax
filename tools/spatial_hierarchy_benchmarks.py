@@ -35,7 +35,7 @@ def _positions(count: int, distribution: str):
 def _reference(positions, masses, softening):
     displacement = positions[None, :, :] - positions[:, None, :]
     squared = jnp.sum(displacement**2, axis=-1) + softening**2
-    mask = ~jnp.eye(positions.shape[0], dtype=bool)
+    mask = ~jnp.eye(positions.shape[0], dtype="bool")
     return jnp.sum(
         jnp.where(
             mask[..., None],
@@ -73,7 +73,7 @@ def _case(count: int, distribution: str):
         / jnp.maximum(jnp.linalg.norm(reference), 1.0e-15)
     )
     hierarchy_bytes = sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree.hierarchy)
         if isinstance(leaf, jax.Array)
     )

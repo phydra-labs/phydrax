@@ -5,16 +5,19 @@ import jax.numpy as jnp
 import phydrax.graph as vx
 
 
-class AddMessagePassing(vx.MessagePassing):
-    def message(self, x_j, x_i=None, edge_attr=None):
-        del edge_attr
-        if x_i is None:
-            return x_j
-        return x_j + x_i
+def _add_message(x_j, x_i=None, edge_attr=None):
+    del edge_attr
+    if x_i is None:
+        return x_j
+    return x_j + x_i
 
 
 def test_message_passing_runs():
-    mp = AddMessagePassing(aggr="add", flow="source_to_target")
+    mp = vx.MessagePassing(
+        aggr="add",
+        flow="source_to_target",
+        message=_add_message,
+    )
     x = jnp.array([[1.0], [2.0], [3.0]])
     edge_index = jnp.array([[0, 1, 2], [1, 2, 0]], dtype=jnp.int32)
 
@@ -23,7 +26,11 @@ def test_message_passing_runs():
 
 
 def test_message_passing_jit_runs():
-    mp = AddMessagePassing(aggr="add", flow="source_to_target")
+    mp = vx.MessagePassing(
+        aggr="add",
+        flow="source_to_target",
+        message=_add_message,
+    )
     x = jnp.array([[1.0], [2.0], [3.0]])
     edge_index = jnp.array([[0, 1, 2], [1, 2, 0]], dtype=jnp.int32)
 

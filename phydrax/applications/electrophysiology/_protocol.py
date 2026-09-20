@@ -90,7 +90,7 @@ class CurrentClamp(StrictModule, NonTrainableState):
         self.stop_ms = stop
         self.stimulus_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-current-clamp-v1",
+                "kind": "electrophysiology-current-clamp",
                 "clamp_id": identifier,
                 "compartment_id": compartment,
                 "amplitude_nA": amplitude,
@@ -131,7 +131,7 @@ class VoltageClamp(StrictModule, NonTrainableState):
         self.stop_ms = stop
         self.stimulus_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-voltage-clamp-v1",
+                "kind": "electrophysiology-voltage-clamp",
                 "clamp_id": identifier,
                 "compartment_id": compartment,
                 "target_mV": target,
@@ -167,7 +167,7 @@ class RecordingPlan(StrictModule, NonTrainableState):
         self.sample_capacity = sample_capacity
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-recording-v1",
+                "kind": "electrophysiology-recording",
                 "compartment_ids": list(identifiers),
                 "sample_capacity": sample_capacity,
                 "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
@@ -212,7 +212,7 @@ class ElectrophysiologyProtocol(StrictModule, NonTrainableState):
         self.recording = recording
         self.protocol_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-protocol-v1",
+                "kind": "electrophysiology-protocol",
                 "current_clamps": [value.stimulus_id for value in currents],
                 "voltage_clamps": [value.stimulus_id for value in voltages],
                 "recording": recording.plan_id,
@@ -269,7 +269,7 @@ class PreparedElectrophysiologyProtocol(StrictModule, NonTrainableState):
         self.recording_indices = recording_indices
         self.runtime_id = canonical_fingerprint(
             {
-                "kind": "prepared-electrophysiology-protocol-v1",
+                "kind": "prepared-electrophysiology-protocol",
                 "protocol": plan.protocol_id,
                 "cable": cable.runtime_id,
             }
@@ -380,7 +380,7 @@ def initialize_recording(runtime: PreparedElectrophysiologyProtocol, /) -> Recor
     return RecordingState(
         jnp.zeros((capacity,), dtype=dtype),
         jnp.zeros((capacity, channels), dtype=dtype),
-        jnp.zeros((capacity,), dtype=bool),
+        jnp.zeros((capacity,), dtype=jnp.bool_),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(False),
     )
@@ -515,7 +515,7 @@ def _checkpoint_identity(
 ) -> str:
     return canonical_fingerprint(
         {
-            "kind": "electrophysiology-checkpoint-v1",
+            "kind": "electrophysiology-checkpoint",
             "protocol": runtime.runtime_id,
             "state": array_tree_fingerprint(state),
             "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,

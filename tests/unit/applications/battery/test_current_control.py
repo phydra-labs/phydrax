@@ -126,7 +126,7 @@ class AnalyticCurrentAdapter(StrictModule, NonTrainableState):
     def ledger(self, prepared_model, native_solution, runtime_inputs, /):
         assert prepared_model == "test:battery:analytic-current:prepared-model"
         successful = (
-            jnp.asarray(native_solution.backend_successful, dtype=bool)
+            jnp.asarray(native_solution.backend_successful, dtype="bool")
             & jnp.all(native_solution.valid)
             & jnp.all(
                 jnp.abs(runtime_inputs.input_policy.values[:, 0])

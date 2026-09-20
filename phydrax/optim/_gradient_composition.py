@@ -129,14 +129,14 @@ class ConflictFreeGradientResult(StrictModule):
         self.norms = jnp.asarray(norms)
         self.cosine_matrix = jnp.asarray(cosine_matrix)
         self.projections = jnp.asarray(projections)
-        self.active = jnp.asarray(active, dtype=bool)
-        self.stationary = jnp.asarray(stationary, dtype=bool)
-        self.conflicts = jnp.asarray(conflicts, dtype=bool)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
+        self.stationary = jnp.asarray(stationary, dtype=jnp.bool_)
+        self.conflicts = jnp.asarray(conflicts, dtype=jnp.bool_)
         self.rank = jnp.asarray(rank)
         self.rank_cutoff = jnp.asarray(rank_cutoff)
         self.condition_estimate = jnp.asarray(condition_estimate)
         self.direction_norm = jnp.asarray(direction_norm)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.policy_id = str(policy_id)
 
@@ -173,9 +173,9 @@ def conflict_free_gradient(
         raise TypeError("policy must be a ConflictFreeGradientPolicy.")
     count = len(values)
     active_mask = (
-        jnp.ones((count,), dtype=bool)
+        jnp.ones((count,), dtype=jnp.bool_)
         if active is None
-        else jnp.asarray(active, dtype=bool)
+        else jnp.asarray(active, dtype=jnp.bool_)
     )
     if active_mask.shape != (count,):
         raise ValueError("active must contain one Boolean per objective gradient.")

@@ -185,10 +185,7 @@ class RoboticsOperationCapability(StrictModule, NonTrainableState):
             requirement.contact_feature is not None
             and requirement.contact_feature not in self.contact_features
         ):
-            return (
-                f"contact feature {requirement.contact_feature!r} is not in the "
-                "closed support set"
-            )
+            return f"contact feature {requirement.contact_feature!r} is not in the closed support set"
         return None
 
     def supports(self, requirement: RoboticsOperationRequirement, /) -> bool:
@@ -561,8 +558,7 @@ class RoboticsProjection(StrictModule, NonTrainableState):
         shape = jnp.shape(values)
         if not shape or shape[-1] != index_map.size:
             raise ValueError(
-                f"{index_map.kind} projection must end in axis size {index_map.size}; "
-                f"got shape {shape}."
+                f"{index_map.kind} projection must end in axis size {index_map.size}; got shape {shape}."
             )
         has_state_epoch = state_epoch is not None
         has_sample_epoch = sample_epoch is not None

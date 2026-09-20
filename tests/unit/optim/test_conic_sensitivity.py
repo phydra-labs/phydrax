@@ -54,7 +54,7 @@ def _prepare(
             jnp.asarray(dual),
             jnp.asarray(lower_dual),
             jnp.asarray(upper_dual),
-            jnp.ones(program.batch_shape, dtype=bool),
+            jnp.ones(program.batch_shape, dtype="bool"),
             jnp.zeros(program.batch_shape, dtype=jnp.int32),
             policy,
             "analytic-test",
@@ -451,7 +451,9 @@ def test_projection_regularity_uses_the_differentiated_residual_point():
 
     sensitivity = phx.optim.prepare_conic_sensitivity(prepared, inconsistent)
     np.testing.assert_allclose(sensitivity.projection_margin, jnp.ones(1))
-    np.testing.assert_array_equal(sensitivity.projection_regular, jnp.ones(1, dtype=bool))
+    np.testing.assert_array_equal(
+        sensitivity.projection_regular, jnp.ones(1, dtype="bool")
+    )
 
 
 def test_damped_derivative_svd_is_rejected():

@@ -179,7 +179,7 @@ def test_export_rejects_nonuniform_plane_axes(tmp_path: Path):
         RigidFrame.identity(3),
         "finite-window",
     )
-    values = jnp.ones(plane.shape + source.time_space.shape, dtype=complex)
+    values = jnp.ones(plane.shape + source.time_space.shape, dtype="complex128")
     nonuniform = PulseEnvelopeField(
         plane,
         source.time_space,

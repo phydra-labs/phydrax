@@ -64,7 +64,7 @@ class PrecisionRecallFScoreResult(StrictModule):
         self.recall = jnp.asarray(recall)
         self.fscore = jnp.asarray(fscore)
         self.support = jnp.asarray(support)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.effective_weight = jnp.asarray(effective_weight)
         self.average = average
@@ -98,7 +98,7 @@ def _probability_inputs(
         raise ValueError("Classification labels must have case_shape + (sample,) axes.")
     if raw.ndim != labels.ndim + 1 or raw.shape[:-1] != labels.shape:
         raise ValueError(f"{metric} requires values with shape y_true.shape + (class,).")
-    classes = int(raw.shape[-1])
+    classes = raw.shape[-1]
     if classes < 2:
         raise ValueError(f"{metric} requires at least two classes.")
     safe_labels, weights, active, invalid, _ = _prepare_values(
@@ -111,8 +111,8 @@ def _probability_inputs(
     )
     included = _broadcast_full(
         mask,
-        tuple(int(size) for size in labels.shape),
-        dtype=bool,
+        tuple(labels.shape),
+        dtype=jnp.bool_,
         fill=True,
         name="mask",
     )
@@ -263,7 +263,7 @@ def confusion_matrix(
     )
     if normalize is None:
         value = confusion
-        undefined = jnp.zeros_like(mass, dtype=bool)
+        undefined = jnp.zeros_like(mass, dtype=jnp.bool_)
     elif normalize == "true":
         denominator = jnp.sum(confusion, axis=-1, keepdims=True)
         undefined = jnp.any(denominator <= 0.0, axis=(-2, -1))
@@ -327,7 +327,7 @@ def smooth_confusion_matrix(
     mass = jnp.sum(jnp.where(active, weights, 0.0), axis=-1)
     if normalize is None:
         value = confusion
-        undefined = jnp.zeros_like(mass, dtype=bool)
+        undefined = jnp.zeros_like(mass, dtype=jnp.bool_)
     elif normalize == "true":
         denominator = jnp.sum(confusion, axis=-1, keepdims=True)
         undefined = jnp.any(denominator <= 0.0, axis=(-2, -1))

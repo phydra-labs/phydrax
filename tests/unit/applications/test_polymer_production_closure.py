@@ -66,7 +66,7 @@ def test_primitive_path_contacts_seed_particle_slip_springs():
     snapshot = ent.PrimitivePathSnapshot(
         positions,
         jnp.asarray([[0, 1], [2, 3]], dtype=jnp.int32),
-        jnp.ones((2, 2), dtype=bool),
+        jnp.ones((2, 2), dtype="bool"),
         jnp.arange(4),
         jnp.ones((2,)),
         jnp.zeros((4, 0), dtype=jnp.int32),

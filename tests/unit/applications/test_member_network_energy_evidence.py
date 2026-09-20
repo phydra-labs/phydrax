@@ -12,7 +12,7 @@ mn = phx.applications.solid_mechanics.member_network
 def _epochs(count: int):
     epoch = jnp.zeros((count,), dtype=jnp.int32)
     return {
-        "accepted": jnp.ones((count,), dtype=bool),
+        "accepted": jnp.ones((count,), dtype="bool"),
         "topology_epoch": epoch,
         "contact_epoch": epoch,
         "fracture_epoch": epoch,

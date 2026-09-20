@@ -49,8 +49,7 @@ def _source_identifier(source: PreconditionerSource, /) -> str:
     if isinstance(source, AbstractPreconditionerBuilder):
         return source.builder_id
     raise TypeError(
-        "pivot_solver and schur_solver must be AbstractPreconditioner values or "
-        "AbstractPreconditionerBuilder values."
+        "pivot_solver and schur_solver must be AbstractPreconditioner values or AbstractPreconditionerBuilder values."
     )
 
 
@@ -240,8 +239,7 @@ def _component_properties(
     )
     if (requires_linear and not linear) or (requires_stationary and not stationary):
         raise ValueError(
-            "Certified block properties require both actions to certify the "
-            "corresponding fixed linear semantics."
+            "Certified block properties require both actions to certify the corresponding fixed linear semantics."
         )
     if supplied.self_adjoint and not self_adjoint:
         if form in ("lower", "upper"):
@@ -254,8 +252,7 @@ def _component_properties(
         pivot.certifies("positive_definite") and schur.certifies("positive_definite")
     ):
         raise ValueError(
-            "A positive-definite block claim requires certified positive-definite "
-            "component actions."
+            "A positive-definite block claim requires certified positive-definite component actions."
         )
     return supplied
 

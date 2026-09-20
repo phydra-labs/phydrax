@@ -192,7 +192,7 @@ exactly by one JVP per state coordinate. Constant structure takes an exact-zero
 correction path. Control, external forcing, absent dissipation, and nonpositive
 temperature are rejected so the Gibbs-invariance contract is not overstated.
 `stationary_fokker_planck_residual` evaluates the normalized stationary equation
-from the actual drift and mobility rather than an algebraically cancelled
+from the actual drift and mobility rather than an algebraically canceled
 identity. The first implementation is Itô-only.
 
 The thermodynamic decomposition is independently implemented; the

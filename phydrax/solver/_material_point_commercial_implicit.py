@@ -44,8 +44,8 @@ class MPMImplicitUnknownLayout(StrictModule, NonTrainableState):
         contact_multiplier_capacity: int = 0,
         rigid_dof_capacity: int = 0,
     ):
-        free = np.asarray(free_mask, dtype=bool)
-        essential = np.asarray(essential_mask, dtype=bool)
+        free = np.asarray(free_mask, dtype=np.bool_)
+        essential = np.asarray(essential_mask, dtype=np.bool_)
         if free.shape != essential.shape or free.ndim < 3:
             raise ValueError("Implicit MPM free/essential masks must share K,G,d shape.")
         if np.any(free & essential):
@@ -54,9 +54,9 @@ class MPMImplicitUnknownLayout(StrictModule, NonTrainableState):
         rigid = int(rigid_dof_capacity)
         if contact < 0 or rigid < 0:
             raise ValueError("Implicit multiplier/rigid capacities must be nonnegative.")
-        self.field_count = int(free.shape[0])
+        self.field_count = free.shape[0]
         self.node_capacity = int(np.prod(free.shape[1:-1]))
-        self.dimension = int(free.shape[-1])
+        self.dimension = free.shape[-1]
         self.free_mask = jnp.asarray(free)
         self.essential_mask = jnp.asarray(essential)
         self.contact_multiplier_capacity = contact

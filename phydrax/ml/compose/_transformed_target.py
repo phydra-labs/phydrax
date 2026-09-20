@@ -100,9 +100,9 @@ def _targets_as_feature_batch(batch: MLBatch, /) -> tuple[MLBatch, tuple[int, ..
     leading = batch.case_shape + (batch.sample_count,)
     values = jnp.asarray(targets).reshape(leading + (width,))
     mask = (
-        jnp.ones(values.shape, dtype=bool)
+        jnp.ones(values.shape, dtype=jnp.bool_)
         if batch.target_mask is None
-        else jnp.asarray(batch.target_mask, dtype=bool).reshape(values.shape)
+        else jnp.asarray(batch.target_mask, dtype=jnp.bool_).reshape(values.shape)
     )
     target_batch = MLBatch(
         values,
@@ -125,8 +125,7 @@ def _regression_batch(
 ) -> MLBatch:
     if isinstance(transformed_targets.features, SparseFeatures):
         raise TypeError(
-            "Sparse transformed targets are unsupported; no implicit densification "
-            "is performed."
+            "Sparse transformed targets are unsupported; no implicit densification is performed."
         )
     targets = transformed_targets.features
     target_mask = transformed_targets.feature_mask
@@ -158,13 +157,13 @@ def _prediction_features(
     array = jnp.asarray(prediction)
     width = _feature_width(out_size, role="Regressor output")
     if out_size == "scalar":
-        leading = tuple(int(size) for size in array.shape)
+        leading = tuple(array.shape)
         return jnp.expand_dims(array, axis=-1), leading
-    if array.ndim < 1 or int(array.shape[-1]) != width:
+    if array.ndim < 1 or array.shape[-1] != width:
         raise ValueError(
             f"Regressor output must end in width {width}; got {array.shape}."
         )
-    return array, tuple(int(size) for size in array.shape[:-1])
+    return array, tuple(array.shape[:-1])
 
 
 def _inverse_pointwise(
@@ -175,9 +174,9 @@ def _inverse_pointwise(
     *,
     key: Any,
 ) -> jax.Array:
-    width = int(values.shape[-1])
+    width = values.shape[-1]
     flat = values.reshape((-1, width))
-    count = int(flat.shape[0])
+    count = flat.shape[0]
     if key is None:
         mapped = jax.vmap(
             lambda row: transformer.inverse_transform(
@@ -361,8 +360,7 @@ class TransformedTargetRegressor(AbstractRecipe):
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         if not isinstance(batch, MLBatch):
             raise TypeError(
-                "TransformedTargetRegressor.fit_batch requires an already-selected "
-                "MLBatch."
+                "TransformedTargetRegressor.fit_batch requires an already-selected MLBatch."
             )
         if batch.target_schema.kind not in ("continuous", "count"):
             raise ValueError(
@@ -376,8 +374,7 @@ class TransformedTargetRegressor(AbstractRecipe):
         transform_model = transform_result.as_trainable()
         if not isinstance(transform_model, ReversibleTransformModel):
             raise TypeError(
-                "TransformedTargetRegressor requires a fitted transformer with "
-                "inverse_transform(values, *, key=None)."
+                "TransformedTargetRegressor requires a fitted transformer with inverse_transform(values, *, key=None)."
             )
         transformed = _transform_batch(transform_model, target_batch, key=transform_key)
         regression_batch = _regression_batch(

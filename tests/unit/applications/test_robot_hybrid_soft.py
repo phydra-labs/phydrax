@@ -153,7 +153,7 @@ class _FakePlant(AbstractDiscretePlant, NonTrainableState):
             lambda value: jnp.broadcast_to(value, case_shape + value.shape),
             self.reset_fallback,
         )
-        attempted = jnp.ones(case_shape, dtype=bool)
+        attempted = jnp.ones(case_shape, dtype="bool")
         status = jnp.zeros(case_shape, dtype=jnp.int32)
         return PlantProposal(payload, payload, attempted, attempted, status, status, ())
 
@@ -177,7 +177,7 @@ class _FakePlant(AbstractDiscretePlant, NonTrainableState):
             source.topology_marker + commands.change_topology.astype(jnp.int32),
             context.duration,
         )
-        attempted = jnp.ones(context.duration.shape, dtype=bool)
+        attempted = jnp.ones(context.duration.shape, dtype="bool")
         successful = attempted & ~commands.fail
         status = jnp.where(successful, 0, 73).astype(jnp.int32)
         return PlantProposal(
@@ -267,9 +267,9 @@ class _FakePort(AbstractHybridPlantPort, NonTrainableState):
 
 def _payload(position, linear_velocity) -> _BodyPayload:
     return _BodyPayload(
-        jnp.asarray(position, dtype=float),
+        jnp.asarray(position, dtype="float64"),
         jnp.eye(3),
-        jnp.asarray(linear_velocity, dtype=float),
+        jnp.asarray(linear_velocity, dtype="float64"),
         jnp.asarray((0.0, 0.0, 2.0)),
         jnp.zeros((3,)),
         jnp.zeros((3,)),
@@ -287,7 +287,7 @@ def _child_commands(
     return _BodyCommands(
         jnp.zeros((3,)),
         jnp.zeros((3,)),
-        jnp.asarray(translation, dtype=float),
+        jnp.asarray(translation, dtype="float64"),
         jnp.asarray(fail),
         jnp.asarray(change_topology),
     )

@@ -189,7 +189,7 @@ class AxisymmetricCoilResponsePlan:
                 "Filament regularity distance and permeability must be positive."
             )
         rr, zz = np.meshgrid(r, z)
-        boundary = np.zeros(rr.shape, dtype=bool)
+        boundary = np.zeros(rr.shape, dtype=np.bool_)
         boundary[0] = True
         boundary[-1] = True
         boundary[:, 0] = True

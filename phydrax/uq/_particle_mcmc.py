@@ -75,7 +75,7 @@ class ParticleGibbsResult(StrictModule):
 
     @property
     def movement_rate(self) -> Array:
-        return jnp.mean(self.moved.astype(float))
+        return jnp.mean(self.moved.astype("float64"))
 
 
 class ParticleMarginalMetropolisHastingsResult(StrictModule):
@@ -97,7 +97,7 @@ class ParticleMarginalMetropolisHastingsResult(StrictModule):
 
     @property
     def acceptance_rate(self) -> Array:
-        return jnp.mean(self.accepted.astype(float))
+        return jnp.mean(self.accepted.astype("float64"))
 
 
 def _particle_configuration(
@@ -179,9 +179,9 @@ def conditional_particle_filter(
         initial_valid.append(jnp.all(jnp.stack(validity)))
     initial_particles = jnp.stack(initial_cases)
     particles = initial_particles
-    log_weights = jnp.full((case_count, count), -jnp.log(float(count)), dtype=float)
+    log_weights = jnp.full((case_count, count), -jnp.log(float(count)), dtype=jnp.float64)
     times = problem.initial_time.reshape((case_count,))
-    cumulative = jnp.zeros((case_count,), dtype=float)
+    cumulative = jnp.zeros((case_count,), dtype=jnp.float64)
     alive = jnp.stack(initial_valid)
     final_status = jnp.where(
         alive, PARTICLE_FILTER_SUCCESS, PARTICLE_FILTER_NONFINITE
@@ -221,7 +221,7 @@ def conditional_particle_filter(
                 step_weights.append(log_weights[case_index])
                 step_ancestors.append(identity)
                 step_transition_valid.append(
-                    jnp.full((count,), alive[case_index], dtype=bool)
+                    jnp.full((count,), alive[case_index], dtype=jnp.bool_)
                 )
                 step_increments.append(jnp.asarray(0.0))
                 step_cumulative.append(cumulative[case_index])
@@ -556,7 +556,7 @@ def particle_marginal_metropolis_hastings(
     current = jax.tree_util.tree_map(jnp.asarray, initial_parameters)
     if not jax.tree_util.tree_leaves(current):
         raise ValueError("initial_parameters must be non-empty.")
-    current_prior = jnp.asarray(log_prior(current), dtype=float).reshape(())
+    current_prior = jnp.asarray(log_prior(current), dtype=jnp.float64).reshape(())
     initial_problem = problem(current)
     if not isinstance(initial_problem, StateSpaceProblem):
         raise TypeError("problem(parameters) must return a StateSpaceProblem.")
@@ -581,7 +581,7 @@ def particle_marginal_metropolis_hastings(
     for iteration in range(total_steps):
         proposal_key = jr.fold_in(jr.fold_in(key, 3), iteration)
         candidate = proposal.sample(proposal_key, current)
-        candidate_prior = jnp.asarray(log_prior(candidate), dtype=float).reshape(())
+        candidate_prior = jnp.asarray(log_prior(candidate), dtype=jnp.float64).reshape(())
         candidate_likelihood = jnp.asarray(-jnp.inf)
         if bool(jnp.isfinite(candidate_prior)):
             candidate_problem = problem(candidate)

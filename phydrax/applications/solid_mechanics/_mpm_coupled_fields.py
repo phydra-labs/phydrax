@@ -162,13 +162,13 @@ class MPMCoupledBoundaryPlan(StrictModule, NonTrainableState):
         temperature_values: ArrayLike,
         heat_flux: ArrayLike,
     ):
-        pressure_mask_ = np.asarray(pressure_mask, dtype=bool)
-        temperature_mask_ = np.asarray(temperature_mask, dtype=bool)
+        pressure_mask_ = np.asarray(pressure_mask, dtype=np.bool_)
+        temperature_mask_ = np.asarray(temperature_mask, dtype=np.bool_)
         if pressure_mask_.shape != temperature_mask_.shape:
             raise ValueError("Coupled boundary masks must share grid shape.")
         shape = pressure_mask_.shape
         arrays = tuple(
-            np.broadcast_to(np.asarray(value, dtype=float), shape)
+            np.broadcast_to(np.asarray(value, dtype=np.float64), shape)
             for value in (
                 pressure_values,
                 pressure_flux,
@@ -229,7 +229,7 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
         boundaries: MPMCoupledBoundaryPlan,
         /,
     ):
-        shape = tuple(int(value) for value in grid_shape)
+        shape = tuple(grid_shape)
         spacing_ = tuple(float(value) for value in spacing)
         periodic_ = tuple(bool(value) for value in periodic)
         if (
@@ -388,7 +388,6 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
             lambda values: function(*values),
             primals,
         )
-        residual_values = linearization.primal
         tangent_values = linearization.jvp(tangents)
         transpose = linearization.vjp(
             (

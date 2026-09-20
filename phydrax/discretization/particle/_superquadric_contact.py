@@ -40,9 +40,9 @@ class SuperquadricSetPlan(StrictModule, NonTrainableState):
         fixed_mask: ArrayLike | None = None,
         plan_id: str | None = None,
     ):
-        axes = np.asarray(semi_axes, dtype=float)
-        first = np.asarray(first_blockiness, dtype=float)
-        second = np.asarray(second_blockiness, dtype=float)
+        axes = np.asarray(semi_axes, dtype=np.float64)
+        first = np.asarray(first_blockiness, dtype=np.float64)
+        second = np.asarray(second_blockiness, dtype=np.float64)
         material = np.asarray(material_ids)
         if axes.ndim != 2 or axes.shape[1] != 3 or axes.shape[0] == 0:
             raise ValueError("semi_axes must have nonempty shape (body,3).")
@@ -65,9 +65,9 @@ class SuperquadricSetPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Superquadric shape/material parameters are invalid.")
         fixed = (
-            np.zeros((count,), dtype=bool)
+            np.zeros((count,), dtype=np.bool_)
             if fixed_mask is None
-            else np.asarray(fixed_mask, dtype=bool)
+            else np.asarray(fixed_mask, dtype=np.bool_)
         )
         if fixed.shape != (count,):
             raise ValueError("fixed_mask must have body-capacity shape.")

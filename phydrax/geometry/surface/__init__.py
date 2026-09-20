@@ -4,6 +4,8 @@
 
 """Authoritative surface geometry, audits, selections, and intersections."""
 
+from importlib import import_module
+
 from ._contracts import (
     InterfaceSide,
     SurfaceAuditPolicy,
@@ -17,11 +19,8 @@ from ._contracts import (
     SurfaceSelection,
     SurfaceValidityCertificate,
 )
-from ._g1_multipatch import *  # noqa: F403
 from ._g1_multipatch import __all__ as _g1_multipatch_all
-from ._high_order import *  # noqa: F403
 from ._high_order import __all__ as _high_order_all
-from ._interop import *  # noqa: F403
 from ._interop import __all__ as _interop_all
 from ._intersection import (
     intersect_plane_surface,
@@ -31,6 +30,23 @@ from ._intersection import (
     PlaneSurfaceSection,
 )
 from ._model import SurfaceModel, SurfaceRealization
+
+
+_FACADE_EXPORT_MODULES = ("._g1_multipatch", "._high_order", "._interop")
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

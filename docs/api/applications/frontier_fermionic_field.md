@@ -91,7 +91,7 @@ q(insert)/q(remove) = k / (number_of_sites × β).
 ```
 
 `LowOrderFermionDiagramMonteCarloPlan` instead samples a finite caller-supplied
-fermionic diagram catalogue with a reversible proposal matrix. It retains the
+fermionic diagram catalog with a reversible proposal matrix. It retains the
 raw configuration index, perturbative order, phase, proposal ratio, weight
 ratio, acceptance probability, and decision at every step. Both controls
 report detailed balance, order autocorrelation/ESS, phase covariance, average

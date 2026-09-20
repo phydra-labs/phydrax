@@ -92,7 +92,7 @@ class ReactionWheelEffector(StrictModule, NonTrainableState):
 
     def __call__(self, time, state: VehicleState, command, /):
         del time
-        wheel_count = int(self.maximum_torque.size)
+        wheel_count = self.maximum_torque.size
         requested = jnp.asarray(command)[
             self.command_offset : self.command_offset + wheel_count
         ]

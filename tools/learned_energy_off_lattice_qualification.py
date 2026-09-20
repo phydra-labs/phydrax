@@ -713,8 +713,7 @@ def _runtime_record(
         },
         "reference": {
             "operation": (
-                "JIT D2V17PeriodicTransportPlan.transport applied independently "
-                "to f and g"
+                "JIT D2V17PeriodicTransportPlan.transport applied independently to f and g"
             ),
             "population_count_per_field": 17,
             "population_field_count": 2,
@@ -949,8 +948,7 @@ def build_report(
         "scope": {
             "stage": "deterministic D2V37 off-lattice transport qualification",
             "claim": (
-                "periodic conservative positive D2V37 off-lattice population "
-                "transport only"
+                "periodic conservative positive D2V37 off-lattice population transport only"
             ),
             "included": [
                 "prepared periodic D2V37 bilinear departure transfers",
@@ -987,8 +985,7 @@ def build_report(
                 "two independent D2V17 exact periodic pulls, one each for f and g"
             ),
             "runtime_interpretation": (
-                "descriptive only because D2V37 and D2V17 differ in population count "
-                "and transport semantics"
+                "descriptive only because D2V37 and D2V17 differ in population count and transport semantics"
             ),
         },
         "configuration": dict(configuration),

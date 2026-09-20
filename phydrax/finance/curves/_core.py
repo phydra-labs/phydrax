@@ -94,7 +94,7 @@ def _real_vector(value: ArrayLike, name: str, /) -> Array:
     if array.ndim != 1:
         raise ValueError(f"{name} must be a rank-one array.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -129,7 +129,7 @@ class CurveGrid(StrictModule):
 
     @property
     def node_count(self) -> int:
-        return int(self.times.shape[0])
+        return self.times.shape[0]
 
 
 class InterpolationPolicy(StrictModule):
@@ -251,7 +251,7 @@ def _interpolate_inside(
     method: InterpolationMethod,
     /,
 ) -> Array:
-    count = int(grid.shape[0])
+    count = grid.shape[0]
     clipped = jnp.clip(query, grid[0], grid[-1])
     lower = jnp.clip(jnp.searchsorted(grid, clipped, side="right") - 1, 0, count - 2)
     upper = lower + 1
@@ -321,7 +321,7 @@ def _parameter_derivative(
         policy.right_extrapolation, definition.representation
     )
     times = _bounded_query(times, grid, left, right)
-    count = int(grid.shape[0])
+    count = grid.shape[0]
     clipped = jnp.clip(times, grid[0], grid[-1])
     lower = jnp.clip(jnp.searchsorted(grid, clipped, side="right") - 1, 0, count - 2)
     if policy.method is InterpolationMethod.LINEAR:
@@ -559,7 +559,7 @@ class PreparedCurve(StrictModule):
         if jnp.issubdtype(query.dtype, jnp.complexfloating):
             raise TypeError("Curve query times must be real-valued.")
         if not jnp.issubdtype(query.dtype, jnp.inexact):
-            query = query.astype(float)
+            query = query.astype("float64")
         return eqx.error_if(
             query,
             jnp.any(~jnp.isfinite(query)) | jnp.any(query < 0.0),

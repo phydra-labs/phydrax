@@ -110,18 +110,18 @@ class FermiSurfacePatchRGPlan(StrictModule, NonTrainableState):
         routing_tolerance: float = 1.0e-8,
         maximum_work_elements: int = 8_000_000,
     ):
-        momenta = np.asarray(patch_momenta, dtype=float)
-        reciprocal = np.asarray(reciprocal_vectors, dtype=float)
-        velocities = np.asarray(fermi_velocities, dtype=float)
-        weights = np.asarray(patch_weights, dtype=float)
-        radial = np.asarray(radial_nodes, dtype=float)
-        radial_weight = np.asarray(radial_weights, dtype=float)
+        momenta = np.asarray(patch_momenta, dtype=np.float64)
+        reciprocal = np.asarray(reciprocal_vectors, dtype=np.float64)
+        velocities = np.asarray(fermi_velocities, dtype=np.float64)
+        weights = np.asarray(patch_weights, dtype=np.float64)
+        radial = np.asarray(radial_nodes, dtype=np.float64)
+        radial_weight = np.asarray(radial_weights, dtype=np.float64)
         beta_ = float(beta)
         frequency_count = int(matsubara_count)
         tolerance = float(routing_tolerance)
         capacity = int(maximum_work_elements)
         selected = FermionicEnergyShellRegulator() if regulator is None else regulator
-        patches = int(momenta.shape[0]) if momenta.ndim == 2 else 0
+        patches = momenta.shape[0] if momenta.ndim == 2 else 0
         work = (2 * patches) ** 4 * 5 + 4 * patches * patches * radial.size * max(
             frequency_count, 0
         )
@@ -136,7 +136,7 @@ class FermiSurfacePatchRGPlan(StrictModule, NonTrainableState):
             or radial_weight.shape != radial.shape
             or np.any(~np.isfinite(momenta))
             or np.any(~np.isfinite(reciprocal))
-            or abs(np.linalg.det(reciprocal)) <= np.finfo(float).eps
+            or abs(np.linalg.det(reciprocal)) <= np.finfo(np.float64).eps
             or np.any(~np.isfinite(velocities))
             or np.any(np.linalg.norm(velocities, axis=1) <= 0.0)
             or np.any(~np.isfinite(weights))
@@ -193,7 +193,7 @@ class FermiSurfacePatchRGPlan(StrictModule, NonTrainableState):
         count = momenta.shape[0]
         outgoing = np.empty((count, count, count), dtype=np.int32)
         wraps = np.empty((count, count, count, 2), dtype=np.int32)
-        residuals = np.empty((count, count, count), dtype=float)
+        residuals = np.empty((count, count, count), dtype=np.float64)
         for first in range(count):
             for second in range(count):
                 for third in range(count):
@@ -243,7 +243,7 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
 
     @property
     def patch_count(self) -> int:
-        return int(self.plan.patch_momenta.shape[0])
+        return self.plan.patch_momenta.shape[0]
 
     def vertex(self, values: ArrayLike, /) -> SU2FermiSurfacePatchVertex:
         value = jnp.asarray(values)

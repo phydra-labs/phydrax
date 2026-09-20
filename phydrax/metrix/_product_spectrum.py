@@ -52,7 +52,7 @@ def _lowest_product_modes(
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Enumerate the lowest Cartesian sums without materializing every mode."""
-    shape = tuple(int(values.size) for values in eigenvalue_arrays)
+    shape = tuple(values.size for values in eigenvalue_arrays)
     start = tuple(0 for _ in shape)
     heap = [(float(sum(values[0] for values in eigenvalue_arrays)), start)]
     visited = {start}
@@ -138,9 +138,9 @@ def product_laplacian_eigenbasis(
     entity_count = math.prod(entity_shapes)
     flat_entities = np.arange(entity_count)
     selected_modes = mode_indices[:requested]
-    functions = np.ones((entity_count, requested), dtype=float)
-    measure = np.ones((entity_count,), dtype=float)
-    active = np.ones((entity_count,), dtype=bool)
+    functions = np.ones((entity_count, requested), dtype=np.float64)
+    measure = np.ones((entity_count,), dtype=np.float64)
+    active = np.ones((entity_count,), dtype=np.bool_)
     entity_stride = entity_count
     for factor_index, factor in enumerate(resolved):
         entity_stride //= factor.entity_count

@@ -48,21 +48,20 @@ def _take(value: Array, axis: int, index: int, /) -> Array:
 
 
 def _one_sided_first_boundaries(value: Array, derivative: Array, axis: int, /) -> Array:
-    coefficients = jnp.asarray(
-        (
-            (-25.0, 48.0, -36.0, 16.0, -3.0),
-            (-3.0, -10.0, 18.0, -6.0, 1.0),
-        ),
-        dtype=value.dtype,
-    ) / 12.0
+    coefficients = (
+        jnp.asarray(
+            (
+                (-25.0, 48.0, -36.0, 16.0, -3.0),
+                (-3.0, -10.0, 18.0, -6.0, 1.0),
+            ),
+            dtype=value.dtype,
+        )
+        / 12.0
+    )
     lower0 = sum(coefficients[0, k] * _take(value, axis, k) for k in range(5))
     lower1 = sum(coefficients[1, k] * _take(value, axis, k) for k in range(5))
-    upper0 = -sum(
-        coefficients[0, k] * _take(value, axis, -1 - k) for k in range(5)
-    )
-    upper1 = -sum(
-        coefficients[1, k] * _take(value, axis, -1 - k) for k in range(5)
-    )
+    upper0 = -sum(coefficients[0, k] * _take(value, axis, -1 - k) for k in range(5))
+    upper1 = -sum(coefficients[1, k] * _take(value, axis, -1 - k) for k in range(5))
     derivative = _set_index(derivative, axis, 0, lower0)
     derivative = _set_index(derivative, axis, 1, lower1)
     derivative = _set_index(derivative, axis, -1, upper0)
@@ -123,21 +122,20 @@ def centered_second_derivative(
         return derivative / h**2
     if boundary != "one_sided":
         raise ValueError("boundary must be 'periodic' or 'one_sided'.")
-    coefficients = jnp.asarray(
-        (
-            (45.0, -154.0, 214.0, -156.0, 61.0, -10.0),
-            (10.0, -15.0, -4.0, 14.0, -6.0, 1.0),
-        ),
-        dtype=value.dtype,
-    ) / 12.0
+    coefficients = (
+        jnp.asarray(
+            (
+                (45.0, -154.0, 214.0, -156.0, 61.0, -10.0),
+                (10.0, -15.0, -4.0, 14.0, -6.0, 1.0),
+            ),
+            dtype=value.dtype,
+        )
+        / 12.0
+    )
     lower0 = sum(coefficients[0, k] * _take(value, actual_axis, k) for k in range(6))
     lower1 = sum(coefficients[1, k] * _take(value, actual_axis, k) for k in range(6))
-    upper0 = sum(
-        coefficients[0, k] * _take(value, actual_axis, -1 - k) for k in range(6)
-    )
-    upper1 = sum(
-        coefficients[1, k] * _take(value, actual_axis, -1 - k) for k in range(6)
-    )
+    upper0 = sum(coefficients[0, k] * _take(value, actual_axis, -1 - k) for k in range(6))
+    upper1 = sum(coefficients[1, k] * _take(value, actual_axis, -1 - k) for k in range(6))
     derivative = _set_index(derivative, actual_axis, 0, lower0)
     derivative = _set_index(derivative, actual_axis, 1, lower1)
     derivative = _set_index(derivative, actual_axis, -1, upper0)
@@ -251,7 +249,7 @@ class FourthOrderDerivatives(StrictModule, NonTrainableState):
         boundary: DerivativeBoundary = "periodic",
         dissipation_strength: float = 0.0,
     ):
-        shape = tuple(int(value) for value in grid_shape)
+        shape = tuple(grid_shape)
         steps = tuple(float(value) for value in spacing)
         strength = float(dissipation_strength)
         minimum = 7 if strength > 0.0 else (5 if boundary == "periodic" else 6)
@@ -311,9 +309,7 @@ class FourthOrderDerivatives(StrictModule, NonTrainableState):
         value = self._validate(field)
         return jnp.stack(
             tuple(
-                jnp.stack(
-                    tuple(self.mixed_second(value, i, j) for j in range(3)), axis=0
-                )
+                jnp.stack(tuple(self.mixed_second(value, i, j) for j in range(3)), axis=0)
                 for i in range(3)
             ),
             axis=0,
@@ -333,9 +329,7 @@ class FourthOrderDerivatives(StrictModule, NonTrainableState):
         value = self._validate(field)
         speed = jnp.asarray(velocity)
         if speed.shape != (3,) + self.grid_shape:
-            raise ValueError(
-                f"velocity must have shape {(3,) + self.grid_shape}."
-            )
+            raise ValueError(f"velocity must have shape {(3,) + self.grid_shape}.")
         return sum(speed[i] * self.upwind(value, speed[i], i) for i in range(3))
 
     def dissipation(self, field: ArrayLike, /) -> Array:

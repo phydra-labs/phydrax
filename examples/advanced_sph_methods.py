@@ -37,7 +37,7 @@ compiled = phx.equations.compile_weakly_compressible_sph_problem(
     method,
     neighborhood=neighborhood_plan,
 )
-position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
 velocity = -0.02 * (position - 0.5)
 initial = compiled.initialize_state(position, velocity)
 transform = phx.solver.ShepardDensityRenormalizationTransform(

@@ -119,7 +119,7 @@ def _scalar(value: ArrayLike, owner: str, /, *, positive: bool = False) -> Array
     raw = jnp.asarray(value)
     if raw.dtype == jnp.bool_:
         raise TypeError(f"{owner} must be numeric, not boolean.")
-    array = raw.astype(float)
+    array = raw.astype("float64")
     if array.shape != ():
         raise ValueError(f"{owner} must be scalar.")
     host = float(array)
@@ -339,7 +339,7 @@ class StoichiometricRuntime(StrictModule):
         raw = jnp.asarray(parameters)
         if raw.dtype == jnp.bool_:
             raise TypeError("Runtime parameters must not be boolean.")
-        values = raw.astype(float)
+        values = raw.astype("float64")
         if values.ndim != 2 or values.shape[-1] != 4:
             raise ValueError("Runtime parameters must have shape (process_count, 4).")
         self.parameters = values
@@ -484,8 +484,7 @@ class StoichiometricNetworkPlan(StrictModule, NonTrainableState):
             unknown = referenced - known_species
             if unknown:
                 raise ValueError(
-                    f"Process {process.name!r} references unknown species "
-                    f"{sorted(unknown)!r}."
+                    f"Process {process.name!r} references unknown species {sorted(unknown)!r}."
                 )
             changed_types = {
                 (
@@ -496,8 +495,7 @@ class StoichiometricNetworkPlan(StrictModule, NonTrainableState):
             }
             if len(changed_types) != 1:
                 raise ValueError(
-                    f"Process {process.name!r} changes species with incompatible "
-                    "quantity or unit types."
+                    f"Process {process.name!r} changes species with incompatible quantity or unit types."
                 )
         maximum_entries = max(len(item.stoichiometry) for item in process_values)
         if stoichiometry_capacity is None:
@@ -585,13 +583,13 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
             (reaction_count, plan.stoichiometry_capacity), dtype=np.int32
         )
         sparse_values = np.zeros_like(sparse_species)
-        sparse_mask = np.zeros_like(sparse_species, dtype=bool)
+        sparse_mask = np.zeros_like(sparse_species, dtype=np.bool_)
         orders = np.zeros_like(dense)
-        normalization = np.ones((reaction_count, species_count), dtype=float)
+        normalization = np.ones((reaction_count, species_count), dtype=np.float64)
         kind = np.zeros(reaction_count, dtype=np.int32)
-        parameters = np.zeros((reaction_count, 4), dtype=float)
+        parameters = np.zeros((reaction_count, 4), dtype=np.float64)
         propensity_species = np.zeros(reaction_count, dtype=np.int32)
-        repression = np.zeros(reaction_count, dtype=bool)
+        repression = np.zeros(reaction_count, dtype=np.bool_)
         maximum_order = 0
         for process_index, process in enumerate(plan.processes):
             for slot, (species_name, value) in enumerate(process.stoichiometry):
@@ -654,15 +652,15 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
                 propensity_species[process_index] = species_index[propensity.source]
                 parameters[process_index] = [float(propensity.rate), 1.0, 1.0, 0.0]
         copy_number = np.asarray(
-            [item.quantity == "count" for item in plan.species], dtype=bool
+            [item.quantity == "count" for item in plan.species], dtype=np.bool_
         )
-        reservoir = np.asarray([item.reservoir for item in plan.species], dtype=bool)
+        reservoir = np.asarray([item.reservoir for item in plan.species], dtype=np.bool_)
         dynamic = dense.copy()
         dynamic[:, reservoir] = 0
         availability = np.maximum(-dense, 0)
         measures = np.asarray(
             [compartment_measure[item.compartment] for item in plan.species],
-            dtype=float,
+            dtype=np.float64,
         )
         basis_rows = []
         basis_units = []
@@ -679,25 +677,25 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
                 ],
                 dtype=np.int32,
             )
-            block = dense[:, indices].astype(float)
+            block = dense[:, indices].astype("float64")
             singular_values = np.linalg.svd(block, compute_uv=False)
             threshold = (
                 max(block.shape)
-                * np.finfo(float).eps
+                * np.finfo(np.float64).eps
                 * max(float(np.max(singular_values, initial=0.0)), 1.0)
             )
             block_rank = int(np.sum(singular_values > threshold))
             rank += block_rank
             _, _, right = np.linalg.svd(block, full_matrices=True)
             for local_basis in right[block_rank:]:
-                embedded = np.zeros(species_count, dtype=float)
+                embedded = np.zeros(species_count, dtype=np.float64)
                 embedded[indices] = local_basis
                 basis_rows.append(embedded)
                 basis_units.append(f"{quantity}:{unit}")
         basis = (
             np.asarray(basis_rows)
             if basis_rows
-            else np.zeros((0, species_count), dtype=float)
+            else np.zeros((0, species_count), dtype=np.float64)
         )
         residual = basis @ dense.T
         maximum_residual = float(np.max(np.abs(residual), initial=0.0))
@@ -840,7 +838,7 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
             ),
         )
         feasible = (
-            jnp.ones((self.process_count,), dtype=bool)
+            jnp.ones((self.process_count,), dtype=jnp.bool_)
             if mode == "deterministic"
             else jnp.all(values[None, :] >= self.availability, axis=-1)
         )
@@ -1078,8 +1076,7 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
         for species in self.plan.species:
             if species.thermochemical_name is None:
                 raise ValueError(
-                    "Every systems-biology species requires thermochemical_name "
-                    "for binding."
+                    "Every systems-biology species requires thermochemical_name for binding."
                 )
             if species.thermochemical_name not in mechanism_species:
                 raise ValueError(
@@ -1111,20 +1108,20 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
                 raise ValueError("Thermochemical bindings require mass-action processes.")
             if process.thermochemical_reaction not in reaction_names:
                 raise ValueError(
-                    "Unknown thermochemical reaction "
-                    f"{process.thermochemical_reaction!r}."
+                    f"Unknown thermochemical reaction {process.thermochemical_reaction!r}."
                 )
             reaction_index = reaction_names[process.thermochemical_reaction]
             if reaction_index in reaction_indices:
                 raise ValueError("Thermochemical reaction bindings must be one-to-one.")
-            biological_reactant = biological_orders[process_index].astype(float)
+            biological_reactant = biological_orders[process_index].astype("float64")
             biological_product = biological_reactant + biological_net[process_index]
             if np.any(biological_product < 0.0):
                 raise ValueError(
-                    "A thermochemical mass-action binding requires kinetic "
-                    "orders to cover every consumed species."
+                    "A thermochemical mass-action binding requires kinetic orders to cover every consumed species."
                 )
-            represented_reactant = np.zeros(mechanism.schema.species_count, dtype=float)
+            represented_reactant = np.zeros(
+                mechanism.schema.species_count, dtype=np.float64
+            )
             represented_product = np.zeros_like(represented_reactant)
             represented_orders = np.zeros_like(represented_reactant)
             mapped = np.asarray(species_indices)

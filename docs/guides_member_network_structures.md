@@ -225,7 +225,7 @@ compression utilization, displacements, local buckling utilization, and the
 governing member.
 
 `ContinuousMemberSizingProblem` accepts a design evaluator that performs the
-required member-network analyses and exposes ordinary PhydraX objectives and
+required member-network analyzes and exposes ordinary PhydraX objectives and
 constraints. `select_catalog_member_sizing` performs deterministic bounded
 catalog enumeration.
 

@@ -355,7 +355,7 @@ def test_equivalent_slab_retrieval_valid_branch_zero_and_multimode_cases() -> No
             value.deembedded_right_to_left_transmission,
         ),
         retrieval.sweep,
-        (jnp.zeros((3,), dtype=complex), jnp.zeros((3,), dtype=complex)),
+        (jnp.zeros((3,), dtype="complex128"), jnp.zeros((3,), dtype="complex128")),
     )
     invalid = fm.retrieve_equivalent_slab(
         zero_transmission,

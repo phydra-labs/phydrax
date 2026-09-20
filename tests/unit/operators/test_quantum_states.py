@@ -10,14 +10,14 @@ import pytest
 import phydrax as phx
 
 
-SIGMA_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
-SIGMA_Y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype=complex)
-SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
+SIGMA_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
+SIGMA_Y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype="complex128")
+SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
 def test_pauli_expectations_norm_and_variance():
     time = phx.domain.TimeInterval(0.0, 1.0)
-    state = time.Function()(jnp.asarray([1.0, 1.0], dtype=complex) / jnp.sqrt(2.0))
+    state = time.Function()(jnp.asarray([1.0, 1.0], dtype="complex128") / jnp.sqrt(2.0))
     sigma_x = time.Function()(SIGMA_X)
     sigma_y = time.Function()(SIGMA_Y)
     sigma_z = time.Function()(SIGMA_Z)
@@ -54,7 +54,7 @@ def test_rectangular_density_factor_is_physical():
     time = phx.domain.TimeInterval(0.0, 1.0)
     factor_value = jnp.asarray(
         [[1.0 + 1.0j, 0.2], [0.3j, 1.4], [0.5, -0.7j]],
-        dtype=complex,
+        dtype="complex128",
     )
     density = phx.operators.density_from_factor(time.Function()(factor_value))
     value = eqx.filter_jit(density.func)()

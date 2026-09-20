@@ -87,16 +87,16 @@ class AffineFeedbackPolicy(AbstractControlParameterization):
             raise ValueError(
                 f"feedback_gain must have shape {expected}; got {gain.shape}."
             )
-        control_size = int(gain.shape[-2])
+        control_size = gain.shape[-2]
         expected_bias = expected_bias_prefix + (control_size,)
         if tuple(bias.shape) != expected_bias:
             raise ValueError(
                 f"feedforward must have shape {expected_bias}; got {bias.shape}."
             )
         if not jnp.issubdtype(gain.dtype, jnp.inexact):
-            gain = gain.astype(float)
+            gain = gain.astype("float64")
         if not jnp.issubdtype(bias.dtype, jnp.inexact):
-            bias = bias.astype(float)
+            bias = bias.astype("float64")
         if not _allow_nonfinite:
             gain = eqx.error_if(
                 gain, jnp.any(~jnp.isfinite(gain)), "feedback_gain must be finite."
@@ -163,7 +163,7 @@ class AffineFeedbackPolicy(AbstractControlParameterization):
                 f"Feedback state must have shape {expected_state}; got {state_.shape}."
             )
         if not jnp.issubdtype(state_.dtype, jnp.inexact):
-            state_ = state_.astype(float)
+            state_ = state_.astype("float64")
         state_ = eqx.error_if(
             state_, jnp.any(~jnp.isfinite(state_)), "Feedback state must be finite."
         )
@@ -218,7 +218,7 @@ class QuadraticValueFunction(StrictModule):
         finite = time_grid is not None
         if matrix.ndim < 2 or matrix.shape[-2] != matrix.shape[-1]:
             raise ValueError("Value matrices must end in square matrix dimensions.")
-        n = int(matrix.shape[-1])
+        n = matrix.shape[-1]
         prefix = cases + ((time_grid.num_times,) if finite else ())
         if tuple(matrix.shape) != prefix + (n, n):
             raise ValueError(
@@ -232,7 +232,7 @@ class QuadraticValueFunction(StrictModule):
             raise ValueError(
                 f"Value constants must have shape {prefix}; got {scalar.shape}."
             )
-        dtype = jnp.result_type(matrix, vector, scalar, float)
+        dtype = jnp.result_type(matrix, vector, scalar, jnp.float64)
         self.matrices = matrix.astype(dtype)
         self.linear = vector.astype(dtype)
         self.constants = scalar.astype(dtype)
@@ -353,8 +353,8 @@ def _finite_inputs(
             "dynamics_matrices must have shape case_shape + (horizon, n, n)."
         )
     case_shape = tuple(a.shape[:-3])
-    horizon = int(a.shape[-3])
-    n = int(a.shape[-1])
+    horizon = a.shape[-3]
+    n = a.shape[-1]
     if horizon < 1:
         raise ValueError("Finite-horizon LQR requires at least one stage.")
     b = jnp.asarray(control_matrices)
@@ -365,10 +365,9 @@ def _finite_inputs(
         or b.shape[-2] != n
     ):
         raise ValueError(
-            "control_matrices must have shape case_shape + (horizon, n, m); "
-            f"got {b.shape}."
+            f"control_matrices must have shape case_shape + (horizon, n, m); got {b.shape}."
         )
-    m = int(b.shape[-1])
+    m = b.shape[-1]
     a = _require_shape(a, case_shape + (horizon, n, n), "dynamics_matrices")
     b = _require_shape(b, case_shape + (horizon, n, m), "control_matrices")
     q = _require_shape(state_costs, case_shape + (horizon, n, n), "state_costs")
@@ -376,7 +375,7 @@ def _finite_inputs(
     q_terminal = _require_shape(
         terminal_state_cost, case_shape + (n, n), "terminal_state_cost"
     )
-    dtype = jnp.result_type(a, b, q, r, q_terminal, float)
+    dtype = jnp.result_type(a, b, q, r, q_terminal, jnp.float64)
     zeros = lambda shape: jnp.zeros(shape, dtype=dtype)
     c = (
         zeros(case_shape + (horizon, n))
@@ -730,8 +729,8 @@ def continuous_lqr(
     b_ = jnp.asarray(b)
     r_ = jnp.asarray(r)
     case_shape = tuple(a_.shape[:-2])
-    n = int(a_.shape[-1])
-    m = int(b_.shape[-1])
+    n = a_.shape[-1]
+    m = b_.shape[-1]
     s_ = (
         jnp.zeros(case_shape + (n, m), dtype=riccati.matrix.dtype)
         if s is None
@@ -795,8 +794,8 @@ def discrete_lqr(
     b_ = jnp.asarray(b)
     r_ = jnp.asarray(r)
     case_shape = tuple(a_.shape[:-2])
-    n = int(a_.shape[-1])
-    m = int(b_.shape[-1])
+    n = a_.shape[-1]
+    m = b_.shape[-1]
     s_ = (
         jnp.zeros(case_shape + (n, m), dtype=riccati.matrix.dtype)
         if s is None

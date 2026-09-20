@@ -84,7 +84,7 @@ class TokamakTransportCoefficients(StrictModule):
             or ion.shape != particle.shape
         ):
             raise ValueError("Transport conductances must share one rank-one face shape.")
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if valid_.shape != ():
             raise ValueError("Transport coefficient validity must be scalar.")
         identity = str(model_id).strip()
@@ -254,7 +254,7 @@ class PreparedTokamakCoreTransport(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.geometry.cell_volume_m3.shape[0])
+        return self.geometry.cell_volume_m3.shape[0]
 
     def conserved_density(self, state: TokamakCoreState, /) -> Array:
         if not isinstance(state, TokamakCoreState):

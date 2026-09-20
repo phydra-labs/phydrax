@@ -398,7 +398,7 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
 
     def _zero_forbidden_modes(self, state: ArrayLike, /) -> Array:
         value = self._validate_state(state, "Distributed projected velocity")
-        mask = jnp.real(self.admissibility_mask).astype(bool)
+        mask = jnp.real(self.admissibility_mask).astype("bool")
         return self.execution.place(
             value * mask[..., None],
             representation="modal",
@@ -634,7 +634,7 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
             infinity,
         )
         admissible_k2 = jnp.where(
-            jnp.real(self.admissibility_mask).astype(bool),
+            jnp.real(self.admissibility_mask).astype("bool"),
             jnp.real(self.wavenumber_squared),
             jnp.zeros_like(jnp.real(self.wavenumber_squared)),
         )

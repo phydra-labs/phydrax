@@ -133,7 +133,7 @@ def test_output_spec_splits_prediction_and_target_shapes_without_casting_labels(
     with pytest.raises(ValueError, match="target shape"):
         hard_output.validate_target(jnp.eye(3), batch)
     with pytest.raises(TypeError, match="integer or Boolean"):
-        hard_output.validate_target(labels.astype(float), batch)
+        hard_output.validate_target(labels.astype("float64"), batch)
 
 
 @pytest.mark.parametrize(
@@ -291,7 +291,7 @@ def test_nll_uses_point_grid_and_topology_geometry_masks_and_quadrature():
 
     grid = _grid_batch()
     grid_prediction, grid_targets = _paired(
-        grid, spec, jnp.zeros((2, 2)), jnp.zeros((2, 2), dtype=int)
+        grid, spec, jnp.zeros((2, 2)), jnp.zeros((2, 2), dtype="int64")
     )
     assert jnp.allclose(
         _evaluate(loss_integral, grid_prediction, grid, grid_targets),
@@ -303,7 +303,7 @@ def test_nll_uses_point_grid_and_topology_geometry_masks_and_quadrature():
         topology,
         spec,
         jnp.zeros((3,)),
-        jnp.asarray([0, 1, 99], dtype=int),
+        jnp.asarray([0, 1, 99], dtype="int64"),
     )
     assert jnp.allclose(
         _evaluate(loss_mean, topology_prediction, topology, topology_targets),

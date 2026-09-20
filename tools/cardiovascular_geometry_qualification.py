@@ -178,8 +178,8 @@ def qualify_affine_coordinates_and_microstructure(subdivisions: int) -> dict[str
     )
     return {
         "case": "manufactured-affine-tetrahedral-lv-slab",
-        "nodes": int(points.shape[0]),
-        "tetrahedra": int(fields.cell_values.shape[1]),
+        "nodes": points.shape[0],
+        "tetrahedra": fields.cell_values.shape[1],
         "boundary_roles_id": roles.roles_id,
         "coordinate_plan_id": coordinate_plan.plan_id,
         "coordinate_fields_id": fields.fields_id,

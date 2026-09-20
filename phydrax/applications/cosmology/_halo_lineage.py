@@ -115,7 +115,7 @@ class HaloTrackSnapshot(StrictModule, NonTrainableState):
         tracks = _array(track_ids, dtype=jnp.int64)
         hosts = _array(host_track_ids, dtype=jnp.int64)
         states = _array(lifecycle_states, dtype=jnp.int8)
-        active = _array(active_mask, dtype=bool)
+        active = _array(active_mask, dtype=jnp.bool_)
         snapshot = _array(snapshot_index, dtype=jnp.int32)
         if (
             rows.ndim != 1
@@ -195,8 +195,8 @@ class HaloTrackSnapshot(StrictModule, NonTrainableState):
         self.host_track_ids = hosts
         self.lifecycle_states = states
         self.active_mask = active
-        self.source_membership_known = _array(source_known, dtype=bool)
-        self.bound_membership_known = _array(bound_known, dtype=bool)
+        self.source_membership_known = _array(source_known, dtype=jnp.bool_)
+        self.bound_membership_known = _array(bound_known, dtype=jnp.bool_)
         self.source_membership_ids = source_memberships
         self.bound_membership_ids = bound_memberships
         self.snapshot_id = canonical_fingerprint(
@@ -237,8 +237,8 @@ class HaloLineageEventLedger(StrictModule, NonTrainableState):
         snapshots = _array(snapshot_indices, dtype=jnp.int32)
         tracks = _array(track_ids, dtype=jnp.int64)
         related = _array(related_track_ids, dtype=jnp.int64)
-        active = _array(active_mask, dtype=bool)
-        success = _array(successful, dtype=bool)
+        active = _array(active_mask, dtype=jnp.bool_)
+        success = _array(successful, dtype=jnp.bool_)
         if not (
             kinds.ndim == 1
             and snapshots.shape == kinds.shape
@@ -306,14 +306,14 @@ class HaloTracerEvidence(StrictModule, NonTrainableState):
     ):
         particles = _array(particle_ids, dtype=jnp.int64)
         ranks = _array(binding_ranks, dtype=jnp.int32)
-        present = _array(present_mask, dtype=bool)
+        present = _array(present_mask, dtype=jnp.bool_)
         candidates = _array(candidate_target_rows, dtype=jnp.int32)
         accepted_rows = _array(accepted_target_rows, dtype=jnp.int32)
         overlaps = _array(overlap_counts, dtype=jnp.int32)
         merit = _array(merits)
-        matched = _array(matched_mask, dtype=bool)
-        accepted = _array(accepted_mask, dtype=bool)
-        success = _array(successful, dtype=bool)
+        matched = _array(matched_mask, dtype=jnp.bool_)
+        accepted = _array(accepted_mask, dtype=jnp.bool_)
+        success = _array(successful, dtype=jnp.bool_)
         if (
             particles.ndim != 3
             or ranks.shape != particles.shape
@@ -396,10 +396,10 @@ class HaloLineageProduct(StrictModule, NonTrainableState):
         if any(item.track_ids.size != capacity for item in snapshots_):
             raise ValueError("All halo snapshots must use the same fixed capacity.")
         descendants = _array(descendant_track_ids, dtype=jnp.int64)
-        descendants_present = _array(descendant_mask, dtype=bool)
+        descendants_present = _array(descendant_mask, dtype=jnp.bool_)
         sinks = _array(sink_track_ids, dtype=jnp.int64)
-        sinks_present = _array(sink_mask, dtype=bool)
-        success = _array(successful, dtype=bool)
+        sinks_present = _array(sink_mask, dtype=jnp.bool_)
+        success = _array(successful, dtype=jnp.bool_)
         expected = (len(snapshots_), capacity)
         if (
             descendants.shape != expected
@@ -459,8 +459,7 @@ class ParticleCoreLineagePlan(StrictModule, NonTrainableState):
         /,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 snapshot_capacity,
                 halo_capacity,
                 tracer_capacity,
@@ -505,7 +504,7 @@ class ParticleCoreLineagePlan(StrictModule, NonTrainableState):
         bound_membership_ids: Sequence[Sequence[str]] | None = None,
     ) -> HaloLineageProduct:
         ids = np.asarray(source_halo_ids, dtype=np.int64)
-        active = np.asarray(active_mask, dtype=bool)
+        active = np.asarray(active_mask, dtype=np.bool_)
         shape = (self.snapshot_capacity, self.halo_capacity)
         transition_shape = (self.snapshot_capacity - 1, self.halo_capacity)
         if ids.shape != shape or active.shape != shape:
@@ -561,7 +560,7 @@ class ParticleCoreLineagePlan(StrictModule, NonTrainableState):
         tracer_present = (
             tracer_ids >= 0
             if tracer_present_mask is None
-            else np.asarray(tracer_present_mask, dtype=bool)
+            else np.asarray(tracer_present_mask, dtype=np.bool_)
         )
         if (
             hosts.shape != shape
@@ -578,16 +577,16 @@ class ParticleCoreLineagePlan(StrictModule, NonTrainableState):
         track_ids = np.full(shape, -1, dtype=np.int64)
         states = np.zeros(shape, dtype=np.int8)
         descendants = np.full(shape, -1, dtype=np.int64)
-        descendant_mask = np.zeros(shape, dtype=bool)
+        descendant_mask = np.zeros(shape, dtype=np.bool_)
         sink_tracks = np.full(shape, -1, dtype=np.int64)
-        sink_mask = np.zeros(shape, dtype=bool)
+        sink_mask = np.zeros(shape, dtype=np.bool_)
         candidate_rows = np.full(transition_shape, -1, dtype=np.int32)
         accepted_rows = np.full(transition_shape, -1, dtype=np.int32)
         overlaps = np.zeros(transition_shape, dtype=np.int32)
-        merits = np.zeros(transition_shape, dtype=float)
-        matched_mask = np.zeros(transition_shape, dtype=bool)
-        accepted_mask = np.zeros(transition_shape, dtype=bool)
-        transition_success = np.ones(self.snapshot_capacity - 1, dtype=bool)
+        merits = np.zeros(transition_shape, dtype=np.float64)
+        matched_mask = np.zeros(transition_shape, dtype=np.bool_)
+        accepted_mask = np.zeros(transition_shape, dtype=np.bool_)
+        transition_success = np.ones(self.snapshot_capacity - 1, dtype=np.bool_)
         events: list[tuple[int, int, int, int, bool]] = []
 
         first_rows = np.flatnonzero(active[0])
@@ -601,9 +600,9 @@ class ParticleCoreLineagePlan(StrictModule, NonTrainableState):
 
         for transition, match in enumerate(matches):
             raw_descendant = np.asarray(match.descendant_indices, dtype=np.int64)
-            raw_merits = np.asarray(match.merits, dtype=float)
+            raw_merits = np.asarray(match.merits, dtype=np.float64)
             raw_overlaps = np.asarray(match.overlap_counts, dtype=np.int32)
-            raw_matched = np.asarray(match.matched, dtype=bool)
+            raw_matched = np.asarray(match.matched, dtype=np.bool_)
             successful = bool(np.asarray(match.successful))
             if not (
                 raw_descendant.shape == (self.halo_capacity,)
@@ -770,8 +769,8 @@ class ParticleCoreLineagePlan(StrictModule, NonTrainableState):
         event_snapshots = np.full(self.event_capacity, -1, dtype=np.int32)
         event_tracks = np.full(self.event_capacity, -1, dtype=np.int64)
         event_related = np.full(self.event_capacity, -1, dtype=np.int64)
-        event_active = np.zeros(self.event_capacity, dtype=bool)
-        event_success = np.zeros(self.event_capacity, dtype=bool)
+        event_active = np.zeros(self.event_capacity, dtype=np.bool_)
+        event_success = np.zeros(self.event_capacity, dtype=np.bool_)
         for index, (kind, snapshot, track, related, success) in enumerate(events):
             event_kinds[index] = kind
             event_snapshots[index] = snapshot

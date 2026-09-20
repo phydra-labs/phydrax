@@ -95,13 +95,13 @@ def _validated_closed_surface_mesh(mesh: CellMesh, /) -> None:
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolygonalConnectivity):
         raise TypeError("Triangular boundary adaptation requires polygonal connectivity.")
-    boundary_edges = np.asarray(connectivity.boundary_edges, dtype=bool)
+    boundary_edges = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
     edge_counts = np.asarray(connectivity.edge_cell_counts, dtype=np.int32)
     if np.any(boundary_edges) or np.any(edge_counts != 2):
         raise ValueError("Boundary adaptation requires a closed two-manifold surface.")
     cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
-    cell_valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
-    cell_signs = np.asarray(connectivity.cell_edge_signs, dtype=float)
+    cell_valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
+    cell_signs = np.asarray(connectivity.cell_edge_signs, dtype=np.float64)
     orientation_balance = np.bincount(
         cell_edges[cell_valid],
         weights=cell_signs[cell_valid],
@@ -110,7 +110,7 @@ def _validated_closed_surface_mesh(mesh: CellMesh, /) -> None:
     if np.any(orientation_balance != 0.0):
         raise ValueError("Boundary surface faces must have a consistent orientation.")
     faces = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)
-    triangles = np.asarray(mesh.coordinates, dtype=float)[faces]
+    triangles = np.asarray(mesh.coordinates, dtype=np.float64)[faces]
     edges = np.stack(
         (
             triangles[:, 1] - triangles[:, 0],
@@ -121,14 +121,14 @@ def _validated_closed_surface_mesh(mesh: CellMesh, /) -> None:
     )
     doubled_areas = np.linalg.norm(np.cross(edges[:, 0], -edges[:, 2]), axis=1)
     edge_scale_squared = np.max(np.sum(edges**2, axis=2), axis=1)
-    tolerance = np.finfo(float).eps * edge_scale_squared * 64.0
+    tolerance = np.finfo(np.float64).eps * edge_scale_squared * 64.0
     if np.any(~np.isfinite(doubled_areas)) or np.any(doubled_areas <= tolerance):
         raise ValueError("Boundary surface contains a degenerate triangle.")
 
 
 def _face_areas(mesh: CellMesh, /) -> np.ndarray:
     faces = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)
-    triangles = np.asarray(mesh.coordinates, dtype=float)[faces]
+    triangles = np.asarray(mesh.coordinates, dtype=np.float64)[faces]
     return 0.5 * np.linalg.norm(
         np.cross(
             triangles[:, 1] - triangles[:, 0],
@@ -435,7 +435,7 @@ def mark_boundary_faces(
         raise TypeError("epoch must be BoundaryMeshEpoch.")
     if not isinstance(policy, BoundaryRefinementPolicy):
         raise TypeError("policy must be BoundaryRefinementPolicy.")
-    values = np.asarray(indicators, dtype=float)
+    values = np.asarray(indicators, dtype=np.float64)
     cell_ids = np.asarray(epoch.mesh.blocks[0].global_ids, dtype=np.int64)
     if (
         values.shape != cell_ids.shape
@@ -514,7 +514,7 @@ def _dp0_parent_routes(
             routes[target_local[cell_id]] = local
     parent_ids = np.asarray(adaptation.parent_cell_ids, dtype=np.int64)
     child_ids = np.asarray(adaptation.child_cell_ids, dtype=np.int64)
-    child_valid = np.asarray(adaptation.child_valid, dtype=bool)
+    child_valid = np.asarray(adaptation.child_valid, dtype=np.bool_)
     for parent_id, children, valid in zip(
         parent_ids, child_ids, child_valid, strict=True
     ):
@@ -546,8 +546,7 @@ def refine_boundary_h(
     target_count = target_mesh.blocks[0].cell_count
     if target_count > policy.max_target_faces:
         raise ValueError(
-            f"Refined boundary has {target_count} faces, exceeding the declared "
-            f"limit {policy.max_target_faces}."
+            f"Refined boundary has {target_count} faces, exceeding the declared limit {policy.max_target_faces}."
         )
     routes = _dp0_parent_routes(epoch, target_mesh, adaptation)
     if epoch.surface_model is None:

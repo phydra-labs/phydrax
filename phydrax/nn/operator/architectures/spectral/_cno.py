@@ -117,9 +117,9 @@ def _prepare_grid_values(
         raise ValueError(
             f"Grid values must contain spatial shape {shape}; got {array.shape}."
         )
-    if int(array.shape[-1]) != channels:
+    if array.shape[-1] != channels:
         raise ValueError(f"Expected {channels} input channels, got {array.shape[-1]}.")
-    case_shape = tuple(int(size) for size in array.shape[: -ndim - 1])
+    case_shape = tuple(array.shape[: -ndim - 1])
     return array, case_shape
 
 
@@ -154,8 +154,7 @@ def _validate_periodic_fourier_axes(
         checked = _error_if_invalid(
             checked,
             jnp.any(~jnp.isfinite(nodes)) | jnp.any(spacing <= 0.0),
-            f"{owner} axis {axis.name!r} must contain finite, distinct, "
-            "strictly ordered nodes.",
+            f"{owner} axis {axis.name!r} must contain finite, distinct, strictly ordered nodes.",
         )
         checked = _error_if_invalid(
             checked,
@@ -338,7 +337,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
             weight_key,
             shape=self.kernel_size + (self.in_channels, self.out_channels),
         )
-        self.bias = jnp.zeros((self.out_channels,), dtype=float)
+        self.bias = jnp.zeros((self.out_channels,), dtype=jnp.float64)
 
     def dependency_support(
         self,
@@ -368,9 +367,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         target_mask: ArrayLike | None = None,
         quadrature: ArrayLike | None = None,
     ) -> Array:
-        original_shape = tuple(
-            int(size) for size in jnp.asarray(values).shape[-self.spatial_ndim - 1 : -1]
-        )
+        original_shape = tuple(jnp.asarray(values).shape[-self.spatial_ndim - 1 : -1])
         halos = tuple(size // 2 for size in self.kernel_size)
 
         def extend(array, *, channels: bool):
@@ -403,7 +400,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         extended_mask = (
             None
             if source_mask is None
-            else extend(jnp.asarray(source_mask, dtype=bool), channels=False)
+            else extend(jnp.asarray(source_mask, dtype=jnp.bool_), channels=False)
         )
         extended_quadrature = (
             None if quadrature is None else extend(quadrature, channels=False)
@@ -423,7 +420,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
                 slices[start + local_axis] = slice(width, width + size)
             output = output[tuple(slices)]
         if self.activation is not None:
-            shape = tuple(int(size) for size in output.shape[-self.spatial_ndim - 1 : -1])
+            shape = tuple(output.shape[-self.spatial_ndim - 1 : -1])
             spatial_axes = tuple(
                 range(output.ndim - self.spatial_ndim - 1, output.ndim - 1)
             )
@@ -459,7 +456,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
                     )
         if target_mask is not None:
             output = jnp.where(
-                jnp.asarray(target_mask, dtype=bool)[..., None],
+                jnp.asarray(target_mask, dtype=jnp.bool_)[..., None],
                 output,
                 jnp.zeros_like(output),
             )
@@ -544,7 +541,7 @@ class _CNOBlock(StrictModule):
         output = (residual + branch) / jnp.sqrt(2.0)
         if target_mask is not None:
             output = jnp.where(
-                jnp.asarray(target_mask, dtype=bool)[..., None],
+                jnp.asarray(target_mask, dtype=jnp.bool_)[..., None],
                 output,
                 jnp.zeros_like(output),
             )
@@ -671,7 +668,7 @@ class CNO(AbstractOperatorModel):
         self.support_plan.validate_axes(axes)
         if source_mask is not None:
             array = jnp.where(
-                jnp.asarray(source_mask, dtype=bool)[..., None],
+                jnp.asarray(source_mask, dtype=jnp.bool_)[..., None],
                 array,
                 jnp.zeros_like(array),
             )
@@ -682,7 +679,7 @@ class CNO(AbstractOperatorModel):
         hidden = self.lift(array)
         if source_mask is not None:
             hidden = jnp.where(
-                jnp.asarray(source_mask, dtype=bool)[..., None],
+                jnp.asarray(source_mask, dtype=jnp.bool_)[..., None],
                 hidden,
                 jnp.zeros_like(hidden),
             )
@@ -701,7 +698,7 @@ class CNO(AbstractOperatorModel):
         output = self.projection(hidden)
         if target_mask is not None:
             output = jnp.where(
-                jnp.asarray(target_mask, dtype=bool)[..., None],
+                jnp.asarray(target_mask, dtype=jnp.bool_)[..., None],
                 output,
                 jnp.zeros_like(output),
             )
@@ -808,7 +805,7 @@ class UNO(AbstractOperatorModel):
         self.in_size = in_channels
         self.out_size = out_channels
         self.spatial_ndim = int(spatial_ndim)
-        self.widths = tuple(int(width) for width in widths)
+        self.widths = tuple(widths)
         self.source_key = source_key
         self.coordinate_embedding = bool(coordinate_embedding)
         self.support_plan = (
@@ -924,9 +921,9 @@ class UNO(AbstractOperatorModel):
         array, case_shape = _prepare_grid_values(values, axes, _get_size(self.in_size))
         self.support_plan.validate_axes(axes)
         mask = (
-            jnp.ones(array.shape[:-1], dtype=bool)
+            jnp.ones(array.shape[:-1], dtype=jnp.bool_)
             if source_mask is None
-            else jnp.asarray(source_mask, dtype=bool)
+            else jnp.asarray(source_mask, dtype=jnp.bool_)
         )
         quadrature = (
             jnp.ones(array.shape[:-1], dtype=array.real.dtype)
@@ -979,7 +976,7 @@ class UNO(AbstractOperatorModel):
             skips.append(hidden)
             masks.append(mask)
             masses.append(mass)
-            shape = tuple(int(size) for size in hidden.shape[-self.spatial_ndim - 1 : -1])
+            shape = tuple(hidden.shape[-self.spatial_ndim - 1 : -1])
             shapes.append(shape)
             if index < len(self.encoders) - 1:
                 hidden, mass, mask = resize_masked(
@@ -1011,7 +1008,7 @@ class UNO(AbstractOperatorModel):
             mask = combined_mask
         output = self.projection(hidden)
         if target_mask is not None:
-            mask = mask & jnp.asarray(target_mask, dtype=bool)
+            mask = mask & jnp.asarray(target_mask, dtype=jnp.bool_)
         output = jnp.where(mask[..., None], output, jnp.zeros_like(output))
         if self.out_size == "scalar":
             return output[..., 0]

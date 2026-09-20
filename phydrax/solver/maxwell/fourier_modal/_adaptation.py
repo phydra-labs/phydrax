@@ -45,7 +45,7 @@ class FourierModalHarmonicAdaptationPolicy(StrictModule, NonTrainableState):
         /,
     ):
         candidates = tuple(candidate_plans)
-        tolerances = np.asarray(observable_tolerances, dtype=float)
+        tolerances = np.asarray(observable_tolerances, dtype=np.float64)
         epochs = int(maximum_epochs)
         if (
             not candidates
@@ -178,10 +178,10 @@ def solve_adaptive_fourier_modal_case(
             raise ValueError(
                 "Harmonic amplitude transfer currently requires homogeneous ports."
             )
-    tolerance_count = int(policy.observable_tolerances.size)
+    tolerance_count = policy.observable_tolerances.size
     history = jnp.zeros((policy.maximum_epochs, tolerance_count))
     removed_history = jnp.zeros((policy.maximum_epochs,))
-    active = jnp.zeros((policy.maximum_epochs,), dtype=bool)
+    active = jnp.zeros((policy.maximum_epochs,), dtype=jnp.bool_)
     current_excitation = excitation
     previous_observable = None
     converged = False

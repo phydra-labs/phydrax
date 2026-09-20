@@ -194,7 +194,7 @@ class OpticalDielectricPlan(StrictModule, NonTrainableState):
         raw = SpectralResponseProduct(
             omega,
             projected,
-            jnp.ones(omega.shape, dtype=bool),
+            jnp.ones(omega.shape, dtype=jnp.bool_),
             angular_frequency_unit,
             conductivity_unit,
             self.channel_labels,

@@ -144,7 +144,7 @@ class ManufacturedSpatialOperator(StrictModule):
             )
         if boundary_mask is None:
             layout = grid.primary_entity_layout
-            mask = jnp.zeros(grid.shape, dtype=bool)
+            mask = jnp.zeros(grid.shape, dtype=jnp.bool_)
             for lower, upper in zip(
                 layout.lower_boundary_masks,
                 layout.upper_boundary_masks,
@@ -152,7 +152,7 @@ class ManufacturedSpatialOperator(StrictModule):
             ):
                 mask = mask | lower | upper
         else:
-            mask = jnp.asarray(boundary_mask, dtype=bool)
+            mask = jnp.asarray(boundary_mask, dtype=jnp.bool_)
         if mask.shape != grid.shape:
             raise ValueError("Manufactured boundary mask must match the grid shape.")
         identifier = (
@@ -281,7 +281,7 @@ class ManufacturedConvergencePlan(StrictModule):
         rate_tolerance: float = 0.25,
         plan_id: str | None = None,
     ):
-        values = tuple(int(value) for value in resolutions)
+        values = tuple(resolutions)
         if len(values) < 2 or any(value <= 0 for value in values):
             raise ValueError(
                 "Convergence studies require at least two positive resolutions."

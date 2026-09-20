@@ -54,8 +54,7 @@ class GaussianProcessKernelFitPolicy(StrictModule):
         constrained = parameter_space.constrain(parameter_space.initial)
         if not isinstance(constrained, GaussianProcessLikelihoodState):
             raise TypeError(
-                "parameter_space constrained values must be "
-                "GaussianProcessLikelihoodState objects."
+                "parameter_space constrained values must be GaussianProcessLikelihoodState objects."
             )
         if not isinstance(method, AbstractMinimizationMethod):
             raise TypeError("method must implement AbstractMinimizationMethod.")
@@ -108,8 +107,7 @@ class MultiOutputGaussianProcessKernelFitPolicy(StrictModule):
         constrained = parameter_space.constrain(parameter_space.initial)
         if not isinstance(constrained, MultiOutputGaussianProcessLikelihoodState):
             raise TypeError(
-                "parameter_space constrained values must be "
-                "MultiOutputGaussianProcessLikelihoodState objects."
+                "parameter_space constrained values must be MultiOutputGaussianProcessLikelihoodState objects."
             )
         if not isinstance(method, AbstractMinimizationMethod):
             raise TypeError("method must implement AbstractMinimizationMethod.")
@@ -151,7 +149,7 @@ def fit_gaussian_process_kernel(
         raise TypeError("policy must be a GaussianProcessKernelFitPolicy.")
     design = jnp.asarray(points)
     observations = jnp.asarray(values)
-    if design.ndim < 2 or int(design.shape[0]) < policy.minimum_data_count:
+    if design.ndim < 2 or design.shape[0] < policy.minimum_data_count:
         raise ValueError("Kernel fitting requires the declared minimum data count.")
     if observations.shape != (design.shape[0],):
         raise ValueError("values must align with points.")

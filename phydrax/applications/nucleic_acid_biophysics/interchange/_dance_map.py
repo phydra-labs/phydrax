@@ -262,8 +262,7 @@ def import_dance_map_files(
     )
     if len(set(payload_identities)) != len(payload_identities):
         raise ValueError(
-            "Identical parsed-mutation payloads cannot be relabeled as distinct "
-            "source manifests or preparations."
+            "Identical parsed-mutation payloads cannot be relabeled as distinct source manifests or preparations."
         )
 
     parsed_by_file: list[tuple[_ParsedRead, ...]] = []
@@ -409,10 +408,12 @@ def _parse_shapemapper_mut(
                 f"ShapeMapper row {line_number} depth/mutation columns must be aligned binary vectors."
             )
         mapped = np.zeros((nucleotide_count,), dtype=np.int8)
-        effective = np.zeros((nucleotide_count,), dtype=bool)
+        effective = np.zeros((nucleotide_count,), dtype=np.bool_)
         mutation = np.zeros((nucleotide_count,), dtype=np.int8)
         mapped[left : right + 1] = np.fromiter(vectors[0], dtype=np.int8)
-        effective[left : right + 1] = np.fromiter(vectors[1], dtype=np.int8).astype(bool)
+        effective[left : right + 1] = np.fromiter(vectors[1], dtype=np.int8).astype(
+            "bool"
+        )
         mutation[left : right + 1] = np.fromiter(vectors[2], dtype=np.int8)
         if np.any(effective & (mapped == 0)) or np.any((mutation == 1) & ~effective):
             raise ValueError(

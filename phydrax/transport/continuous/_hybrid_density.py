@@ -122,7 +122,7 @@ class PiecewiseContinuousFlowLaw(AbstractProbabilityLaw):
         self.tape_provider = tape_provider
         self.law_id = canonical_fingerprint(
             {
-                "kind": "piecewise-continuous-flow-law-v2",
+                "kind": "piecewise-continuous-flow-law",
                 "transport": transport.transport_id,
                 "schedule": prepared_schedule.schedule_id,
                 "schedule_preparation": prepared_schedule.preparation_id,
@@ -160,8 +160,7 @@ class PiecewiseContinuousFlowLaw(AbstractProbabilityLaw):
             or tape.policy_id != self.prepared_schedule.replay_policy.policy_id
         ):
             raise ValueError(
-                "Hybrid event tape itinerary or replay-policy identity differs "
-                "from the prepared schedule."
+                "Hybrid event tape itinerary or replay-policy identity differs from the prepared schedule."
             )
         event_valid = (
             jnp.all((~tape.active) | tape.log_jacobian_valid)

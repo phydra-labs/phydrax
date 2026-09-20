@@ -610,7 +610,7 @@ def exponential_memory_qubit_problem(
     initial_density: ArrayLike,
     /,
 ) -> MemoryKernelMasterEquation:
-    sigma_minus = jnp.asarray([[0, 0], [1, 0]], dtype=complex)
+    sigma_minus = jnp.asarray([[0, 0], [1, 0]], dtype=jnp.complex128)
     sigma_plus = jnp.conj(sigma_minus.T)
 
     def kernel(lag, density):

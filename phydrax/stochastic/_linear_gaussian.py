@@ -30,7 +30,7 @@ ParameterValue = Array | Callable[[Array, Array, Any], ArrayLike]
 
 
 def _shape(value: Sequence[int], /) -> tuple[int, ...]:
-    resolved = tuple(int(size) for size in value)
+    resolved = tuple(value)
     if any(size <= 0 for size in resolved):
         raise ValueError("state_shape dimensions must be positive.")
     return resolved
@@ -44,7 +44,7 @@ def _name(value: str, /, *, owner: str) -> str:
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _parameter(value: ParameterValue, start: Array, end: Array, context: Any, /) -> Array:

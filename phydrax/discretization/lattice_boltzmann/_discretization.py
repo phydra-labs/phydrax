@@ -30,7 +30,7 @@ from ._precision import LatticeBoltzmannPrecisionPolicy
 
 
 class LatticeBoltzmannPlan(AbstractDiscretizationPlan):
-    """Uniform cell-centred support and velocity quadrature for LBM."""
+    """Uniform cell-centered support and velocity quadrature for LBM."""
 
     grid: PreparedTensorGrid
     velocity_set: LatticeBoltzmannVelocitySet
@@ -139,7 +139,7 @@ class LatticeBoltzmannDiscretization(AbstractPreparedDiscretization):
         if plan.velocity_set.dimension != dimension:
             raise ValueError("Velocity-set dimension does not match the tensor grid.")
         if any(axis.primary_entity != "interval" for axis in grid.structured_axes):
-            raise ValueError("LBM requires cell-centred interval-primary axes.")
+            raise ValueError("LBM requires cell-centered interval-primary axes.")
         if any(axis.basis != "uniform" for axis in grid.axes):
             raise ValueError("LBM requires uniform tensor-grid axes.")
         widths = tuple(np.asarray(axis.interval_widths) for axis in grid.structured_axes)
@@ -185,9 +185,9 @@ class LatticeBoltzmannDiscretization(AbstractPreparedDiscretization):
         preparation = PreparationReport(
             capabilities=plan.capabilities,
             diagnostics=(
-                "uniform isotropic cell-centred lattice",
+                "uniform isotropic cell-centered lattice",
                 "trailing population component axis",
-                "fixed nearest-neighbour velocity set",
+                "fixed nearest-neighbor velocity set",
             ),
             resource_counts={
                 "cells": grid.size,

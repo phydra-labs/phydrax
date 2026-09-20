@@ -209,7 +209,7 @@ class HydraulicChannelPlan(StrictModule, NonTrainableState):
             or tolerance <= 0.0
         ):
             raise ValueError("Rectangular channel geometry or series policy is invalid.")
-        odd = np.arange(1, 2 * terms, 2, dtype=float)
+        odd = np.arange(1, 2 * terms, 2, dtype=np.float64)
         series = np.sum(np.tanh(odd * np.pi * long_side / (2.0 * short_side)) / odd**5)
         coefficient = 192.0 * short_side / (np.pi**5 * long_side)
         correction = 1.0 - coefficient * series
@@ -323,8 +323,8 @@ class MonotoneHydraulicResponsePlan(StrictModule, NonTrainableState):
         *,
         reverse_symmetric: bool = False,
     ) -> None:
-        flow = np.asarray(volume_flow, dtype=float)
-        pressure = np.asarray(pressure_drop, dtype=float)
+        flow = np.asarray(volume_flow, dtype=np.float64)
+        pressure = np.asarray(pressure_drop, dtype=np.float64)
         symmetric = bool(reverse_symmetric)
         if (
             not isinstance(fluid, HydraulicFluidProperties)

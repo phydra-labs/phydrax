@@ -74,7 +74,7 @@ class AlgebraDerivationPolicy(StrictModule, NonTrainableState):
         self.dtype = dtype_
         self.policy_id = canonical_fingerprint(
             {
-                "kind": "algebra-derivation-policy-v1",
+                "kind": "algebra-derivation-policy",
                 "absolute_cutoff": values[0].hex(),
                 "relative_cutoff": values[1].hex(),
                 "minimum_singular_gap": values[2].hex(),
@@ -107,7 +107,7 @@ class AlgebraDerivationPlan(StrictModule, NonTrainableState):
         self.policy = policy_
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "algebra-derivation-plan-v1",
+                "kind": "algebra-derivation-plan",
                 "constraint": constraint.constraint_id,
                 "policy": policy_.policy_id,
             }
@@ -158,14 +158,14 @@ class PreparedAlgebraDerivations(StrictModule):
         self.maximum_commutator_closure_residual = jnp.asarray(
             maximum_commutator_closure_residual
         )
-        self.converged = jnp.asarray(converged, dtype=bool)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.constraint_matrix_bytes = int(constraint_matrix_bytes)
         self.workspace_bytes = int(workspace_bytes)
         self.basis_bytes = int(basis_bytes)
         self.prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-algebra-derivations-v1",
+                "kind": "prepared-algebra-derivations",
                 "plan": plan.plan_id,
                 "subspace": subspace.subspace_id,
                 "basis": array_tree_fingerprint(subspace.basis),
@@ -247,7 +247,7 @@ def prepare_algebra_derivations(
         orthonormal=True,
         subspace_id=canonical_fingerprint(
             {
-                "kind": "algebra-derivation-subspace-v1",
+                "kind": "algebra-derivation-subspace",
                 "plan": plan.plan_id,
                 "capacity": nullity,
             }

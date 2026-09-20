@@ -190,7 +190,10 @@ class TiogaDonorEvidence(StrictModule, NonTrainableState):
         raw_weights: ArrayLike,
         /,
     ):
-        cells, weights = np.asarray(donor_cell_ids), np.asarray(raw_weights, dtype=float)
+        cells, weights = (
+            np.asarray(donor_cell_ids),
+            np.asarray(raw_weights, dtype=np.float64),
+        )
         if (
             cells.dtype.kind not in "iu"
             or cells.shape != (coupling.target_scope.entity_ids.size,)
@@ -602,7 +605,7 @@ def _couplings(
             float(np.max(np.abs(coordinates))),
             float(np.max(np.abs(expected))),
             float(np.max(np.ptp(coordinates, axis=0))),
-            np.finfo(float).tiny,
+            np.finfo(np.float64).tiny,
         )
         if not np.allclose(reconstructed, expected, rtol=0, atol=10 * tolerance * scale):
             raise ValueError("TIOGA donor weights do not reproduce receptor coordinates.")

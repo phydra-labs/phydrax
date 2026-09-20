@@ -400,14 +400,14 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
             self.replay.policy_id,
             self.dynamics.splat.plan.execution.policy_id,
             accumulation != "fast",
-            int(retained.times.shape[0]),
+            retained.times.shape[0],
             canonical_fingerprint(
                 {
                     "kind": "mpm-replay-evidence",
                     "plan": self.plan_id,
                     "replay": self.replay.policy_id,
                     "accumulation": accumulation,
-                    "retained_state_count": int(retained.times.shape[0]),
+                    "retained_state_count": retained.times.shape[0],
                 }
             ),
         )

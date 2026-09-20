@@ -14,7 +14,7 @@ import phydrax as phx
 
 def _feature_gram(paths, depth):
     features = phx.stochastic.SignatureFeatures(
-        int(paths.shape[-1]), depth, include_scalar=True
+        paths.shape[-1], depth, include_scalar=True
     )
     values = jax.vmap(features)(paths)
     return values @ values.T

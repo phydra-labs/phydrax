@@ -29,7 +29,7 @@ def _name(value: str, /, *, owner: str) -> str:
 
 
 def _shape(value: tuple[int, ...], /, *, owner: str) -> tuple[int, ...]:
-    resolved = tuple(int(size) for size in value)
+    resolved = tuple(value)
     if any(size <= 0 for size in resolved):
         raise ValueError(f"{owner} dimensions must be positive.")
     return resolved
@@ -114,8 +114,8 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
         if times_raw.ndim < 1:
             raise ValueError("Sampled input times must have a trailing knot axis.")
         if values_raw.ndim < times_raw.ndim or tuple(
-            int(size) for size in values_raw.shape[: times_raw.ndim]
-        ) != tuple(int(size) for size in times_raw.shape):
+            values_raw.shape[: times_raw.ndim]
+        ) != tuple(times_raw.shape):
             raise ValueError(
                 "Sampled input values must begin with the complete times shape."
             )
@@ -127,11 +127,11 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
         ):
             raise TypeError("Sampled input values must be numeric.")
 
-        case_shape = tuple(int(size) for size in times_raw.shape[:-1])
-        input_shape = tuple(int(size) for size in values_raw.shape[times_raw.ndim :])
+        case_shape = tuple(times_raw.shape[:-1])
+        input_shape = tuple(values_raw.shape[times_raw.ndim :])
         _shape(case_shape, owner="case_shape")
         _shape(input_shape, owner="input_shape")
-        num_knots = int(times_raw.shape[-1])
+        num_knots = times_raw.shape[-1]
         minimum_knots = 1 if interpolation == "zero-order-hold" else 2
         if num_knots < minimum_knots:
             raise ValueError(
@@ -139,14 +139,14 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
             )
 
         valid = (
-            jnp.ones(times_raw.shape, dtype=bool)
+            jnp.ones(times_raw.shape, dtype=jnp.bool_)
             if knot_valid is None
-            else jnp.asarray(knot_valid, dtype=bool)
+            else jnp.asarray(knot_valid, dtype=jnp.bool_)
         )
         if valid.shape != times_raw.shape:
             raise ValueError("knot_valid must have the same shape as times.")
-        times_ = times_raw.astype(jnp.result_type(times_raw, float))
-        values_ = values_raw.astype(jnp.result_type(values_raw, float))
+        times_ = times_raw.astype(jnp.result_type(times_raw, jnp.float64))
+        values_ = values_raw.astype(jnp.result_type(values_raw, jnp.float64))
         times_ = eqx.error_if(
             times_,
             jnp.any(jnp.sum(valid, axis=-1) < minimum_knots),
@@ -237,12 +237,10 @@ class BSplineStateSpaceInput(AbstractStateSpaceInput):
         expected_prefix = cases + (grid.coefficient_count,)
         if (
             coefficients_raw.ndim <= coefficient_axis
-            or tuple(int(size) for size in coefficients_raw.shape[: coefficient_axis + 1])
-            != expected_prefix
+            or tuple(coefficients_raw.shape[: coefficient_axis + 1]) != expected_prefix
         ):
             raise ValueError(
-                "B-spline input coefficients must begin with case_shape and "
-                "the grid coefficient count."
+                "B-spline input coefficients must begin with case_shape and the grid coefficient count."
             )
         if not (
             jnp.issubdtype(coefficients_raw.dtype, jnp.number)
@@ -252,7 +250,7 @@ class BSplineStateSpaceInput(AbstractStateSpaceInput):
 
         self.grid = grid
         coefficients_array = coefficients_raw.astype(
-            jnp.result_type(coefficients_raw, float)
+            jnp.result_type(coefficients_raw, jnp.float64)
         )
         self.coefficients = eqx.error_if(
             coefficients_array,
@@ -260,9 +258,7 @@ class BSplineStateSpaceInput(AbstractStateSpaceInput):
             "B-spline input coefficients must be finite.",
         )
         self.case_shape = cases
-        self.input_shape = tuple(
-            int(size) for size in coefficients_raw.shape[coefficient_axis + 1 :]
-        )
+        self.input_shape = tuple(coefficients_raw.shape[coefficient_axis + 1 :])
         _shape(self.input_shape, owner="input_shape")
         self.input_id = _name(input_id, owner="input_id")
 

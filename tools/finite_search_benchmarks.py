@@ -59,7 +59,7 @@ def _candidate_space(
     payload_size: int,
 ) -> phx.optim.FiniteProductSpace:
     axes = []
-    payload_offsets = jnp.arange(payload_size, dtype=float) / max(payload_size, 1)
+    payload_offsets = jnp.arange(payload_size, dtype="float64") / max(payload_size, 1)
     for axis_index in range(num_axes):
         coordinates = jnp.linspace(-1.0, 1.0, axis_length)
         values = coordinates[:, None] + payload_offsets[None, :] + axis_index * 0.01
@@ -80,7 +80,7 @@ def _evaluator(objective_size: int, work: int):
         if objective_size == 1:
             return score, jnp.asarray(True)
         values = score + jnp.arange(objective_size, dtype=score.dtype) * 1e-6
-        return values, jnp.ones((objective_size,), dtype=bool)
+        return values, jnp.ones((objective_size,), dtype="bool")
 
     return evaluate
 
@@ -110,7 +110,7 @@ def _memory_report(executable) -> dict[str, int]:
 
 
 def _timing_report(samples: list[float], candidate_count: int) -> dict[str, float]:
-    values = np.asarray(samples, dtype=float)
+    values = np.asarray(samples, dtype="float64")
     median = float(np.median(values))
     return {
         "minimum_seconds": float(np.min(values)),
@@ -137,7 +137,7 @@ def run_benchmark(arguments: argparse.Namespace) -> dict[str, object]:
     candidate_count = space.size
     dtype_bytes = np.dtype(jnp.asarray(0.0).dtype).itemsize
     candidate_storage_bytes = sum(
-        int(value.size * value.dtype.itemsize)
+        value.size * value.dtype.itemsize
         for axis in jax.tree_util.tree_leaves(
             space.axes,
             is_leaf=lambda value: isinstance(value, phx.optim.FiniteAxis),

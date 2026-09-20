@@ -95,13 +95,13 @@ class NewtonianPairKernel(StrictModule, NonTrainableState):
             raise ValueError("Pair-kernel source/target shapes are invalid.")
         displacement = sources[None, :, :] - targets[:, None, :]
         radius_squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
-        mask = jnp.ones(radius_squared.shape, dtype=bool)
+        mask = jnp.ones(radius_squared.shape, dtype=jnp.bool_)
         if exclude_diagonal:
             if targets.shape[0] != sources.shape[0]:
                 raise ValueError(
                     "Diagonal exclusion requires equal source/target counts."
                 )
-            mask = mask & ~jnp.eye(targets.shape[0], dtype=bool)
+            mask = mask & ~jnp.eye(targets.shape[0], dtype=jnp.bool_)
         if self.cutoff is not None:
             mask = mask & (radius_squared <= self.cutoff**2 + self.softening**2)
         contribution = (
@@ -194,9 +194,9 @@ class DirectParticleGravityPlan(StrictModule, NonTrainableState):
         position = jnp.asarray(positions)
         mass = jnp.asarray(masses, dtype=position.dtype)
         active = (
-            jnp.ones((position.shape[0],), dtype=bool)
+            jnp.ones((position.shape[0],), dtype=jnp.bool_)
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         acceleration = self.kernel.acceleration(
             position,
@@ -335,9 +335,9 @@ class ParticleOctreePlan3D(StrictModule, NonTrainableState):
         position = jnp.asarray(positions)
         mass = jnp.asarray(masses, dtype=position.dtype)
         active = (
-            jnp.ones((position.shape[0],), dtype=bool)
+            jnp.ones((position.shape[0],), dtype=jnp.bool_)
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         if (
             position.ndim != 2
@@ -610,8 +610,8 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
                 target_storage < hierarchy.node_item_starts + hierarchy.node_item_counts
             )
             node_valid = hierarchy.node_active & (tree.leaf_mass > 0.0)
-            outside_cutoff = jnp.zeros((node_capacity,), dtype=bool)
-            fully_inside_cutoff = jnp.ones((node_capacity,), dtype=bool)
+            outside_cutoff = jnp.zeros((node_capacity,), dtype=jnp.bool_)
+            fully_inside_cutoff = jnp.ones((node_capacity,), dtype=jnp.bool_)
             if cutoff_value is not None:
                 outside_cutoff = node_distance - node_radius > cutoff_value
                 fully_inside_cutoff = node_distance + node_radius <= cutoff_value
@@ -634,7 +634,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
                 0,
                 node_capacity,
                 propagate_blocked,
-                jnp.zeros((node_capacity,), dtype=bool),
+                jnp.zeros((node_capacity,), dtype=jnp.bool_),
             )
             selected_far = target_active & accept & ~blocked
             selected_leaf = (
@@ -1502,7 +1502,7 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         )
 
     def _evaluate_impl(self, tree: PreparedParticleOctree3D, /) -> TreeGravityResult:
-        point_capacity = int(tree.positions.shape[0])
+        point_capacity = tree.positions.shape[0]
         address = MortonAddressPlan(
             (0.0, 0.0, 0.0),
             tree.box_size,
@@ -1939,7 +1939,7 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         dimension = len(lengths)
         integer_offsets = np.asarray(
             tuple(product(range(-real, real + 1), repeat=dimension)),
-            dtype=float,
+            dtype=np.float64,
         )
         offset_vectors = integer_offsets * np.asarray(lengths)[None, :]
         reciprocal_indices = np.asarray(
@@ -1948,7 +1948,7 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
                 for index in product(range(-reciprocal, reciprocal + 1), repeat=dimension)
                 if any(value != 0 for value in index)
             ),
-            dtype=float,
+            dtype=np.float64,
         )
         wavevectors = 2.0 * np.pi * reciprocal_indices / np.asarray(lengths)[None, :]
         lower = np.min(offset_vectors, axis=0)
@@ -2006,7 +2006,7 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             == self.zero_offset_index
         )
         self_pair = (
-            jnp.eye(position.shape[0], dtype=bool)[:, :, None]
+            jnp.eye(position.shape[0], dtype=jnp.bool_)[:, :, None]
             & zero_offset[None, None, :]
         )
         inverse_cube = jnp.where(
@@ -2033,9 +2033,9 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         position: Array,
         mass: Array,
     ) -> tuple[Array, Array, Array, Array]:
-        count = int(position.shape[0])
+        count = position.shape[0]
         capacity = (
-            count * count * int(self.real_offsets.shape[0])
+            count * count * self.real_offsets.shape[0]
             if self.maximum_real_pairs is None
             else self.maximum_real_pairs
         )
@@ -2202,9 +2202,10 @@ class PeriodicBarnesHutPlan(StrictModule, NonTrainableState):
         squared = jnp.sum(displacement**2, axis=-1) + self.barnes_hut.softening**2
         direct = jnp.sum(
             jnp.where(
-                (tree.active_mask[None, :] & ~jnp.eye(position.shape[0], dtype=bool))[
-                    ..., None
-                ],
+                (
+                    tree.active_mask[None, :]
+                    & ~jnp.eye(position.shape[0], dtype=jnp.bool_)
+                )[..., None],
                 self.barnes_hut.gravitational_constant
                 * tree.masses[None, :, None]
                 * displacement

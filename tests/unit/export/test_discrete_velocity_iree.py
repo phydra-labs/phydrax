@@ -256,7 +256,7 @@ def test_d2v_iree_modes_have_one_fixed_ordered_heterogeneous_abi():
         assert contract.output_shapes[:2] == (state.particle_populations.shape,) * 2
         assert contract.output_shapes[2:] == ((),) * 9
         assert contract.output_dtypes[:2] == (np.dtype(np.float64).str,) * 2
-        assert contract.output_dtypes[2:4] == (np.dtype(bool).str,) * 2
+        assert contract.output_dtypes[2:4] == (np.dtype(np.bool_).str,) * 2
         assert contract.output_dtypes[4:6] == (np.dtype(np.int32).str,) * 2
         assert contract.output_dtypes[6:] == (np.dtype(np.float64).str,) * 5
         assert not contract.supports_reverse_mode

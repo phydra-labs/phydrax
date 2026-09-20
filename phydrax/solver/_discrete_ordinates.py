@@ -89,12 +89,10 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
             raise ValueError("Discrete-ordinates iteration controls are invalid.")
         matrices = _dsa_matrices(problem)
         positive_angles = tuple(
-            int(index)
-            for index in np.flatnonzero(np.asarray(problem.quadrature.ordinates) > 0.0)
+            np.flatnonzero(np.asarray(problem.quadrature.ordinates) > 0.0)
         )
         negative_angles = tuple(
-            int(index)
-            for index in np.flatnonzero(np.asarray(problem.quadrature.ordinates) < 0.0)
+            np.flatnonzero(np.asarray(problem.quadrature.ordinates) < 0.0)
         )
         self.problem = problem
         self.maximum_iterations = iterations
@@ -328,7 +326,7 @@ def _dsa_matrices(problem: MultigroupSlabTransportProblem) -> np.ndarray:
     absorption = np.asarray(problem.absorption_cross_section)
     widths = np.asarray(problem.cell_widths)
     cells, groups = total.shape
-    output = np.zeros((groups, cells, cells), dtype=float)
+    output = np.zeros((groups, cells, cells), dtype=np.float64)
     for group in range(groups):
         diffusion = 1.0 / (3.0 * total[:, group])
         matrix = np.diag(absorption[:, group] + 1.0e-12)

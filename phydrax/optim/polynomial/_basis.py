@@ -101,7 +101,7 @@ class DenseMonomialBasis(StrictModule):
         """Evaluate every basis monomial at points ending in the variable axis."""
 
         values = jnp.asarray(points)
-        if values.ndim < 1 or int(values.shape[-1]) != self.variable_count:
+        if values.ndim < 1 or values.shape[-1] != self.variable_count:
             raise ValueError(
                 f"points must end in shape ({self.variable_count},); got {values.shape}."
             )
@@ -163,7 +163,7 @@ class DenseMomentBasis(StrictModule):
 
     def matrix(self, moments: ArrayLike, /) -> Array:
         values = jnp.asarray(moments)
-        if values.ndim < 1 or int(values.shape[-1]) != self.moment_count:
+        if values.ndim < 1 or values.shape[-1] != self.moment_count:
             raise ValueError(
                 f"moments must end in shape ({self.moment_count},); got {values.shape}."
             )
@@ -212,7 +212,7 @@ class DenseLocalizingBasis(StrictModule):
             exponent: position
             for position, exponent in enumerate(moments.moments.exponent_tuples)
         }
-        exponent_rows = tuple(tuple(int(value) for value in row) for row in exponents)
+        exponent_rows = tuple(tuple(row) for row in exponents)
         entries = tuple(
             tuple(
                 tuple(
@@ -240,7 +240,7 @@ class DenseLocalizingBasis(StrictModule):
         self.polynomial_degree = degree
         self.localizing_order = localizing_order
         self.matrix_size = multipliers.size
-        self.term_count = int(exponents.shape[0])
+        self.term_count = exponents.shape[0]
         self.basis_id = canonical_fingerprint(
             {
                 "kind": "dense-localizing-basis",
@@ -253,10 +253,9 @@ class DenseLocalizingBasis(StrictModule):
     def matrix(self, moments: ArrayLike, coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(moments)
         weights = jnp.asarray(coefficients)
-        if values.ndim < 1 or int(values.shape[-1]) != self.moments.moment_count:
+        if values.ndim < 1 or values.shape[-1] != self.moments.moment_count:
             raise ValueError(
-                "moments must end in shape "
-                f"({self.moments.moment_count},); got {values.shape}."
+                f"moments must end in shape ({self.moments.moment_count},); got {values.shape}."
             )
         if weights.shape != (self.term_count,):
             raise ValueError(f"coefficients must have shape ({self.term_count},).")

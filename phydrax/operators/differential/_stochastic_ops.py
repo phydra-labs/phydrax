@@ -181,8 +181,7 @@ class _KolmogorovCallable(StrictModule):
         )
         if gradient.ndim < 1 or gradient.shape[-1] != self.state_dim:
             raise ValueError(
-                f"grad(observable) must end in state dimension {self.state_dim}; "
-                f"got {gradient.shape}."
+                f"grad(observable) must end in state dimension {self.state_dim}; got {gradient.shape}."
             )
         if drift.ndim < 1 or drift.shape[-1] != self.state_dim:
             raise ValueError(
@@ -259,8 +258,7 @@ class _FactorHVPKolmogorovCallable(StrictModule):
             )
         if diffusion.ndim != 2 or diffusion.shape[0] != self.state_dim:
             raise ValueError(
-                "diffusion must have trailing shape "
-                f"({self.state_dim}, noise_dim); got {diffusion.shape}."
+                f"diffusion must have trailing shape ({self.state_dim}, noise_dim); got {diffusion.shape}."
             )
 
         def evaluate(value):
@@ -404,8 +402,7 @@ def _resolved_coefficients(
     if interpretation == "stratonovich":
         if diffusion is None:
             raise ValueError(
-                "Stratonovich operators require diffusion; covariance alone cannot "
-                "determine the drift correction."
+                "Stratonovich operators require diffusion; covariance alone cannot determine the drift correction."
             )
         resolved_drift = stratonovich_to_ito_drift(drift, diffusion, var=var)
         resolved_covariance = diffusion_covariance(diffusion)
@@ -468,8 +465,7 @@ def kolmogorov_generator(
         raise ValueError("var must name a geometry state variable.")
     if metric is not None and metric.chart.dimension != state_dim:
         raise ValueError(
-            f"Metric chart dimension {metric.chart.dimension} does not match "
-            f"state dimension {state_dim}."
+            f"Metric chart dimension {metric.chart.dimension} does not match state dimension {state_dim}."
         )
     drift_ito, covariance_ito = _resolved_coefficients(
         drift_field,
@@ -620,8 +616,7 @@ def probability_current(
         raise ValueError("var must name a geometry state variable.")
     if metric is not None and metric.chart.dimension != state_dim:
         raise ValueError(
-            f"Metric chart dimension {metric.chart.dimension} does not match "
-            f"state dimension {state_dim}."
+            f"Metric chart dimension {metric.chart.dimension} does not match state dimension {state_dim}."
         )
     drift_ito, covariance_ito = _resolved_coefficients(
         drift_field,

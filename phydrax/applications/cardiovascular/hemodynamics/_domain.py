@@ -45,10 +45,7 @@ class FixedWallScope(StrictModule, NonTrainableState):
     scope_id: str = eqx.field(static=True)
 
     def __init__(self):
-        statement = (
-            "fixed voxel lumen with stationary halfway bounce-back walls; "
-            "numerical hemodynamics qualification only"
-        )
+        statement = "fixed voxel lumen with stationary halfway bounce-back walls; numerical hemodynamics qualification only"
         self.wall_motion_supported = False
         self.fluid_structure_interaction_supported = False
         self.curved_wall_accuracy_supported = False
@@ -366,7 +363,7 @@ class FixedWallLumenRegion(StrictModule, NonTrainableState):
     lumen_id: str = eqx.field(static=True)
 
     def __init__(self, fluid_mask: ArrayLike, /, *, lumen_name: str = "lumen"):
-        mask = np.asarray(fluid_mask, dtype=bool)
+        mask = np.asarray(fluid_mask, dtype=np.bool_)
         name = str(lumen_name)
         if mask.ndim != 3 or not np.any(mask):
             raise ValueError(
@@ -374,8 +371,8 @@ class FixedWallLumenRegion(StrictModule, NonTrainableState):
             )
         if not name:
             raise ValueError("lumen_name must be nonempty.")
-        self.fluid_mask = jnp.asarray(mask, dtype=bool)
-        self.solid_mask = jnp.asarray(~mask, dtype=bool)
+        self.fluid_mask = jnp.asarray(mask, dtype=jnp.bool_)
+        self.solid_mask = jnp.asarray(~mask, dtype=jnp.bool_)
         self.lumen_name = name
         self.lumen_id = canonical_fingerprint(
             {
@@ -389,7 +386,7 @@ class FixedWallLumenRegion(StrictModule, NonTrainableState):
 
     @property
     def shape(self) -> tuple[int, int, int]:
-        return tuple(int(value) for value in self.fluid_mask.shape)
+        return tuple(self.fluid_mask.shape)
 
 
 class HemodynamicsEvidence(StrictModule):
@@ -581,8 +578,8 @@ class WomersleyPipeReference(StrictModule, NonTrainableState):
         )
 
     def axial_velocity(self, radius_mm: ArrayLike, time_ms: ArrayLike, /) -> Array:
-        radius = np.asarray(radius_mm, dtype=float)
-        time = np.asarray(time_ms, dtype=float)
+        radius = np.asarray(radius_mm, dtype=np.float64)
+        time = np.asarray(time_ms, dtype=np.float64)
         pipe_radius = float(self.radius_mm)
         if (
             np.any(~np.isfinite(radius))

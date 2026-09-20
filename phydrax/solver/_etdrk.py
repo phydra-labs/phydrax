@@ -197,7 +197,7 @@ class PreparedETDRKMethod(AbstractFixedStepMethod):
         self.order = method.order
         self.method_id = canonical_fingerprint(
             {
-                "kind": "prepared-etdrk-method-v1",
+                "kind": "prepared-etdrk-method",
                 "method": method.method_id,
                 "drift": drift.drift_id,
                 "coordinates": None if coordinates is None else coordinates.coordinate_id,
@@ -212,8 +212,7 @@ class PreparedETDRKMethod(AbstractFixedStepMethod):
         value = jnp.asarray(state)
         if value.shape != self.drift.state_shape:
             raise ValueError(
-                f"ETDRK state must have shape {self.drift.state_shape}; "
-                f"got {value.shape}."
+                f"ETDRK state must have shape {self.drift.state_shape}; got {value.shape}."
             )
         if not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("ETDRK state must have an inexact dtype.")
@@ -366,8 +365,7 @@ class LESStabilityGuardedETDRKMethod(StrictModule, NonTrainableState):
             or coordinates.state_shape != dynamics.state_shape
         ):
             raise ValueError(
-                "LES ETDRK coordinates must bind the compiled spectral "
-                "discretization and velocity state shape."
+                "LES ETDRK coordinates must bind the compiled spectral discretization and velocity state shape."
             )
         base = self.base_method.prepare(
             dynamics.semilinear_drift,
@@ -545,7 +543,7 @@ def solve_etdrk(
         raise TypeError("ETDRK times must be real-valued.")
     if saved.ndim != 1 or saved.size < 2:
         raise ValueError("ETDRK times must be a rank-one grid with at least two values.")
-    saved_host = np.asarray(saved, dtype=float)
+    saved_host = np.asarray(saved, dtype=np.float64)
     if np.any(~np.isfinite(saved_host)) or np.any(np.diff(saved_host) <= 0.0):
         raise ValueError("ETDRK times must be finite and strictly increasing.")
     prepared = method.prepare(drift, coordinates=coordinates)
@@ -570,7 +568,7 @@ def solve_etdrk(
         valid = cumulative_valid & result.successful
         return (following, valid), (following, valid)
 
-    indices = jnp.arange(int(saved.size) - 1, dtype=jnp.int32)
+    indices = jnp.arange(saved.size - 1, dtype=jnp.int32)
     _, (advanced, advanced_valid) = jax.lax.scan(
         advance,
         (accepted_initial, initial_valid),
@@ -586,7 +584,7 @@ def solve_etdrk(
         terminal_time=saved[-1],
         terminal_state=states[-1],
         backend_result=prepared,
-        stats={"num_steps": int(saved.size - 1), "order": method.order},
+        stats={"num_steps": saved.size - 1, "order": method.order},
         solver_name=name,
         interpretation="ito",
         solver_id=f"solver:etdrk:{method.order}",

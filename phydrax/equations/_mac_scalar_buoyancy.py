@@ -170,7 +170,7 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         enforce_exchange: bool = False,
         law_id: str | None = None,
     ):
-        gravity_ = jnp.asarray(gravity, dtype=float)
+        gravity_ = jnp.asarray(gravity, dtype=jnp.float64)
         if (
             gravity_.shape not in ((2,), (3,))
             or jnp.iscomplexobj(gravity_)
@@ -464,8 +464,7 @@ class PreparedMACKSGS(StrictModule, NonTrainableState):
         )
         if unsupported:
             raise ValueError(
-                "MAC KSGS supports only its admitted impermeable momentum "
-                "boundary subset."
+                "MAC KSGS supports only its admitted impermeable momentum boundary subset."
             )
         provenance = plan.provenance
         resolved_filter = provenance.resolved_filter
@@ -485,8 +484,7 @@ class PreparedMACKSGS(StrictModule, NonTrainableState):
             or resolved_filter.repeated_filter_semantics != "unmodeled"
         ):
             raise ValueError(
-                "KSGS filter semantics do not match the admitted structured MAC "
-                "implicit grid-volume filter."
+                "KSGS filter semantics do not match the admitted structured MAC implicit grid-volume filter."
             )
         if provenance.discretization_id != momentum.operators.discretization.prepared_id:
             raise ValueError("KSGS provenance does not match the MAC discretization.")
@@ -737,7 +735,7 @@ class PreparedMACKSGS(StrictModule, NonTrainableState):
             modeled = test_tensor - self.test_filter.apply(resolved_tensor)
             shape = state.kinetic_energy.shape
             requested_update = jnp.broadcast_to(
-                jnp.asarray(accept_update, dtype=bool), shape
+                jnp.asarray(accept_update, dtype=jnp.bool_), shape
             )
             sample_numerator = jnp.sum(leonard * modeled, axis=(-2, -1))
             sample_denominator = jnp.sum(modeled * modeled, axis=(-2, -1))
@@ -1000,8 +998,7 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         value = jnp.asarray(state)
         if value.shape != self.state_shape:
             raise ValueError(
-                f"Coupled MAC coordinates must have shape {self.state_shape}; "
-                f"got {value.shape}."
+                f"Coupled MAC coordinates must have shape {self.state_shape}; got {value.shape}."
             )
         dtype = self.momentum.operators.pressure_space.dtype
         if value.dtype != dtype:
@@ -1419,7 +1416,7 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
             )
             cell_velocity = jnp.moveaxis(cell_velocity, 0, axis_index)
             shape = [1] * inverse_advective.ndim
-            shape[axis_index] = int(axis.interval_widths.size)
+            shape[axis_index] = axis.interval_widths.size
             widths = axis.interval_widths.reshape(tuple(shape))
             inverse_advective = inverse_advective + jnp.abs(cell_velocity) / widths
             inverse_diffusive = inverse_diffusive + 2.0 / widths**2
@@ -1823,8 +1820,7 @@ def compile_mac_scalar_buoyancy(
                 )
                 if condition.kind != "periodic" and not no_flux:
                     raise ValueError(
-                        "Prognostic MAC KSGS supports only periodic or impermeable "
-                        "zero-flux scalar boundaries."
+                        "Prognostic MAC KSGS supports only periodic or impermeable zero-flux scalar boundaries."
                     )
     base = compile_mac_incompressible_flow(
         flow_problem,

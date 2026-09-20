@@ -86,10 +86,10 @@ class ExecutionFeedbackPolicy(StrictModule):
                 raise ValueError(f"{owner} must be finite.")
         if bool(jnp.any(lower > upper)):
             raise ValueError("lower_bounds cannot exceed upper_bounds.")
-        self.gain = matrix.astype(jnp.result_type(matrix, float))
-        self.bias = offset.astype(jnp.result_type(offset, float))
-        self.lower_bounds = lower.astype(jnp.result_type(lower, float))
-        self.upper_bounds = upper.astype(jnp.result_type(upper, float))
+        self.gain = matrix.astype(jnp.result_type(matrix, jnp.float64))
+        self.bias = offset.astype(jnp.result_type(offset, jnp.float64))
+        self.lower_bounds = lower.astype(jnp.result_type(lower, jnp.float64))
+        self.upper_bounds = upper.astype(jnp.result_type(upper, jnp.float64))
         self.state_size = state_size
         self.action_size = action_size
         self.policy_id = _identifier(policy_id, "policy_id")
@@ -192,8 +192,7 @@ def prepare_jump_execution(
         plan=plan,
         realization=realization,
         prepared_id=(
-            f"prepared-jump-execution:{definition.definition_id}:"
-            f"{plan.plan_id}:{realization.realization_id}"
+            f"prepared-jump-execution:{definition.definition_id}:{plan.plan_id}:{realization.realization_id}"
         ),
     )
 

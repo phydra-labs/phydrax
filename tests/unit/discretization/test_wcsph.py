@@ -21,9 +21,12 @@ def _compiled(*, continuity, backend="dense", viscosity=None, acceleration=None)
         if continuity
         else phx.discretization.SummationDensityPlan()
     )
-    method = phx.discretization.WeaklyCompressibleSPHMethodPlan(phx.discretization.WendlandC2SPHKernel(1),
-    1.25 * spacing,
-    density=density, physical_viscosity=viscosity, )
+    method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
+        phx.discretization.WendlandC2SPHKernel(1),
+        1.25 * spacing,
+        density=density,
+        physical_viscosity=viscosity,
+    )
     neighborhood = (
         phx.discretization.DenseParticleNeighborhoodPlan(
             count * (count - 1) // 2, box=box
@@ -49,7 +52,7 @@ def _compiled(*, continuity, backend="dense", viscosity=None, acceleration=None)
 
 def _initial(compiled):
     count = compiled.dynamics.particles.capacity
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] / count
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] / count
     position = position + 0.002 * jnp.sin(2.0 * jnp.pi * position)
     velocity = 0.03 * jnp.cos(2.0 * jnp.pi * position)
     return compiled.initialize_state(position, velocity)

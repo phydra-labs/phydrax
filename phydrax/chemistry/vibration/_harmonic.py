@@ -68,10 +68,10 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
         values = jnp.asarray(eigenvalues)
         frequencies = jnp.asarray(angular_frequencies, dtype=values.dtype)
         waves = jnp.asarray(wavenumbers, dtype=values.dtype)
-        imaginary = jnp.asarray(imaginary_mask, dtype=bool)
+        imaginary = jnp.asarray(imaginary_mask, dtype=jnp.bool_)
         modes = jnp.asarray(normal_modes, dtype=values.dtype)
         masses = jnp.asarray(reduced_masses, dtype=values.dtype)
-        count = int(values.size)
+        count = values.size
         if (
             frequencies.shape != (count,)
             or waves.shape != (count,)
@@ -92,7 +92,7 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
         residual = jnp.asarray(external_projection_residual, dtype=values.dtype).reshape(
             ()
         )
-        successful_ = jnp.asarray(successful, dtype=bool).reshape(())
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.eigenvalues = values
         self.angular_frequencies = frequencies
         self.wavenumbers = waves
@@ -186,12 +186,14 @@ class VibrationalAnalysisPlan(StrictModule, NonTrainableState):
         _require_structure_matches_system(structure, self.system)
         if hessian.units.unit_system_id != self.system.units.unit_system_id:
             raise ValueError("Hessian and vibration unit systems differ.")
-        active = np.asarray(self.system.active_mask, dtype=bool)
-        if not np.array_equal(active, np.asarray(self.system.mobile_mask, dtype=bool)):
+        active = np.asarray(self.system.active_mask, dtype=np.bool_)
+        if not np.array_equal(
+            active, np.asarray(self.system.mobile_mask, dtype=np.bool_)
+        ):
             raise ValueError(
                 "Constrained or fixed-coordinate vibrational analysis is not supported."
             )
-        if int(self.system.topology.constraints.shape[0]):
+        if self.system.topology.constraints.shape[0]:
             raise ValueError(
                 "Constrained vibrational analysis requires a projected constraint subspace."
             )
@@ -231,7 +233,7 @@ class VibrationalAnalysisPlan(StrictModule, NonTrainableState):
             inverse_root_mass[:, None] * active_hessian * inverse_root_mass[None, :]
         )
         reduced = internal_basis.T @ mass_weighted @ internal_basis
-        internal_count = int(reduced.shape[0])
+        internal_count = reduced.shape[0]
         if internal_count:
             solve = eigensolve(
                 Eigenproblem(

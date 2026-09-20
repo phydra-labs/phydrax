@@ -722,7 +722,7 @@ def evaluate_finite_effect(
             law,
             "The identified functional has a zero-probability conditioning event.",
         )
-    values = np.asarray((active, reference, active - reference), dtype=float)
+    values = np.asarray((active, reference, active - reference), dtype=np.float64)
     if not np.all(np.isfinite(values)):
         return _finite_failure(
             EvaluationStatus.NONFINITE,
@@ -1170,7 +1170,7 @@ def _evaluate_expression(expression: Expression, law: FiniteObservedLaw) -> _Fac
         values = np.divide(
             factor.values,
             denominator_values,
-            out=np.full_like(factor.values, np.nan, dtype=float),
+            out=np.full_like(factor.values, np.nan, dtype=np.float64),
             where=denominator_values > 0,
         )
         return _Factor(factor.variables, expression.outcomes, values)
@@ -1195,7 +1195,7 @@ def _evaluate_expression(expression: Expression, law: FiniteObservedLaw) -> _Fac
             for name in law.schema.names
             if any(name in factor.variables for factor in factors)
         )
-        values = np.ones(tuple(cardinality[name] for name in union), dtype=float)
+        values = np.ones(tuple(cardinality[name] for name in union), dtype=np.float64)
         random: set[str] = set()
         for factor in factors:
             values = values * _align_factor(factor, union, cardinality)
@@ -1226,7 +1226,7 @@ def _evaluate_expression(expression: Expression, law: FiniteObservedLaw) -> _Fac
             conditional = np.divide(
                 numerator_values,
                 denominator_values,
-                out=np.full_like(numerator_values, np.nan, dtype=float),
+                out=np.full_like(numerator_values, np.nan, dtype=np.float64),
                 where=denominator_values > 0,
             )
             current = _Factor(union, (node,), conditional)
@@ -1315,7 +1315,7 @@ def _evaluate_regime_mean(
     distribution = np.asarray(values) / total
     if distribution.shape != (outcome_cardinality,):
         raise ValueError("Finite identified outcome distribution has the wrong shape.")
-    return float(np.dot(np.arange(outcome_cardinality, dtype=float), distribution))
+    return float(np.dot(np.arange(outcome_cardinality, dtype=np.float64), distribution))
 
 
 def _evaluate_adjustment_mean(
@@ -1328,7 +1328,7 @@ def _evaluate_adjustment_mean(
     outcome_axis = names.index(expression.outcome)
     treatment_axis = names.index(expression.treatment)
     adjustment_axes = tuple(names.index(name) for name in expression.adjustment)
-    outcome_values = np.arange(probabilities.shape[outcome_axis], dtype=float)
+    outcome_values = np.arange(probabilities.shape[outcome_axis], dtype=np.float64)
     total = 0.0
     adjustment_ranges = [range(probabilities.shape[axis]) for axis in adjustment_axes]
     assignments = itertools.product(*adjustment_ranges) if adjustment_ranges else [()]

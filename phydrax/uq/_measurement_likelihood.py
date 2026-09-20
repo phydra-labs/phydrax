@@ -73,10 +73,9 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
         inputs = jax.tree_util.tree_map(jnp.asarray, measured_inputs)
         num_cases = _validate_case_tree(inputs, owner="Measured inputs", finite=True)
         targets = _field_data(measured_targets)
-        if targets.ndim == 0 or int(targets.shape[0]) != num_cases:
+        if targets.ndim == 0 or targets.shape[0] != num_cases:
             raise ValueError(
-                "Measured targets must have the same non-empty leading case axis as "
-                "measured inputs."
+                "Measured targets must have the same non-empty leading case axis as measured inputs."
             )
         if jnp.issubdtype(targets.dtype, jnp.complexfloating):
             raise TypeError("Measurement likelihood targets must be real-valued.")
@@ -85,15 +84,14 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
 
         one_input = jax.tree_util.tree_map(lambda value: value[0], inputs)
         flat_input, _ = ravel_pytree(one_input)
-        input_dimension = int(flat_input.size)
+        input_dimension = flat_input.size
         output_dimension = int(prod(targets.shape[1:])) if targets.ndim > 1 else 1
         maximum = int(max_output_dimension)
         if maximum <= 0:
             raise ValueError("max_output_dimension must be positive.")
         if output_dimension > maximum:
             raise ValueError(
-                "Measurement output event exceeds max_output_dimension; "
-                f"got {output_dimension} > {maximum}."
+                f"Measurement output event exceeds max_output_dimension; got {output_dimension} > {maximum}."
             )
         input_batching = _validate_batching(
             input_covariance_batching,
@@ -175,7 +173,7 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
             finite=False,
         )
         target_array = _field_data(targets)
-        if target_array.ndim == 0 or int(target_array.shape[0]) != batch_size:
+        if target_array.ndim == 0 or target_array.shape[0] != batch_size:
             raise ValueError(
                 "Measurement batch targets must share the input leading case axis."
             )
@@ -246,15 +244,13 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
         if batching == "shared":
             if value.shape != (dimension, dimension):
                 raise ValueError(
-                    f"{owner} callback must return shape {(dimension, dimension)}; "
-                    f"got {value.shape}."
+                    f"{owner} callback must return shape {(dimension, dimension)}; got {value.shape}."
                 )
             return jnp.broadcast_to(value, (batch_size, dimension, dimension))
         expected = (self.num_cases, dimension, dimension)
         if value.shape != expected:
             raise ValueError(
-                f"{owner} callback must return per-case shape {expected}; "
-                f"got {value.shape}."
+                f"{owner} callback must return per-case shape {expected}; got {value.shape}."
             )
         return jnp.take(
             value,
@@ -283,8 +279,7 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
         prediction, pushforward = jax.linearize(predict_flat, flat_input)
         if prediction.shape != (self.output_dimension,):
             raise ValueError(
-                "predict_case output event dimension changed; "
-                f"expected {self.output_dimension}, got {prediction.size}."
+                f"predict_case output event dimension changed; expected {self.output_dimension}, got {prediction.size}."
             )
         input_hermitian = 0.5 * (input_covariance + input_covariance.T)
         input_eigenvalues, input_eigenvectors = jnp.linalg.eigh(input_hermitian)
@@ -408,8 +403,8 @@ def _validate_case_tree(
         raise TypeError(f"{owner} must be a non-empty PyTree of inexact arrays.")
     if any(leaf.ndim == 0 for leaf in leaves):
         raise ValueError(f"Every {owner.lower()} leaf needs a leading case axis.")
-    count = int(leaves[0].shape[0])
-    if count <= 0 or any(int(leaf.shape[0]) != count for leaf in leaves):
+    count = leaves[0].shape[0]
+    if count <= 0 or any(leaf.shape[0] != count for leaf in leaves):
         raise ValueError(f"Every {owner.lower()} leaf must share one positive case axis.")
     if any(jnp.issubdtype(leaf.dtype, jnp.complexfloating) for leaf in leaves):
         raise TypeError(f"{owner} must be real-valued.")
@@ -459,7 +454,7 @@ def _label(value: str, /) -> str:
 def _covariance_tolerance(matrix: Array, /) -> Array:
     epsilon = jnp.finfo(matrix.dtype).eps
     scale = jnp.maximum(jnp.max(jnp.abs(matrix)), jnp.ones((), dtype=matrix.dtype))
-    return 100.0 * int(matrix.shape[-1]) * epsilon * scale
+    return 100.0 * matrix.shape[-1] * epsilon * scale
 
 
 __all__ = ["CovarianceBatching", "LinearizedGaussianMeasurementLikelihood"]

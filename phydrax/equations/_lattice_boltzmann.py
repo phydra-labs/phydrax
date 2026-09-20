@@ -164,7 +164,7 @@ def snapshot_lattice_boltzmann_geometry(
     geometry.require(GeometryCapability.REGION_QUERY)
     if geometry.ambient_dimension != discretization.velocity_set.dimension:
         raise ValueError("Geometry and lattice dimensions do not match.")
-    inside = np.asarray(geometry.contains(discretization.grid.points), dtype=bool)
+    inside = np.asarray(geometry.contains(discretization.grid.points), dtype=np.bool_)
     if inside.shape != (discretization.grid.size,):
         raise ValueError("Geometry region query returned an incompatible point mask.")
     mask = inside if fluid_inside else ~inside

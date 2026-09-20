@@ -17,13 +17,20 @@ from phydrax.uq import ParameterSpace
 
 def main() -> None:
     force = SkeletalObservationChannel(
-        "force", "observed_force", "example-load-cell",
-        jnp.asarray((100.0, 120.0, 140.0)), 2.0, jnp.asarray((True, True, True))
+        "force",
+        "observed_force",
+        "example-load-cell",
+        jnp.asarray((100.0, 120.0, 140.0)),
+        2.0,
+        jnp.asarray((True, True, True)),
     )
     emg = SkeletalObservationChannel(
-        "surface-emg", "surface_electric_potential", "example-electrodes",
-        jnp.asarray((1.0e-4, -2.0e-5, 5.0e-5)), 1.0e-5,
-        jnp.asarray((True, False, True))
+        "surface-emg",
+        "surface_electric_potential",
+        "example-electrodes",
+        jnp.asarray((1.0e-4, -2.0e-5, 5.0e-5)),
+        1.0e-5,
+        jnp.asarray((True, False, True)),
     )
     likelihood = SkeletalMultimodalLikelihoodPlan((force, emg))
     base_force = jnp.asarray((100.0, 120.0, 140.0))

@@ -126,7 +126,7 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
         self.reduction = reduction_
         self.values = target
         self.observation_operator = observation_operator
-        weight_array = jnp.asarray(weight, dtype=float)
+        weight_array = jnp.asarray(weight, dtype=jnp.float64)
         if weight_array.ndim != 0 or not bool(jnp.isfinite(weight_array)):
             raise ValueError("weight must be a finite scalar.")
         self.weight = weight_array
@@ -196,7 +196,7 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
             raise TypeError(
                 "Observation location must evaluate to a phydrax.axes.AxisArray."
             )
-        return jnp.asarray(value.data, dtype=float)
+        return jnp.asarray(value.data, dtype=jnp.float64)
 
     @abstractmethod
     def per_case_loss(
@@ -224,7 +224,7 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
         batch_value = self.sample(key=key) if batch is None else batch
 
         def zero_loss() -> Array:
-            return jnp.zeros((), dtype=jnp.result_type(self.weight, float))
+            return jnp.zeros((), dtype=jnp.result_type(self.weight, jnp.float64))
 
         def active_loss() -> Array:
             per_case = self.per_case_loss(
@@ -238,7 +238,7 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
                 reduction=self.reduction,
                 sample_weight=batch_value.sample_weight,
             )
-            return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
+            return self.weight * jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
         return jax.lax.cond(self.weight == 0.0, zero_loss, active_loss)
 
@@ -319,13 +319,13 @@ class _AbstractSupervisedLikelihoodTerm(_AbstractSupervisedDatasetObservationTer
         if batch.target_mask is not None:
             parameters["target_mask"] = batch.target_mask
         log_prob = jnp.asarray(
-            self.likelihood.log_prob(location, target, **parameters), dtype=float
+            self.likelihood.log_prob(location, target, **parameters), dtype=jnp.float64
         )
-        if log_prob.ndim == 0 or int(log_prob.shape[0]) != int(target.shape[0]):
+        if log_prob.ndim == 0 or log_prob.shape[0] != target.shape[0]:
             raise ValueError(
                 "Likelihood log_prob must retain the leading empirical-case axis."
             )
-        return log_prob.reshape((int(log_prob.shape[0]), -1)).sum(axis=1)
+        return log_prob.reshape((log_prob.shape[0], -1)).sum(axis=1)
 
     def per_case_loss(
         self,

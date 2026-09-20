@@ -53,7 +53,7 @@ class AtomisticCoordinateDiffusion(StrictModule):
             raise ValueError(
                 "Atomistic coordinate diffusion initially excludes periodic cells."
             )
-        if process.state_shape != (int(template.positions.size),):
+        if process.state_shape != (template.positions.size,):
             raise ValueError(
                 "Coordinate diffusion dimension must equal padded position size."
             )
@@ -146,7 +146,7 @@ class AtomisticHybridDiffusion(StrictModule):
             raise TypeError("coordinate must be an AtomisticCoordinateDiffusion.")
         if not isinstance(species_schedule, CategoricalDiffusionSchedule):
             raise TypeError("species_schedule must be categorical diffusion.")
-        values = tuple(int(number) for number in species)
+        values = tuple(species)
         if len(values) != species_schedule.num_classes or len(set(values)) != len(values):
             raise ValueError("species must uniquely map every categorical class.")
         if any(number <= 0 for number in values):
@@ -203,7 +203,7 @@ class AtomisticHybridDiffusion(StrictModule):
         if not jnp.issubdtype(raw.dtype, jnp.integer):
             raise TypeError("Species indices must use an integer dtype.")
         value = raw.astype(jnp.int32)
-        active = jnp.asarray(mask, dtype=bool)
+        active = jnp.asarray(mask, dtype=jnp.bool_)
         vocabulary = jnp.asarray(self.species, dtype=jnp.int32)
         if value.shape != active.shape:
             raise ValueError("Species indices and mask must have identical shapes.")

@@ -25,7 +25,7 @@ class VortexWakeState(StrictModule):
     step_index: Array
 
     def as_filaments(self, /) -> VortexFilamentState:
-        capacity = int(self.start.shape[0])
+        capacity = self.start.shape[0]
         vertices = jnp.concatenate((self.start, self.end), axis=0)
         segment_index = jnp.arange(capacity, dtype=jnp.int32)
         start_index = jnp.where(self.active, segment_index, 0)
@@ -98,7 +98,7 @@ class VortexWakePlan(StrictModule, NonTrainableState):
             jnp.zeros((self.segment_capacity,), dtype=bound.dtype),
             jnp.full((self.segment_capacity,), self.core_radius, dtype=bound.dtype),
             jnp.zeros((self.segment_capacity,), dtype=bound.dtype),
-            jnp.zeros((self.segment_capacity,), dtype=bool),
+            jnp.zeros((self.segment_capacity,), dtype=jnp.bool_),
             bound,
             jnp.asarray(0, dtype=jnp.int32),
         )
@@ -193,7 +193,7 @@ class VortexWakePlan(StrictModule, NonTrainableState):
 def jax_tree_select(
     condition: ArrayLike, candidate: VortexWakeState, previous: VortexWakeState, /
 ) -> VortexWakeState:
-    condition_ = jnp.asarray(condition, dtype=bool)
+    condition_ = jnp.asarray(condition, dtype=jnp.bool_)
     return VortexWakeState(
         jnp.where(condition_, candidate.start, previous.start),
         jnp.where(condition_, candidate.end, previous.end),

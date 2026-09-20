@@ -101,7 +101,7 @@ class TreeFitDiagnostics(StrictModule):
         method: str,
         split_search: str,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
@@ -109,8 +109,8 @@ class TreeFitDiagnostics(StrictModule):
         self.trees_built = jnp.asarray(trees_built, dtype=jnp.int32)
         self.nodes_used = jnp.asarray(nodes_used, dtype=jnp.int32)
         self.leaves_used = jnp.asarray(leaves_used, dtype=jnp.int32)
-        self.capacity_exhausted = jnp.asarray(capacity_exhausted, dtype=bool)
-        self.converged = jnp.asarray(converged, dtype=bool)
+        self.capacity_exhausted = jnp.asarray(capacity_exhausted, dtype=jnp.bool_)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.method = str(method)
         self.split_search = str(split_search)
 
@@ -185,15 +185,15 @@ def _empty_tree(
         "threshold": jnp.zeros((node_capacity,), dtype=threshold_dtype),
         "left_child": jnp.full((node_capacity,), -1, dtype=jnp.int32),
         "right_child": jnp.full((node_capacity,), -1, dtype=jnp.int32),
-        "default_left": jnp.zeros((node_capacity,), dtype=bool),
+        "default_left": jnp.zeros((node_capacity,), dtype=jnp.bool_),
         "split_kind": jnp.zeros((node_capacity,), dtype=jnp.int8),
         "category_values": jnp.zeros(
             (node_capacity, category_capacity), dtype=threshold_dtype
         ),
-        "category_mask": jnp.zeros((node_capacity, category_capacity), dtype=bool),
+        "category_mask": jnp.zeros((node_capacity, category_capacity), dtype=jnp.bool_),
         "leaf_value": jnp.zeros((node_capacity, output_count), dtype=value_dtype),
-        "node_mask": jnp.zeros((node_capacity,), dtype=bool),
-        "leaf_mask": jnp.zeros((node_capacity,), dtype=bool),
+        "node_mask": jnp.zeros((node_capacity,), dtype=jnp.bool_),
+        "leaf_mask": jnp.zeros((node_capacity,), dtype=jnp.bool_),
         "node_gain": jnp.zeros((node_capacity,), dtype=jnp.asarray(0.0).dtype),
         "node_cover": jnp.zeros((node_capacity,), dtype=jnp.asarray(0.0).dtype),
         "capacity_exhausted": jnp.asarray(False),
@@ -305,12 +305,12 @@ def _build_tree(
     assert target is not None
     tree = _empty_tree(
         node_capacity,
-        int(target.shape[-1]),
+        target.shape[-1],
         max_categories,
         value_dtype=target.dtype,
         threshold_dtype=x.dtype,
     )
-    feature_count = int(x.shape[-1])
+    feature_count = x.shape[-1]
     selected_feature_count = _feature_count(max_features, feature_count)
     if monotonic_constraints and len(monotonic_constraints) != feature_count:
         raise ValueError("monotonic_constraints must align with the feature axis.")
@@ -395,7 +395,7 @@ def _build_tree(
         best_default_left = False
         best_kind = 0
         best_categories = jnp.zeros((max_categories,), dtype=x.dtype)
-        best_category_mask = jnp.zeros((max_categories,), dtype=bool)
+        best_category_mask = jnp.zeros((max_categories,), dtype=jnp.bool_)
         best_left_mask = node_samples
         best_right_mask = node_samples
         best_left_value = parent_value
@@ -421,7 +421,9 @@ def _build_tree(
                         .set(jnp.where(category_valid, category, 0.0))
                     )
                     category_mask = (
-                        jnp.zeros((max_categories,), dtype=bool).at[0].set(category_valid)
+                        jnp.zeros((max_categories,), dtype=jnp.bool_)
+                        .at[0]
+                        .set(category_valid)
                     )
                     candidates.append((category, 1, categories, category_mask))
             elif split_search == "random":
@@ -442,7 +444,7 @@ def _build_tree(
                         threshold,
                         0,
                         jnp.zeros((max_categories,), dtype=x.dtype),
-                        jnp.zeros((max_categories,), dtype=bool),
+                        jnp.zeros((max_categories,), dtype=jnp.bool_),
                     )
                 )
             else:
@@ -458,7 +460,7 @@ def _build_tree(
                             threshold,
                             0,
                             jnp.zeros((max_categories,), dtype=x.dtype),
-                            jnp.zeros((max_categories,), dtype=bool),
+                            jnp.zeros((max_categories,), dtype=jnp.bool_),
                         )
                     )
 
@@ -577,7 +579,7 @@ def _build_tree(
                     jnp.asarray(False),
                     jnp.asarray(0, dtype=jnp.int32),
                     jnp.zeros((max_categories,), dtype=x.dtype),
-                    jnp.zeros((max_categories,), dtype=bool),
+                    jnp.zeros((max_categories,), dtype=jnp.bool_),
                     jnp.zeros_like(node_samples),
                     jnp.zeros_like(node_samples),
                     initial_value,
@@ -674,7 +676,7 @@ def _tree_predict(tree: dict[str, Array], x: Array) -> Array:
             tree["leaf_value"],
             tree["node_mask"],
             tree["leaf_mask"],
-            int(tree["feature_index"].shape[0]),
+            tree["feature_index"].shape[0],
         )[0]
     )(x)  # type: ignore[arg-type]
 
@@ -714,7 +716,7 @@ def _prepare_batch(
     elif bool(invalid_weight_predicate):
         raise ValueError("Tree fitting requires finite nonnegative sample weights.")
     target_mask = (
-        jnp.ones_like(raw_y, dtype=bool)
+        jnp.ones_like(raw_y, dtype=jnp.bool_)
         if batch.target_mask is None
         else batch.target_mask.reshape(raw_y.shape)
     )
@@ -747,7 +749,7 @@ def _prepare_batch(
         )
         return x, y, weight, sample_mask, num_classes, (num_classes,), target_schema
 
-    output_count = int(raw_y.shape[-1])
+    output_count = raw_y.shape[-1]
     out_shape = batch.target_shape
     return x, raw_y, weight, sample_mask, output_count, out_shape, batch.target_schema
 
@@ -912,7 +914,7 @@ def _fit_bagged(
         classification=classification,
         num_classes=recipe.num_classes if classification else None,
     )
-    case_count = int(x.shape[0])
+    case_count = x.shape[0]
     all_keys: list[list[Any]]
     if key is None:
         all_keys = [[None] * tree_count for _ in range(case_count)]
@@ -1296,7 +1298,7 @@ class AdaBoostClassifier(_AbstractCARTRecipe):
         x, y, weight, sample_mask, classes, _, target_schema = _prepare_batch(
             batch, classification=True, num_classes=self.num_classes
         )
-        case_count = int(x.shape[0])
+        case_count = x.shape[0]
         keys = (
             [None] * (case_count * self.n_estimators)
             if key is None
@@ -1445,7 +1447,7 @@ class AdaBoostRegressor(_AbstractCARTRecipe):
         )
         if jnp.issubdtype(y.dtype, jnp.complexfloating):
             raise TypeError("AdaBoost.R2 weighted medians require real targets.")
-        case_count = int(x.shape[0])
+        case_count = x.shape[0]
         keys = (
             [None] * (case_count * self.n_estimators)
             if key is None
@@ -1517,7 +1519,7 @@ class AdaBoostRegressor(_AbstractCARTRecipe):
             median = _weighted_median_case(
                 tree_predictions,
                 alpha_array,
-                jnp.ones((self.n_estimators,), dtype=bool),
+                jnp.ones((self.n_estimators,), dtype=jnp.bool_),
                 jnp.zeros((outputs,), dtype=y.dtype),
             )
             forests.append(forest)
@@ -1678,7 +1680,7 @@ def _fit_boosted(
     if jnp.issubdtype(y.dtype, jnp.complexfloating) and objective_name != "squared_error":
         raise TypeError("Only squared-error boosting supports complex targets.")
 
-    case_count = int(x.shape[0])
+    case_count = x.shape[0]
     all_keys = (
         [None] * (case_count * recipe.n_estimators)
         if key is None

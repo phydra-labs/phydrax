@@ -74,7 +74,7 @@ def main() -> None:
     report = {
         "shape": list(lpt.shape),
         "particles": lpt.particles.capacity,
-        "steps": int(rollout.scale_factors.size - 1),
+        "steps": rollout.scale_factors.size - 1,
         "lpt_compile_seconds": initial_compile,
         "lpt_steady_seconds": initial_steady,
         "rollout_compile_seconds": rollout_compile,

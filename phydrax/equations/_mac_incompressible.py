@@ -204,8 +204,7 @@ class CompiledMACIncompressibleDynamics(StrictModule):
         value = jnp.asarray(state)
         if value.shape != self.state_shape:
             raise ValueError(
-                f"MAC velocity coordinates must have shape {self.state_shape}; "
-                f"got {value.shape}."
+                f"MAC velocity coordinates must have shape {self.state_shape}; got {value.shape}."
             )
         dtype = self.momentum.operators.pressure_space.dtype
         if value.dtype != dtype:
@@ -463,7 +462,7 @@ class CompiledMACIncompressibleDynamics(StrictModule):
             )
             cell_velocity = jnp.moveaxis(cell_velocity, 0, axis_index)
             shape = [1] * inverse_advective.ndim
-            shape[axis_index] = int(axis.interval_widths.size)
+            shape[axis_index] = axis.interval_widths.size
             widths = axis.interval_widths.reshape(tuple(shape))
             inverse_advective = inverse_advective + jnp.abs(cell_velocity) / widths
             inverse_diffusive = inverse_diffusive + 2.0 / widths**2

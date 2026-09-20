@@ -76,7 +76,7 @@ class ParametricBasisPayload(StrictModule):
             raise ValueError("Basis values require a trailing basis-function axis.")
         if gradients_.shape[:-1] != values_.shape:
             raise ValueError("Basis gradients must append one parameter axis to values.")
-        dimension = int(gradients_.shape[-1])
+        dimension = gradients_.shape[-1]
         if dimension <= 0 or hessians_.shape != (*values_.shape, dimension, dimension):
             raise ValueError("Basis Hessians must append two square parameter axes.")
         if not revision:
@@ -86,7 +86,7 @@ class ParametricBasisPayload(StrictModule):
             for value in (values_, gradients_, hessians_)
         ):
             raise TypeError("Manifold basis payloads must be real.")
-        dtype = jnp.result_type(values_, gradients_, hessians_, float)
+        dtype = jnp.result_type(values_, gradients_, hessians_, jnp.float64)
         self.values = values_.astype(dtype)
         self.gradients = gradients_.astype(dtype)
         self.hessians = hessians_.astype(dtype)
@@ -103,7 +103,7 @@ class ParametricBasisPayload(StrictModule):
 
     @property
     def parametric_dimension(self) -> int:
-        return int(self.gradients.shape[-1])
+        return self.gradients.shape[-1]
 
 
 @runtime_checkable
@@ -417,8 +417,8 @@ class SurfaceChartTransition(StrictModule, NonTrainableState):
     ):
         left = int(left_chart)
         right = int(right_chart)
-        left_points = jnp.asarray(left_reference, dtype=float)
-        right_points = jnp.asarray(right_reference, dtype=float)
+        left_points = jnp.asarray(left_reference, dtype=jnp.float64)
+        right_points = jnp.asarray(right_reference, dtype=jnp.float64)
         if left < 0 or right < 0 or left == right:
             raise ValueError("A chart transition requires two distinct chart indices.")
         if (
@@ -497,9 +497,9 @@ def _connected_chart_graph(
     frontier = [0]
     while frontier:
         chart = frontier.pop()
-        for neighbour in adjacency[chart] - visited:
-            visited.add(neighbour)
-            frontier.append(neighbour)
+        for neighbor in adjacency[chart] - visited:
+            visited.add(neighbor)
+            frontier.append(neighbor)
     return len(visited) == chart_count
 
 
@@ -550,7 +550,7 @@ def certify_surface_embedding(
     minimum_normal_dot = 1.0
     transition_sample_count = 0
     for transition in transition_values:
-        count = int(transition.left_reference.shape[0])
+        count = transition.left_reference.shape[0]
         left_indices = jnp.full((count,), transition.left_chart, dtype=jnp.int32)
         right_indices = jnp.full((count,), transition.right_chart, dtype=jnp.int32)
         left_frame = atlas.frame(left_indices, transition.left_reference)
@@ -594,7 +594,7 @@ def certify_surface_embedding(
         jnp.asarray(minimum_measure_ratio),
         jnp.asarray(maximum_transition_residual),
         jnp.asarray(minimum_normal_dot),
-        int(indices.shape[0]),
+        indices.shape[0],
         transition_sample_count,
         evidence_id,
     )

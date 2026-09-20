@@ -86,7 +86,7 @@ def _quantity(name, kind, unit):
 
 
 def _controls(voltage):
-    voltage = jnp.asarray(voltage, dtype=float)
+    voltage = jnp.asarray(voltage, dtype="float64")
     return jnp.stack(
         (voltage, jnp.full_like(voltage, 300.0), jnp.full_like(voltage, DENSITY)), axis=-1
     )

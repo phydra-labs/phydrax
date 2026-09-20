@@ -181,7 +181,7 @@ def _adaptive_batched_dense(
     chosen = jnp.full(batch_shape, maximum, dtype=jnp.int32)
     selected_estimate = full.estimate
     selected_standard_error = full.standard_error
-    selected_converged = jnp.zeros(batch_shape, dtype=bool)
+    selected_converged = jnp.zeros(batch_shape, dtype=jnp.bool_)
     for count in range(selected.min_probes, maximum + 1, selected.batch_size):
         prefix = full.samples[:count]
         estimate = jnp.mean(prefix, axis=0)
@@ -331,7 +331,7 @@ def _adaptive_stochastic_trace(
     nan_sample = jnp.asarray(jnp.nan, dtype=sample_spec.dtype)
     nan_real = jnp.asarray(jnp.nan, dtype=real_dtype)
     samples = jnp.full((maximum,), nan_sample, dtype=sample_spec.dtype)
-    booleans = jnp.zeros((maximum,), dtype=bool)
+    booleans = jnp.zeros((maximum,), dtype=jnp.bool_)
     statuses = jnp.full(
         (maximum,),
         int(StochasticProbeStatus.NOT_EVALUATED),
@@ -649,7 +649,7 @@ def _adaptive_cost(
     retained_per_probe = (
         sample_itemsize
         + 3 * real_itemsize
-        + 2 * jnp.dtype(bool).itemsize
+        + 2 * jnp.dtype(jnp.bool_).itemsize
         + 5 * jnp.dtype(jnp.int32).itemsize
     )
     retained = policy.max_probes * retained_per_probe

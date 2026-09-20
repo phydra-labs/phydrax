@@ -46,24 +46,21 @@ def _reshape_value(
     if out_size == "scalar":
         if leading_shape:
             raise ValueError(
-                "Expected scalar output with no leading axes; got "
-                f"leading_shape={leading_shape}."
+                f"Expected scalar output with no leading axes; got leading_shape={leading_shape}."
             )
         if y_arr.shape == ():
             return y_arr
         if y_arr.shape == (1,):
             return jnp.squeeze(y_arr, axis=0)
         raise ValueError(
-            "Wrapped module returned the wrong shape for scalar out_size. Expected "
-            f"() or (1,), got {y_arr.shape}."
+            f"Wrapped module returned the wrong shape for scalar out_size. Expected () or (1,), got {y_arr.shape}."
         )
 
     out_numel = _get_size(out_size)
     out_shape = _get_value_shape(out_size)
     if leading_shape:
         raise ValueError(
-            "Expected unbatched output (no leading axes) for layout='value'. "
-            f"Got leading_shape={leading_shape}."
+            f"Expected unbatched output (no leading axes) for layout='value'. Got leading_shape={leading_shape}."
         )
     if y_arr.shape != (out_numel,):
         raise ValueError(

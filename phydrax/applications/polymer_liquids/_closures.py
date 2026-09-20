@@ -39,7 +39,7 @@ class PRISMClosurePlan(StrictModule, NonTrainableState):
             raise TypeError("kind must be PRISMClosureKind.")
         diameters = None
         if hard_core_diameters is not None:
-            host = np.asarray(hard_core_diameters, dtype=float)
+            host = np.asarray(hard_core_diameters, dtype=np.float64)
             if (
                 host.ndim != 2
                 or host.shape[0] != host.shape[1]
@@ -98,7 +98,7 @@ def evaluate_prism_closure(
     ):
         raise ValueError("Closure radii, gamma, and potential shapes are incompatible.")
     if plan.hard_core_diameters is None:
-        core = jnp.zeros_like(indirect, dtype=bool)
+        core = jnp.zeros_like(indirect, dtype=jnp.bool_)
     else:
         if plan.hard_core_diameters.shape != indirect.shape[:2]:
             raise ValueError("Hard-core diameter matrix does not match the site count.")

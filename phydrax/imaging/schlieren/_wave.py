@@ -254,7 +254,7 @@ class MultisliceRefractivePlan(StrictModule, NonTrainableState):
         maximum_phase_per_slice: float = np.pi / 2.0,
         maximum_leakage_fraction: float = 1.0e-5,
     ):
-        thicknesses = np.asarray(slice_thicknesses, dtype=float)
+        thicknesses = np.asarray(slice_thicknesses, dtype=np.float64)
         if (
             thicknesses.ndim != 1
             or thicknesses.size < 1

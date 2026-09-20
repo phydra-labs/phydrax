@@ -203,8 +203,7 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
             raise TypeError("precision must be a ParticlePrecisionPolicy or None.")
         if execution_.realization != neighborhood.backend:
             raise ValueError(
-                "Particle execution realization does not match the prepared "
-                "neighborhood backend."
+                "Particle execution realization does not match the prepared neighborhood backend."
             )
         preparation = PreparationReport(
             capabilities=(
@@ -528,7 +527,7 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
 
     @staticmethod
     def _angular_sum(position: Array, vector: Array, /) -> Array:
-        dimension = int(position.shape[-1])
+        dimension = position.shape[-1]
         if dimension == 1:
             return jnp.zeros((), dtype=position.dtype)
         if dimension == 2:

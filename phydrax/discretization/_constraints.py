@@ -42,12 +42,12 @@ class AbstractDiscreteDirichletConstraint(StrictModule, NonTrainableState):
         if not isinstance(full_space, ArraySpace):
             raise TypeError("Discrete Dirichlet lifts require an ArraySpace.")
         full_shape = full_space.shape
-        full_size = int(np.prod(full_shape, dtype=int))
+        full_size = int(np.prod(full_shape, dtype=np.int64))
         if raw.shape == ():
             full = jnp.broadcast_to(raw, full_shape).reshape((full_size,))
         elif raw.shape == full_shape:
             full = raw.reshape((full_size,))
-        elif raw.shape == (int(self.constrained_dofs.size),):
+        elif raw.shape == (self.constrained_dofs.size,):
             full = (
                 jnp.zeros((full_size,), dtype=raw.dtype)
                 .at[self.constrained_dofs]
@@ -55,8 +55,7 @@ class AbstractDiscreteDirichletConstraint(StrictModule, NonTrainableState):
             )
         else:
             raise ValueError(
-                "Dirichlet values must be scalar, full-space shaped, or contain "
-                "one value per constrained coordinate."
+                "Dirichlet values must be scalar, full-space shaped, or contain one value per constrained coordinate."
             )
         zeros = jnp.zeros((full_size,), dtype=full.dtype)
         return (

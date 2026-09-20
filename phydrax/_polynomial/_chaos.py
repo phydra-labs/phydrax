@@ -72,7 +72,7 @@ class PolynomialMultiIndexSet(StrictModule, NonTrainableState):
                     index[coordinate] += 1
                 rows.append(index)
         indices = np.asarray(rows, dtype=np.int32).reshape((feature_count, dimension_))
-        if int(indices.nbytes) != storage_bytes:
+        if indices.nbytes != storage_bytes:
             raise RuntimeError(
                 "Polynomial multiindex storage accounting is inconsistent."
             )
@@ -84,7 +84,7 @@ class PolynomialMultiIndexSet(StrictModule, NonTrainableState):
         self.storage_bytes = storage_bytes
         self.content_id = canonical_fingerprint(
             {
-                "kind": "polynomial-chaos-total-degree-multiindices-v1",
+                "kind": "polynomial-chaos-total-degree-multiindices",
                 "dimension": dimension_,
                 "degree": degree_,
                 "feature_count": feature_count,
@@ -101,7 +101,7 @@ def normalized_vandermonde(
     /,
 ) -> Array:
     """Evaluate a one-dimensional orthonormal polynomial family."""
-    values = jnp.asarray(points, dtype=float)
+    values = jnp.asarray(points, dtype=jnp.float64)
     degree_ = _nonnegative_integer(degree, "degree")
     if measure == "uniform":
         vandermonde = standard_vandermonde("legendre", values.reshape((-1,)), degree_)

@@ -70,7 +70,7 @@ def main():
     if solver.version != runtime["version"]:
         raise ValueError("The imported DAFoam engine has a different version.")
     design = {
-        name: np.asarray(values, dtype=float)
+        name: np.asarray(values, dtype=np.float64)
         for name, values in request["design"].items()
     }
     for name, values in design.items():

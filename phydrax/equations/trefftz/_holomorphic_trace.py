@@ -121,7 +121,7 @@ class HolomorphicContourFunctional(StrictModule, NonTrainableState):
         if nodes_raw.ndim == 1:
             nodes_raw = nodes_raw[:, None]
         weights_raw = np.asarray(weights, dtype=np.complex128)
-        derivative = tuple(int(value) for value in derivative_multi_index)
+        derivative = tuple(derivative_multi_index)
         output = int(output_index)
         component = complex(component_weight)
         construction_ = str(construction)
@@ -166,7 +166,7 @@ class HolomorphicContourFunctional(StrictModule, NonTrainableState):
         if not isinstance(frame, HolomorphicLinearFrame):
             raise TypeError("frame must implement HolomorphicLinearFrame.")
         certificate = frame.linear_frame_certificate()
-        if int(self.nodes.shape[1]) != certificate.complex_input_size:
+        if self.nodes.shape[1] != certificate.complex_input_size:
             raise ValueError("Contour and frame input dimensions differ.")
         if self.output_index >= certificate.complex_output_size:
             raise ValueError("Contour output index exceeds the frame output size.")

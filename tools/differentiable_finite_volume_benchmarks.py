@@ -89,7 +89,7 @@ def _measure(runtime, mesh, initial, replay):
         "value": float(value),
         "gradient_norm": float(jnp.linalg.norm(gradient)),
         "duration_seconds": duration,
-        "retained_state_values": int(result.retained_states.size),
+        "retained_state_values": result.retained_states.size,
         "final_state": result.final_state.content_state.conservative_content,
     }
 

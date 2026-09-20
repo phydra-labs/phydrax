@@ -26,7 +26,7 @@ from phydrax.particle_physics._hadronization import (
     fission_dark_cluster,
     fragment_dark_string,
 )
-from phydrax.particle_physics._identity import ParticleCatalogueReference
+from phydrax.particle_physics._identity import ParticleCatalogReference
 from phydrax.particle_physics._species import ParticleSpeciesTable
 from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 from phydrax.units import COULOMB
@@ -87,7 +87,7 @@ def _contracts():
         species_revision_id="3" * 64,
         topology_revision_id="4" * 64,
     )
-    catalogue = ParticleCatalogueReference(
+    catalog = ParticleCatalogReference(
         source_id="dark-hadrons",
         provider_release="test",
         checksum="checksum",
@@ -97,7 +97,7 @@ def _contracts():
         jnp.asarray((100, -100, 200, -200, 201, -201)),
         jnp.asarray((0.0, 0.0, 1.0, 1.0, 2.0, 2.0)),
         jnp.asarray((1.0, -1.0, 1.0, -1.0, 1.0, -1.0)),
-        catalogue=catalogue,
+        catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
     )

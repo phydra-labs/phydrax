@@ -66,8 +66,7 @@ def _require_dose_rate_quantity(quantity: QuantitySpec, /) -> None:
         raise TypeError("quantity must be a QuantitySpec.")
     if quantity.reference_configuration not in CIRCULATING_BLOOD_DOSE_RATE_REFERENCES:
         raise ValueError(
-            "Dose-rate reference_configuration is outside the circulating-blood "
-            "absorbed/water/medium allow-list."
+            "Dose-rate reference_configuration is outside the circulating-blood absorbed/water/medium allow-list."
         )
     expected = circulating_blood_dose_rate_quantity(
         "circulating_blood_dose_rate",
@@ -83,7 +82,7 @@ def _require_dose_rate_quantity(quantity: QuantitySpec, /) -> None:
 
 
 def _readonly_vector(value: ArrayLike, name: str, /) -> np.ndarray:
-    array = np.array(value, dtype=float, copy=True)
+    array = np.array(value, dtype=np.float64, copy=True)
     if array.ndim != 1 or array.shape[0] == 0:
         raise ValueError(f"{name} must be a non-empty vector.")
     if np.any(~np.isfinite(array)) or np.any(array < 0.0):
@@ -192,7 +191,7 @@ class PiecewiseConstantDoseRateSchedule:
 
     @property
     def compartment_count(self) -> int:
-        return int(self.intervals[0].dose_rates_gy_per_s.shape[0])
+        return self.intervals[0].dose_rates_gy_per_s.shape[0]
 
     @property
     def quantity(self) -> QuantitySpec:
@@ -286,7 +285,7 @@ def _advance_probability(
 ) -> tuple[Array, Array]:
     """Advance a row law and integrate its exact occupation by one block exponential."""
 
-    count = int(matrix.shape[0])
+    count = matrix.shape[0]
     block = jnp.zeros((2 * count, 2 * count), dtype=matrix.dtype)
     block = block.at[:count, :count].set(matrix)
     block = block.at[:count, count:].set(jnp.eye(count, dtype=matrix.dtype))
@@ -309,7 +308,7 @@ def integrate_circulating_blood_dose(
 
     count = _validate_schedule_model(prepared, schedule)
     start, end = _time_bounds(t0_s, t1_s)
-    initial_host = np.asarray(initial_probabilities, dtype=float)
+    initial_host = np.asarray(initial_probabilities, dtype=np.float64)
     if initial_host.shape != (count,):
         raise ValueError(f"initial_probabilities must have shape {(count,)}.")
     tolerance = 128.0 * np.finfo(initial_host.dtype).eps

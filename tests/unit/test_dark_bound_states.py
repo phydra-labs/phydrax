@@ -24,7 +24,7 @@ from phydrax.particle_physics._bound_states import (
     evaluate_thermal_bound_state_balance,
     RadiativeCapturePlan,
 )
-from phydrax.particle_physics._identity import ParticleCatalogueReference
+from phydrax.particle_physics._identity import ParticleCatalogReference
 from phydrax.particle_physics._species import ParticleSpeciesTable
 from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 from phydrax.units import COULOMB
@@ -85,7 +85,7 @@ def _capture_plan():
         species_revision_id="5" * 64,
         topology_revision_id="6" * 64,
     )
-    catalogue = ParticleCatalogueReference(
+    catalog = ParticleCatalogReference(
         source_id="bound-test",
         provider_release="test",
         checksum="checksum",
@@ -95,7 +95,7 @@ def _capture_plan():
         jnp.asarray((10, -10)),
         jnp.asarray((5.0, 5.0)),
         jnp.asarray((1.0, -1.0)),
-        catalogue=catalogue,
+        catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
     )

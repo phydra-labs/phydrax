@@ -132,7 +132,7 @@ def mixed_radix_assignments(
 ) -> Array:
     """Enumerate deterministic lexicographic assignments, last label fastest."""
 
-    dimensions_ = tuple(int(value) for value in dimensions)
+    dimensions_ = tuple(dimensions)
     if not dimensions_ or any(value < 1 for value in dimensions_):
         raise ValueError("Mixed-radix dimensions must be a nonempty positive tuple.")
     total = prod(dimensions_)

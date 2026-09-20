@@ -11,7 +11,7 @@ evanescent diffraction orders, metasurfaces, and bianisotropic stacks. Use compa
 Maxwell for general full-wave time-domain problems. Use `phydrax.optics.geometric`
 when a fixed optical path and surface intersections are the model. Use
 `phydrax.optics.wave` for coherent sampled-plane propagation. Use beamlets only while
-the chief path and its differential neighbourhood share one regular topology. Use
+the chief path and its differential neighborhood share one regular topology. Use
 `phydrax.optics.transport` only after coherence and diffraction have intentionally
 been discarded.
 
@@ -45,7 +45,7 @@ not smooth gradients.
 `ParaxialResonatorPlan` composes a closed ordered tuple of compatible
 `DifferentialRayMap` legs. It solves the affine closed orbit, audits the full
 canonical four-dimensional symplectic/Floquet map, and distinguishes certified
-stable, cleanly unstable, marginal, singular, and invalid analyses. A stable
+stable, cleanly unstable, marginal, singular, and invalid analyzes. A stable
 analysis returns a positive invariant complex Lagrangian plane rather than
 assuming independent sagittal and tangential scalar q parameters. Mode
 selection is host-prepared and fixed; crossings, marginal multipliers, route

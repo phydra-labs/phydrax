@@ -28,7 +28,7 @@ class RadialGrid(StrictModule, NonTrainableState):
     grid_id: str = eqx.field(static=True)
 
     def __init__(self, redshifts: ArrayLike, /):
-        nodes = np.asarray(redshifts, dtype=float).reshape((-1,))
+        nodes = np.asarray(redshifts, dtype=np.float64).reshape((-1,))
         if (
             nodes.size < 3
             or np.any(~np.isfinite(nodes))
@@ -184,7 +184,7 @@ class LimberAngularPowerPlan(StrictModule, NonTrainableState):
         tracer_count: int,
         /,
     ):
-        ell = np.asarray(multipoles, dtype=int).reshape((-1,))
+        ell = np.asarray(multipoles, dtype=np.int64).reshape((-1,))
         count = int(tracer_count)
         if ell.size < 1 or np.any(ell < 2) or np.any(np.diff(ell) <= 0) or count < 1:
             raise ValueError("Limber multipoles/tracer count are invalid.")
@@ -318,7 +318,7 @@ class LinearRSDMultipolePlan(StrictModule, NonTrainableState):
         *,
         mu_order: int = 32,
     ):
-        k = np.asarray(wavenumbers, dtype=float).reshape((-1,))
+        k = np.asarray(wavenumbers, dtype=np.float64).reshape((-1,))
         order = int(mu_order)
         if (
             k.size < 2

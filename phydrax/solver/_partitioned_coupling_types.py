@@ -15,7 +15,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import DiscreteFieldSpace, DiscreteMeasure, FieldTransfer
 from ..linalg import AbstractVectorSpace
@@ -476,7 +476,7 @@ class CouplingSweep(StrictModule, NonTrainableState):
 
 
 class AbstractCouplingPolicy(StrictModule, NonTrainableState):
-    policy_id: AbstractAttribute[str]
+    policy_id: eqx.AbstractVar[str]
 
 
 class ExplicitCouplingPolicy(AbstractCouplingPolicy):
@@ -516,8 +516,7 @@ class ImplicitCouplingPolicy(AbstractCouplingPolicy):
     ):
         if not isinstance(method, (FixedPointIteration, AbstractNonlinearMethod)):
             raise TypeError(
-                "Implicit coupling method must be FixedPointIteration or "
-                "AbstractNonlinearMethod."
+                "Implicit coupling method must be FixedPointIteration or AbstractNonlinearMethod."
             )
         if not isinstance(termination, NonlinearTermination):
             raise TypeError("Implicit coupling termination must be NonlinearTermination.")
@@ -608,8 +607,7 @@ class CouplingDifferentiationPolicy(StrictModule, NonTrainableState):
     def __init__(self, mode: CouplingDifferentiationMode = "none", /):
         if mode not in ("none", "algorithmic", "implicit"):
             raise ValueError(
-                "Coupling differentiation mode must be 'none', 'algorithmic', or "
-                "'implicit'."
+                "Coupling differentiation mode must be 'none', 'algorithmic', or 'implicit'."
             )
         self.mode = mode
         self.policy_id = f"coupling-differentiation:{mode}"
@@ -659,7 +657,7 @@ class CouplingWindowErrorEstimate(StrictModule):
         error = _scalar(error_norm, "coupling error_norm")
         reference = _scalar(reference_norm, "coupling reference_norm", dtype=error.dtype)
         order_ = _scalar(order, "coupling error order", dtype=jnp.int32)
-        reliable_ = _scalar(reliable, "coupling error reliability", dtype=bool)
+        reliable_ = _scalar(reliable, "coupling error reliability", dtype=jnp.bool_)
         error = eqx.error_if(
             error,
             ~jnp.isfinite(error)
@@ -709,7 +707,7 @@ class CouplingSubsystemResult(StrictModule):
     ):
         self.candidate_state = _array_tree(candidate_state, "candidate_state")
         self.outputs = tuple(outputs)
-        self.successful = _scalar(successful, "participant successful", dtype=bool)
+        self.successful = _scalar(successful, "participant successful", dtype=jnp.bool_)
         self.status = _scalar(status, "participant status", dtype=jnp.int32)
         self.residual_norm = _scalar(residual_norm, "participant residual_norm")
         self.iterations = _scalar(iterations, "participant iterations", dtype=jnp.int32)
@@ -727,11 +725,11 @@ class CouplingSubsystemResult(StrictModule):
 class AbstractCouplingSubsystem(StrictModule, NonTrainableState):
     """Pure prepared subsystem map over one coupling window."""
 
-    subsystem_id: AbstractAttribute[str]
-    input_ports: AbstractAttribute[tuple[CouplingPort, ...]]
-    output_ports: AbstractAttribute[tuple[CouplingPort, ...]]
-    capabilities: AbstractAttribute[CouplingSubsystemCapabilities]
-    discretization_bundle_id: AbstractAttribute[str | None]
+    subsystem_id: eqx.AbstractVar[str]
+    input_ports: eqx.AbstractVar[tuple[CouplingPort, ...]]
+    output_ports: eqx.AbstractVar[tuple[CouplingPort, ...]]
+    capabilities: eqx.AbstractVar[CouplingSubsystemCapabilities]
+    discretization_bundle_id: eqx.AbstractVar[str | None]
 
     @abc.abstractmethod
     def advance_window(

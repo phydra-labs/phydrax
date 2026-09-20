@@ -43,7 +43,7 @@ def _line_batch(domain, xs):
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
+                jnp.asarray(xs, dtype="float64").reshape((-1, 1)), dims=(axis, None)
             )
         }
     )
@@ -58,9 +58,11 @@ def _paired_batch(domain, xs, ts):
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
+                jnp.asarray(xs, dtype="float64").reshape((-1, 1)), dims=(axis, None)
             ),
-            "t": cx.AxisArray(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
+            "t": cx.AxisArray(
+                jnp.asarray(ts, dtype="float64").reshape((-1,)), dims=(axis,)
+            ),
         }
     )
     return PointBatch(points=points, structure=structure)
@@ -77,8 +79,8 @@ def test_error_missing_anchor_label():
 
     interior = InteriorAnchors(
         "u",
-        points={"x": jnp.array([[0.25]], dtype=float)},
-        values=jnp.array([1.0], dtype=float),
+        points={"x": jnp.array([[0.25]], dtype="float64")},
+        values=jnp.array([1.0], dtype="float64"),
     )
 
     with pytest.raises(KeyError, match="missing labels"):
@@ -102,10 +104,10 @@ def test_error_anchor_on_boundary():
     interior = InteriorAnchors(
         "u",
         points={
-            "x": jnp.array([[0.0]], dtype=float),
-            "t": jnp.array([0.5], dtype=float),
+            "x": jnp.array([[0.0]], dtype="float64"),
+            "t": jnp.array([0.5], dtype="float64"),
         },
-        values=jnp.array([2.0], dtype=float),
+        values=jnp.array([2.0], dtype="float64"),
     )
 
     with pytest.raises(ValueError, match="M\\(z_i\\)=0"):
@@ -133,10 +135,10 @@ def test_error_anchor_on_initial_time():
     interior = InteriorAnchors(
         "u",
         points={
-            "x": jnp.array([[0.25]], dtype=float),
-            "t": jnp.array([0.0], dtype=float),
+            "x": jnp.array([[0.25]], dtype="float64"),
+            "t": jnp.array([0.0], dtype="float64"),
         },
-        values=jnp.array([2.0], dtype=float),
+        values=jnp.array([2.0], dtype="float64"),
     )
 
     with pytest.raises(ValueError, match="M\\(z_i\\)=0"):
@@ -157,11 +159,11 @@ def test_error_conflicting_duplicate_anchors():
         return x[0] + t
 
     points = {
-        "x": jnp.array([[0.25]], dtype=float),
-        "t": jnp.array([0.5], dtype=float),
+        "x": jnp.array([[0.25]], dtype="float64"),
+        "t": jnp.array([0.5], dtype="float64"),
     }
-    a = InteriorAnchors("u", points=points, values=jnp.array([1.0], dtype=float))
-    b = InteriorAnchors("u", points=points, values=jnp.array([2.0], dtype=float))
+    a = InteriorAnchors("u", points=points, values=jnp.array([1.0], dtype="float64"))
+    b = InteriorAnchors("u", points=points, values=jnp.array([2.0], dtype="float64"))
 
     with pytest.raises(ValueError, match="Conflicting coincident interior anchors"):
         EnforcementProgram.build(functions={"u": u}, interior=[a, b])
@@ -175,7 +177,7 @@ def test_identity_remainder_toggle_changes_output():
         return x[0] * 0.0 + 10.0
 
     left = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
-    full_boundary = geom.component({"x": Boundary()})
+    geom.component({"x": Boundary()})
     left_constraint = EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0))
 
     pipes_no = EnforcementProgram.build(
@@ -195,7 +197,7 @@ def test_identity_remainder_toggle_changes_output():
     u_yes = pipes_yes.apply({"u": u})["u"]
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
 
-    batch = _line_batch(geom, xs=jnp.array([1.0], dtype=float))
+    batch = _line_batch(geom, xs=jnp.array([1.0], dtype="float64"))
     out_no = eval_jit(u_no, batch).reshape((-1,))[0]
     out_yes = eval_jit(u_yes, batch).reshape((-1,))[0]
 
@@ -255,7 +257,7 @@ def test_enforce_traction_enforces_zero_boundary():
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype=float), dims=(axis, None)
+                jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype="float64"), dims=(axis, None)
             )
         }
     )
@@ -296,7 +298,7 @@ def test_enforce_neumann_enforces_zero_normal_derivative():
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype=float), dims=(axis, None)
+                jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype="float64"), dims=(axis, None)
             )
         }
     )
@@ -346,7 +348,7 @@ def test_enforce_robin_enforces_boundary_relation():
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype=float), dims=(axis, None)
+                jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype="float64"), dims=(axis, None)
             )
         }
     )
@@ -386,8 +388,8 @@ def test_enforce_sommerfeld_enforces_absorbing_condition():
 
     pts = _paired_batch(
         domain,
-        xs=jnp.array([0.0, 1.0], dtype=float),
-        ts=jnp.array([0.25, 0.75], dtype=float),
+        xs=jnp.array([0.0, 1.0], dtype="float64"),
+        ts=jnp.array([0.25, 0.75], dtype="float64"),
     )
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
     out = eval_jit(residual, pts)
@@ -403,8 +405,11 @@ def test_envelope_extremes():
     def u(x, t):
         return x[0] * 0.0 + t * 0.0
 
-    anchors = {"x": jnp.array([[0.0]], dtype=float), "t": jnp.array([0.0], dtype=float)}
-    values = jnp.array([5.0], dtype=float)
+    anchors = {
+        "x": jnp.array([[0.0]], dtype="float64"),
+        "t": jnp.array([0.0], dtype="float64"),
+    }
+    values = jnp.array([5.0], dtype="float64")
 
     small = InteriorAnchors(
         "u",
@@ -429,7 +434,9 @@ def test_envelope_extremes():
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
 
     batch = _paired_batch(
-        domain, xs=jnp.array([[1.0]], dtype=float), ts=jnp.array([1.0], dtype=float)
+        domain,
+        xs=jnp.array([[1.0]], dtype="float64"),
+        ts=jnp.array([1.0], dtype="float64"),
     )
     out_small = eval_jit(u_small, batch).reshape((-1,))[0]
     out_large = eval_jit(u_large, batch).reshape((-1,))[0]
@@ -451,7 +458,7 @@ def test_equivalent_domain_join_arithmetic():
         return x[0] * 2.0
 
     h = f + g
-    batch = _line_batch(dom_a, xs=jnp.array([0.2, 0.8], dtype=float))
+    batch = _line_batch(dom_a, xs=jnp.array([0.2, 0.8], dtype="float64"))
     eval_jit = eqx.filter_jit(lambda b: h(b).data)
     out = eval_jit(batch).reshape((-1,))
     assert jnp.allclose(out, jnp.array([0.6, 2.4]), atol=1e-6)
@@ -473,12 +480,12 @@ def test_join_broadcast_x_t():
     h = f + g
     batch = _paired_batch(
         domain,
-        xs=jnp.array([[0.2], [0.8]], dtype=float),
-        ts=jnp.array([0.1, 0.9], dtype=float),
+        xs=jnp.array([[0.2], [0.8]], dtype="float64"),
+        ts=jnp.array([0.1, 0.9], dtype="float64"),
     )
     eval_jit = eqx.filter_jit(lambda b: h(b).data)
     out = eval_jit(batch).reshape((-1,))
-    expected = jnp.array([0.3, 1.7], dtype=float)
+    expected = jnp.array([0.3, 1.7], dtype="float64")
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
@@ -489,8 +496,8 @@ def test_pipeline_points_vs_coord_separable():
     def u(x):
         return x[0] ** 2
 
-    anchors = {"x": jnp.array([[0.25]], dtype=float)}
-    values = jnp.array([0.0625], dtype=float)
+    anchors = {"x": jnp.array([[0.25]], dtype="float64")}
+    values = jnp.array([0.0625], dtype="float64")
     interior = InteriorAnchors("u", points=anchors, values=values)
 
     pipes = EnforcementProgram.build(functions={"u": u}, interior=[interior])
@@ -518,8 +525,8 @@ def test_gated_pipeline_points_vs_coord_separable():
     constraint = EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0))
     interior = InteriorAnchors(
         "u",
-        points={"x": jnp.array([[0.25]], dtype=float)},
-        values=jnp.array([0.125], dtype=float),
+        points={"x": jnp.array([[0.25]], dtype="float64")},
+        values=jnp.array([0.125], dtype="float64"),
     )
     pipes = EnforcementProgram.build(
         functions={"u": u},
@@ -546,8 +553,8 @@ def test_operator_stack_with_pipeline():
     def u(x):
         return x[0] ** 2
 
-    anchors = {"x": jnp.array([[0.25]], dtype=float)}
-    values = jnp.array([0.0625], dtype=float)
+    anchors = {"x": jnp.array([[0.25]], dtype="float64")}
+    values = jnp.array([0.0625], dtype="float64")
     interior = InteriorAnchors("u", points=anchors, values=values)
 
     pipes = EnforcementProgram.build(functions={"u": u}, interior=[interior])
@@ -574,14 +581,14 @@ def test_jit_pipeline_determinism():
     def u(x):
         return x[0] + 1.0
 
-    anchors = {"x": jnp.array([[0.5]], dtype=float)}
-    values = jnp.array([1.5], dtype=float)
+    anchors = {"x": jnp.array([[0.5]], dtype="float64")}
+    values = jnp.array([1.5], dtype="float64")
     interior = InteriorAnchors("u", points=anchors, values=values)
 
     pipes = EnforcementProgram.build(functions={"u": u}, interior=[interior])
     u_enforced = pipes.apply({"u": u})["u"]
 
-    batch = _line_batch(geom, xs=jnp.array([0.25, 0.75], dtype=float))
+    batch = _line_batch(geom, xs=jnp.array([0.25, 0.75], dtype="float64"))
     eval_jit = eqx.filter_jit(lambda b: u_enforced(b).data)
     out1 = jnp.asarray(eval_jit(batch)).reshape((-1,))
     out2 = jnp.asarray(eval_jit(batch)).reshape((-1,))
@@ -609,10 +616,10 @@ def test_pipeline_passthrough_for_unconstrained_field():
     )
     enforced = pipes.apply({"u": u, "v": v})
 
-    batch = _line_batch(geom, xs=jnp.array([0.2, 0.8], dtype=float))
+    batch = _line_batch(geom, xs=jnp.array([0.2, 0.8], dtype="float64"))
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
     out_v = eval_jit(enforced["v"], batch).reshape((-1,))
-    expected = jnp.array([0.4, 1.6], dtype=float)
+    expected = jnp.array([0.4, 1.6], dtype="float64")
     assert jnp.allclose(out_v, expected, atol=1e-6)
 
 
@@ -644,9 +651,9 @@ def test_sensor_tracks_require_xt_domain():
 
     interior = InteriorAnchors(
         "u",
-        sensors=jnp.array([[0.25]], dtype=float),
-        times=jnp.array([0.5], dtype=float),
-        sensor_values=jnp.array([[1.0]], dtype=float),
+        sensors=jnp.array([[0.25]], dtype="float64"),
+        times=jnp.array([0.5], dtype="float64"),
+        sensor_values=jnp.array([[1.0]], dtype="float64"),
     )
 
     with pytest.raises(ValueError, match="domain labels exactly"):
@@ -660,8 +667,8 @@ def test_vector_output_interior_data():
     def u(x):
         return jnp.stack([x[0], x[0] * 2.0], axis=-1)
 
-    anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
-    values = jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=float)
+    anchors = {"x": jnp.array([[0.25], [0.75]], dtype="float64")}
+    values = jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype="float64")
     interior = InteriorAnchors("u", points=anchors, values=values)
 
     pipes = EnforcementProgram.build(functions={"u": u}, interior=[interior])
@@ -689,7 +696,7 @@ def test_where_all_weight_all_mean():
         return x[0] * 0.0 + 2.0
 
     component = geom.component(where_all=mask, weight_all=weight)
-    batch = _line_batch(geom, xs=jnp.array([0.25, 0.75], dtype=float))
+    batch = _line_batch(geom, xs=jnp.array([0.25, 0.75], dtype="float64"))
     realization = from_samples(mean_over(component), batch)
     eval_jit = eqx.filter_jit(lambda: mean(u, realization).data)
     out = eval_jit().reshape(())
@@ -737,7 +744,7 @@ def test_enforce_traction_cancels_nonzero_affine_boundary_traction():
                             [0.4, -1.0],
                             [-0.2, 1.0],
                         ],
-                        dtype=float,
+                        dtype="float64",
                     ),
                     dims=(axis, None),
                 )

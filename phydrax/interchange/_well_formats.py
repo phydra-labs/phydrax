@@ -82,8 +82,8 @@ def read_las_curve(
     if not depth_name or depth_name != expected_depth_unit:
         raise ValueError("LAS measured-depth index unit is absent or unexpected.")
     factor = float(conversion_factor(measured_depth_unit, METER))
-    depth = np.asarray(las.index, dtype=float) * factor
-    values = np.asarray(las[curve_name], dtype=float)
+    depth = np.asarray(las.index, dtype=np.float64) * factor
+    values = np.asarray(las[curve_name], dtype=np.float64)
     if depth.ndim != 1 or values.shape != depth.shape or depth.size == 0:
         raise ValueError("LAS index and selected curve must be matching vectors.")
     if np.any(~np.isfinite(depth)) or np.any(np.diff(depth) <= 0):

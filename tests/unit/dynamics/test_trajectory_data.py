@@ -56,7 +56,7 @@ def test_trajectory_data_rejects_cross_reset_transition_marked_valid():
             jnp.arange(4.0)[:, None],
             state_layout=phx.dynamics.StateLayout((1,)),
             reset_mask=jnp.asarray([False, True, False]),
-            transition_valid=jnp.ones((3,), dtype=bool),
+            transition_valid=jnp.ones((3,), dtype="bool"),
             source_id="invalid-reset",
         )
 

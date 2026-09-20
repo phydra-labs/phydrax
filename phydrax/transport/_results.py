@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._blocks import apply_plan, coupling_statistics, dense_plan
 from ._problem import DiscreteTransportProblem
 from ._status import TransportStatus
@@ -52,7 +52,7 @@ class TransportProvenance(StrictModule):
 class AbstractBalancedTransportPlan(StrictModule):
     """Minimal common contract for balanced finite transport plans."""
 
-    regularized_cost: AbstractAttribute[Array]
+    regularized_cost: eqx.AbstractVar[Array]
 
     @property
     @abstractmethod
@@ -104,7 +104,7 @@ class AbstractBalancedTransportPlan(StrictModule):
 class AbstractBalancedTransportSolver(StrictModule):
     """Solver producing a balanced plan for one finite transport problem."""
 
-    epsilon: AbstractAttribute[Array]
+    epsilon: eqx.AbstractVar[Array]
 
     @abstractmethod
     def __call__(

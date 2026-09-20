@@ -172,7 +172,7 @@ def decode_segy_rev2_resource(
         )
     measurement_system = u16(54)
     if measurement_system not in (1, 2):
-        raise SEGYDecodeError("SEG-Y measurement system must identify metres or feet.")
+        raise SEGYDecodeError("SEG-Y measurement system must identify meters or feet.")
     length_factor = 1.0 if measurement_system == 1 else 0.3048
     binary_count, binary_interval = u16(20), u16(16)
     if profile.trace_length == "fixed" and (binary_count == 0 or binary_interval == 0):
@@ -218,14 +218,14 @@ def decode_segy_rev2_resource(
     )
     text = _decode_text(data, profile)
     samples = np.zeros((trace_count, maximum_count), dtype=np.float64)
-    valid = np.zeros((trace_count, maximum_count), dtype=bool)
+    valid = np.zeros((trace_count, maximum_count), dtype=np.bool_)
     times = np.zeros((trace_count, maximum_count), dtype=np.float64)
     sources, receivers = np.empty((trace_count, 3)), np.empty((trace_count, 3))
     sequence = np.empty(trace_count, dtype=np.int32)
     identification = np.empty(trace_count, dtype=np.int32)
     delays, sample_intervals = (
         np.empty(trace_count),
-        np.asarray(intervals, dtype=float) * 1e-6,
+        np.asarray(intervals, dtype=np.float64) * 1e-6,
     )
     qualified: bool | None = None
     previous_sequence = 0
@@ -288,7 +288,7 @@ def decode_segy_rev2_resource(
         spatial = coordinate_metadata.require_cartesian(dimensions=3)
         if spatial.length_unit != METER:
             raise SEGYDecodeError(
-                "SEG-Y coordinate metadata must describe normalized metres."
+                "SEG-Y coordinate metadata must describe normalized meters."
             )
     identity = canonical_fingerprint(
         {
@@ -329,7 +329,7 @@ def decode_segy_rev2_resource(
             },
         ),
         coordinate_mapping=(
-            "source/group XYZ normalized to positive-up metres",
+            "source/group XYZ normalized to positive-up meters",
             "CRS/datum supplied externally or remains unqualified",
         ),
         preserved_fields=(

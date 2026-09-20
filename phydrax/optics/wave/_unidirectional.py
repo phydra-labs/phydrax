@@ -261,7 +261,7 @@ class PreparedUnidirectionalPropagation(StrictModule, NonTrainableState):
 
 
 def _uniform_spacing(nodes: Array, name: str, /) -> float:
-    host = np.asarray(nodes, dtype=float)
+    host = np.asarray(nodes, dtype=np.float64)
     if host.ndim != 1 or host.size < 4:
         raise ValueError(f"{name} requires at least four samples.")
     differences = np.diff(host)
@@ -505,13 +505,11 @@ def _prepare_carrier_response(
         resolved = response
     else:
         raise TypeError(
-            "response must implement AbstractCarrierResolvedResponse or "
-            "PreparedCarrierResolvedResponse."
+            "response must implement AbstractCarrierResolvedResponse or PreparedCarrierResolvedResponse."
         )
     if resolved.field_kind != expected_kind:
         raise TypeError(
-            f"{plan.polarization.capitalize()} propagation requires a "
-            f"{expected_kind} carrier-resolved response."
+            f"{plan.polarization.capitalize()} propagation requires a {expected_kind} carrier-resolved response."
         )
     if resolved.time_space.space_id != plan.time_space.space_id:
         raise ValueError("Prepared response and propagation use different pulse time.")

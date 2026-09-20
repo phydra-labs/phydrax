@@ -167,7 +167,7 @@ class SBSSharedDomainMap(StrictModule, NonTrainableState):
         self.acoustic_to_boundary = jnp.asarray(acoustic_boundary)
         self.boundary_normals = jnp.asarray(normals)
         self.normal_unit_error = jnp.asarray(normal_error)
-        self.spatial_dimension = int(normals.shape[1])
+        self.spatial_dimension = normals.shape[1]
         self.normal_orientation = normal_orientation
         self.jump_convention = jump_convention
         self.map_id = identifier

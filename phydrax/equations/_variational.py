@@ -193,8 +193,7 @@ class VariationalCoefficient(StrictModule, NonTrainableState):
         axes = default_axes if layout_axes is None else tuple(str(v) for v in layout_axes)
         if axes != default_axes:
             raise ValueError(
-                f"{location_} coefficients require canonical layout axes "
-                f"{default_axes!r}; got {axes!r}."
+                f"{location_} coefficients require canonical layout axes {default_axes!r}; got {axes!r}."
             )
         if callable(value):
             if coefficient_id is None or not str(coefficient_id):
@@ -208,7 +207,7 @@ class VariationalCoefficient(StrictModule, NonTrainableState):
         else:
             array = jnp.asarray(value)
             if not jnp.issubdtype(array.dtype, jnp.inexact):
-                array = array.astype(float)
+                array = array.astype("float64")
             evaluator = None
             data_fingerprint = array_tree_fingerprint(np.asarray(array))
             identifier = (
@@ -484,13 +483,12 @@ class TensorDiffusionAction(StrictModule, NonTrainableState):
                 else array.shape
             )
         else:
-            leading = tuple(int(value) for value in leading_shape)
+            leading = tuple(leading_shape)
         if array.shape == leading:
             return array[..., None, None] * jnp.eye(dimension_, dtype=array.dtype)
         if array.shape != leading + (dimension_, dimension_):
             raise ValueError(
-                "Tensor diffusivity must have either scalar coefficient shape or "
-                "two trailing physical tensor axes."
+                "Tensor diffusivity must have either scalar coefficient shape or two trailing physical tensor axes."
             )
         return (
             array

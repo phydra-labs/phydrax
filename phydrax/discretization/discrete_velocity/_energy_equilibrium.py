@@ -387,7 +387,7 @@ class PositiveEnergyEquilibriumPlan(StrictModule, NonTrainableState):
         )
         active = eligible & ~converged
         iterations = jnp.zeros(energy.shape, dtype=jnp.int32)
-        linear_failed = jnp.zeros(energy.shape, dtype=bool)
+        linear_failed = jnp.zeros(energy.shape, dtype=jnp.bool_)
         nonfinite_failed = eligible & ~state_finite
         nonpositive_failed = eligible & ~state_positive
         active = active & state_finite & state_positive

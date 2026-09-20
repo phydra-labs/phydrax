@@ -124,7 +124,7 @@ class FermionicPairingPlan(StrictModule):
 
     @property
     def k_count(self) -> int:
-        return int(self.minus_k_indices.size)
+        return self.minus_k_indices.size
 
 
 class FermionicBdGPlan(StrictModule):
@@ -368,7 +368,7 @@ def evaluate_bdg_thermal_kernel(
         ),
         policy=EigenSolvePolicy(
             DenseEigh(),
-            count=int(matrices.shape[-1]),
+            count=matrices.shape[-1],
             which="smallest-algebraic",
         ),
     )
@@ -393,7 +393,7 @@ def _hermitian_eigensystem(matrix: Array, /) -> tuple[Array, Array]:
             )
         ),
         policy=EigenSolvePolicy(
-            DenseEigh(), count=int(matrix.shape[0]), which="smallest-algebraic"
+            DenseEigh(), count=matrix.shape[0], which="smallest-algebraic"
         ),
     )
     if not bool(solved.successful):

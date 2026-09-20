@@ -16,6 +16,8 @@ from shapely.geometry import Polygon as ShapelyPolygon
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
+import phydrax.ein as ein
+
 from ._regions import MeshRegion, PlanarMeshRegion
 
 
@@ -35,7 +37,7 @@ def _canonical_triangle_arrays(
     vertices: np.ndarray,
     faces: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    vertices_ = np.asarray(vertices, dtype=float)
+    vertices_ = np.asarray(vertices, dtype=np.float64)
     faces_ = np.asarray(faces, dtype=np.int32)
     if vertices_.ndim != 2 or faces_.ndim != 2 or faces_.shape[1] != 3:
         return vertices_, faces_
@@ -64,7 +66,7 @@ def _canonical_triangle_arrays(
     if vertices_.shape[1] >= 3:
         triangles = vertices_[faces_, :3]
         signed_volume = np.sum(
-            np.einsum(
+            ein.contract(
                 "ij,ij->i",
                 triangles[:, 0],
                 np.cross(triangles[:, 1], triangles[:, 2]),
@@ -92,7 +94,7 @@ def _canonical_feature_id(
 
 
 def _canonical_ring(points: np.ndarray) -> np.ndarray:
-    points_ = np.asarray(points, dtype=float)
+    points_ = np.asarray(points, dtype=np.float64)
     start = int(np.lexsort((points_[:, 1], points_[:, 0]))[0])
     return np.roll(points_, -start, axis=0)
 
@@ -105,7 +107,7 @@ def _meshio_triangles(mesh: meshio.Mesh) -> tuple[np.ndarray, np.ndarray]:
     ]
     if not blocks:
         raise ValueError("Mesh input contains no triangle cells.")
-    return np.asarray(mesh.points, dtype=float), np.concatenate(blocks, axis=0)
+    return np.asarray(mesh.points, dtype=np.float64), np.concatenate(blocks, axis=0)
 
 
 def _pyvista_triangles(mesh: pv.PolyData) -> tuple[np.ndarray, np.ndarray]:
@@ -117,13 +119,13 @@ def _pyvista_triangles(mesh: pv.PolyData) -> tuple[np.ndarray, np.ndarray]:
     if np.any(records[:, 0] != 3):
         raise ValueError("Triangulated PolyData contains a non-triangle cell.")
     return (
-        np.asarray(triangulated.points, dtype=float),
+        np.asarray(triangulated.points, dtype=np.float64),
         records[:, 1:].astype(np.int32),
     )
 
 
 def _trimesh_arrays(mesh: trimesh.Trimesh) -> tuple[np.ndarray, np.ndarray]:
-    vertices = np.asarray(mesh.vertices, dtype=float)
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
     faces = np.asarray(mesh.faces)
     if not np.all(np.isfinite(vertices)):
         raise ValueError("Mesh vertices must contain only finite values.")
@@ -134,7 +136,7 @@ def _trimesh_arrays(mesh: trimesh.Trimesh) -> tuple[np.ndarray, np.ndarray]:
     mesh_.remove_unreferenced_vertices()
     mesh_.merge_vertices()
     mesh_.fix_normals(multibody=True)
-    return np.asarray(mesh_.vertices, dtype=float), np.asarray(
+    return np.asarray(mesh_.vertices, dtype=np.float64), np.asarray(
         mesh_.faces, dtype=np.int32
     )
 
@@ -192,7 +194,7 @@ def planar_region_from_triangles(
 ) -> PlanarMeshRegion:
     """Recover oriented polygon loops from one triangulated planar region."""
 
-    vertices_ = np.asarray(vertices, dtype=float)
+    vertices_ = np.asarray(vertices, dtype=np.float64)
     faces_ = np.asarray(faces, dtype=np.int32)
     if vertices_.ndim != 2 or vertices_.shape[1] < 2:
         raise ValueError("Planar vertices must have at least two coordinates.")
@@ -208,10 +210,10 @@ def planar_region_from_triangles(
     if region.geom_type != "Polygon":
         raise ValueError("Planar mesh must represent one connected polygonal region.")
     region = orient(region, sign=1.0)
-    exterior = _canonical_ring(np.asarray(region.exterior.coords[:-1], dtype=float))
+    exterior = _canonical_ring(np.asarray(region.exterior.coords[:-1], dtype=np.float64))
     interiors = sorted(
         (
-            _canonical_ring(np.asarray(interior.coords[:-1], dtype=float))
+            _canonical_ring(np.asarray(interior.coords[:-1], dtype=np.float64))
             for interior in region.interiors
         ),
         key=lambda points: tuple(points.reshape((-1,))),

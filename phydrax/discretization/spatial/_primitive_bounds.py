@@ -65,8 +65,8 @@ class MortonPrimitiveBoundsPlan(NonTrainableState, StrictModule):
         maximum_depth = int(np.max(np.asarray(hierarchy.node_levels)))
         self.hierarchy = hierarchy
         self.maximum_depth = maximum_depth
-        self.point_capacity = int(hierarchy.sorted_codes.shape[0])
-        self.node_capacity = int(hierarchy.node_active.shape[0])
+        self.point_capacity = hierarchy.sorted_codes.shape[0]
+        self.node_capacity = hierarchy.node_active.shape[0]
         self.ambient_dimension = dimension
         self.plan_id = canonical_fingerprint(
             {

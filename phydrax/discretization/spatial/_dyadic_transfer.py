@@ -101,9 +101,9 @@ class DyadicCellTransferPlan(NonTrainableState, StrictModule):
         capacity = max(len(routes), 1)
         targets = np.zeros((capacity,), dtype=np.int32)
         sources = np.zeros((capacity,), dtype=np.int32)
-        average_weights = np.zeros((capacity,), dtype=float)
-        content_weights = np.zeros((capacity,), dtype=float)
-        active = np.zeros((capacity,), dtype=bool)
+        average_weights = np.zeros((capacity,), dtype=np.float64)
+        content_weights = np.zeros((capacity,), dtype=np.float64)
+        active = np.zeros((capacity,), dtype=np.bool_)
         for route, (target, source, average, content) in enumerate(routes):
             targets[route] = target
             sources[route] = source

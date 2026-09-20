@@ -101,7 +101,7 @@ class MartingaleSchrodingerBridgeProblem(StrictModule):
                 (cases, nodes, states, shared.shape[-1]),
             )
         else:
-            supplied = jnp.asarray(martingale_coordinates, dtype=float)
+            supplied = jnp.asarray(martingale_coordinates, dtype=jnp.float64)
             if supplied.ndim == 1 and supplied.shape == (states,):
                 supplied = supplied[:, None]
             if supplied.ndim == 2 and supplied.shape[0] == states:
@@ -137,7 +137,7 @@ class MartingaleSchrodingerBridgeProblem(StrictModule):
 
     @property
     def coordinate_size(self) -> int:
-        return int(self.martingale_coordinates.shape[-1])
+        return self.martingale_coordinates.shape[-1]
 
 
 class MartingaleSchrodingerBridgeResult(StrictModule):
@@ -237,8 +237,7 @@ def _enumerate_paths(states: int, nodes: int, /, *, max_path_entries: int) -> Ar
     count = states**nodes
     if count > max_path_entries:
         raise ValueError(
-            f"Martingale bridge needs {count} enumerated paths, exceeding explicit "
-            f"budget {max_path_entries}."
+            f"Martingale bridge needs {count} enumerated paths, exceeding explicit budget {max_path_entries}."
         )
     flat = jnp.arange(count, dtype=jnp.int32)
     columns = []
@@ -269,7 +268,7 @@ def _group_projection(
     potential: Array,
     /,
 ) -> tuple[Array, Array, Array]:
-    group_count = int(target.shape[0])
+    group_count = target.shape[0]
     feasible = jnp.asarray(True)
     result = probability
     updated = potential
@@ -350,7 +349,7 @@ def _vector_moment_projection(
     iterations: int,
     tolerance: float,
 ) -> tuple[Array, Array, Array]:
-    dimension = int(delta.shape[1])
+    dimension = delta.shape[1]
     theta = jnp.zeros((dimension,), dtype=probability.dtype)
     active = group & (probability > 0.0)
     for _ in range(iterations):

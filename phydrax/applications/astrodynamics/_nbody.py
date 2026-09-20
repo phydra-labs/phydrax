@@ -114,7 +114,7 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
             raise ValueError(f"N-body positions must have shape {expected}.")
         active = self.particles.active_mask
         pair_active = active[:, None] & active[None, :]
-        diagonal = jnp.eye(self.particles.capacity, dtype=bool)
+        diagonal = jnp.eye(self.particles.capacity, dtype=jnp.bool_)
         pair_active = pair_active & ~diagonal
         displacement = positions[None, :, :] - positions[:, None, :]
         distance_squared = jnp.sum(displacement * displacement, axis=-1)
@@ -198,7 +198,7 @@ class NBodyPropagationPlan(StrictModule, NonTrainableState):
     def __init__(self, gravity: DirectNBodyGravityPlan, times: ArrayLike, /):
         if not isinstance(gravity, DirectNBodyGravityPlan):
             raise TypeError("gravity must be a DirectNBodyGravityPlan.")
-        times_host = np.asarray(times, dtype=float)
+        times_host = np.asarray(times, dtype=np.float64)
         if (
             times_host.ndim != 1
             or times_host.size < 2
@@ -212,7 +212,7 @@ class NBodyPropagationPlan(StrictModule, NonTrainableState):
             {
                 "kind": "direct-nbody-propagation",
                 "gravity": gravity.plan_id,
-                "num_times": int(times_host.size),
+                "num_times": times_host.size,
             }
         )
 

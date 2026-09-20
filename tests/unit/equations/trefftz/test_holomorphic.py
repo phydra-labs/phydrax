@@ -13,7 +13,7 @@ from phydrax._trainable import partition_trainable
 
 
 def _set_polynomial(potential, real, imaginary=None):
-    real_ = jnp.asarray(real, dtype=float)
+    real_ = jnp.asarray(real, dtype="float64")
     imaginary_ = jnp.zeros_like(real_) if imaginary is None else jnp.asarray(imaginary)
     return eqx.tree_at(
         lambda value: (value.coefficient_real, value.coefficient_imag),

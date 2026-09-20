@@ -66,4 +66,6 @@ def test_finite_element_marker_map_uses_paired_H_and_H_adjoint():
         atol=1.0e-10,
     )
     state = marker_map.kinematics(configuration, velocity)
-    assert jnp.allclose(markers.active_values(state.position).reshape((-1,)), configuration)
+    assert jnp.allclose(
+        markers.active_values(state.position).reshape((-1,)), configuration
+    )

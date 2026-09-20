@@ -245,8 +245,7 @@ def _file_transfer_syntax(dataset: Any, /) -> str:
     syntax = _text(file_meta["TransferSyntaxUID"].value, "TransferSyntaxUID")
     if syntax not in _SUPPORTED_TRANSFER_SYNTAXES:
         raise DICOMProfileError(
-            f"Unsupported DICOM transfer syntax {syntax!r}; only uncompressed "
-            "little-endian syntaxes are admitted."
+            f"Unsupported DICOM transfer syntax {syntax!r}; only uncompressed little-endian syntaxes are admitted."
         )
     return syntax
 
@@ -578,13 +577,13 @@ def _regular_geometry(
     )
     affine = ImageIndexAffine(
         matrix,
-        "dicom-voxel-centres",
+        "dicom-voxel-centers",
         contract,
         ImageAxisConvention.LPS,
         VoxelReference.CENTER,
         "dicom-image-plane-patient",
     )
-    return _Geometry(tuple(int(item) for item in order_array), affine)
+    return _Geometry(tuple(order_array), affine)
 
 
 def _report(

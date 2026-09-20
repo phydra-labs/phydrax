@@ -82,7 +82,7 @@ class JaxAdapter(BenchmarkAdapter):
                 spec=spec,
                 matrix=jnp.asarray(dense_matrix),
                 rhs=jnp.asarray(problem.rhs),
-                host_to_device_bytes=int(dense_matrix.nbytes + problem.rhs.nbytes),
+                host_to_device_bytes=dense_matrix.nbytes + problem.rhs.nbytes,
             )
         if isinstance(problem, GeneralEigenProblem):
             if problem.variant != "standard-largest-magnitude":
@@ -93,7 +93,7 @@ class JaxAdapter(BenchmarkAdapter):
             return _JaxState(
                 spec=spec,
                 matrix=jnp.asarray(problem.matrix),
-                host_to_device_bytes=int(problem.matrix.nbytes),
+                host_to_device_bytes=problem.matrix.nbytes,
             )
         if isinstance(problem, OptimizationProblem):
             if problem.variant != "unconstrained":
@@ -104,7 +104,7 @@ class JaxAdapter(BenchmarkAdapter):
             return _JaxState(
                 spec=spec,
                 matrix=jnp.asarray(problem.initial),
-                host_to_device_bytes=int(problem.initial.nbytes),
+                host_to_device_bytes=problem.initial.nbytes,
             )
         raise TypeError(
             f"direct JAX adapter does not implement {spec.capability!r}; "
@@ -231,7 +231,7 @@ class JaxAdapter(BenchmarkAdapter):
     ) -> dict[str, Any]:
         del result
         return {
-            "matrix_bytes": int(prepared_state.matrix.nbytes),
+            "matrix_bytes": prepared_state.matrix.nbytes,
             "setup_bytes": 0,
             "peak_estimate_bytes": None,
             "evidence": (

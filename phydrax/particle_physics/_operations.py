@@ -54,7 +54,7 @@ class BeamConditionSnapshot(StrictModule, NonTrainableState):
         length_unit_id: str,
         source_id: str,
     ):
-        species = tuple(int(value) for value in species_pdg_ids)
+        species = tuple(species_pdg_ids)
         energies = tuple(float(value) for value in beam_energies)
         intensities = tuple(float(value) for value in bunch_intensities)
         angle = float(crossing_angle)

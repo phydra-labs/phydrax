@@ -188,7 +188,9 @@ def qualification() -> dict[str, object]:
     checkpoint = ExecutionWorksetCheckpoint(
         first, vectorized.values, vectorized.next_rng_counters
     )
-    restarted, restarted_counters = restore_execution_workset_checkpoint(first, checkpoint)
+    restarted, restarted_counters = restore_execution_workset_checkpoint(
+        first, checkpoint
+    )
     scatter_error = float(jnp.max(jnp.abs(first.scatter(first.gather(values)) - values)))
     serial_vmap_error = float(jnp.max(jnp.abs(serial.values - vectorized.values)))
     restart_error = float(jnp.max(jnp.abs(restarted - vectorized.values)))
@@ -197,8 +199,7 @@ def qualification() -> dict[str, object]:
     passed = bool(
         prepared_descriptor.evidence.successful
         and rejected
-        and failure_reasons
-        == ("compiled SHA-256 digest does not match the descriptor",)
+        and failure_reasons == ("compiled SHA-256 digest does not match the descriptor",)
         and jnp.allclose(mapped_length, 1.25)
         and jnp.allclose(mapped_force, 42.0)
         and scatter_error == 0.0

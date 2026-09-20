@@ -48,8 +48,7 @@ def _broadcast_multiplier(
         raise TypeError("Algebra regular-action multipliers must use floating dtype.")
     if np.dtype(value.dtype) != space.dtype:
         raise TypeError(
-            f"Algebra regular-action multiplier must have dtype {space.dtype}; "
-            f"got {value.dtype}."
+            f"Algebra regular-action multiplier must have dtype {space.dtype}; got {value.dtype}."
         )
     dimension = space.algebra.coordinate_dimension
     if value.shape == (dimension,):
@@ -58,8 +57,7 @@ def _broadcast_multiplier(
         value = value.reshape(tuple(shape))
     elif value.ndim != len(space.shape) or value.shape[space.algebra_axis] != dimension:
         raise ValueError(
-            "Algebra regular-action multiplier must be one algebra element or expose "
-            "the space's declared algebra axis."
+            "Algebra regular-action multiplier must be one algebra element or expose the space's declared algebra axis."
         )
     if jnp.broadcast_shapes(value.shape, space.shape) != space.shape:
         raise ValueError(
@@ -95,7 +93,7 @@ def algebra_regular_action_operator(
     action = _BoundAlgebraAction(product, multiplier_, side)
     operator_id = canonical_fingerprint(
         {
-            "kind": "algebra-regular-action-v1",
+            "kind": "algebra-regular-action",
             "product": product.plan_id,
             "space": space.space_id,
             "side": side,

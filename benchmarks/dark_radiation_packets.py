@@ -122,7 +122,7 @@ def main() -> None:
         jr.split(jr.key(5), count),
         jnp.arange(count, dtype=jnp.int32) % arguments.shards,
         jnp.ones((count,)),
-        jnp.ones((count,), dtype=bool),
+        jnp.ones((count,), dtype="bool"),
     )
     if not bool(admitted.successful):
         raise RuntimeError("Packet benchmark admission failed.")

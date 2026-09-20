@@ -78,7 +78,7 @@ class QuadratureMomentCertification(StrictModule, NonTrainableState):
         tolerance: float,
         positive_weights: bool,
     ):
-        exponents_ = tuple(tuple(int(value) for value in row) for row in exponents)
+        exponents_ = tuple(tuple(row) for row in exponents)
         expected_host = np.asarray(expected_moments)
         measured_host = np.asarray(measured_moments, dtype=expected_host.dtype)
         residuals_host = np.abs(measured_host - expected_host)
@@ -101,7 +101,7 @@ class QuadratureMomentCertification(StrictModule, NonTrainableState):
         self.passed = passed
         self.certification_id = canonical_fingerprint(
             {
-                "kind": "centered-maxwellian-quadrature-certification-v1",
+                "kind": "centered-maxwellian-quadrature-certification",
                 "exponents": [list(row) for row in exponents_],
                 "expected": array_tree_fingerprint(expected_host),
                 "measured": array_tree_fingerprint(measured_host),
@@ -222,11 +222,11 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
         self.transport_kind = transport_kind
         self.name = name_
         self.certification = certification
-        self.dimension = int(velocity_values.shape[1])
-        self.population_count = int(velocity_values.shape[0])
+        self.dimension = velocity_values.shape[1]
+        self.population_count = velocity_values.shape[0]
         self.quadrature_id = canonical_fingerprint(
             {
-                "kind": "certified-discrete-velocity-quadrature-v1",
+                "kind": "certified-discrete-velocity-quadrature",
                 "name": name_,
                 "velocities": array_tree_fingerprint(velocity_values),
                 "weights": array_tree_fingerprint(weight_values),
@@ -240,8 +240,7 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
         values = jnp.asarray(populations)
         if values.ndim == 0 or values.shape[-1] != self.population_count:
             raise ValueError(
-                "Discrete-velocity populations must have trailing shape "
-                f"({self.population_count},)."
+                f"Discrete-velocity populations must have trailing shape ({self.population_count},)."
             )
         return values
 
@@ -259,11 +258,11 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
             raise ValueError(
                 "Certified integer-lattice velocities are not integer within tolerance."
             )
-        return tuple(tuple(int(value) for value in row) for row in rounded)
+        return tuple(tuple(row) for row in rounded)
 
     def raw_moment(self, populations: ArrayLike, exponents: Sequence[int], /) -> Array:
         values = self.validate_populations(populations)
-        powers = tuple(int(value) for value in exponents)
+        powers = tuple(exponents)
         if len(powers) != self.dimension or any(value < 0 for value in powers):
             raise ValueError("Moment exponents must be non-negative with length D.")
         monomial = jnp.prod(

@@ -106,21 +106,18 @@ class MACScalarLayout(StrictModule, NonTrainableState):
         supplied = dict(fields)
         if set(supplied) != set(self.field_names):
             raise ValueError(
-                "MAC scalar field keys must exactly match "
-                f"{self.field_names}; got {tuple(sorted(supplied))}."
+                f"MAC scalar field keys must exactly match {self.field_names}; got {tuple(sorted(supplied))}."
             )
         values: dict[str, Array] = {}
         for name in self.field_names:
             value = jnp.asarray(supplied[name])
             if value.shape != self.cell_shape:
                 raise ValueError(
-                    f"MAC scalar field {name!r} must have shape {self.cell_shape}; "
-                    f"got {value.shape}."
+                    f"MAC scalar field {name!r} must have shape {self.cell_shape}; got {value.shape}."
                 )
             if value.dtype != self.dtype:
                 raise TypeError(
-                    f"MAC scalar field {name!r} must have dtype {self.dtype}; "
-                    f"got {value.dtype}."
+                    f"MAC scalar field {name!r} must have dtype {self.dtype}; got {value.dtype}."
                 )
             values[name] = _finite_array(value, f"MAC scalar field {name!r}")
         return values
@@ -129,8 +126,7 @@ class MACScalarLayout(StrictModule, NonTrainableState):
         value = jnp.asarray(state)
         if value.shape != self.state_shape:
             raise ValueError(
-                f"MAC scalar coordinates must have shape {self.state_shape}; "
-                f"got {value.shape}."
+                f"MAC scalar coordinates must have shape {self.state_shape}; got {value.shape}."
             )
         if value.dtype != self.dtype:
             raise TypeError(
@@ -243,8 +239,7 @@ class MACScalarBoundaryCondition(StrictModule, NonTrainableState):
                 output = jnp.broadcast_to(output, target_shape)
             elif output.shape != target_shape:
                 raise ValueError(
-                    "Dynamic MAC scalar boundary flux must be scalar or match "
-                    f"boundary shape {target_shape}."
+                    f"Dynamic MAC scalar boundary flux must be scalar or match boundary shape {target_shape}."
                 )
         return _finite_array(output, "MAC scalar boundary evaluation")
 
@@ -332,8 +327,7 @@ class MACScalarBoundarySet(StrictModule, NonTrainableState):
                         )
                         if condition.value.shape not in ((), expected):
                             raise ValueError(
-                                "MAC scalar wall data must be scalar or match its tangential "
-                                f"shape {expected}."
+                                f"MAC scalar wall data must be scalar or match its tangential shape {expected}."
                             )
                 axis_conditions.append(pair)
             all_conditions.append(tuple(axis_conditions))
@@ -420,7 +414,7 @@ class MACScalarTransport(StrictModule, NonTrainableState):
         field_name = str(name)
         if not field_name:
             raise ValueError("MAC scalar transport requires a non-empty field name.")
-        diffusivity_ = jnp.asarray(diffusivity, dtype=float)
+        diffusivity_ = jnp.asarray(diffusivity, dtype=jnp.float64)
         if (
             diffusivity_.ndim > 1
             or diffusivity_.size == 0
@@ -429,8 +423,7 @@ class MACScalarTransport(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "MAC scalar diffusivity must be one finite nonnegative scalar "
-                "or one nonnegative value per grid axis."
+                "MAC scalar diffusivity must be one finite nonnegative scalar or one nonnegative value per grid axis."
             )
         if advection not in ("centered", "upwind"):
             raise ValueError("MAC scalar advection must be 'centered' or 'upwind'.")
@@ -485,8 +478,7 @@ class MACScalarReaction(StrictModule, NonTrainableState):
             not np.isfinite(value) or value < 0.0 for value in supplied.values()
         ):
             raise ValueError(
-                "MAC scalar reaction rate bounds must be finite, nonnegative, and "
-                "provided for every reaction field."
+                "MAC scalar reaction rate bounds must be finite, nonnegative, and provided for every reaction field."
             )
         identifier = str(reaction_id)
         if not identifier:
@@ -969,13 +961,11 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
             value = jnp.asarray(raw[name])
             if value.shape != self.layout.cell_shape:
                 raise ValueError(
-                    f"MAC scalar reaction field {name!r} must have shape "
-                    f"{self.layout.cell_shape}."
+                    f"MAC scalar reaction field {name!r} must have shape {self.layout.cell_shape}."
                 )
             if value.dtype != self.layout.dtype:
                 raise TypeError(
-                    f"MAC scalar reaction field {name!r} must have dtype "
-                    f"{self.layout.dtype}."
+                    f"MAC scalar reaction field {name!r} must have dtype {self.layout.dtype}."
                 )
             output[name] = _finite_array(value, f"MAC scalar reaction field {name!r}")
         return output
@@ -1027,8 +1017,7 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
         supplied = dict(values)
         if set(supplied) != set(self.layout.field_names):
             raise ValueError(
-                "Runtime MAC scalar SGS diffusivities must exactly match "
-                f"{self.layout.field_names}."
+                f"Runtime MAC scalar SGS diffusivities must exactly match {self.layout.field_names}."
             )
         output: dict[str, Array] = {}
         for name in self.layout.field_names:
@@ -1138,8 +1127,7 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 source = jnp.asarray(declaration.source(time_, fields_, velocity_, args))
                 if source.shape != self.layout.cell_shape:
                     raise ValueError(
-                        f"MAC scalar source {name!r} must have shape "
-                        f"{self.layout.cell_shape}."
+                        f"MAC scalar source {name!r} must have shape {self.layout.cell_shape}."
                     )
                 if source.dtype != self.layout.dtype:
                     raise TypeError(

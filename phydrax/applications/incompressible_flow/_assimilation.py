@@ -103,8 +103,7 @@ class TimeAverageWindows(StrictModule, NonTrainableState):
         normalized = host_weights / row_mass[:, None]
         if labels is None:
             labels_ = tuple(
-                f"time-average-window-{window}"
-                for window in range(int(raw_weights.shape[0]))
+                f"time-average-window-{window}" for window in range(raw_weights.shape[0])
             )
         else:
             labels_ = tuple(str(label).strip() for label in labels)
@@ -121,8 +120,8 @@ class TimeAverageWindows(StrictModule, NonTrainableState):
         self.sample_times = times
         self.weights = normalized_array
         self.labels = labels_
-        self.sample_count = int(times.size)
-        self.window_count = int(normalized_array.shape[0])
+        self.sample_count = times.size
+        self.window_count = normalized_array.shape[0]
         self.windows_id = canonical_fingerprint(
             {
                 "kind": "time-average-windows",
@@ -160,7 +159,9 @@ class TimeAverageWindows(StrictModule, NonTrainableState):
             or np.any(upper < lower)
         ):
             raise ValueError("Time-average bounds must be finite and ordered.")
-        weights = np.zeros((lower.size, times.size), dtype=np.result_type(times, float))
+        weights = np.zeros(
+            (lower.size, times.size), dtype=np.result_type(times, np.float64)
+        )
         for window, (start, stop) in enumerate(zip(lower, upper, strict=True)):
             start_matches = np.flatnonzero(times == start)
             stop_matches = np.flatnonzero(times == stop)
@@ -252,7 +253,7 @@ class SparseTimeAverageObservationOperator(StrictModule, NonTrainableState):
         self.window_indices = window_index
         self.source_indices = source_index
         self.source_size = source_size_
-        self.observation_count = int(window_index.size)
+        self.observation_count = window_index.size
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "sparse-time-average-observation-operator",
@@ -477,8 +478,7 @@ class PeriodicModelErrorParameterization(
         values = _real_array(parameters, "Model-error parameters")
         if values.shape != self.parameter_shape:
             raise ValueError(
-                f"Model-error parameters must have shape {self.parameter_shape}; "
-                f"got {values.shape}."
+                f"Model-error parameters must have shape {self.parameter_shape}; got {values.shape}."
             )
         return eqx.error_if(
             values,

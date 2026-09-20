@@ -79,10 +79,9 @@ class _WaveletSubbandMixerND(StrictModule):
     ) -> MultiresolutionCoefficients:
         if coefficients.transform_fingerprint != self.transform_fingerprint:
             raise ValueError("Wavelet mixer and coefficient transforms do not match.")
-        if int(coefficients.scaling.shape[-1]) != self.in_channels:
+        if coefficients.scaling.shape[-1] != self.in_channels:
             raise ValueError(
-                f"Expected {self.in_channels} coefficient channels; "
-                f"got {coefficients.scaling.shape[-1]}."
+                f"Expected {self.in_channels} coefficient channels; got {coefficients.scaling.shape[-1]}."
             )
         scaling = self._mix(self.scaling_weight, coefficients.scaling)
         details = tuple(
@@ -197,7 +196,7 @@ def _decode_wavelet_queries(
     coordinates = query.coordinates_array(case_shape=case_shape)
     axis_nodes = tuple(axis.nodes for axis in source.axes)
     usable = query.mask_array(case_shape=case_shape)
-    inside = jnp.ones(usable.shape, dtype=bool)
+    inside = jnp.ones(usable.shape, dtype=jnp.bool_)
     for dimension, nodes in enumerate(axis_nodes):
         inside = inside & (coordinates[..., dimension] >= nodes[0])
         inside = inside & (coordinates[..., dimension] <= nodes[-1])
@@ -243,7 +242,7 @@ def _decode_multiwavelet_queries(
         jnp.any(usable & ~inside),
         "Multiwavelet query lies outside the represented source support.",
     )
-    point_count = int(values.shape[-2])
+    point_count = values.shape[-2]
     query_shape = query.sample_shape
     cases = int(np.prod(case_shape)) if case_shape else 1
     flat_values = values.reshape((cases, point_count, values.shape[-1]))
@@ -297,10 +296,10 @@ def _grid_values(
         raise ValueError("Grid operators require one array-valued source field.")
     values = samples.values
     scalar_shape = case_shape + spatial_shape
-    if tuple(int(size) for size in values.shape) == scalar_shape and channels == 1:
+    if tuple(values.shape) == scalar_shape and channels == 1:
         return values[..., None]
     expected = scalar_shape + (channels,)
-    if tuple(int(size) for size in values.shape) != expected:
+    if tuple(values.shape) != expected:
         raise ValueError(
             f"Grid source values must have shape {expected}; got {values.shape}."
         )
@@ -308,7 +307,7 @@ def _grid_values(
 
 
 def _validate_uniform_axis(nodes: Array, /) -> None:
-    if int(nodes.shape[0]) < 2:
+    if nodes.shape[0] < 2:
         raise ValueError("Wavelet axes require at least two nodes.")
     if isinstance(nodes, jax_core.Tracer):
         return
@@ -332,7 +331,7 @@ def _validate_tensor_grid(
         raise ValueError("Wavelet queries require tensor axes or point coordinates.")
     if source.axis_names and query.axis_names and source.axis_names != query.axis_names:
         raise ValueError("Wavelet source and tensor-query axis names must match.")
-    spatial_shape = tuple(int(size) for size in source.sample_shape)
+    spatial_shape = tuple(source.sample_shape)
     for source_axis, boundary in zip(source.axes, boundaries, strict=True):
         _validate_uniform_axis(source_axis.nodes)
         if boundary == "periodization" and not source_axis.periodic:
@@ -342,9 +341,7 @@ def _validate_tensor_grid(
             raise ValueError(f"Wavelet tensor queries require {spatial_ndim} axes.")
         for query_axis in query.axes:
             _validate_uniform_axis(query_axis.nodes)
-    elif (
-        query.coordinates is not None and int(query.coordinates.shape[-1]) != spatial_ndim
-    ):
+    elif query.coordinates is not None and query.coordinates.shape[-1] != spatial_ndim:
         raise ValueError("Wavelet point-query coordinate dimension is incompatible.")
     return spatial_shape
 

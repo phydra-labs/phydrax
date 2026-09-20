@@ -35,7 +35,7 @@ def _generalized_amplitude_kraus(probability_ground: float, damping: float):
             jnp.sqrt(1.0 - p) * jnp.asarray([[root, 0.0], [0.0, 1.0]]),
             jnp.sqrt(1.0 - p) * jnp.asarray([[0.0, 0.0], [jump, 0.0]]),
         ],
-        dtype=complex,
+        dtype=jnp.complex128,
     )
 
 
@@ -53,9 +53,9 @@ def boundary_driven_xxz_problem(
     count = int(site_count)
     if count < 2 or abs(left_polarization) > 1.0 or abs(right_polarization) > 1.0:
         raise ValueError("XXZ site count or boundary polarization is invalid.")
-    sigma_x = jnp.asarray([[0, 1], [1, 0]], dtype=complex)
-    sigma_y = jnp.asarray([[0, -1j], [1j, 0]], dtype=complex)
-    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=complex)
+    sigma_x = jnp.asarray([[0, 1], [1, 0]], dtype=jnp.complex128)
+    sigma_y = jnp.asarray([[0, -1j], [1j, 0]], dtype=jnp.complex128)
+    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=jnp.complex128)
     term = float(coupling) * (
         jnp.kron(sigma_x, sigma_x)
         + jnp.kron(sigma_y, sigma_y)
@@ -66,7 +66,7 @@ def boundary_driven_xxz_problem(
         tuple(2 for _ in range(count)),
         hamiltonian_id=f"boundary-xxz:{count}",
     )
-    local_factor = jnp.zeros((1, 2, 2, 1), dtype=complex)
+    local_factor = jnp.zeros((1, 2, 2, 1), dtype=jnp.complex128)
     local_factor = local_factor.at[0, 0, 0, 0].set(1.0 / jnp.sqrt(2.0))
     local_factor = local_factor.at[0, 1, 1, 0].set(1.0 / jnp.sqrt(2.0))
     initial = LocallyPurifiedDensity(tuple(local_factor for _ in range(count)))
@@ -122,7 +122,7 @@ def qualify_boundary_driven_xxz(
     maximum_purification_dimension: int,
     steady_window: int = 4,
 ) -> XXZQualificationResult:
-    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=complex)
+    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=jnp.complex128)
     current_problem = problem
     magnetization = []
     final_result = None

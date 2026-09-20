@@ -19,7 +19,7 @@ def _match(descendants, overlaps, merits=None, *, successful=True):
     descendants = jnp.asarray(descendants)
     overlaps = jnp.asarray(overlaps)
     if merits is None:
-        merits = overlaps.astype(float)
+        merits = overlaps.astype("float64")
     return MergerMatchResult(
         descendants,
         jnp.asarray(merits),

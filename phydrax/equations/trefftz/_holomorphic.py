@@ -23,14 +23,14 @@ from ..._strict import StrictModule
 
 def _horner(coefficients: Array, coordinate: Array, /) -> Array:
     value = coefficients[..., -1]
-    for index in range(int(coefficients.shape[-1]) - 2, -1, -1):
+    for index in range(coefficients.shape[-1] - 2, -1, -1):
         value = value * coordinate + coefficients[..., index]
     return value
 
 
 def _derivative_coefficients(coefficients: Array, order: int, /) -> Array:
     order_ = int(order)
-    degree = int(coefficients.shape[-1]) - 1
+    degree = coefficients.shape[-1] - 1
     if order_ > degree:
         return jnp.zeros(coefficients.shape[:-1] + (1,), dtype=coefficients.dtype)
     factors = jnp.asarray(
@@ -83,8 +83,8 @@ class HolomorphicPolynomialPotential(StrictModule):
             raise ValueError("HolomorphicPolynomialPotential requires one complex input.")
         shape = (branches_, degree + 1)
         if scale == 0.0:
-            real = jnp.zeros(shape, dtype=float)
-            imaginary = jnp.zeros(shape, dtype=float)
+            real = jnp.zeros(shape, dtype=jnp.float64)
+            imaginary = jnp.zeros(shape, dtype=jnp.float64)
         else:
             real_key, imaginary_key = jr.split(key)
             component_scale = scale / math.sqrt(float(degree + 1))

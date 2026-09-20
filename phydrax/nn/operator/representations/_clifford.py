@@ -25,7 +25,7 @@ from phydrax.metrix.clifford import (
 from ._o3 import O3Features, O3Representation
 
 
-class CliffordGradeFeatures(eqx.Module):
+class CliffordGradeFeatures(StrictModule):
     """One multiplicity-bearing array for every Clifford grade."""
 
     grades: tuple[Array, ...]
@@ -47,7 +47,7 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
     ):
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be a CliffordAlgebraSpec.")
-        resolved = tuple(int(value) for value in multiplicities)
+        resolved = tuple(multiplicities)
         if len(resolved) != algebra.dimension + 1:
             raise ValueError(
                 "Clifford grade multiplicities must contain one count per grade."
@@ -65,7 +65,7 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
         self.grade_layouts = layouts
         self.representation_id = canonical_fingerprint(
             {
-                "kind": "clifford-grade-representation-v1",
+                "kind": "clifford-grade-representation",
                 "algebra": algebra.algebra_id,
                 "orientation": algebra.orientation,
                 "multiplicities": list(resolved),
@@ -122,8 +122,7 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
             expected = (multiplicity, layout.blade_count)
             if array.shape[-2:] != expected:
                 raise ValueError(
-                    f"Grade {grade} Clifford features must end in {expected}; "
-                    f"got {array.shape}."
+                    f"Grade {grade} Clifford features must end in {expected}; got {array.shape}."
                 )
             if leading is None:
                 leading = array.shape[:-2]
@@ -143,8 +142,8 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
         offsets: Sequence[float],
         /,
     ) -> None:
-        scale = np.asarray(scales, dtype=float)
-        offset = np.asarray(offsets, dtype=float)
+        scale = np.asarray(scales, dtype=np.float64)
+        offset = np.asarray(offsets, dtype=np.float64)
         expected = (self.packed_size,)
         if scale.shape != expected or offset.shape != expected:
             raise ValueError(
@@ -191,7 +190,7 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
             raise TypeError("Serialized Clifford multiplicities must be a sequence.")
         return cls(
             CliffordAlgebraSpec.from_dict(algebra_value),
-            tuple(int(item) for item in multiplicities),
+            tuple(multiplicities),
         )
 
     def transform(self, values: Array, action: MetricIsometryAction, /) -> Array:

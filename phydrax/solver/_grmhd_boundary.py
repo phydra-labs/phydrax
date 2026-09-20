@@ -59,13 +59,13 @@ class GRMHDBoundaryCondition(StrictModule, NonTrainableState):
         if kind == "prescribed":
             if prescribed_primitive is None:
                 raise ValueError("A prescribed GRMHD boundary requires primitives.")
-            primitive = np.asarray(prescribed_primitive, dtype=float)
+            primitive = np.asarray(prescribed_primitive, dtype=np.float64)
             if primitive.shape != (8,) or np.any(~np.isfinite(primitive)):
                 raise ValueError("Prescribed GRMHD primitive must be one finite state.")
         else:
             if prescribed_primitive is not None:
                 raise ValueError("Only a prescribed GRMHD boundary accepts primitives.")
-            primitive = np.zeros((8,), dtype=float)
+            primitive = np.zeros((8,), dtype=np.float64)
         self.kind = kind
         self.prescribed_primitive = jnp.asarray(primitive)
         self.boundary_id = canonical_fingerprint(
@@ -97,7 +97,7 @@ class GRMHDBoundaryCondition(StrictModule, NonTrainableState):
             exterior = jnp.broadcast_to(
                 self.prescribed_primitive.astype(primitive.dtype), primitive.shape
             )
-            suppressed = jnp.zeros(primitive.shape[:-1], dtype=bool)
+            suppressed = jnp.zeros(primitive.shape[:-1], dtype=jnp.bool_)
         else:
             exterior = primitive
             transport = (

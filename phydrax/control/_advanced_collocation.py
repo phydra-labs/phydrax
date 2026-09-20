@@ -643,10 +643,10 @@ def manifold_radau_collocation_defects(
             jnp.nan,
             dtype=sentinel_dtype,
         )
-        invalid = jnp.zeros((intervals,), dtype=bool)
+        invalid = jnp.zeros((intervals,), dtype=jnp.bool_)
         contained = jnp.zeros(
             (intervals, method.stage_count + 3),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         evidence = ManifoldCollocationEvidence(
             invalid,
@@ -722,7 +722,7 @@ def manifold_radau_collocation_defects(
         )
 
     def membership(point):
-        contained = jnp.asarray(geometry.contains(point), dtype=bool)
+        contained = jnp.asarray(geometry.contains(point), dtype=jnp.bool_)
         if contained.shape != ():
             raise ValueError("geometry.contains must return one scalar boolean.")
         return contained
@@ -787,10 +787,10 @@ def manifold_radau_collocation_defects(
             axis=1,
         )
 
-    tangent_equation_valid = jnp.ones((intervals,), dtype=bool)
-    dynamics_finite = jnp.ones((intervals,), dtype=bool)
-    differential_finite = jnp.ones((intervals,), dtype=bool)
-    differential_valid = jnp.ones((intervals,), dtype=bool)
+    tangent_equation_valid = jnp.ones((intervals,), dtype=jnp.bool_)
+    dynamics_finite = jnp.ones((intervals,), dtype=jnp.bool_)
+    differential_finite = jnp.ones((intervals,), dtype=jnp.bool_)
+    differential_valid = jnp.ones((intervals,), dtype=jnp.bool_)
 
     if implicit:
         ambient_rates = jax.vmap(jvp_interval)(anchors, stage_local, rates)
@@ -875,8 +875,7 @@ def manifold_radau_collocation_defects(
             + state_shape
         ):
             raise ValueError(
-                "Explicit dynamics must return one point-storage ambient vector "
-                "per stage."
+                "Explicit dynamics must return one point-storage ambient vector per stage."
             )
         projected_fields = jax.vmap(jax.vmap(projected_physical))(
             stage_states, ambient_fields

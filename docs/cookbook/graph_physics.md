@@ -982,7 +982,7 @@ other cell degree.
             "mass": zero_form,
         },
         residual_fn=darcy_residual,
-        identity="cookbook.mixed_darcy.v1",
+        identity="cookbook.mixed_darcy",
     )
 
     fields = {"p": pressure, "q": flux, "f": source}

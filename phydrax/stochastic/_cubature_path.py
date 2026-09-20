@@ -54,13 +54,12 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
         source_rule_id: str,
         maximum_path_bytes: int = _DEFAULT_PATH_BYTES,
     ):
-        increments_host = np.asarray(increments, dtype=float)
-        widths_host = np.asarray(segment_widths, dtype=float).reshape((-1,))
-        weights_host = np.asarray(weights, dtype=float).reshape((-1,))
+        increments_host = np.asarray(increments, dtype=np.float64)
+        widths_host = np.asarray(segment_widths, dtype=np.float64).reshape((-1,))
+        weights_host = np.asarray(weights, dtype=np.float64).reshape((-1,))
         if increments_host.ndim != 3 or not all(increments_host.shape):
             raise ValueError(
-                "Wiener cubature increments must have shape "
-                "(path_count, segment_count, noise_dimension)."
+                "Wiener cubature increments must have shape (path_count, segment_count, noise_dimension)."
             )
         path_count, segment_count, noise_dimension = increments_host.shape
         if widths_host.shape != (segment_count,):
@@ -86,7 +85,7 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
             or np.any(weights_host <= 0.0)
         ):
             raise ValueError("Wiener cubature path data must be finite and positive.")
-        tolerance = np.finfo(float).eps * max(path_count, noise_dimension) * 256.0
+        tolerance = np.finfo(np.float64).eps * max(path_count, noise_dimension) * 256.0
         if not np.isclose(np.sum(widths_host), 1.0, rtol=tolerance, atol=tolerance):
             raise ValueError("Wiener cubature segment widths must sum to one.")
         if not np.isclose(np.sum(weights_host), 1.0, rtol=tolerance, atol=tolerance):
@@ -95,9 +94,7 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
         signature_degree_ = _positive_integer(signature_degree, "signature_degree")
         if signature_degree_ > gaussian_degree_:
             raise ValueError("signature_degree cannot exceed gaussian_degree.")
-        storage_bytes = int(
-            increments_host.nbytes + widths_host.nbytes + weights_host.nbytes
-        )
+        storage_bytes = increments_host.nbytes + widths_host.nbytes + weights_host.nbytes
         maximum = _positive_integer(maximum_path_bytes, "maximum_path_bytes")
         if storage_bytes > maximum:
             raise ValueError("Wiener cubature path data exceeds maximum_path_bytes.")
@@ -132,7 +129,7 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
         self.certification_precision = str(increments_host.dtype)
         self.path_id = canonical_fingerprint(
             {
-                "kind": "wiener-cubature-path-v1",
+                "kind": "wiener-cubature-path",
                 "noise_dimension": noise_dimension,
                 "path_count": path_count,
                 "segment_count": segment_count,
@@ -297,12 +294,10 @@ def _validate_wiener_signatures(
             level_name = _signature_level_name(homogeneous_degree)
             if homogeneous_degree == tensor_level:
                 raise ValueError(
-                    "Wiener cubature paths do not match the "
-                    f"{level_name} signature level."
+                    f"Wiener cubature paths do not match the {level_name} signature level."
                 )
             raise ValueError(
-                "Wiener cubature paths do not match time-space signatures at the "
-                f"{level_name} signature level."
+                f"Wiener cubature paths do not match time-space signatures at the {level_name} signature level."
             )
     return residuals
 
@@ -318,8 +313,8 @@ def straight_wiener_cubature_path(
         raise TypeError("rule must be CubatureRuleData.")
     if rule.reference_domain != "standard-normal" or rule.exact_degree < 1:
         raise ValueError("Straight Wiener cubature requires standard-normal data.")
-    points = np.asarray(rule.points, dtype=float)
-    weights = np.asarray(rule.weights, dtype=float)
+    points = np.asarray(rule.points, dtype=np.float64)
+    weights = np.asarray(rule.weights, dtype=np.float64)
     return WienerCubaturePathData(
         points[:, None, :],
         np.asarray([1.0]),
@@ -363,15 +358,15 @@ def fit_wiener_cubature_path(
         raise ValueError("Requested signature degree exceeds maximum_signature_terms.")
     workspace = (
         paths * segments * driver_dimension + paths * signature_terms + signature_terms
-    ) * np.dtype(float).itemsize
+    ) * np.dtype(np.float64).itemsize
     if workspace > byte_cap:
         raise ValueError("Wiener cubature fitting exceeds maximum_workspace_bytes.")
     if isinstance(initial_data, WienerCubaturePathData):
-        initial_increments = np.asarray(initial_data.increments, dtype=float)
-        initial_weights = np.asarray(initial_data.weights, dtype=float)
-        widths = np.asarray(initial_data.segment_widths, dtype=float)
+        initial_increments = np.asarray(initial_data.increments, dtype=np.float64)
+        initial_weights = np.asarray(initial_data.weights, dtype=np.float64)
+        widths = np.asarray(initial_data.segment_widths, dtype=np.float64)
     else:
-        initial_increments = np.asarray(initial_data, dtype=float)
+        initial_increments = np.asarray(initial_data, dtype=np.float64)
         initial_weights = np.full((paths,), 1.0 / paths)
         widths = np.full((segments,), 1.0 / segments)
     expected_shape = (paths, segments, dimension)
@@ -422,13 +417,13 @@ def fit_wiener_cubature_path(
     else:
         if not callable(optimizer):
             raise TypeError("optimizer must be callable or None.")
-        vector = np.asarray(optimizer(residual, initial_vector), dtype=float)
+        vector = np.asarray(optimizer(residual, initial_vector), dtype=np.float64)
         if vector.shape != initial_vector.shape:
             raise ValueError("Custom optimizer returned an incompatible vector.")
     increments, weights = unpack(vector)
     source_id = canonical_fingerprint(
         {
-            "kind": "fitted-wiener-cubature-path-v1",
+            "kind": "fitted-wiener-cubature-path",
             "noise_dimension": dimension,
             "signature_degree": degree,
             "path_count": paths,

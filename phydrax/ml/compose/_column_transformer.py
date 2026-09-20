@@ -121,7 +121,7 @@ def _select_sparse_columns(
     if not indices:
         raise ValueError("Sparse column selection requires at least one feature.")
     lookup = jnp.zeros((features.feature_count,), dtype=jnp.int32)
-    selected = jnp.zeros((features.feature_count,), dtype=bool)
+    selected = jnp.zeros((features.feature_count,), dtype=jnp.bool_)
     source = jnp.asarray(indices, dtype=jnp.int32)
     lookup = lookup.at[source].set(jnp.arange(len(indices), dtype=jnp.int32))
     selected = selected.at[source].set(True)
@@ -215,7 +215,7 @@ class FittedColumnTransformer(AbstractArrayModel):
         )
         self.branch_input_schemas = input_schemas
         self.branch_output_schemas = output_schemas
-        self.remainder_indices = tuple(int(index) for index in remainder_indices)
+        self.remainder_indices = tuple(remainder_indices)
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.gradient_contract = gradient_contract

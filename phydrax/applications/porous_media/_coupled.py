@@ -90,7 +90,7 @@ class CoupledWaterHeatPlan(StrictModule):
                 diffusion.face_count,
                 "inflow_temperature_K",
             )
-            self.inflow_qualified = jnp.ones(diffusion.face_count, dtype=bool)
+            self.inflow_qualified = jnp.ones(diffusion.face_count, dtype=jnp.bool_)
         for value in (temperature_scale_K, energy_rate_scale_W):
             if not float(value) > 0 or not jnp.isfinite(value):
                 raise ValueError(
@@ -196,12 +196,12 @@ class CoupledWaterHeatPlan(StrictModule):
         conduction = -contract("cfg,cg->cf", matrices, difference)
         conduction = jnp.where(diffusion.valid, conduction, 0.0)
         face = diffusion.cell_faces
-        owner, neighbour = (
+        owner, neighbor = (
             self.discretization.owner_cells,
-            self.discretization.neighbour_cells,
+            self.discretization.neighbor_cells,
         )
         cells = jnp.arange(diffusion.cell_count)[:, None]
-        opposite = jnp.where(cells == owner[face], neighbour[face], owner[face])
+        opposite = jnp.where(cells == owner[face], neighbor[face], owner[face])
         enthalpy = self.thermal.enthalpy(state.temperature_K)
         incoming = jnp.where(
             opposite >= 0,
@@ -274,7 +274,7 @@ class CoupledWaterHeatPlan(StrictModule):
             state.temperature_K,
             state.face_temperature_K,
         )
-        exterior_inflow = (self.discretization.neighbour_cells < 0) & (
+        exterior_inflow = (self.discretization.neighbor_cells < 0) & (
             water_flux.mass_face_rates < 0
         )
         return (

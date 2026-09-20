@@ -47,12 +47,12 @@ _CHECKPOINT_FORMAT = "phydrax-inelastic-sidm-checkpoint"
 
 
 def _segment_samples(nodes: Array, /, *, periodic: bool = False) -> np.ndarray:
-    values = np.asarray(nodes, dtype=float)
+    values = np.asarray(nodes, dtype=np.float64)
     if periodic:
         values = values[:-1]
     if values.size == 1:
         return values
-    source = np.asarray(nodes, dtype=float)
+    source = np.asarray(nodes, dtype=np.float64)
     midpoints = 0.5 * (source[:-1] + source[1:])
     return np.unique(np.concatenate((values, midpoints)))
 
@@ -265,23 +265,21 @@ class DarkTwoBodyReactionPlan(StrictModule, NonTrainableState):
             if value is None:
                 if identical:
                     raise ValueError(
-                        f"{direction}_outgoing_convention is required for an "
-                        "identical outgoing pair."
+                        f"{direction}_outgoing_convention is required for an identical outgoing pair."
                     )
                 return "distinguishable-full-sphere"
             convention = str(value)
             if identical and convention not in (
-                "labelled-full-sphere",
+                "labeled-full-sphere",
                 "exchange-quotient",
             ):
                 raise ValueError(
-                    f"{direction} identical outgoing species require labelled-full-"
+                    f"{direction} identical outgoing species require labeled-full-"
                     "sphere or exchange-quotient normalization."
                 )
             if not identical and convention != "distinguishable-full-sphere":
                 raise ValueError(
-                    f"{direction} distinct outgoing species require "
-                    "distinguishable-full-sphere normalization."
+                    f"{direction} distinct outgoing species require distinguishable-full-sphere normalization."
                 )
             return convention
 
@@ -300,8 +298,7 @@ class DarkTwoBodyReactionPlan(StrictModule, NonTrainableState):
             or reverse_outgoing != forward_kernel.identical_particle_convention
         ):
             raise ValueError(
-                "Outgoing angular normalization must match the time-reversed "
-                "kernel's incoming-pair convention."
+                "Outgoing angular normalization must match the time-reversed kernel's incoming-pair convention."
             )
         mass_unit = species[0].mass_unit
         energy_unit = species[0].energy_unit
@@ -675,8 +672,7 @@ class InelasticSIDMPlan(StrictModule, NonTrainableState):
             or radiation.position_unit != first.position_unit
         ):
             raise ValueError(
-                "Reaction and radiation plans must share dimensions, light speed, "
-                "and energy/momentum/position units."
+                "Reaction and radiation plans must share dimensions, light speed, and energy/momentum/position units."
             )
         if len({item.channel_id for item in channels}) != len(channels):
             raise ValueError("Reaction channel identities must be unique.")
@@ -704,7 +700,7 @@ class InelasticSIDMPlan(StrictModule, NonTrainableState):
         direction_incoming = np.asarray((*incoming, *outgoing), dtype=np.int32)
         direction_outgoing = np.asarray((*outgoing, *incoming), dtype=np.int32)
         direction_forward = np.asarray(
-            (True,) * len(channels) + (False,) * len(channels), dtype=bool
+            (True,) * len(channels) + (False,) * len(channels), dtype=np.bool_
         )
         direction_channels = np.asarray(
             (*range(len(channels)), *range(len(channels))), dtype=np.int32

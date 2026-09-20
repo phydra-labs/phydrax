@@ -627,8 +627,7 @@ def _validate_dataset(
         or binding.training_preparation_id != dataset.preparation_id
     ):
         raise ValueError(
-            "Rollout dataset, stage-one binding, support, and physical runtime "
-            "identity mismatch."
+            "Rollout dataset, stage-one binding, support, and physical runtime identity mismatch."
         )
 
 
@@ -691,8 +690,7 @@ class KineticRolloutTrainingState(StrictModule):
         if best_loss_.shape != () or not jnp.issubdtype(best_loss_.dtype, jnp.floating):
             raise ValueError("best_loss must be one floating scalar array.")
         counters = tuple(
-            int(value)
-            for value in (
+            (
                 attempt_count,
                 accepted_update_count,
                 rejection_count,

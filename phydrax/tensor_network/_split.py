@@ -78,7 +78,7 @@ def truncated_svd(
         raise ValueError("truncated_svd requires a nonempty rank-two matrix.")
 
     u, singular_values, vh = jnp.linalg.svd(value, full_matrices=False)
-    available = int(singular_values.shape[0])
+    available = singular_values.shape[0]
     retained = min(capacity, available)
     discarded = precision.decision(
         jnp.real(precision.sum(jnp.abs(singular_values[retained:]) ** 2))

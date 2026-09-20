@@ -75,11 +75,11 @@ def _two_axis_points(dimension: int, radius: float, /) -> np.ndarray:
     points = []
     for first, second in itertools.combinations(range(dimension), 2):
         for first_sign, second_sign in itertools.product((-1.0, 1.0), repeat=2):
-            point = np.zeros((dimension,), dtype=float)
+            point = np.zeros((dimension,), dtype=np.float64)
             point[first] = first_sign * radius
             point[second] = second_sign * radius
             points.append(point)
-    return np.asarray(points, dtype=float).reshape((-1, dimension))
+    return np.asarray(points, dtype=np.float64).reshape((-1, dimension))
 
 
 def _reflected_diagonal(dimension: int, radius: float, /) -> np.ndarray:
@@ -112,7 +112,7 @@ def _hadamard_3(
     half_count = 2 ** math.ceil(math.log2(dimension))
     count = 2 * half_count
     _guard_count(count, maximum_points)
-    directions = np.asarray(hadamard(half_count)[:, :dimension], dtype=float)
+    directions = np.asarray(hadamard(half_count)[:, :dimension], dtype=np.float64)
     points = np.concatenate((directions, -directions), axis=0)
     weights = np.full((count,), 1.0 / count)
     return CubatureRuleData(

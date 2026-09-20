@@ -116,8 +116,7 @@ class RegistrationEvaluationPlan:
             raise TypeError("direction must be a RegistrationDirection.")
         if self.direction is not RegistrationDirection.REFERENCE_TO_TARGET:
             raise ValueError(
-                "RegistrationEvaluationPlan currently supports only "
-                "REFERENCE_TO_TARGET displacement observations."
+                "RegistrationEvaluationPlan currently supports only REFERENCE_TO_TARGET displacement observations."
             )
         minimum = float(self.minimum_jacobian)
         tolerance = float(self.inverse_consistency_tolerance_mm)

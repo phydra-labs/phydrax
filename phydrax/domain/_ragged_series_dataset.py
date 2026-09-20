@@ -49,7 +49,7 @@ def _tree_leading_axis_size(tree: PyTree[ArrayLike], /, *, name: str) -> int:
     first = jnp.asarray(leaves[0])
     if first.ndim == 0:
         raise ValueError(f"{name} leaves must have a leading case axis.")
-    n = int(first.shape[0])
+    n = first.shape[0]
     if n <= 0:
         raise ValueError(f"{name} leading case axis must be non-empty.")
 
@@ -57,10 +57,9 @@ def _tree_leading_axis_size(tree: PyTree[ArrayLike], /, *, name: str) -> int:
         arr = jnp.asarray(leaf)
         if arr.ndim == 0:
             raise ValueError(f"{name} leaves must have a leading case axis.")
-        if int(arr.shape[0]) != n:
+        if arr.shape[0] != n:
             raise ValueError(
-                f"{name} requires all leaves to share the same leading case axis; "
-                f"got {int(arr.shape[0])} and {n}."
+                f"{name} requires all leaves to share the same leading case axis; got {arr.shape[0]} and {n}."
             )
     return n
 
@@ -76,8 +75,8 @@ def _validate_series(series: PyTree[ArrayLike], /) -> tuple[PyTree[Array], int, 
         raise ValueError(
             f"Ragged series leaves must have shape (N, Lmax, ...); got {first.shape}."
         )
-    n = int(first.shape[0])
-    max_length = int(first.shape[1])
+    n = first.shape[0]
+    max_length = first.shape[1]
     if n <= 0:
         raise ValueError("Ragged series leading case axis must be non-empty.")
     if max_length <= 0:
@@ -89,15 +88,13 @@ def _validate_series(series: PyTree[ArrayLike], /) -> tuple[PyTree[Array], int, 
             raise ValueError(
                 f"Ragged series leaves must have shape (N, Lmax, ...); got {arr.shape}."
             )
-        if int(arr.shape[0]) != n:
+        if arr.shape[0] != n:
             raise ValueError(
-                "Ragged series leaves must share leading case axis; "
-                f"got {int(arr.shape[0])} and {n}."
+                f"Ragged series leaves must share leading case axis; got {arr.shape[0]} and {n}."
             )
-        if int(arr.shape[1]) != max_length:
+        if arr.shape[1] != max_length:
             raise ValueError(
-                "Ragged series leaves must share padded time axis; "
-                f"got {int(arr.shape[1])} and {max_length}."
+                f"Ragged series leaves must share padded time axis; got {arr.shape[1]} and {max_length}."
             )
     return arrays, n, max_length
 
@@ -114,8 +111,7 @@ def _validate_static(
     static_n = _tree_leading_axis_size(arrays, name="Ragged static data")
     if int(static_n) != int(n):
         raise ValueError(
-            "Ragged static data leading case axis must match series leading axis; "
-            f"got {static_n} and {n}."
+            f"Ragged static data leading case axis must match series leading axis; got {static_n} and {n}."
         )
     return arrays
 
@@ -124,8 +120,8 @@ def _as_lengths(lengths: ArrayLike, n: int, max_length: int, /) -> Array:
     arr = jnp.asarray(lengths)
     if arr.ndim != 1:
         raise ValueError(f"lengths must have shape (N,), got {arr.shape}.")
-    if int(arr.shape[0]) != int(n):
-        raise ValueError(f"lengths must have length {n}, got {int(arr.shape[0])}.")
+    if arr.shape[0] != int(n):
+        raise ValueError(f"lengths must have length {n}, got {arr.shape[0]}.")
     arr_i = arr.astype(jnp.int32)
     if bool(jnp.any(arr_i <= 0)):
         raise ValueError("All ragged series lengths must be positive.")
@@ -137,7 +133,7 @@ def _as_lengths(lengths: ArrayLike, n: int, max_length: int, /) -> Array:
 
 
 def _as_scalar(name: str, value: ArrayLike, /) -> Array:
-    arr = jnp.asarray(value, dtype=float)
+    arr = jnp.asarray(value, dtype=jnp.float64)
     if arr.shape != ():
         raise ValueError(f"{name} must be scalar, got shape {arr.shape}.")
     return arr.reshape(())
@@ -155,7 +151,7 @@ def _pack_padded_series(series: PyTree[Array], lengths: Array, /) -> PyTree[Arra
 
 
 def _mask_series_tree(series: PyTree[Array], mask: Array, /) -> PyTree[Array]:
-    valid = jnp.asarray(mask, dtype=bool)
+    valid = jnp.asarray(mask, dtype=jnp.bool_)
 
     def _mask_leaf(leaf: Array) -> Array:
         arr = jnp.asarray(leaf)
@@ -240,7 +236,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         self._measure_mode = measure
         self._size = int(n)
         self._max_length = int(max_length)
-        self._time_axis = start_arr + dt_arr * jnp.arange(max_length, dtype=float)
+        self._time_axis = start_arr + dt_arr * jnp.arange(max_length, dtype=jnp.float64)
 
     @classmethod
     def from_padded(
@@ -299,7 +295,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
             first = jnp.asarray(leaves[0])
             if first.ndim == 0:
                 raise ValueError("Series record leaves must have a leading time axis.")
-            length = int(first.shape[0])
+            length = first.shape[0]
             if length <= 0:
                 raise ValueError("Series record lengths must be positive.")
             for leaf in leaves:
@@ -308,7 +304,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
                     raise ValueError(
                         "Series record leaves must have a leading time axis."
                     )
-                if int(arr.shape[0]) != length:
+                if arr.shape[0] != length:
                     raise ValueError(
                         "All leaves in a series record must share the same length."
                     )
@@ -399,8 +395,8 @@ class RaggedSeriesDatasetDomain(JointFactor):
     def measure(self) -> Array:
         """Total domain measure under the configured measure mode."""
         if self._measure_mode == "count":
-            return jnp.asarray(float(self._size), dtype=float)
-        return jnp.asarray(1.0, dtype=float)
+            return jnp.asarray(float(self._size), dtype=jnp.float64)
+        return jnp.asarray(1.0, dtype=jnp.float64)
 
     def field(self, values: ArrayLike, /) -> "DomainFunction":
         """Expose case-aligned target values as a non-trainable domain function."""
@@ -463,7 +459,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         lengths = self.lengths[idx]
         positions = jnp.broadcast_to(
             jnp.arange(self.max_length, dtype=jnp.int32),
-            (int(idx.shape[0]), self.max_length),
+            (idx.shape[0], self.max_length),
         )
         mask = positions < lengths[:, None]
         return self._rows_from_positions(idx, positions, mask)
@@ -495,27 +491,28 @@ class RaggedSeriesDatasetDomain(JointFactor):
             "suffix",
         ):
             raise ValueError(
-                "sampled_input_rows sampling must be 'points_uniform', "
-                "'window_uniform', 'prefix', or 'suffix'."
+                "sampled_input_rows sampling must be 'points_uniform', 'window_uniform', 'prefix', or 'suffix'."
             )
 
         lengths = self.lengths[idx]
         arange_k = jnp.arange(k, dtype=jnp.int32)
-        arange_grid = jnp.broadcast_to(arange_k[None, :], (int(idx.shape[0]), k))
+        arange_grid = jnp.broadcast_to(arange_k[None, :], (idx.shape[0], k))
 
         if sampling_str == "points_uniform":
-            u = jr.uniform(key, shape=(int(idx.shape[0]), k))
-            random_pos = jnp.floor(u * lengths[:, None].astype(float)).astype(jnp.int32)
+            u = jr.uniform(key, shape=(idx.shape[0], k))
+            random_pos = jnp.floor(u * lengths[:, None].astype("float64")).astype(
+                jnp.int32
+            )
             positions = jnp.where(lengths[:, None] >= k, random_pos, arange_grid)
             mask = jnp.where(
                 lengths[:, None] >= k,
-                jnp.ones((int(idx.shape[0]), k), dtype=bool),
+                jnp.ones((idx.shape[0], k), dtype=jnp.bool_),
                 arange_grid < lengths[:, None],
             )
         elif sampling_str == "window_uniform":
             max_start = jnp.maximum(lengths - k, 0)
-            u = jr.uniform(key, shape=(int(idx.shape[0]),))
-            start = jnp.floor(u * (max_start.astype(float) + 1.0)).astype(jnp.int32)
+            u = jr.uniform(key, shape=(idx.shape[0],))
+            start = jnp.floor(u * (max_start.astype("float64") + 1.0)).astype(jnp.int32)
             positions = start[:, None] + arange_grid
             mask = positions < lengths[:, None]
         elif sampling_str == "prefix":
@@ -538,12 +535,12 @@ class RaggedSeriesDatasetDomain(JointFactor):
     ) -> dict[str, Any]:
         idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         pos = jnp.asarray(positions, dtype=jnp.int32)
-        valid = jnp.asarray(mask, dtype=bool)
+        valid = jnp.asarray(mask, dtype=jnp.bool_)
         if pos.ndim != 2:
             raise ValueError("series positions must have shape (B, K).")
         if valid.shape != pos.shape:
             raise ValueError("series mask must match sampled positions shape.")
-        if int(pos.shape[0]) != int(idx.shape[0]):
+        if pos.shape[0] != idx.shape[0]:
             raise ValueError("series positions leading axis must match indices.")
 
         lengths = self.lengths[idx]
@@ -555,15 +552,15 @@ class RaggedSeriesDatasetDomain(JointFactor):
         )
         valid_counts = jnp.maximum(
             jnp.sum(valid.astype(jnp.int32), axis=1),
-            jnp.ones((int(idx.shape[0]),), dtype=jnp.int32),
+            jnp.ones((idx.shape[0],), dtype=jnp.int32),
         )
         rows: dict[str, Any] = {
             "series": _mask_series_tree(series_rows, valid),
-            "time": self.start + self.dt * pos.astype(float),
+            "time": self.start + self.dt * pos.astype("float64"),
             "mask": valid,
             "length": lengths,
             "sample_index": source_pos,
-            "sample_scale": lengths.astype(float) / valid_counts.astype(float),
+            "sample_scale": lengths.astype("float64") / valid_counts.astype("float64"),
         }
         if self.static is not None:
             rows["static"] = jax.tree_util.tree_map(
@@ -585,8 +582,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         axis = structure_out.axis_for(self.label)
         if axis is None:
             raise ValueError(
-                f"RaggedSeriesDatasetDomain points require a sampling axis for "
-                f"label {self.label!r}."
+                f"RaggedSeriesDatasetDomain points require a sampling axis for label {self.label!r}."
             )
 
         idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
@@ -622,8 +618,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         axis = structure_out.axis_for(self.label)
         if axis is None:
             raise ValueError(
-                f"RaggedSeriesDatasetDomain points require a sampling axis for "
-                f"label {self.label!r}."
+                f"RaggedSeriesDatasetDomain points require a sampling axis for label {self.label!r}."
             )
         idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         rows = self.sampled_input_rows(

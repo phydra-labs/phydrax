@@ -114,9 +114,9 @@ class ProcessExperimentPlan(StrictModule):
         self.effect_completeness_residuals = completeness
         self.finite = finite
         self.valid = valid
-        self.experiment_count = int(inputs.shape[0])
-        self.outcome_count = int(measurements.shape[1])
-        self.dimension = int(inputs.shape[-1])
+        self.experiment_count = inputs.shape[0]
+        self.outcome_count = measurements.shape[1]
+        self.dimension = inputs.shape[-1]
         self.tolerance = tolerance_
         self.plan_id = canonical_fingerprint(
             {

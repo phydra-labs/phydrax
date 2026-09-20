@@ -22,7 +22,7 @@ aligned child counts, and stable integer block-ID range from one prepared tensor
 Level zero always covers the full base grid. Active blocks occupy a compact prefix in
 canonical lattice/stable-ID order; inactive metadata uses explicit sentinels.
 
-`FDAMRHierarchyPlan.prepare()` owns the cell-centred lifecycle:
+`FDAMRHierarchyPlan.prepare()` owns the cell-centered lifecycle:
 
 1. `initial_topology()` realizes the complete level-zero topology.
 2. `compile_topology(source, tags)` buffers cell tags, checks proper nesting and every
@@ -45,7 +45,7 @@ closed if any requested value is missing.
 physical boundary slots, coarse/fine route pairs, FillPatch plans, cell coordinates,
 and active-cell masks for exactly one topology epoch.
 
-`BlockAMRFiniteVolumePlan` remains the optimized fixed-Cartesian, cell-centred
+`BlockAMRFiniteVolumePlan` remains the optimized fixed-Cartesian, cell-centered
 inviscid path. The general production path constructs a
 `MultivaluedCutCellComplex` over canonical leaf cells and lowers its connected
 fluid components to the ordinary polyhedral `UnstructuredFiniteVolumePlan`.
@@ -98,11 +98,11 @@ Direct and Galerkin coarse-operator choices are explicit. This is a fixed-topolo
 scalar diffusion profile, not a general composite elliptic claim.
 
 `MultivaluedCutCellDiffusionPlan` builds a volume-paired matrix-free graph
-Laplacian from open aperture measures and physical centre distances. It supports
+Laplacian from open aperture measures and physical center distances. It supports
 positive variable coefficients, Dirichlet or Neumann boundary faces, one certified
 constant nullspace per disconnected unanchored fluid region, and native projected
 PCG. `ViscousFluxPlan.unstructured_*` supplies equation-owned viscous tensors,
-least-squares gradients, conservative owner/neighbour scatter, explicit stability
+least-squares gradients, conservative owner/neighbor scatter, explicit stability
 evidence, and prescribed boundary normal fluxes on polygonal or polyhedral cells.
 The same component graph feeds three-dimensional conservative small-cell
 redistribution.
@@ -167,7 +167,7 @@ partition-independent component, face, body, coordinate, and connectivity arrays
 `BlockAMRPartitionPlan` retains the optimized fixed-block owner routes.
 `DistributedCutCellPartitionPlan` binds multivalued control-volume components to
 a live `ExecutionGroup`, places the part axis under `NamedSharding`, prepares
-cross-part aperture evidence, and gathers owner/neighbour states through global
+cross-part aperture evidence, and gathers owner/neighbor states through global
 JAX routes. Process-global commit decisions use an actual multi-process
 collective. Stable semantic component order is independent of process count, so
 repartition changes placement rather than topology or state meaning.
@@ -215,11 +215,11 @@ face quadrature from map Jacobians at a declared order; it records Jacobian,
 face-closure, mesh-volume-rate, and GCL evidence on active bucket cells.
 
 `MappedMortarPlan` is the required seam for nonconforming charts. Owner and
-neighbour reference traces are compared to one explicit common physical surface;
+neighbor reference traces are compared to one explicit common physical surface;
 quadrature weights and owner-oriented area vectors are generated only when both
 trace mismatches and the physical measure pass.
 `MappedMortarFluxPlan` evaluates arbitrary-normal numerical fluxes at that common
-quadrature and scatters one exactly cancelling owner/neighbour content rate.
+quadrature and scatters one exactly canceling owner/neighbor content rate.
 
 `MovingMultivaluedCutCellPlan` prepares start, endpoint, and midpoint cut
 complexes, constructs an incomplete physical common refinement when a wall sweeps
@@ -253,7 +253,7 @@ conservative SSPRK(3,3) path.
 
 One background cell may therefore own several independent conserved states, and
 one background face may own several aperture fragments. Component volumes,
-centres, volume fractions, body facets, face routes, and area vectors are
+centers, volume fractions, body facets, face routes, and area vectors are
 capacity-bounded. `MultivaluedCutCellEvidence` records regular, covered, cut, and
 multivalued counts plus predicate margin and independent volume/face closure.
 Subcell samples on the predicate tolerance, nonmanifold shells, unresolved patch

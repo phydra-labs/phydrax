@@ -185,8 +185,12 @@ class CellularPairMap(StrictModule, NonTrainableState):
             target_ambient = np.asarray(
                 target.ambient.layout.compact_to_ambient[degree], dtype=np.int32
             )
-            source_relative_mask = np.asarray(source.relative.masks[degree], dtype=bool)
-            target_relative_mask = np.asarray(target.relative.masks[degree], dtype=bool)
+            source_relative_mask = np.asarray(
+                source.relative.masks[degree], dtype=np.bool_
+            )
+            target_relative_mask = np.asarray(
+                target.relative.masks[degree], dtype=np.bool_
+            )
             source_quotient_map = np.asarray(
                 source.quotient_layout.ambient_to_compact[degree], dtype=np.int32
             )
@@ -204,8 +208,7 @@ class CellularPairMap(StrictModule, NonTrainableState):
                     and not target_relative_mask[target_slot]
                 ):
                     raise ValueError(
-                        "Cellular pair map does not send the relative subcomplex "
-                        "into the target relative subcomplex."
+                        "Cellular pair map does not send the relative subcomplex into the target relative subcomplex."
                     )
                 quotient_column = int(source_quotient_map[source_slot])
                 quotient_row = int(target_quotient_map[target_slot])

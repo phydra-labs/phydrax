@@ -264,7 +264,7 @@ def _geometry_transition(source_result, scale):
         ids,
         ids[:, None],
         jnp.ones((ids.size, 1)),
-        jnp.ones((ids.size, 1), dtype=bool),
+        jnp.ones((ids.size, 1), dtype="bool"),
     )
     return phx.meshing.CellMeshTransition(
         source.mesh_id,

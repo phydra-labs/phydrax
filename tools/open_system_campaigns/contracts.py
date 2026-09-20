@@ -98,8 +98,7 @@ class SemanticReplayEvidence(StrictModule):
             )
         ):
             raise ValueError(
-                "Semantic replay values and tolerances must be finite "
-                "non-negative scalars."
+                "Semantic replay values and tolerances must be finite non-negative scalars."
             )
         self.valid = (
             self.variates_equal

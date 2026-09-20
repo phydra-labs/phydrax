@@ -51,11 +51,11 @@ class MacroscopicDielectricResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         /,
     ):
-        q = jnp.asarray(q_magnitudes, dtype=float)
-        energy = jnp.asarray(positive_energy, dtype=float)
+        q = jnp.asarray(q_magnitudes, dtype=jnp.float64)
+        energy = jnp.asarray(positive_energy, dtype=jnp.float64)
         epsilon = jnp.asarray(dielectric)
-        targets = jnp.asarray(fsum_targets, dtype=float)
-        causal = jnp.asarray(causal_residual, dtype=float).reshape(())
+        targets = jnp.asarray(fsum_targets, dtype=jnp.float64)
+        causal = jnp.asarray(causal_residual, dtype=jnp.float64).reshape(())
         profile = str(source_profile_id).strip()
         provider = str(provider_id).strip()
         hashes = tuple(str(value).strip() for value in source_hashes)
@@ -90,7 +90,7 @@ class MacroscopicDielectricResult(StrictModule, NonTrainableState):
         self.source_profile_id = profile
         self.provider_id = provider
         self.source_hashes = hashes
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.result_id = canonical_fingerprint(
             {
                 "kind": "macroscopic-longitudinal-dielectric-result",
@@ -236,7 +236,7 @@ class ElectronEnergyLossPlan(StrictModule, NonTrainableState):
             passivity, fsum, 0.0, 0.0, successful
         )
         labels = tuple(f"q[{index}]" for index in range(dielectric.q_magnitudes.size))
-        active = jnp.ones(dielectric.positive_energy.shape, dtype=bool)
+        active = jnp.ones(dielectric.positive_energy.shape, dtype=jnp.bool_)
         loss_response = SpectralResponseProduct(
             dielectric.positive_energy,
             loss,

@@ -28,9 +28,7 @@ def stable_bernoulli(value: ArrayLike, /) -> Array:
     series = 1.0 - series_x / 2.0 + series_x**2 / 12.0 - series_x**4 / 720.0
     regular_magnitude = jnp.where(small, 1.0, magnitude)
     positive = (
-        regular_magnitude
-        * jnp.exp(-regular_magnitude)
-        / -jnp.expm1(-regular_magnitude)
+        regular_magnitude * jnp.exp(-regular_magnitude) / -jnp.expm1(-regular_magnitude)
     )
     # B(-x) = B(x) + x; this also avoids overflow for large negative x.
     regular = jnp.where(x < 0.0, positive + regular_magnitude, positive)
@@ -95,13 +93,13 @@ class PreparedCochainElectrochemicalFlux(StrictModule, NonTrainableState):
     ):
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
-        values = np.asarray(diffusivities, dtype=float)
+        values = np.asarray(diffusivities, dtype=np.float64)
         if values.ndim != 1 or np.any(~np.isfinite(values)) or np.any(values <= 0.0):
             raise ValueError(
                 "diffusivities must be one-dimensional, finite, and positive."
             )
         incidence = bridge.cochain.topology.incidences[0]
-        valid = np.asarray(incidence.relation.valid, dtype=bool)
+        valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
         source = np.asarray(incidence.relation.source_indices)[valid]
         target = np.asarray(incidence.relation.target_indices)[valid]
         signs = np.asarray(incidence.signs)[valid]
@@ -143,9 +141,7 @@ class PreparedCochainElectrochemicalFlux(StrictModule, NonTrainableState):
         """
 
         concentration = jnp.asarray(concentrations)
-        potential = jnp.asarray(
-            dimensionless_drift_potential, dtype=concentration.dtype
-        )
+        potential = jnp.asarray(dimensionless_drift_potential, dtype=concentration.dtype)
         node_count = self.bridge.cochain.cell_counts[0]
         if concentration.shape != (node_count, self.species_count) or (
             potential.shape != concentration.shape
@@ -186,9 +182,7 @@ class PreparedCochainElectrochemicalFlux(StrictModule, NonTrainableState):
             electrochemical[self.head_indices] - electrochemical[self.tail_indices]
         )
         edge_weights = self.bridge.cochain.hodge_stars[1].astype(concentration.dtype)
-        dissipation = -jnp.sum(
-            edge_weights[:, None] * flux * electrochemical_difference
-        )
+        dissipation = -jnp.sum(edge_weights[:, None] * flux * electrochemical_difference)
         scale = jnp.maximum(
             jnp.sum(weights[:, None] * jnp.abs(rate), axis=0),
             1.0,

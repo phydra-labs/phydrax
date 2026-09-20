@@ -15,7 +15,7 @@ from ..._interpolation import barycentric_differentiation_matrix
 def _fd_first_derivative(
     y: jax.Array, /, *, dx: jax.Array, axis: int, periodic: bool
 ) -> jax.Array:
-    dx_ = jnp.asarray(dx, dtype=float).reshape(())
+    dx_ = jnp.asarray(dx, dtype=jnp.float64).reshape(())
     if periodic:
         return (jnp.roll(y, -1, axis=axis) - jnp.roll(y, 1, axis=axis)) / (2.0 * dx_)
 
@@ -49,7 +49,7 @@ def _poly_nth_derivative(
 
     def _step(_: int, out_i: jax.Array) -> jax.Array:
         out0 = jnp.moveaxis(out_i, axis, 0)
-        n = int(out0.shape[0])
+        n = out0.shape[0]
         flat = out0.reshape((n, -1))
         differentiated = matrix @ flat
         return jnp.moveaxis(differentiated.reshape(out0.shape), 0, axis)
@@ -60,8 +60,8 @@ def _poly_nth_derivative(
 def _fourier_nth_derivative(
     y: jax.Array, x: jax.Array, /, *, axis: int, order: int
 ) -> jax.Array:
-    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
-    n = int(x1.shape[0])
+    x1 = jnp.asarray(x, dtype=jnp.float64).reshape((-1,))
+    n = x1.shape[0]
     if n < 2:
         return jnp.zeros_like(y)
 
@@ -82,8 +82,8 @@ def _fourier_nth_derivative(
 def _cosine_nth_derivative(
     y: jax.Array, x: jax.Array, /, *, axis: int, order: int
 ) -> jax.Array:
-    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
-    n = int(x1.shape[0])
+    x1 = jnp.asarray(x, dtype=jnp.float64).reshape((-1,))
+    n = x1.shape[0]
     if n < 2:
         return jnp.zeros_like(y)
 
@@ -107,8 +107,8 @@ def _cosine_nth_derivative(
 def _sine_nth_derivative(
     y: jax.Array, x: jax.Array, /, *, axis: int, order: int
 ) -> jax.Array:
-    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
-    n = int(x1.shape[0])
+    x1 = jnp.asarray(x, dtype=jnp.float64).reshape((-1,))
+    n = x1.shape[0]
     if n < 2:
         return jnp.zeros_like(y)
 

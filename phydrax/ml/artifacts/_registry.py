@@ -50,7 +50,7 @@ def register_native_ml_artifacts() -> None:
             ):
                 continue
             register_artifact_value(
-                f"phydrax.ml.{family}:{name}@1",
+                f"phydrax.ml.{family}:{name}",
                 value,
             )
     kernel_module = importlib.import_module("phydrax.kernels")
@@ -58,7 +58,7 @@ def register_native_ml_artifacts() -> None:
         value = vars(kernel_module)[name]
         if isinstance(value, type) and value.__module__.startswith("phydrax.kernels."):
             register_artifact_value(
-                f"phydrax.kernels:{name}@1",
+                f"phydrax.kernels:{name}",
                 value,
             )
     _REGISTERED = True

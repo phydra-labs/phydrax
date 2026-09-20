@@ -671,7 +671,7 @@ def test_degree_three_tetrahedral_advection_residual_is_cubic_exact_under_refine
         )
         exact_faces = _cubic_3d(discretization.face_quadrature_points)
         np.testing.assert_allclose(left, exact_faces, rtol=2e-9, atol=2e-9)
-        interior = np.asarray(discretization.neighbour_cells) >= 0
+        interior = np.asarray(discretization.neighbor_cells) >= 0
         np.testing.assert_allclose(
             np.asarray(right)[interior],
             np.asarray(exact_faces)[interior],
@@ -817,19 +817,19 @@ def test_unstructured_weno_smooth_trace_error_converges_on_refined_mapped_grids(
         )
         exact = smooth(discretization.face_quadrature_points)
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
+        neighbor = discretization.neighbor_cells
         centers = discretization.cell_centers
         margin = 1.5 / cells
         owner_interior = jnp.all(
             (centers[owner] > margin) & (centers[owner] < 1.0 - margin),
             axis=-1,
         )
-        safe_neighbour = jnp.maximum(neighbour, 0)
-        neighbour_interior = (neighbour >= 0) & jnp.all(
-            (centers[safe_neighbour] > margin) & (centers[safe_neighbour] < 1.0 - margin),
+        safe_neighbor = jnp.maximum(neighbor, 0)
+        neighbor_interior = (neighbor >= 0) & jnp.all(
+            (centers[safe_neighbor] > margin) & (centers[safe_neighbor] < 1.0 - margin),
             axis=-1,
         )
-        interior = owner_interior & neighbour_interior
+        interior = owner_interior & neighbor_interior
         weights = discretization.face_quadrature_weights[interior]
         defect = left[interior] - exact[interior]
         errors.append(float(jnp.sqrt(jnp.sum(weights * defect**2) / jnp.sum(weights))))
@@ -916,7 +916,7 @@ def test_unstructured_weno_flux_quadrature_recovers_affine_advection_residual():
     balance_terms = np.asarray(discretization.cell_volumes[:, None] * residual)
     integrated = np.asarray(flux * discretization.face_measures[:, None])
     boundary_terms = np.where(
-        np.asarray(discretization.neighbour_cells < 0)[:, None],
+        np.asarray(discretization.neighbor_cells < 0)[:, None],
         integrated,
         0.0,
     )

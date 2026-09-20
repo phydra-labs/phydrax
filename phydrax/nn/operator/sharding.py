@@ -80,7 +80,7 @@ class OperatorShardingPolicy(StrictModule):
 
     @property
     def data_axis_size(self) -> int:
-        return int(self.mesh.shape[self.mesh_axis])
+        return self.mesh.shape[self.mesh_axis]
 
     @property
     def is_primary_process(self) -> bool:
@@ -96,8 +96,7 @@ class OperatorShardingPolicy(StrictModule):
             raise ValueError("Sharding case_axis does not name a case dimension.")
         if int(case_shape[axis]) % self.data_axis_size:
             raise ValueError(
-                f"Sharded case dimension {case_shape[axis]} must be divisible by "
-                f"mesh axis size {self.data_axis_size}."
+                f"Sharded case dimension {case_shape[axis]} must be divisible by mesh axis size {self.data_axis_size}."
             )
 
     def synchronize(self, name: str, /) -> None:

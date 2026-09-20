@@ -33,9 +33,9 @@ class ConservativeMaterialTransfer:
         *,
         tolerance: float = 1e-10,
     ) -> ConservativeMaterialTransfer:
-        interpolation = np.asarray(matrix, dtype=float)
-        source = np.asarray(source_weights, dtype=float)
-        target = np.asarray(target_weights, dtype=float)
+        interpolation = np.asarray(matrix, dtype=np.float64)
+        source = np.asarray(source_weights, dtype=np.float64)
+        target = np.asarray(target_weights, dtype=np.float64)
         if interpolation.ndim != 2:
             raise ValueError("Material transfer matrix must be two-dimensional.")
         if interpolation.shape != (target.size, source.size):
@@ -84,8 +84,8 @@ class SpatialMaterialField:
         state: MaterialState,
         /,
     ) -> SpatialMaterialField:
-        coordinates = np.asarray(coordinates_m, dtype=float)
-        weights = np.asarray(measure_weights, dtype=float)
+        coordinates = np.asarray(coordinates_m, dtype=np.float64)
+        weights = np.asarray(measure_weights, dtype=np.float64)
         if coordinates.ndim != 2 or coordinates.shape[0] == 0:
             raise ValueError("Material coordinates require shape (point, dimension).")
         if weights.shape != (coordinates.shape[0],) or np.any(weights <= 0):

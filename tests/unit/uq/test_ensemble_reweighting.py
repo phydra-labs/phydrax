@@ -30,7 +30,7 @@ def _physical_provenance(source_id, *, converged=True, authorized=True):
     return PhysicalEquilibriumSupportProvenance(
         source_id,
         f"manifest:{source_id}",
-        "replica-exchange-equilibrium-v1",
+        "replica-exchange-equilibrium",
         "condition-25-celsius",
         ("unbound", "bound"),
         f"convergence:{source_id}",
@@ -53,9 +53,9 @@ def _cholesky_plan(
     case_ids=None,
     parent_ids=None,
 ):
-    observed_array = np.atleast_1d(np.asarray(observed, dtype=float))
+    observed_array = np.atleast_1d(np.asarray(observed, dtype="float64"))
     standard_deviation_array = np.broadcast_to(
-        np.asarray(standard_deviation, dtype=float), observed_array.shape
+        np.asarray(standard_deviation, dtype="float64"), observed_array.shape
     )
     layout = CoordinateLayout(
         tuple(f"observable-{index}" for index in range(observed_array.size))
@@ -86,9 +86,9 @@ def _precision_plan(
     case_ids=None,
     parent_ids=None,
 ):
-    observed_array = np.atleast_1d(np.asarray(observed, dtype=float))
+    observed_array = np.atleast_1d(np.asarray(observed, dtype="float64"))
     standard_deviation_array = np.broadcast_to(
-        np.asarray(standard_deviation, dtype=float), observed_array.shape
+        np.asarray(standard_deviation, dtype="float64"), observed_array.shape
     )
     layout = CoordinateLayout(
         tuple(f"observable-{index}" for index in range(observed_array.size))

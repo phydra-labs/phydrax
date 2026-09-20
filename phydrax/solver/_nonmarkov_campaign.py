@@ -138,9 +138,9 @@ def lorentzian_qubit_comparison(
     )
     pseudomode_problem = jaynes_cummings_pseudomode_problem(mode, initial_density)
     pseudomode = solve_pseudomode(pseudomode_problem, step_size=step_size, steps=steps)
-    sigma_minus = jnp.asarray([[0, 0], [1, 0]], dtype=complex)
+    sigma_minus = jnp.asarray([[0, 0], [1, 0]], dtype=jnp.complex128)
     heom_problem = HEOMProblem(
-        jnp.zeros((2, 2), dtype=complex),
+        jnp.zeros((2, 2), dtype=jnp.complex128),
         sigma_minus + jnp.conj(sigma_minus.T),
         expansion,
         HEOMHierarchy(expansion.rank, heom_depth),
@@ -175,8 +175,8 @@ def spin_boson_dephasing_comparison(
     step_size: float = 0.01,
     steps: int = 4,
 ) -> SpinBosonComparisonResult:
-    sigma_x = jnp.asarray([[0, 1], [1, 0]], dtype=complex)
-    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=complex)
+    sigma_x = jnp.asarray([[0, 1], [1, 0]], dtype=jnp.complex128)
+    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=jnp.complex128)
     hamiltonian = 0.5 * (float(bias) * sigma_z + float(tunneling) * sigma_x)
     expansion = lorentzian_pseudomode(0.0, 2.0 * float(decay), coupling, cutoff=2)[0]
     heom_problem = HEOMProblem(

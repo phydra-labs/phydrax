@@ -16,7 +16,7 @@ from ._diffusion import HestonModel
 
 
 def _scalar(value: ArrayLike, name: str, /, *, positive: bool = False) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape != ():
         raise ValueError(f"{name} must be scalar.")
     invalid = ~jnp.isfinite(array) | ((array <= 0.0) if positive else False)
@@ -55,7 +55,7 @@ class MertonJumpDiffusionModel(StrictModule):
         )
 
     def characteristic_exponent(self, frequency: ArrayLike, /) -> Array:
-        u = jnp.asarray(frequency, dtype=complex)
+        u = jnp.asarray(frequency, dtype=jnp.complex128)
         jump = jnp.exp(1j * u * self.jump_mean - 0.5 * self.jump_volatility**2 * u**2)
         return (
             -0.5 * self.diffusion_volatility**2 * (u**2 + 1j * u)
@@ -112,7 +112,7 @@ class KouJumpDiffusionModel(StrictModule):
         return self.jump_intensity * (expected_multiplier - 1.0)
 
     def characteristic_exponent(self, frequency: ArrayLike, /) -> Array:
-        u = jnp.asarray(frequency, dtype=complex)
+        u = jnp.asarray(frequency, dtype=jnp.complex128)
         jump_cf = self.upward_probability * self.upward_rate / (
             self.upward_rate - 1j * u
         ) + (1.0 - self.upward_probability) * self.downward_rate / (
@@ -159,7 +159,7 @@ class VarianceGammaModel(StrictModule):
         )
 
     def characteristic_exponent(self, frequency: ArrayLike, /) -> Array:
-        u = jnp.asarray(frequency, dtype=complex)
+        u = jnp.asarray(frequency, dtype=jnp.complex128)
         raw = (
             -jnp.log(
                 1.0
@@ -198,7 +198,7 @@ class NormalInverseGaussianModel(StrictModule):
         )
 
     def characteristic_exponent(self, frequency: ArrayLike, /) -> Array:
-        u = jnp.asarray(frequency, dtype=complex)
+        u = jnp.asarray(frequency, dtype=jnp.complex128)
         raw = self.scale * (
             jnp.sqrt(self.tail**2 - self.skew**2)
             - jnp.sqrt(self.tail**2 - (self.skew + 1j * u) ** 2)
@@ -240,7 +240,7 @@ class CGMYModel(StrictModule):
         self.activity = activity_
 
     def _raw_exponent(self, frequency: Array) -> Array:
-        u = jnp.asarray(frequency, dtype=complex)
+        u = jnp.asarray(frequency, dtype=jnp.complex128)
         return (
             self.scale
             * jsp.special.gamma(-self.activity)
@@ -257,7 +257,7 @@ class CGMYModel(StrictModule):
         return jnp.real(self._raw_exponent(jnp.asarray(-1j)))
 
     def characteristic_exponent(self, frequency: ArrayLike, /) -> Array:
-        u = jnp.asarray(frequency, dtype=complex)
+        u = jnp.asarray(frequency, dtype=jnp.complex128)
         return self._raw_exponent(u) - 1j * u * self.exponential_compensator
 
 
@@ -291,7 +291,7 @@ class BatesModel(StrictModule):
         )
 
     def jump_characteristic_exponent(self, frequency: ArrayLike, /) -> Array:
-        u = jnp.asarray(frequency, dtype=complex)
+        u = jnp.asarray(frequency, dtype=jnp.complex128)
         jump = jnp.exp(1j * u * self.jump_mean - 0.5 * self.jump_volatility**2 * u**2)
         return self.jump_intensity * (jump - 1.0) - 1j * u * self.exponential_compensator
 

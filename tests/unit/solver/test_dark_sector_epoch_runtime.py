@@ -94,8 +94,8 @@ def _work(index, parent=None):
 def test_compile_signature_changes_with_species_topology_capacity_and_sharding():
     base = _plan()
     revisions = (
-        _plan(species="species-v2"),
-        _plan(topology="topology-v2"),
+        _plan(species="species"),
+        _plan(topology="topology"),
         _plan(work=2),
         _plan(shards=2),
     )

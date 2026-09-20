@@ -98,7 +98,7 @@ def test_all_masked_stencils_and_invalid_targets_return_exact_zero():
         key=jr.key(7),
     )
     values = jnp.full((4, 5, 2), jnp.nan)
-    source_mask = jnp.zeros((4, 5), dtype=bool)
+    source_mask = jnp.zeros((4, 5), dtype="bool")
     target_mask = jnp.asarray(
         [
             [True, True, False, False, False],
@@ -162,7 +162,7 @@ def test_measure_convolution_preserves_leading_case_axes():
         key=jr.key(13),
     )
     values = jnp.ones((2, 3, 7, 5, 1))
-    mask = jnp.ones((7, 5), dtype=bool)
+    mask = jnp.ones((7, 5), dtype="bool")
 
     output = eqx.filter_jit(layer)(values, source_mask=mask)
     assert output.shape == (2, 3, math.floor((7 - 3) / 2) + 1, 5, 2)
@@ -255,8 +255,8 @@ def test_circular_measure_convolution_preserves_batch_axes_and_target_mask():
         key=jr.key(64),
     )
     values = jnp.ones((2, 3, 4, 5, 1))
-    source_mask = jnp.ones((4, 5), dtype=bool).at[0, 0].set(False)
-    target_mask = jnp.ones((4, 5), dtype=bool).at[-1, -1].set(False)
+    source_mask = jnp.ones((4, 5), dtype="bool").at[0, 0].set(False)
+    target_mask = jnp.ones((4, 5), dtype="bool").at[-1, -1].set(False)
     values = jnp.where(source_mask[..., None], values, jnp.nan)
 
     output = layer(

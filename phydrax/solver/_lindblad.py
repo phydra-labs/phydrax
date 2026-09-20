@@ -132,7 +132,7 @@ def solve_lindblad(
     if not isinstance(problem, LindbladProblem):
         raise TypeError("problem must be a LindbladProblem.")
     count = int(steps)
-    step = jnp.asarray(step_size, dtype=float).reshape(())
+    step = jnp.asarray(step_size, dtype=jnp.float64).reshape(())
     if count < 0 or float(step) <= 0.0:
         raise ValueError("steps and step_size must be positive.")
     channel = jsp.linalg.expm(step * problem.generator_matrix())
@@ -156,9 +156,9 @@ def amplitude_damping_problem(
     rate = float(damping_rate)
     if rate < 0.0:
         raise ValueError("damping_rate must be non-negative.")
-    lowering = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=complex)
+    lowering = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=jnp.complex128)
     return LindbladProblem(
-        jnp.zeros((2, 2), dtype=complex),
+        jnp.zeros((2, 2), dtype=jnp.complex128),
         jnp.sqrt(rate) * lowering[None, ...],
         initial_density,
         problem_id="qubit-amplitude-damping",
@@ -173,9 +173,9 @@ def dephasing_problem(
     rate = float(dephasing_rate)
     if rate < 0.0:
         raise ValueError("dephasing_rate must be non-negative.")
-    sigma_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
+    sigma_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
     return LindbladProblem(
-        jnp.zeros((2, 2), dtype=complex),
+        jnp.zeros((2, 2), dtype=jnp.complex128),
         jnp.sqrt(0.5 * rate) * sigma_z[None, ...],
         initial_density,
         problem_id="qubit-dephasing",

@@ -159,11 +159,11 @@ class InvariantScalarTransferPlan(StrictModule, NonTrainableState):
         active: ArrayLike | None = None,
         path_id: str,
     ):
-        lengths = np.asarray(segment_lengths, dtype=float)
+        lengths = np.asarray(segment_lengths, dtype=np.float64)
         active_host = (
-            np.ones(lengths.shape, dtype=bool)
+            np.ones(lengths.shape, dtype=np.bool_)
             if active is None
-            else np.asarray(active, dtype=bool)
+            else np.asarray(active, dtype=np.bool_)
         )
         identifier = str(path_id).strip()
         if (
@@ -177,15 +177,14 @@ class InvariantScalarTransferPlan(StrictModule, NonTrainableState):
             or not identifier
         ):
             raise ValueError(
-                "Transfer segments must be finite, nonnegative, nonempty, and use "
-                "a nonempty active prefix."
+                "Transfer segments must be finite, nonnegative, nonempty, and use a nonempty active prefix."
             )
         if not isinstance(units, InvariantTransferUnitContract):
             raise TypeError("units must be an InvariantTransferUnitContract.")
         self.segment_lengths = jax.lax.stop_gradient(jnp.asarray(lengths))
         self.active = jax.lax.stop_gradient(jnp.asarray(active_host))
         self.units = units
-        self.capacity = int(lengths.size)
+        self.capacity = lengths.size
         self.active_count = int(np.count_nonzero(active_host))
         self.plan_id = canonical_fingerprint(
             {
@@ -207,13 +206,13 @@ class InvariantScalarTransferPlan(StrictModule, NonTrainableState):
     ) -> InvariantScalarTransferResult:
         emission = jnp.asarray(invariant_emission)
         if not jnp.issubdtype(emission.dtype, jnp.inexact):
-            emission = emission.astype(float)
+            emission = emission.astype("float64")
         extinction = jnp.asarray(invariant_extinction, dtype=emission.dtype)
         incident = jnp.asarray(incident_invariant_intensity, dtype=emission.dtype)
         support_value = (
-            jnp.ones((self.capacity,), dtype=bool)
+            jnp.ones((self.capacity,), dtype=jnp.bool_)
             if support is None
-            else jnp.asarray(support, dtype=bool)
+            else jnp.asarray(support, dtype=jnp.bool_)
         )
         if emission.shape != (self.capacity,) or extinction.shape != (self.capacity,):
             raise ValueError("Scalar transfer coefficients must match plan capacity.")
@@ -606,8 +605,8 @@ class PolarizedInvariantTransferPlan(StrictModule, NonTrainableState):
                 "Transfer path-parameter unit must exactly match the GR ray path."
             )
         cone_tolerance_ = float(cone_tolerance)
-        affine_host = np.asarray(path.affine_parameter, dtype=float)
-        node_active_host = np.asarray(path.active, dtype=bool)
+        affine_host = np.asarray(path.affine_parameter, dtype=np.float64)
+        node_active_host = np.asarray(path.active, dtype=np.bool_)
         active_host = node_active_host[:-1] & node_active_host[1:]
         lengths = np.diff(affine_host)
         if (
@@ -631,7 +630,7 @@ class PolarizedInvariantTransferPlan(StrictModule, NonTrainableState):
         self.active = jax.lax.stop_gradient(jnp.asarray(active_host))
         self.node_active = jax.lax.stop_gradient(jnp.asarray(node_active_host))
         self.units = units
-        self.capacity = int(lengths.size)
+        self.capacity = lengths.size
         self.active_count = active_count
         self.cone_tolerance = cone_tolerance_
         self.plan_id = canonical_fingerprint(
@@ -657,14 +656,14 @@ class PolarizedInvariantTransferPlan(StrictModule, NonTrainableState):
     ) -> PolarizedInvariantTransferResult:
         emission = jnp.asarray(invariant_emission)
         if not jnp.issubdtype(emission.dtype, jnp.inexact):
-            emission = emission.astype(float)
+            emission = emission.astype("float64")
         matrix = jnp.asarray(invariant_propagation_matrix, dtype=emission.dtype)
         incident = jnp.asarray(incident_invariant_stokes, dtype=emission.dtype)
         angle = jnp.asarray(local_to_transported_angle, dtype=emission.dtype)
         support_value = (
-            jnp.ones((self.capacity,), dtype=bool)
+            jnp.ones((self.capacity,), dtype=jnp.bool_)
             if support is None
-            else jnp.asarray(support, dtype=bool)
+            else jnp.asarray(support, dtype=jnp.bool_)
         )
         if emission.shape != (self.capacity, 4):
             raise ValueError("Polarized emission must have shape (capacity, 4).")

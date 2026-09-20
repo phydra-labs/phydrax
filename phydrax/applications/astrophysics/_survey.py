@@ -38,7 +38,7 @@ class SurveyVisitPlan(StrictModule, NonTrainableState):
         self.dither = jnp.asarray(dither)
         self.depth = jnp.asarray(depth)
         self.selection_width = jnp.asarray(selection_width)
-        count = int(self.times.size)
+        count = self.times.size
         if (
             self.exposure.shape != (count,)
             or self.dither.shape != (count, 2)

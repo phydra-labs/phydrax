@@ -66,12 +66,12 @@ class ElectrostaticPlasmaCouplingPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Electrostatic plasma coupling requires ionized gas and cochain plans."
             )
-        shape = tuple(int(value) for value in cell_shape)
+        shape = tuple(cell_shape)
         cell_count = int(np.prod(shape))
         node_count = electrostatic.bridge.cochain.cell_counts[0]
         edge_count = electrostatic.bridge.cochain.cell_counts[1]
-        to_node = np.asarray(cell_to_node, dtype=float)
-        to_cell = np.asarray(edge_to_cell_vector, dtype=float)
+        to_node = np.asarray(cell_to_node, dtype=np.float64)
+        to_cell = np.asarray(edge_to_cell_vector, dtype=np.float64)
         if (
             not shape
             or any(value <= 0 for value in shape)

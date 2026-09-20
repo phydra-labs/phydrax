@@ -347,7 +347,7 @@ def test_observation_radius_flux_uses_spherical_area_and_exposure():
     )
     crossings = spherical_surface_crossings(
         state[None, None, :],
-        jnp.ones((1, 1), dtype=bool),
+        jnp.ones((1, 1), dtype="bool"),
         source,
         radius,
         direction="outward",

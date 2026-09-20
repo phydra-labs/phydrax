@@ -223,12 +223,12 @@ def test_gain_compression_limits_power_while_linewidth_factor_changes_only_phase
 
 
 def test_distributed_grating_transfers_waves_without_changing_photon_inventory():
-    coupling = jnp.full((3,), np.pi / (4.0e-4), dtype=complex)
+    coupling = jnp.full((3,), np.pi / (4.0e-4), dtype="complex128")
     detuning = jnp.asarray((100.0, 0.0, 100.0))
     initial = TravelingWaveSemiconductorLaserState(
         jnp.full((3,), 1.0e24),
         jnp.full((3,), 0.2 + 0.0j),
-        jnp.zeros((3,), dtype=complex),
+        jnp.zeros((3,), dtype="complex128"),
     )
     inputs = TravelingWaveLaserInput(0.0, 300.0)
     no_grating = simulate_traveling_wave_laser(

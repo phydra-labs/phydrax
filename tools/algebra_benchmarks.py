@@ -90,10 +90,10 @@ def run_algebra_benchmark(level: int, /, *, repeats: int = 5) -> AlgebraBenchmar
     dense = algebra.prepare_product(backend="dense")
     preparation = 1e3 * (time.perf_counter() - started)
     dimension = algebra.coordinate_dimension
-    left = jnp.sin(jnp.arange(8 * dimension, dtype=float)).reshape((8, dimension))
-    right = jnp.cos(jnp.arange(dimension, dtype=float))
-    middle = jnp.sin(0.3 + jnp.arange(dimension, dtype=float))
-    associator_left = jnp.sin(0.7 + jnp.arange(dimension, dtype=float))
+    left = jnp.sin(jnp.arange(8 * dimension, dtype="float64")).reshape((8, dimension))
+    right = jnp.cos(jnp.arange(dimension, dtype="float64"))
+    middle = jnp.sin(0.3 + jnp.arange(dimension, dtype="float64"))
+    associator_left = jnp.sin(0.7 + jnp.arange(dimension, dtype="float64"))
     right_associator = right
     if algebra.properties.claim("associative").status == "disproven":
         witness = algebra.properties.claim("associative").witness
@@ -122,8 +122,8 @@ def run_algebra_benchmark(level: int, /, *, repeats: int = 5) -> AlgebraBenchmar
         else True
     )
     space = phx.linalg.AlgebraArraySpace((), algebra, dtype=jnp.float64)
-    multiplier = jnp.sin(jnp.arange(dimension, dtype=float))
-    action_value = jnp.cos(jnp.arange(dimension, dtype=float))
+    multiplier = jnp.sin(jnp.arange(dimension, dtype="float64"))
+    action_value = jnp.cos(jnp.arange(dimension, dtype="float64"))
     action = phx.linalg.algebra_regular_action_operator(
         sparse,
         multiplier,

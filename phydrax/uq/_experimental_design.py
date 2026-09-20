@@ -151,7 +151,7 @@ class ExperimentalDesignCandidate(StrictModule, NonTrainableState):
         if not isinstance(mandatory_control, bool):
             raise TypeError("mandatory_control must be boolean.")
         payload = {
-            "kind": "experimental-design-candidate-v1",
+            "kind": "experimental-design-candidate",
             "candidate_id": identifier,
             "condition_id": condition,
             "cost": candidate_cost.hex(),
@@ -213,10 +213,10 @@ class ExpectedUtilityResult(StrictModule):
         unit_id: str = "nat",
     ):
         candidate_values = _candidate_tuple(candidates)
-        values = jnp.asarray(expected_utility, dtype=float)
-        errors = jnp.asarray(estimator_standard_error, dtype=float)
-        biases = jnp.asarray(estimator_bias_bound, dtype=float)
-        validity = jnp.asarray(valid, dtype=bool)
+        values = jnp.asarray(expected_utility, dtype=jnp.float64)
+        errors = jnp.asarray(estimator_standard_error, dtype=jnp.float64)
+        biases = jnp.asarray(estimator_bias_bound, dtype=jnp.float64)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         expected_shape = (len(candidate_values),)
         if (
             values.shape != expected_shape
@@ -225,8 +225,7 @@ class ExpectedUtilityResult(StrictModule):
             or validity.shape != expected_shape
         ):
             raise ValueError(
-                "Expected utility, uncertainty, bias, and validity must have one "
-                "rank-1 entry per candidate."
+                "Expected utility, uncertainty, bias, and validity must have one rank-1 entry per candidate."
             )
         if bool(jnp.any(jnp.isinf(errors))) or bool(jnp.any(jnp.isinf(biases))):
             raise ValueError("Estimator error fields may be finite or NaN, not infinite.")
@@ -343,7 +342,7 @@ class ExperimentalBatchConstraints(StrictModule, NonTrainableState):
                 "maximum_per_diversity_group",
             )
         payload = {
-            "kind": "experimental-batch-constraints-v1",
+            "kind": "experimental-batch-constraints",
             "budget": budget_value.hex(),
             "minimum_batch_size": minimum_size,
             "maximum_batch_size": maximum_size,
@@ -416,7 +415,7 @@ class ExperimentalBatchPlan(StrictModule, NonTrainableState):
             raise ValueError("Every selected candidate must belong to the frozen panel.")
         budget_value = _nonnegative_finite(budget, "budget")
         total_cost = _nonnegative_finite(planned_total_cost, "planned_total_cost")
-        tolerance = 64.0 * jnp.finfo(float).eps * max(1.0, budget_value)
+        tolerance = 64.0 * jnp.finfo(jnp.float64).eps * max(1.0, budget_value)
         if total_cost > budget_value + float(tolerance):
             raise ValueError("planned_total_cost exceeds budget.")
         value = float(objective_value)
@@ -424,7 +423,7 @@ class ExperimentalBatchPlan(StrictModule, NonTrainableState):
             raise ValueError("objective_value must be finite.")
         models = tuple(sorted(_identifiers(model_ids, "model_ids")))
         payload = {
-            "kind": "prospective-experimental-batch-plan-v1",
+            "kind": "prospective-experimental-batch-plan",
             "selected_candidate_ids": list(selected),
             "candidates": [list(record) for record in records],
             "objective_id": _identifier(objective_id, "objective_id"),
@@ -462,7 +461,7 @@ class ExperimentalBatchPlan(StrictModule, NonTrainableState):
     def to_record(self) -> dict[str, Any]:
         """Return the complete canonical prospective registration record."""
         return {
-            "kind": "prospective-experimental-batch-plan-v1",
+            "kind": "prospective-experimental-batch-plan",
             "selected_candidate_ids": list(self.selected_candidate_ids),
             "candidate_ids": list(self.candidate_ids),
             "candidate_content_ids": list(self.candidate_content_ids),
@@ -501,7 +500,7 @@ class ExperimentalBatchPlan(StrictModule, NonTrainableState):
         }
         if not isinstance(record, Mapping) or set(record) != expected_keys:
             raise ValueError("Experimental batch plan record has an invalid schema.")
-        if record["kind"] != "prospective-experimental-batch-plan-v1":
+        if record["kind"] != "prospective-experimental-batch-plan":
             raise ValueError("Experimental batch plan record has an invalid kind.")
         plan = cls(
             record["selected_candidate_ids"],
@@ -558,8 +557,8 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
                 "plans must contain random, space-filling, uncertainty-only, "
                 "domain-heuristic, and proposed plans in that order."
             )
-        values = jnp.asarray(realized_utility, dtype=float)
-        validity = jnp.asarray(realized_valid, dtype=bool)
+        values = jnp.asarray(realized_utility, dtype=jnp.float64)
+        validity = jnp.asarray(realized_valid, dtype=jnp.bool_)
         expected_shape = (len(_RETROSPECTIVE_STRATEGIES),)
         if values.shape != expected_shape or validity.shape != expected_shape:
             raise ValueError("Retrospective metrics must have one value per strategy.")
@@ -582,10 +581,11 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
                 "candidate panel, model set, and analysis."
             )
         costs = jnp.asarray(
-            tuple(plan.planned_total_cost for plan in plan_values), dtype=float
+            tuple(plan.planned_total_cost for plan in plan_values), dtype=jnp.float64
         )
         sizes = jnp.asarray(
-            tuple(len(plan.selected_candidate_ids) for plan in plan_values), dtype=int
+            tuple(len(plan.selected_candidate_ids) for plan in plan_values),
+            dtype=jnp.int64,
         )
         positive_cost = jnp.isfinite(costs) & (costs > 0.0)
         normalized_valid = validity & positive_cost
@@ -615,7 +615,7 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
         self.matched_batch_size = matched_size
         self.evaluation_id = canonical_fingerprint(
             {
-                "kind": "retrospective-experimental-design-evaluation-v2",
+                "kind": "retrospective-experimental-design-evaluation",
                 "strategy_ids": list(_RETROSPECTIVE_STRATEGIES),
                 "plan_ids": [plan.plan_id for plan in plan_values],
                 "metric_id": metric,
@@ -645,12 +645,11 @@ def exact_finite_expected_utility(
     """
     target = _utility_target(utility_target)
     candidate_values = _candidate_tuple(candidates)
-    conditional = jnp.asarray(conditional_observation_probabilities, dtype=float)
-    priors = jnp.asarray(target_probabilities, dtype=float)
+    conditional = jnp.asarray(conditional_observation_probabilities, dtype=jnp.float64)
+    priors = jnp.asarray(target_probabilities, dtype=jnp.float64)
     if conditional.ndim != 3:
         raise ValueError(
-            "conditional_observation_probabilities must have shape "
-            "(candidate, target, observation)."
+            "conditional_observation_probabilities must have shape (candidate, target, observation)."
         )
     if conditional.shape[0] != len(candidate_values):
         raise ValueError("Conditional probabilities do not align with candidates.")
@@ -726,7 +725,7 @@ def exact_finite_expected_utility(
         unit_id = "nat"
     else:
         joint = conditional * priors[None, :, None]
-        utilities = jnp.asarray(utility_values, dtype=float)
+        utilities = jnp.asarray(utility_values, dtype=jnp.float64)
         if utilities.shape != conditional.shape:
             raise ValueError(
                 "utility_values must match the candidate-target-observation shape."
@@ -780,7 +779,7 @@ def _nested_result(
         raise ValueError(
             "Nested utility contributions must have candidate and outer axes."
         )
-    outer_count = int(contributions.shape[1])
+    outer_count = contributions.shape[1]
     if outer_count < 2:
         raise ValueError("At least two outer samples are required to estimate error.")
     valid = jnp.all(jnp.isfinite(contributions), axis=1)
@@ -829,8 +828,10 @@ def nested_monte_carlo_expected_utility(
     """
     target = _utility_target(utility_target)
     candidate_values = _candidate_tuple(candidates)
-    conditioned = jnp.asarray(target_conditioned_log_probability_samples, dtype=float)
-    marginal = jnp.asarray(marginal_log_probability_samples, dtype=float)
+    conditioned = jnp.asarray(
+        target_conditioned_log_probability_samples, dtype=jnp.float64
+    )
+    marginal = jnp.asarray(marginal_log_probability_samples, dtype=jnp.float64)
     if conditioned.ndim != 3 or marginal.ndim != 3:
         raise ValueError("Nested log-probability samples must be rank-3 arrays.")
     if conditioned.shape[:2] != marginal.shape[:2]:
@@ -862,7 +863,7 @@ def _position_sample_count(samples: PyTree[ArrayLike], /) -> tuple[PyTree[Array]
         raise ValueError("posterior_position_samples must contain array leaves.")
     if any(value.ndim < 1 for value in leaves):
         raise ValueError("Every posterior-position leaf requires a leading sample axis.")
-    counts = {int(value.shape[0]) for value in leaves}
+    counts = {value.shape[0] for value in leaves}
     if len(counts) != 1:
         raise ValueError("Posterior-position leaves must share their leading axis.")
     count = counts.pop()
@@ -876,7 +877,7 @@ def _tree_index(tree: PyTree[Array], index: int, /) -> PyTree[Array]:
 
 
 def _scalar_log_probability(value: ArrayLike, name: str, /) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if result.ndim != 0:
         raise ValueError(f"{name} must return a scalar log probability.")
     if not bool(jnp.isfinite(result) | jnp.isneginf(result)):
@@ -982,8 +983,7 @@ def posterior_parameter_expected_utility(
         utility_target="parameter",
         method_id="posterior_problem_nested_parameter_information",
         approximation=(
-            "empirical_posterior_pool_with_replacement; "
-            "nested_monte_carlo_finite_inner_log_mixture"
+            "empirical_posterior_pool_with_replacement; nested_monte_carlo_finite_inner_log_mixture"
         ),
         error_basis=(f"conditional on the supplied posterior pool; {result.error_basis}"),
         outer_sample_count=outer_count,
@@ -1118,8 +1118,7 @@ def posterior_model_discrimination_expected_utility(
         or len(log_probability_values) != model_count
     ):
         raise ValueError(
-            "Problems, position samples, log-probability functions, and model IDs "
-            "must have identical lengths."
+            "Problems, position samples, log-probability functions, and model IDs must have identical lengths."
         )
     if any(not isinstance(problem, PosteriorProblem) for problem in problem_values):
         raise TypeError("Every problems entry must be a PosteriorProblem.")
@@ -1133,7 +1132,7 @@ def posterior_model_discrimination_expected_utility(
         positions, count = _position_sample_count(samples)
         prepared_positions.append(positions)
         position_counts.append(count)
-    probabilities = jnp.asarray(model_probabilities, dtype=float)
+    probabilities = jnp.asarray(model_probabilities, dtype=jnp.float64)
     if probabilities.shape != (model_count,):
         raise ValueError("model_probabilities must have one entry per model.")
     if bool(jnp.any(~jnp.isfinite(probabilities))) or bool(jnp.any(probabilities <= 0.0)):
@@ -1282,8 +1281,8 @@ def _pairwise_matrix(
     /,
 ) -> Array:
     if value is None:
-        return jnp.zeros((size, size), dtype=float)
-    matrix = jnp.asarray(value, dtype=float)
+        return jnp.zeros((size, size), dtype=jnp.float64)
+    matrix = jnp.asarray(value, dtype=jnp.float64)
     if matrix.shape != (size, size):
         raise ValueError(f"{name} must have one square entry per candidate.")
     if bool(jnp.any(~jnp.isfinite(matrix))) or bool(jnp.any(matrix < 0.0)):
@@ -1293,7 +1292,7 @@ def _pairwise_matrix(
         raise ValueError(f"{name} must be symmetric.")
     if bool(jnp.any(jnp.abs(jnp.diag(matrix)) > tolerance)):
         raise ValueError(f"{name} must have a zero diagonal.")
-    indices = jnp.asarray(order, dtype=int)
+    indices = jnp.asarray(order, dtype=jnp.int64)
     return matrix[indices[:, None], indices[None, :]]
 
 
@@ -1320,7 +1319,7 @@ def _feasible_batch(
     selected_ids = {candidates[index].candidate_id for index in selected}
     size = len(selected)
     cost = _batch_cost(selected, candidates)
-    tolerance = 64.0 * jnp.finfo(float).eps * max(1.0, constraints.budget)
+    tolerance = 64.0 * jnp.finfo(jnp.float64).eps * max(1.0, constraints.budget)
     if (
         size < constraints.minimum_batch_size
         or size > constraints.maximum_batch_size
@@ -1394,8 +1393,7 @@ def select_experimental_batch(
         for candidate in original
     ):
         raise ValueError(
-            "Utility candidate content and prediction sources must exactly match "
-            "the candidate panel."
+            "Utility candidate content and prediction sources must exactly match the candidate panel."
         )
     models = tuple(sorted(_identifiers(model_ids, "model_ids")))
     if models != utility.model_ids:
@@ -1412,7 +1410,7 @@ def select_experimental_batch(
         ]
     )
     mandatory_control = jnp.asarray(
-        [candidate.mandatory_control for candidate in ordered], dtype=bool
+        [candidate.mandatory_control for candidate in ordered], dtype=jnp.bool_
     )
     values = jnp.where(mandatory_control, 0.0, raw_values)
     valid = jnp.asarray(
@@ -1481,7 +1479,7 @@ def select_experimental_batch(
             feasible, cost = _feasible_batch(selected, ordered, effective_constraints)
             if not feasible:
                 continue
-            indices = jnp.asarray(selected, dtype=int)
+            indices = jnp.asarray(selected, dtype=jnp.int64)
             score = float(jnp.sum(values[indices]))
             if len(selected) > 1:
                 selected_redundancy = redundancy[indices[:, None], indices[None, :]]
@@ -1510,7 +1508,7 @@ def select_experimental_batch(
         raise ValueError("No batch satisfies all declared experimental constraints.")
     selection_policy_id = canonical_fingerprint(
         {
-            "kind": "exact-modest-experimental-batch-selection-v2",
+            "kind": "exact-modest-experimental-batch-selection",
             "constraints_id": effective_constraints.constraints_id,
             "estimator_method_id": utility.method_id,
             "estimator_approximation": utility.approximation,
@@ -1570,7 +1568,7 @@ def _score_result(
     method_id: str,
     model_ids: Sequence[str],
 ) -> ExpectedUtilityResult:
-    values = jnp.asarray(scores, dtype=float)
+    values = jnp.asarray(scores, dtype=jnp.float64)
     if values.shape != (len(candidates),):
         raise ValueError(f"{method_id} scores must have one entry per candidate.")
     valid = jnp.isfinite(values)
@@ -1637,7 +1635,7 @@ def evaluate_retrospective_design(
         model_ids=model_ids,
     )
     space_result = _score_result(
-        jnp.ones((len(candidate_values),), dtype=float),
+        jnp.ones((len(candidate_values),), dtype=jnp.float64),
         candidate_values,
         method_id="common_budget_ceiling_space_filling",
         model_ids=model_ids,
@@ -1706,7 +1704,9 @@ def evaluate_retrospective_design(
     realized_values: list[Array] = []
     realized_validity: list[Array] = []
     for plan in plans:
-        value = jnp.asarray(realized_utility(plan.selected_candidate_ids), dtype=float)
+        value = jnp.asarray(
+            realized_utility(plan.selected_candidate_ids), dtype=jnp.float64
+        )
         if value.ndim != 0:
             raise ValueError("realized_utility must return one scalar per plan.")
         valid = jnp.isfinite(value)

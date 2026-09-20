@@ -49,9 +49,9 @@ class ElectrostaticEmbeddingState(StrictModule, NonTrainableState):
                 "Embedding IDs, positions, and charges must have shapes (P,), (P,3), and (P,)."
             )
         active = (
-            jnp.ones(ids.shape, dtype=bool)
+            jnp.ones(ids.shape, dtype=jnp.bool_)
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         if active.shape != ids.shape:
             raise ValueError("Embedding active_mask must align with point IDs.")
@@ -268,9 +268,9 @@ class PermanentMultipoleEmbeddingState(StrictModule, NonTrainableState):
         if multipoles.site_capacity != ids.size:
             raise ValueError("Multipole capacity must match embedding site IDs.")
         active = (
-            jnp.ones(ids.shape, dtype=bool)
+            jnp.ones(ids.shape, dtype=jnp.bool_)
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         if active.shape != ids.shape:
             raise ValueError("Multipole active_mask must align with site IDs.")

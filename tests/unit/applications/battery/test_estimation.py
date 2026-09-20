@@ -135,12 +135,12 @@ def _prepared(
         plan,
         _parameters(branches=branches, capacity=capacity),
         process_noise_covariance_rate=process_covariance,
-        voltage_variance_v2=2.5e-3,
+        voltage_variance_squared=2.5e-3,
     )
 
 
 def _truth(prepared, times, currents, temperatures, initial):
-    values = [np.asarray(initial, dtype=float)]
+    values = [np.asarray(initial, dtype="float64")]
     resistances = np.asarray(prepared.branch_resistances_ohm)
     capacitances = np.asarray(prepared.branch_capacitances_f)
     capacity = float(prepared.reference_capacity_c)
@@ -463,7 +463,7 @@ def test_soc_support_exit_is_fail_closed_and_retains_native_history():
         300.0,
         prior_mean=jnp.asarray((0.75, 0.0)),
         prior_covariance=jnp.diag(jnp.asarray((1.0e-12, 1.0e-12))),
-        voltage_mask=jnp.zeros((4,), dtype=bool),
+        voltage_mask=jnp.zeros((4,), dtype="bool"),
     )
     result = estimate_exact_affine_ecm(
         problem,
@@ -575,19 +575,19 @@ def test_covariances_are_validated_at_the_qualified_boundary():
             plan,
             parameters,
             process_noise_covariance_rate=jnp.asarray(((-1.0, 0.0), (0.0, 1.0))),
-            voltage_variance_v2=1.0e-3,
+            voltage_variance_squared=1.0e-3,
         )
     with pytest.raises(ValueError, match="symmetric"):
         _qualify(
             plan,
             parameters,
             process_noise_covariance_rate=jnp.asarray(((1.0, 0.2), (0.0, 1.0))),
-            voltage_variance_v2=1.0e-3,
+            voltage_variance_squared=1.0e-3,
         )
     with pytest.raises(ValueError, match="positive"):
-        _qualify(plan, parameters, voltage_variance_v2=0.0)
+        _qualify(plan, parameters, voltage_variance_squared=0.0)
 
-    prepared = _qualify(plan, parameters, voltage_variance_v2=1.0e-3)
+    prepared = _qualify(plan, parameters, voltage_variance_squared=1.0e-3)
     with pytest.raises(ValueError, match="positive semidefinite"):
         prepared.problem(
             jnp.asarray((0.0, 1.0)),
@@ -630,7 +630,7 @@ def test_finite_nonlinear_and_gapped_laws_cannot_stand_in_for_global_affine_cont
             parameters,
             open_circuit_voltage=finite_affine,
             entropic_coefficient=_global_laws()["entropic_coefficient"],
-            voltage_variance_v2=1.0e-3,
+            voltage_variance_squared=1.0e-3,
         )
 
     nonlinear_ocv = _tabulated_law(
@@ -641,7 +641,7 @@ def test_finite_nonlinear_and_gapped_laws_cannot_stand_in_for_global_affine_cont
     )
     nonlinear_parameters = _parameters(branches=1, ocv=nonlinear_ocv)
     with pytest.raises(ValueError, match="does not agree"):
-        _qualify(plan, nonlinear_parameters, voltage_variance_v2=1.0e-3)
+        _qualify(plan, nonlinear_parameters, voltage_variance_squared=1.0e-3)
 
     gapped_ocv = _tabulated_law(
         (0.1, 0.4, 0.7, 0.9),
@@ -669,7 +669,7 @@ def test_finite_nonlinear_and_gapped_laws_cannot_stand_in_for_global_affine_cont
         gapped_entropic,
     )
     with pytest.raises(ValueError, match="physical support gap"):
-        _qualify(plan, gapped_parameters, voltage_variance_v2=1.0e-3)
+        _qualify(plan, gapped_parameters, voltage_variance_squared=1.0e-3)
 
     disagreeing = _global_laws()
     disagreeing["open_circuit_voltage"] = _global_law(
@@ -679,7 +679,7 @@ def test_finite_nonlinear_and_gapped_laws_cannot_stand_in_for_global_affine_cont
         unit="V",
     )
     with pytest.raises(ValueError, match="does not agree"):
-        plan.prepare(parameters, **disagreeing, voltage_variance_v2=1.0e-3)
+        plan.prepare(parameters, **disagreeing, voltage_variance_squared=1.0e-3)
 
     global_ocv = _global_laws()["open_circuit_voltage"]
     far_values = eqx.filter_jit(global_ocv.evaluate)(jnp.asarray((-100.0, 100.0)))
@@ -696,7 +696,7 @@ def test_isothermal_route_requires_one_externally_known_temperature():
     isothermal = _qualify(
         isothermal_plan,
         _parameters(branches=1),
-        voltage_variance_v2=1.0e-3,
+        voltage_variance_squared=1.0e-3,
     )
     with pytest.raises(ValueError, match="one scalar known temperature"):
         isothermal.problem(

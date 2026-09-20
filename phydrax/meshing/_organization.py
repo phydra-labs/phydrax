@@ -210,7 +210,7 @@ class MeshAttribute(StrictModule, NonTrainableState):
         self.scope = scope
         self.values = jnp.asarray(array)
         self.unit = unit
-        self.component_shape = tuple(int(size) for size in array.shape[1:])
+        self.component_shape = tuple(array.shape[1:])
         self.attribute_id = canonical_fingerprint(
             {
                 "kind": "mesh-attribute",

@@ -43,7 +43,7 @@ def _stationary_source_oracle(points, sign):
     those equations without using the production common-slope elimination.
     It is an equation oracle, not an assertion of OpenSim executable parity.
     """
-    points = np.asarray(points, dtype=float)
+    points = np.asarray(points, dtype="float64")
     distance = np.linalg.norm(points[:, :2], axis=-1)
     polar = np.arctan2(points[:, 1], points[:, 0])
     tangent_angle = polar + sign * np.asarray((1.0, -1.0)) * np.arccos(1.0 / distance)

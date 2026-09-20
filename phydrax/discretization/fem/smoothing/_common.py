@@ -60,15 +60,15 @@ class SmoothingPatchLayout(StrictModule, NonTrainableState):
     ):
         owners = np.asarray(owner_entities, dtype=np.int32)
         routes = np.asarray(dof_routes, dtype=np.int32)
-        route_valid = np.asarray(dof_valid, dtype=bool)
+        route_valid = np.asarray(dof_valid, dtype=np.bool_)
         sources = np.asarray(vertex_sources, dtype=np.int32)
-        coefficients = np.asarray(vertex_coefficients, dtype=float)
-        vertices_valid = np.asarray(vertex_valid, dtype=bool)
+        coefficients = np.asarray(vertex_coefficients, dtype=np.float64)
+        vertices_valid = np.asarray(vertex_valid, dtype=np.bool_)
         edges = np.asarray(boundary_edges, dtype=np.int32)
-        edges_valid = np.asarray(boundary_valid, dtype=bool)
-        shape_values = np.asarray(boundary_shape_values, dtype=float)
-        parameters = np.asarray(rule_points, dtype=float)
-        weights = np.asarray(rule_weights, dtype=float)
+        edges_valid = np.asarray(boundary_valid, dtype=np.bool_)
+        shape_values = np.asarray(boundary_shape_values, dtype=np.float64)
+        parameters = np.asarray(rule_points, dtype=np.float64)
+        weights = np.asarray(rule_weights, dtype=np.float64)
         if patch_kind not in ("cell", "edge", "node", "axisymmetric"):
             raise ValueError("Unknown smoothing patch kind.")
         if owners.ndim != 1 or routes.ndim != 2 or routes.shape[0] != owners.size:
@@ -167,7 +167,7 @@ class SmoothingEvidence(StrictModule, NonTrainableState):
         *,
         energy_evidence: SmoothingEnergyEvidence = "none",
     ):
-        positive = jnp.asarray(positive_measure, dtype=bool)
+        positive = jnp.asarray(positive_measure, dtype=jnp.bool_)
         closure = jnp.asarray(closure_defect)
         partition = jnp.asarray(partition_defect)
         affine = jnp.asarray(affine_reproduction_defect)

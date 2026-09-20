@@ -80,7 +80,7 @@ class ThermodynamicConvention:
 
 def celsius_to_kelvin(temperature: ArrayLike) -> Array:
     """Declared offset adapter, not a multiplicative UnitDefinition conversion."""
-    return jnp.asarray(temperature, dtype=float) + 273.15
+    return jnp.asarray(temperature, dtype=jnp.float64) + 273.15
 
 
 def thermal_unfolding_free_energy(

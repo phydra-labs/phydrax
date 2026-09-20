@@ -11,7 +11,7 @@
 
 Image arrays use `(row, column)`. Row increases down and column increases right. Image coordinates and image displacements therefore use `(row_down, column_right)` component order. Physical planar and camera/world coordinates use explicitly named right-handed frames.
 
-An image displacement is not a physical velocity. PIV first estimates displacement in pixels. An explicit planar calibration maps the interrogation centres and displacement vectors to physical space; explicit positive frame timing then converts physical displacement to velocity.
+An image displacement is not a physical velocity. PIV first estimates displacement in pixels. An explicit planar calibration maps the interrogation centers and displacement vectors to physical space; explicit positive frame timing then converts physical displacement to velocity.
 
 Camera projection returns `(row, column)` positions. World points and reconstructed tracks use right-handed `(x, y, z)` coordinates. Results carry coordinate-frame, unit, source, plan, and calibration identities so that incompatible data cannot be combined silently.
 

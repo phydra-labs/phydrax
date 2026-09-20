@@ -251,7 +251,7 @@ class NativeJaxLatticeProvider:
         self, plaquettes: ArrayLike, beta: ArrayLike, owned_mask: ArrayLike, /
     ) -> Array:
         values = jnp.asarray(plaquettes)
-        mask = jnp.asarray(owned_mask, dtype=bool)
+        mask = jnp.asarray(owned_mask, dtype=jnp.bool_)
         if values.ndim < 3 or values.shape[-1] != values.shape[-2]:
             raise ValueError("Plaquettes must end in square color-matrix axes.")
         if mask.shape != values.shape[:-2]:
@@ -273,7 +273,7 @@ class NativeJaxLatticeProvider:
     ) -> Array:
         links_ = jnp.asarray(links)
         staples_ = jnp.asarray(staples)
-        mask = jnp.asarray(owned_mask, dtype=bool)
+        mask = jnp.asarray(owned_mask, dtype=jnp.bool_)
         if (
             links_.shape != staples_.shape
             or links_.ndim < 3

@@ -82,8 +82,8 @@ class RealCoordinateEvidence(StrictModule, NonTrainableState):
         )
         if any(not value for value in identifiers):
             raise ValueError("Real-coordinate evidence identifiers must be non-empty.")
-        source_shape_ = tuple(int(size) for size in source_shape)
-        coordinate_shape_ = tuple(int(size) for size in coordinate_shape)
+        source_shape_ = tuple(source_shape)
+        coordinate_shape_ = tuple(coordinate_shape)
         if any(size <= 0 for size in source_shape_ + coordinate_shape_):
             raise ValueError("Real-coordinate shapes must contain positive dimensions.")
         self.domain_kind = domain_kind
@@ -100,7 +100,7 @@ class RealCoordinateEvidence(StrictModule, NonTrainableState):
         self.norm_relation = norm_relation
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "real-coordinate-evidence-v1",
+                "kind": "real-coordinate-evidence",
                 "domain_kind": domain_kind,
                 "source_space": self.source_space_id,
                 "coordinate_space": self.coordinate_space_id,
@@ -202,9 +202,7 @@ class PreparedRealCoordinateTree(AbstractRealCoordinateMap, NonTrainableState):
                 jnp.zeros(coordinate_spec.shape, dtype=coordinate_spec.dtype)
             )
             identifiers.append(f"{index}:{coordinate_map.coordinate_id}")
-        coordinate_shapes = tuple(
-            tuple(int(size) for size in leaf.shape) for leaf in coordinate_leaves
-        )
+        coordinate_shapes = tuple(tuple(leaf.shape) for leaf in coordinate_leaves)
         coordinate_dtypes = {np.dtype(leaf.dtype) for leaf in coordinate_leaves}
         if len(coordinate_dtypes) != 1:
             raise TypeError(
@@ -344,7 +342,7 @@ class ComplexCartesianCoordinates(AbstractRealCoordinateMap, NonTrainableState):
         real_dtype = jnp.empty((), dtype=source_space.dtype).real.dtype
         identifier = canonical_fingerprint(
             {
-                "kind": "complex-cartesian-coordinates-v1",
+                "kind": "complex-cartesian-coordinates",
                 "source_space": source_space.space_id,
                 "pair_axis": axis,
             }
@@ -395,7 +393,7 @@ class ComplexCartesianCoordinates(AbstractRealCoordinateMap, NonTrainableState):
         /,
     ) -> Array:
         array = jnp.asarray(value)
-        expected = self.source_space.shape + tuple(int(size) for size in trailing_shape)
+        expected = self.source_space.shape + tuple(trailing_shape)
         if array.shape != expected:
             raise ValueError(
                 f"Complex value must have shape {expected}; got {array.shape}."
@@ -408,7 +406,7 @@ class ComplexCartesianCoordinates(AbstractRealCoordinateMap, NonTrainableState):
         axis = int(pair_axis)
         if axis < 0:
             axis += array.ndim
-        if axis < 0 or axis >= array.ndim or int(array.shape[axis]) != 2:
+        if axis < 0 or axis >= array.ndim or array.shape[axis] != 2:
             raise ValueError("Real coordinates require one size-two Cartesian axis.")
         return jax.lax.complex(
             jnp.take(array, 0, axis=axis),
@@ -531,12 +529,11 @@ class HermitianInvolutionCoordinates(AbstractRealCoordinateMap, NonTrainableStat
             )
         else:
             raise TypeError(
-                "Hermitian involution coordinates require a Euclidean or "
-                "coordinate-diagonal source pairing."
+                "Hermitian involution coordinates require a Euclidean or coordinate-diagonal source pairing."
             )
         identifier = canonical_fingerprint(
             {
-                "kind": "hermitian-involution-coordinates-v1",
+                "kind": "hermitian-involution-coordinates",
                 "source_space": source_space.space_id,
                 "conjugate_indices": array_tree_fingerprint(indices),
                 "phases": array_tree_fingerprint(phase_values),
@@ -572,8 +569,8 @@ class HermitianInvolutionCoordinates(AbstractRealCoordinateMap, NonTrainableStat
         self.partner_indices = jnp.asarray(partners, dtype=jnp.int32)
         self.fixed_half_phases = jnp.asarray(half_phases, dtype=source_space.dtype)
         self.reality_tolerance = tolerance
-        self.fixed_coordinate_count = int(fixed.size)
-        self.conjugate_pair_count = int(representatives.size)
+        self.fixed_coordinate_count = fixed.size
+        self.conjugate_pair_count = representatives.size
 
     def validate_state(self, state: ArrayLike, /) -> Array:
         return self.source_space.validate(state)

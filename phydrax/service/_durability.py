@@ -508,8 +508,7 @@ class SQLiteServiceStore:
         _identifier(key, "idempotency key")
         with self._lock:
             row = self._connection.execute(
-                "SELECT scheduler_job_id FROM scheduler_idempotency "
-                "WHERE provider_id=? AND idempotency_key=?",
+                "SELECT scheduler_job_id FROM scheduler_idempotency WHERE provider_id=? AND idempotency_key=?",
                 (provider_id, key),
             ).fetchone()
         return None if row is None else str(row[0])
@@ -533,8 +532,7 @@ class SQLiteServiceStore:
                     (provider_id, key, scheduler_job_id),
                 )
                 row = self._connection.execute(
-                    "SELECT scheduler_job_id FROM scheduler_idempotency "
-                    "WHERE provider_id=? AND idempotency_key=?",
+                    "SELECT scheduler_job_id FROM scheduler_idempotency WHERE provider_id=? AND idempotency_key=?",
                     (provider_id, key),
                 ).fetchone()
                 self._connection.commit()

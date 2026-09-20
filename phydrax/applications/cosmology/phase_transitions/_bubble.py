@@ -112,8 +112,8 @@ class BubbleParticleEnsemble(StrictModule, NonTrainableState):
         positions_ = jnp.asarray(positions)
         momenta_ = jnp.asarray(momenta, dtype=positions_.dtype)
         weights_ = jnp.asarray(weights, dtype=positions_.dtype)
-        inside_ = jnp.asarray(inside, dtype=bool)
-        active_ = jnp.asarray(active, dtype=bool)
+        inside_ = jnp.asarray(inside, dtype=jnp.bool_)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if (
             positions_.ndim != 2
             or positions_.shape[1] != 3
@@ -137,7 +137,7 @@ class BubbleParticleEnsemble(StrictModule, NonTrainableState):
         self.inside = inside_
         self.active = active_
         self.valid = jnp.where(active_, valid, True)
-        self.capacity = int(weights_.shape[0])
+        self.capacity = weights_.shape[0]
 
 
 class ThinWallBubbleState(StrictModule, NonTrainableState):

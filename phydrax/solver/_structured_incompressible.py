@@ -243,8 +243,7 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             )
         if solve_method not in ("auto", "direct", "transform", "hybrid", "iterative"):
             raise ValueError(
-                "solve_method must be 'auto', 'direct', 'transform', 'hybrid', or "
-                "'iterative'."
+                "solve_method must be 'auto', 'direct', 'transform', 'hybrid', or 'iterative'."
             )
         line_axis = None if hybrid_line_axis is None else int(hybrid_line_axis)
         dimension = len(operators.discretization.cell_shape)
@@ -605,8 +604,7 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             axis_data = pressure_cell_axis_transform(axis, dtype)
             if axis_data is None:
                 raise ValueError(
-                    "Hybrid MAC projection requires uniform transform-compatible "
-                    "transverse axes."
+                    "Hybrid MAC projection requires uniform transform-compatible transverse axes."
                 )
             transverse_data.append(axis_data)
         base_lower, _, base_upper = pressure_cell_line_coefficients(physical_line, dtype)

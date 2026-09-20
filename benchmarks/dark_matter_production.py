@@ -255,8 +255,8 @@ def main() -> None:
             "output_events": output_counts[-1],
         },
         "resources": {
-            "device_state_bytes": int(result.state.accepted_state.psi.size)
-            * int(result.state.accepted_state.psi.dtype.itemsize),
+            "device_state_bytes": result.state.accepted_state.psi.size
+            * result.state.accepted_state.psi.dtype.itemsize,
             "communication_bytes": 0,
             "production_checkpoint_bytes_mean": float(
                 np.mean(production_checkpoint_bytes)

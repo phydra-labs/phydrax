@@ -1,6 +1,6 @@
 # Regional neural dynamics and BOLD
 
-`phydrax.applications.neuroscience` composes regional neural laws, physical connectome delays, persistent neurovascular state, labelled sampled series, and native nonlinear least squares. It is separate from cellular electrophysiology: a region is an aggregate modelling coordinate, not an enlarged membrane compartment.
+`phydrax.applications.neuroscience` composes regional neural laws, physical connectome delays, persistent neurovascular state, labeled sampled series, and native nonlinear least squares. It is separate from cellular electrophysiology: a region is an aggregate modeling coordinate, not an enlarged membrane compartment.
 
 ## Connectivity and units
 
@@ -21,7 +21,7 @@ connectivity = ns.RegionalConnectivity(
 
 ## Regional laws
 
-`WilsonCowan` evolves bounded excitatory and inhibitory fractions with explicit time constants, recruitment functions, and coupling gain. Its variables are fractions unless the caller supplies and documents another interpretation; sigmoid outputs are not silently labelled as firing rates.
+`WilsonCowan` evolves bounded excitatory and inhibitory fractions with explicit time constants, recruitment functions, and coupling gain. Its variables are fractions unless the caller supplies and documents another interpretation; sigmoid outputs are not silently labeled as firing rates.
 
 `Hopf` evolves two-coordinate normal-form oscillators. Frequency is supplied in hertz and converted to angular frequency in the law. Coupling is directed diffusive coupling: a self-edge cancels against its own weighted source term rather than creating artificial gain.
 

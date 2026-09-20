@@ -146,8 +146,7 @@ def _tree_leaves(
             return
         if len(nonzero) != 1:
             raise ValueError(
-                "Exact tree compilation requires each split feature to bind one "
-                "canonical decision coordinate."
+                "Exact tree compilation requires each split feature to bind one canonical decision coordinate."
             )
         variable = int(nonzero[0])
         if not discrete[variable]:
@@ -213,7 +212,7 @@ def compile_tree_predictor_constraint(
     if model.feature_schema.layout_id != binding.feature_layout_id:
         raise ValueError("Binding feature layout does not match the TreeEnsemble schema.")
     leaf_value = np.asarray(model.leaf_value)
-    output_count = int(leaf_value.shape[-1])
+    output_count = leaf_value.shape[-1]
     if constraint.output_index >= output_count:
         raise ValueError("output_index exceeds the tree output dimension.")
     active_trees = np.flatnonzero(np.asarray(model.tree_mask))

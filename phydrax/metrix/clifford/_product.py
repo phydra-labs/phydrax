@@ -172,8 +172,7 @@ class CliffordProductPlan(StrictModule, NonTrainableState):
             missing = output_bitmaps.difference(output_layout.bitmaps)
             if missing:
                 raise ValueError(
-                    "Clifford output layout drops nonzero product blades: "
-                    f"{tuple(sorted(missing))}."
+                    f"Clifford output layout drops nonzero product blades: {tuple(sorted(missing))}."
                 )
             output = output_layout
         output_lookup = {
@@ -248,7 +247,7 @@ class CliffordProductPlan(StrictModule, NonTrainableState):
         )
         plan_id = canonical_fingerprint(
             {
-                "kind": "clifford-product-plan-v1",
+                "kind": "clifford-product-plan",
                 "evidence": evidence.evidence_id,
                 "left_indices": list(left_indices),
                 "right_indices": list(right_indices),

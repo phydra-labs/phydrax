@@ -69,12 +69,12 @@ def nested_cell_transfer(
     if len(source_points) != nc or len(target_points) != nt:
         raise ValueError("Mesh block ordering does not match prepared cell spaces.")
     owner = np.asarray(source.owner_cells)
-    neighbour = np.asarray(source.neighbour_cells)
+    neighbor = np.asarray(source.neighbor_cells)
     centers = np.asarray(source.face_centers)
     normal = np.asarray(source.area_vectors) / np.asarray(source.face_measures)[:, None]
     planes = []
     for cell in range(nc):
-        faces = np.flatnonzero((owner == cell) | (neighbour == cell))
+        faces = np.flatnonzero((owner == cell) | (neighbor == cell))
         outward = normal[faces] * np.where(owner[faces] == cell, 1.0, -1.0)[:, None]
         delta = source_points[cell][:, None, :] - centers[faces][None, :, :]
         length = source_volume[cell] ** (1.0 / 3.0)
@@ -87,13 +87,13 @@ def nested_cell_transfer(
         if np.any(np.sum(delta * outward[None, :, :], axis=-1) > tolerance * length):
             raise ValueError("A child cell extends outside its declared parent.")
     target_owner = np.asarray(target.owner_cells)
-    target_neighbour = np.asarray(target.neighbour_cells)
+    target_neighbor = np.asarray(target.neighbor_cells)
     target_centers = np.asarray(target.face_centers)
     for face, cell in enumerate(target_owner):
-        neighbour_cell = target_neighbour[face]
-        if neighbour_cell >= 0 and parents[cell] == parents[neighbour_cell]:
+        neighbor_cell = target_neighbor[face]
+        if neighbor_cell >= 0 and parents[cell] == parents[neighbor_cell]:
             continue
-        for adjacent in (cell,) if neighbour_cell < 0 else (cell, neighbour_cell):
+        for adjacent in (cell,) if neighbor_cell < 0 else (cell, neighbor_cell):
             plane_centers, outward, length = planes[parents[adjacent]]
             distance = np.abs(
                 np.sum((target_centers[face] - plane_centers) * outward, axis=-1)

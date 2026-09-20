@@ -16,6 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
+from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....special._spherical_bessel import (
     _spherical_hankel1_sequence,
@@ -27,28 +28,29 @@ from ._laplace3d import (
     _flatten_payload,
     _mode_basis,
     _translation_quadrature,
+    AbstractLaplaceMultipoleEvaluation3D,
+    AbstractPreparedLaplaceMultipole3D,
     LaplaceMultipoleEvaluation3D,
     LaplaceMultipolePlan3D,
-    PreparedLaplaceMultipole3D,
 )
 
 
 RadialKernel3D = Literal["helmholtz", "modified-helmholtz"]
 
 
-class HelmholtzMultipoleEvaluation3D(LaplaceMultipoleEvaluation3D):
+class HelmholtzMultipoleEvaluation3D(AbstractLaplaceMultipoleEvaluation3D):
     """Complete outgoing-Helmholtz FMM evaluation."""
 
     wavenumber: float = eqx.field(static=True)
 
 
-class ModifiedHelmholtzMultipoleEvaluation3D(LaplaceMultipoleEvaluation3D):
+class ModifiedHelmholtzMultipoleEvaluation3D(AbstractLaplaceMultipoleEvaluation3D):
     """Complete screened modified-Helmholtz FMM evaluation."""
 
     decay: float = eqx.field(static=True)
 
 
-class _RadialMultipolePlan3D(eqx.Module, NonTrainableState):
+class _AbstractRadialMultipolePlan3D(StrictModule, NonTrainableState):
     substrate: LaplaceMultipolePlan3D
     parameter: float = eqx.field(static=True)
     kernel: RadialKernel3D = eqx.field(static=True)
@@ -94,13 +96,12 @@ class _RadialMultipolePlan3D(eqx.Module, NonTrainableState):
             )
         if not math.isfinite(maximum_plane_argument) or maximum_plane_argument <= 0.0:
             raise ValueError("maximum_plane_node_argument must be finite and positive.")
-        lower_ = np.asarray(lower, dtype=float)
-        upper_ = np.asarray(upper, dtype=float)
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
         diameter = float(np.linalg.norm(upper_ - lower_))
         if parameter_ * diameter > maximum_argument:
             raise ValueError(
-                "The requested radial translation domain exceeds "
-                "maximum_dimensionless_argument."
+                "The requested radial translation domain exceeds maximum_dimensionless_argument."
             )
         if order > 12:
             raise ValueError(
@@ -144,7 +145,7 @@ class _RadialMultipolePlan3D(eqx.Module, NonTrainableState):
         )
 
 
-class HelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
+class HelmholtzMultipolePlan3D(_AbstractRadialMultipolePlan3D):
     """Bounded outgoing-Helmholtz radial translation plan."""
 
     def __init__(
@@ -204,7 +205,7 @@ class HelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
         return PreparedHelmholtzMultipole3D(self)
 
 
-class ModifiedHelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
+class ModifiedHelmholtzMultipolePlan3D(_AbstractRadialMultipolePlan3D):
     """Bounded screened modified-Helmholtz radial translation plan."""
 
     def __init__(
@@ -264,15 +265,15 @@ class ModifiedHelmholtzMultipolePlan3D(_RadialMultipolePlan3D):
         return PreparedModifiedHelmholtzMultipole3D(self)
 
 
-class _PreparedRadialMultipole3D(PreparedLaplaceMultipole3D):
-    kernel_plan: _RadialMultipolePlan3D
+class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
+    kernel_plan: _AbstractRadialMultipolePlan3D
     projection_directions: Array
     projection_weights: Array
     projection_harmonics: Array
     equivalent_radius: float = eqx.field(static=True)
 
-    def __init__(self, plan: _RadialMultipolePlan3D, /):
-        if not isinstance(plan, _RadialMultipolePlan3D):
+    def __init__(self, plan: _AbstractRadialMultipolePlan3D, /):
+        if not isinstance(plan, _AbstractRadialMultipolePlan3D):
             raise TypeError("plan must be a radial multipole plan.")
         super().__init__(plan.substrate)
         quadrature_limit = 3 * self.layout.bandlimit + 2
@@ -294,29 +295,17 @@ class _PreparedRadialMultipole3D(PreparedLaplaceMultipole3D):
                 "plan": plan.plan_id,
                 "layout": self.layout.layout_id,
                 "base_prepared": base_prepared_id,
-                "projection_nodes": int(directions.shape[0]),
+                "projection_nodes": directions.shape[0],
                 "equivalent_radius": radius,
                 "maximum_plane_node_argument": plan.maximum_plane_node_argument,
             }
         )
         if plan.kernel == "helmholtz":
-            self.source_convention = (
-                "M[l,m]=i*k*sum(q*j_l(k*r)*conj(Y[l,m])); "
-                "field=sum(M[l,m]*h_l^(1)(k*r)*Y[l,m])"
-            )
-            self.local_convention = (
-                "L[l,m]=i*k*sum(q*h_l^(1)(k*r)*conj(Y[l,m])); "
-                "field=sum(L[l,m]*j_l(k*r)*Y[l,m])"
-            )
+            self.source_convention = "M[l,m]=i*k*sum(q*j_l(k*r)*conj(Y[l,m])); field=sum(M[l,m]*h_l^(1)(k*r)*Y[l,m])"
+            self.local_convention = "L[l,m]=i*k*sum(q*h_l^(1)(k*r)*conj(Y[l,m])); field=sum(L[l,m]*j_l(k*r)*Y[l,m])"
         else:
-            self.source_convention = (
-                "M[l,m]=(2*kappa/pi)*sum(q*i_l(kappa*r)*conj(Y[l,m])); "
-                "field=sum(M[l,m]*k_l(kappa*r)*Y[l,m])"
-            )
-            self.local_convention = (
-                "L[l,m]=(2*kappa/pi)*sum(q*k_l(kappa*r)*conj(Y[l,m])); "
-                "field=sum(L[l,m]*i_l(kappa*r)*Y[l,m])"
-            )
+            self.source_convention = "M[l,m]=(2*kappa/pi)*sum(q*i_l(kappa*r)*conj(Y[l,m])); field=sum(M[l,m]*k_l(kappa*r)*Y[l,m])"
+            self.local_convention = "L[l,m]=(2*kappa/pi)*sum(q*k_l(kappa*r)*conj(Y[l,m])); field=sum(L[l,m]*i_l(kappa*r)*Y[l,m])"
 
     def _radial_sequence(
         self, radius: Array, /, *, radial: Literal["regular", "irregular"]
@@ -585,7 +574,7 @@ class _PreparedRadialMultipole3D(PreparedLaplaceMultipole3D):
         return self._wrap_evaluation(evaluation)
 
 
-class PreparedHelmholtzMultipole3D(_PreparedRadialMultipole3D):
+class PreparedHelmholtzMultipole3D(_AbstractPreparedRadialMultipole3D):
     """Prepared complete outgoing-Helmholtz multipole pipeline."""
 
     def __init__(self, plan: HelmholtzMultipolePlan3D, /):
@@ -594,7 +583,7 @@ class PreparedHelmholtzMultipole3D(_PreparedRadialMultipole3D):
         super().__init__(plan)
 
 
-class PreparedModifiedHelmholtzMultipole3D(_PreparedRadialMultipole3D):
+class PreparedModifiedHelmholtzMultipole3D(_AbstractPreparedRadialMultipole3D):
     """Prepared complete screened modified-Helmholtz multipole pipeline."""
 
     def __init__(self, plan: ModifiedHelmholtzMultipolePlan3D, /):

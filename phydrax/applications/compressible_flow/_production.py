@@ -104,7 +104,7 @@ class CompressibleResourcePreflight(StrictModule, NonTrainableState):
             or maximum <= 0
         ):
             raise ValueError("Compressible production resource preflight is invalid.")
-        state_bytes = sum(int(leaf.size * leaf.dtype.itemsize) for leaf in leaves)
+        state_bytes = sum(leaf.size * leaf.dtype.itemsize for leaf in leaves)
         estimated = state_bytes * count
         passed = estimated <= maximum
         self.state_bytes = state_bytes
@@ -716,8 +716,7 @@ class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
             or interface.policy.policy_id != shock_.policy_id
         ):
             raise TypeError(
-                "FV all-speed shock production requires a "
-                "ShockAwareAllSpeedFluxPlan bound to the shock policy."
+                "FV all-speed shock production requires a ShockAwareAllSpeedFluxPlan bound to the shock policy."
             )
         reconstruction = HighResolutionReconstructionPlan(
             shock_.reconstruction, order=reconstruction_order
@@ -777,8 +776,7 @@ class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
         diffusive_system = isinstance(dynamics.system, AbstractEntropyDiffusionSystem)
         if diffusive_system != (dynamics.method.viscous is not None):
             raise ValueError(
-                "Prepared FV dynamics must bind viscous projection exactly when "
-                "the physical system owns diffusion."
+                "Prepared FV dynamics must bind viscous projection exactly when the physical system owns diffusion."
             )
         mapped = isinstance(dynamics.discretization, MappedFiniteVolumeDiscretization)
         if mapped != (self.geometry_route == "mapped"):

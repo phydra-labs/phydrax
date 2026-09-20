@@ -136,7 +136,7 @@ class SubstructuredSPDSystem(StrictModule, NonTrainableState):
 
     @property
     def broken_dof_count(self) -> int:
-        return sum(int(matrix.shape[0]) for matrix in self.local_matrices)
+        return sum(matrix.shape[0] for matrix in self.local_matrices)
 
     def assemble_matrix(self, /) -> Array:
         dtype = self.local_matrices[0].dtype
@@ -885,7 +885,7 @@ def _averaging_matrix(
     maps = tuple(np.asarray(value) for value in system.local_to_global)
     averaging = np.zeros((system.global_dof_count, system.broken_dof_count), dtype=dtype)
     multiplicity = np.asarray(deluxe.multiplicity)
-    covered = np.zeros((system.global_dof_count,), dtype=bool)
+    covered = np.zeros((system.global_dof_count,), dtype=np.bool_)
     for interface in deluxe.interfaces:
         ids = np.asarray(interface.global_dof_ids)
         left_broken = broken_maps[interface.left_subdomain][

@@ -39,7 +39,7 @@ class EnergyTarget(StrictModule):
     ):
         if not callable(energy):
             raise TypeError("energy must be callable.")
-        shape = tuple(int(size) for size in event_shape)
+        shape = tuple(event_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("event_shape must contain positive dimensions.")
         value = float(temperature)
@@ -72,7 +72,7 @@ class EnergyTarget(StrictModule):
         )
         if self.support is None:
             return finite
-        return finite & jnp.asarray(self.support(array), dtype=bool)
+        return finite & jnp.asarray(self.support(array), dtype=jnp.bool_)
 
     def energy_value(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
@@ -89,7 +89,10 @@ class EnergyTarget(StrictModule):
         array = jnp.asarray(value)
         if array.shape != self.event_shape:
             raise ValueError("One energy score evaluation requires one unbatched event.")
-        return -jax.grad(lambda current: self.energy_value(current))(array) / self.temperature
+        return (
+            -jax.grad(lambda current: self.energy_value(current))(array)
+            / self.temperature
+        )
 
 
 class PersistentEnergyState(StrictModule):
@@ -171,12 +174,17 @@ class PersistentContrastiveDivergence(StrictModule):
         )
 
     def advance(self, state: PersistentEnergyState, /) -> PersistentEnergyState:
-        if not isinstance(state, PersistentEnergyState) or state.target_id != self.target.target_id:
+        if (
+            not isinstance(state, PersistentEnergyState)
+            or state.target_id != self.target.target_id
+        ):
             raise ValueError("Persistent energy state does not match this target.")
         refresh_key = jr.fold_in(state.root_key, state.step_index * 3)
         dynamics_key = jr.fold_in(state.root_key, state.step_index * 3 + 1)
         mask_key = jr.fold_in(state.root_key, state.step_index * 3 + 2)
-        fresh = jnp.asarray(self.reference_sampler(refresh_key, (state.particles.shape[0],)))
+        fresh = jnp.asarray(
+            self.reference_sampler(refresh_key, (state.particles.shape[0],))
+        )
         refresh = jr.bernoulli(
             mask_key,
             self.refresh_probability,

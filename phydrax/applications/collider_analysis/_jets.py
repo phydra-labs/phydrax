@@ -105,7 +105,7 @@ class JetInputBatch(StrictModule, NonTrainableState):
     ):
         event_ids_ = jnp.asarray(event_ids)
         momenta_ = jnp.asarray(momenta)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if (
             event_ids_.ndim != 1
             or momenta_.ndim != 3
@@ -130,7 +130,7 @@ class JetInputBatch(StrictModule, NonTrainableState):
         self.valid = jnp.where(active_, valid, True)
         self.source_collection_id = source
         self.momentum_unit_id = unit
-        self.constituent_capacity = int(momenta_.shape[1])
+        self.constituent_capacity = momenta_.shape[1]
 
 
 class JetCollection(StrictModule, NonTrainableState):
@@ -448,7 +448,7 @@ def _fuzzy_one(plan: FuzzyJetPlan, momenta, active):
     seed_pt = transverse_momentum[seeds]
     distinct_seed_margin = jnp.min(
         jnp.where(
-            jnp.eye(plan.component_count, dtype=bool),
+            jnp.eye(plan.component_count, dtype=jnp.bool_),
             jnp.inf,
             jnp.abs(seed_pt[:, None] - seed_pt[None, :]),
         )

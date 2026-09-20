@@ -242,8 +242,7 @@ class AerothermodynamicResourceCaps(StrictModule, NonTrainableState):
         maximum_radiation_groups: int,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_particles,
                 maximum_collision_events,
                 maximum_surface_events,

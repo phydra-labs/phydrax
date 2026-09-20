@@ -323,7 +323,7 @@ class PreparedDFSPH(StrictModule, NonTrainableState):
         )
         neighborhood, geometry, valid, density = self._geometry(position)
         factor = self.factor(position)
-        surface_mask = jnp.zeros((self.particles.capacity,), dtype=bool)
+        surface_mask = jnp.zeros((self.particles.capacity,), dtype=jnp.bool_)
         if self.free_surface is not None:
             surface_mask = detect_free_surface(
                 self.free_surface,

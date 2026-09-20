@@ -82,7 +82,7 @@ def test_shared_result_influences_supply_joint_edge_covariance_without_independe
         [0.0, 1.0, 3.0],
         covariance,
         jnp.eye(3),
-        jnp.ones((3, 3), dtype=bool),
+        jnp.ones((3, 3), dtype="bool"),
         [20.0, 20.0, 20.0],
         [20.0, 20.0, 20.0],
         influence,

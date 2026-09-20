@@ -50,7 +50,7 @@ class TemporalMesh(StrictModule, NonTrainableState):
         if values.ndim != 1 or values.size < 2:
             raise ValueError("Temporal meshes require at least two rank-1 nodes.")
         if not np.issubdtype(values.dtype, np.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         if np.any(~np.isfinite(values)) or np.any(np.diff(values) <= 0):
             raise ValueError(
                 "Temporal mesh nodes must be finite and strictly increasing."
@@ -64,11 +64,11 @@ class TemporalMesh(StrictModule, NonTrainableState):
             atol=1e-12,
         ):
             raise ValueError("Path temporal meshes must be uniform.")
-        interval_count = int(values.size - 1)
+        interval_count = values.size - 1
         active = (
-            np.ones((interval_count,), dtype=bool)
+            np.ones((interval_count,), dtype=np.bool_)
             if active_intervals is None
-            else np.asarray(active_intervals, dtype=bool)
+            else np.asarray(active_intervals, dtype=np.bool_)
         )
         if active.shape != (interval_count,):
             raise ValueError(
@@ -131,7 +131,7 @@ class TemporalMesh(StrictModule, NonTrainableState):
 
     @property
     def interval_count(self) -> int:
-        return int(self.nodes.shape[0]) - 1
+        return self.nodes.shape[0] - 1
 
     @property
     def widths(self) -> Array:
@@ -163,7 +163,7 @@ class TemporalMesh(StrictModule, NonTrainableState):
 
     @property
     def num_nodes(self) -> int:
-        return int(self.nodes.shape[0])
+        return self.nodes.shape[0]
 
     @property
     def dt(self) -> Array:
@@ -202,12 +202,11 @@ class RealizedTemporalMesh(StrictModule, NonTrainableState):
     ):
         initial = jnp.asarray(initial_time)
         times = jnp.asarray(accepted_times)
-        mask = jnp.asarray(valid, dtype=bool)
+        mask = jnp.asarray(valid, dtype=jnp.bool_)
         count_ = jnp.asarray(count, dtype=jnp.int32)
         if initial.shape != () or times.ndim != 1 or mask.shape != times.shape:
             raise ValueError(
-                "Realized temporal mesh requires scalar initial time and aligned "
-                "rank-1 accepted times/mask."
+                "Realized temporal mesh requires scalar initial time and aligned rank-1 accepted times/mask."
             )
         if count_.shape != ():
             raise ValueError("Realized temporal mesh count must be scalar.")
@@ -245,13 +244,13 @@ class RealizedTemporalMesh(StrictModule, NonTrainableState):
                 "source_plan": plan,
                 "requested_time": requested,
                 "adaptive": bool(adaptive),
-                "capacity": int(times.size),
+                "capacity": times.size,
             },
         )
 
     @property
     def capacity(self) -> int:
-        return int(self.accepted_times.size)
+        return self.accepted_times.size
 
     @property
     def nodes(self) -> Array:
@@ -263,7 +262,7 @@ class RealizedTemporalMesh(StrictModule, NonTrainableState):
     @property
     def node_valid(self) -> Array:
         return jnp.concatenate(
-            (jnp.ones((1,), dtype=bool), self.valid),
+            (jnp.ones((1,), dtype=jnp.bool_), self.valid),
             axis=0,
         )
 

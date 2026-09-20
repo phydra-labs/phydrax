@@ -35,8 +35,8 @@ ProjectionMethod = Literal["auto", "exact", "l2"]
 
 
 def _validate_common_interval(old_grid: BSplineGrid, new_grid: BSplineGrid) -> None:
-    old_interval = np.asarray(old_grid.active_interval, dtype=float)
-    new_interval = np.asarray(new_grid.active_interval, dtype=float)
+    old_interval = np.asarray(old_grid.active_interval, dtype=np.float64)
+    new_interval = np.asarray(new_grid.active_interval, dtype=np.float64)
     if not np.array_equal(old_interval, new_interval):
         raise ValueError("B-spline projection grids must have the same active interval.")
 
@@ -191,7 +191,9 @@ def _exact_refinement_matrix(
     if insertions is None:
         return None
 
-    matrix = np.eye(old_grid.coefficient_count, dtype=np.result_type(old_knots, float))
+    matrix = np.eye(
+        old_grid.coefficient_count, dtype=np.result_type(old_knots, np.float64)
+    )
     working_knots = old_knots
     for knot in insertions:
         working_knots, matrix = _insert_knot_once(
@@ -263,8 +265,7 @@ class BSplineGridTransfer(StrictModule, NonTrainableState):
         condition = float(np.linalg.cond(np.asarray(mass)))
         if not isfinite(condition) or condition > maximum_condition:
             raise ValueError(
-                "B-spline projection mass matrix is singular or ill-conditioned: "
-                f"condition estimate {condition:.6g}."
+                f"B-spline projection mass matrix is singular or ill-conditioned: condition estimate {condition:.6g}."
             )
         if exact is not None:
             matrix = exact
@@ -299,7 +300,7 @@ class BSplineGridTransfer(StrictModule, NonTrainableState):
         ):
             raise TypeError("coefficient_axis must be an integer.")
         axis = int(coefficient_axis) % coefficients_.ndim
-        if int(coefficients_.shape[axis]) != self.old_grid.coefficient_count:
+        if coefficients_.shape[axis] != self.old_grid.coefficient_count:
             raise ValueError(
                 "B-spline coefficient axis does not match the transfer source grid."
             )

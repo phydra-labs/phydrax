@@ -71,7 +71,7 @@ def _case(count, topology, scheme, args):
     state = ep.initialize_cable_state(cable, jnp.full((count,), -65.0))
     zeros = jnp.zeros((count,))
     injected = zeros.at[-1].set(0.02)
-    mask = jnp.zeros((count,), dtype=bool).at[0].set(count > 1)
+    mask = jnp.zeros((count,), dtype="bool").at[0].set(count > 1)
     inputs = ep.CableStepInputs(injected, zeros, zeros, mask, jnp.full((count,), -65.0))
 
     def run(initial):
@@ -182,7 +182,7 @@ def _case(count, topology, scheme, args):
         tree_voltage = one_step(injected).candidate_voltage_mV
         case["dense_reference"] = {
             "timing": timing,
-            "matrix_bytes": int(matrix.nbytes),
+            "matrix_bytes": matrix.nbytes,
             "maximum_voltage_error_mV": float(jnp.max(jnp.abs(tree_voltage - reference))),
         }
     return case

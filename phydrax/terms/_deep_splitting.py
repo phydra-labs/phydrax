@@ -273,7 +273,7 @@ class DeepSplittingRegressionTerm(AbstractSamplingTerm):
             label_provider = labels
         else:
             raise TypeError("labels must be a DeepSplittingLabelBatch or provider.")
-        weight = jnp.asarray(value_weight, dtype=float).reshape(())
+        weight = jnp.asarray(value_weight, dtype=jnp.float64).reshape(())
         if bool(~jnp.isfinite(weight)) or float(weight) < 0.0:
             raise ValueError("value_weight must be finite and nonnegative.")
         self.problem = problem

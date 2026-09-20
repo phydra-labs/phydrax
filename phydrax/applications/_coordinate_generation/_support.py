@@ -181,7 +181,7 @@ def prepare_coordinate_support(
         raise ValueError("Coordinate generation excludes periodic cells.")
     if not construct_id or not token_labels:
         raise ValueError("A fixed construct and its chemical token labels are required.")
-    ids = tuple(int(i) for i in np.asarray(template.particle_ids[0]))
+    ids = tuple(np.asarray(template.particle_ids[0]))
     active = tuple(bool(v) for v in np.asarray(template.atom_mask[0]))
     lookup = {
         atom_id: row
@@ -291,7 +291,7 @@ def prepare_coordinate_support(
     return support
 
 
-class CoordinateProposalQualification(eqx.Module):
+class CoordinateProposalQualification(StrictModule):
     finite: object
     gauge_valid: object
     bond_valid: object
@@ -333,10 +333,10 @@ def qualify_coordinate_proposals(support, positions, *, solver_valid=None):
             axis=1,
         )
     else:
-        chirality_valid = jnp.ones(values.shape[0], dtype=bool)
+        chirality_valid = jnp.ones(values.shape[0], dtype=jnp.bool_)
     accepted = finite & gauge_valid & bond_valid & chirality_valid
     if solver_valid is not None:
-        solver_valid = jnp.asarray(solver_valid, dtype=bool)
+        solver_valid = jnp.asarray(solver_valid, dtype=jnp.bool_)
         if solver_valid.shape != accepted.shape:
             raise ValueError("Solver validity must retain one entry per proposal.")
         accepted = accepted & solver_valid

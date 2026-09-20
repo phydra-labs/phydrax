@@ -22,6 +22,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from phydrax._strict import StrictModule
+
 
 ArrayLike = Array | np.ndarray | float
 
@@ -114,8 +116,7 @@ class CardiacReactionStateLayout:
         resolved = jnp.asarray(state)
         if resolved.ndim == 0 or resolved.shape[-1] != self.state_count:
             raise ValueError(
-                "reaction state must have final axis size "
-                f"{self.state_count}, received shape {resolved.shape}."
+                f"reaction state must have final axis size {self.state_count}, received shape {resolved.shape}."
             )
         return resolved
 
@@ -185,7 +186,7 @@ class CardiacReactionParameterLayout:
         return jnp.stack(jnp.broadcast_arrays(*arrays), axis=-1)
 
 
-class CardiacReactionEvaluation(eqx.Module):
+class CardiacReactionEvaluation(StrictModule):
     """Pure candidate rates, decomposed currents, calcium, and validity evidence."""
 
     state_rate: Array
@@ -280,7 +281,7 @@ class ReactionPlan:
         if dtype.kind != "f":
             raise TypeError("reaction dtype must be floating point.")
         identity = (
-            f"cardiac-reaction-plan-v1\0{self.model.model_id}\0{self.node_count}\0"
+            f"cardiac-reaction-plan\0{self.model.model_id}\0{self.node_count}\0"
             f"{dtype.str}\0{self.model.state_layout.state_names!r}"
         )
         object.__setattr__(self, "dtype", dtype)
@@ -347,8 +348,7 @@ class PreparedReaction:
             )
         if local.shape != (self.node_count, self.gate_count):
             raise ValueError(
-                "gates must have shape "
-                f"{(self.node_count, self.gate_count)}, got {local.shape}."
+                f"gates must have shape {(self.node_count, self.gate_count)}, got {local.shape}."
             )
         return jnp.concatenate((voltage[..., None], local), axis=-1)
 

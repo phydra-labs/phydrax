@@ -80,8 +80,7 @@ class _ProductCubatureIntegrand(StrictModule):
                     transport = factor.reference_transport
                     if transport.reference_measure != "uniform":
                         raise ValueError(
-                            f"Adaptive cubature probability axis {label!r} requires a "
-                            "uniform reference transport."
+                            f"Adaptive cubature probability axis {label!r} requires a uniform reference transport."
                         )
                     physical = transport.from_reference(coordinate)
                     scale = scale * 0.5
@@ -104,8 +103,7 @@ class _ProductCubatureIntegrand(StrictModule):
                 )
             else:
                 raise TypeError(
-                    "Adaptive cubature varying factors must be scalar domains or "
-                    "HyperRectangle values."
+                    "Adaptive cubature varying factors must be scalar domains or HyperRectangle values."
                 )
         if offset != reference.shape[1]:
             raise RuntimeError("Adaptive cubature coordinate layout is inconsistent.")
@@ -168,10 +166,10 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
             value = selector.value
         else:
             raise TypeError("Nonintegrated adaptive scalar factors must be fixed.")
-        return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
+        return cx.AxisArray(jnp.asarray(value, dtype=jnp.float64).reshape(()), dims=())
     if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
         return cx.AxisArray(
-            jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
+            jnp.asarray(selector.value, dtype=jnp.float64).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
     raise TypeError("Nonintegrated adaptive factors must be fixed scalars or geometry.")
@@ -183,8 +181,7 @@ def _factor_dimension(factor: Any, /) -> int:
     if isinstance(factor, HyperRectangle):
         return factor.spatial_dim
     raise TypeError(
-        "Adaptive cubature varying factors must be scalar domains or HyperRectangle "
-        "values."
+        "Adaptive cubature varying factors must be scalar domains or HyperRectangle values."
     )
 
 
@@ -199,14 +196,13 @@ def _reference_breakpoints(
     for label in varying:
         factor = component.domain.factor(label)
         if isinstance(factor, AbstractScalarDomain):
-            physical = jnp.asarray(plan.breakpoints[position], dtype=float)
+            physical = jnp.asarray(plan.breakpoints[position], dtype=jnp.float64)
             position += 1
             if isinstance(factor, ProbabilityDomain):
                 transport = factor.reference_transport
                 if transport.reference_measure != "uniform":
                     raise ValueError(
-                        f"Adaptive cubature probability axis {label!r} requires a "
-                        "uniform reference transport."
+                        f"Adaptive cubature probability axis {label!r} requires a uniform reference transport."
                     )
                 result.append(jnp.asarray(transport.to_reference(physical)))
             else:
@@ -217,7 +213,7 @@ def _reference_breakpoints(
             lower = jnp.asarray(factor.lower)
             upper = jnp.asarray(factor.upper)
             for axis in range(factor.spatial_dim):
-                physical = jnp.asarray(plan.breakpoints[position], dtype=float)
+                physical = jnp.asarray(plan.breakpoints[position], dtype=jnp.float64)
                 position += 1
                 result.append(
                     (2.0 * physical - upper[axis] - lower[axis])
@@ -225,8 +221,7 @@ def _reference_breakpoints(
                 )
         else:
             raise TypeError(
-                "Adaptive cubature varying factors must be scalar domains or "
-                "HyperRectangle values."
+                "Adaptive cubature varying factors must be scalar domains or HyperRectangle values."
             )
     if position != plan.dimension:
         raise RuntimeError("Adaptive cubature breakpoint layout is inconsistent.")
@@ -295,7 +290,9 @@ def _adaptive_cubature_solve(
     *,
     precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
-    reference_template = precision.evaluation(jnp.zeros((1, plan.dimension), dtype=float))
+    reference_template = precision.evaluation(
+        jnp.zeros((1, plan.dimension), dtype=jnp.float64)
+    )
     prototype = eqx.filter_eval_shape(
         lambda points: precision.evaluation(jnp.asarray(integrand(points))),
         reference_template,
@@ -484,7 +481,7 @@ def _adaptive_cubature_solve(
     initial_lower, initial_upper, initial_bounds_valid = _canonical_initial_cells(
         reference_breakpoints, coordinate_dtype
     )
-    initial_count = int(initial_lower.shape[0])
+    initial_count = initial_lower.shape[0]
     initial_cost = initial_count * local_cost
     maximum_evaluations = (
         initial_cost + (plan.max_cells - initial_count) * 2 * local_cost
@@ -516,7 +513,7 @@ def _adaptive_cubature_solve(
                 ),
                 estimated_errors=jnp.zeros((capacity,), dtype=error.dtype),
                 split_indicators=jnp.zeros((capacity, plan.dimension), dtype=error.dtype),
-                active=jnp.zeros((capacity,), dtype=bool),
+                active=jnp.zeros((capacity,), dtype=jnp.bool_),
             )
         if plan.throw:
             value = eqx.error_if(
@@ -564,7 +561,7 @@ def _adaptive_cubature_solve(
             jnp.zeros((initial_count,) + output_shape, dtype=value_dtype),
             jnp.full((initial_count,), jnp.inf, dtype=real_dtype),
             jnp.zeros((initial_count, plan.dimension), dtype=real_dtype),
-            jnp.zeros((initial_count,), dtype=bool),
+            jnp.zeros((initial_count,), dtype=jnp.bool_),
         )
 
     (
@@ -948,8 +945,7 @@ def _run_product(
     )
     if dimension != plan.dimension:
         raise ValueError(
-            "AdaptiveCubaturePlan rule dimension must equal the flattened varying "
-            f"coordinate dimension {dimension}."
+            f"AdaptiveCubaturePlan rule dimension must equal the flattened varying coordinate dimension {dimension}."
         )
     fixed_labels = frozenset(
         label for label in component.domain.labels if label not in varying
@@ -984,7 +980,7 @@ def _run_product(
     )
     prototype_shape = eqx.filter_eval_shape(
         callback.field,
-        precision.evaluation(jnp.zeros((1, plan.dimension), dtype=float)),
+        precision.evaluation(jnp.zeros((1, plan.dimension), dtype=jnp.float64)),
     )
     prototype = cx.AxisArray(
         jnp.zeros(prototype_shape.data.shape, dtype=prototype_shape.data.dtype),

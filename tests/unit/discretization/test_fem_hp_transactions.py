@@ -41,7 +41,9 @@ def test_hp_degree_buckets_are_fixed_capacity_and_deterministic():
     np.testing.assert_array_equal(np.asarray(first.cell_slots[1, :2]), (2, 0))
     np.testing.assert_array_equal(np.asarray(first.cell_bucket), (1, 0, 1, 2, -1, -1))
 
-    gathered = eqx.filter_jit(first.gather)(jnp.arange(topology.capacity, dtype=float))
+    gathered = eqx.filter_jit(first.gather)(
+        jnp.arange(topology.capacity, dtype="float64")
+    )
     np.testing.assert_allclose(np.asarray(gathered[1, :2]), (2.0, 0.0))
     np.testing.assert_allclose(np.asarray(gathered[3:]), 0.0)
 

@@ -131,7 +131,7 @@ def _combine_corner_routes(
         sorted_offsets = source_offsets[order]
         sorted_valid = source_valid[order]
         starts = sorted_valid & jnp.concatenate(
-            (jnp.ones((1,), dtype=bool), sorted_indices[1:] != sorted_indices[:-1])
+            (jnp.ones((1,), dtype=jnp.bool_), sorted_indices[1:] != sorted_indices[:-1])
         )
         groups = jnp.cumsum(starts.astype(jnp.int32)) - 1
         safe_groups = jnp.maximum(groups, 0)
@@ -239,7 +239,7 @@ class AffineCPDISplatAssignment(_AbstractBaseCPDIAssignment):
         maximum_extent_cells: float = 2.0,
         maximum_condition: float = 1.0e6,
     ):
-        edges = np.asarray(reference_edges, dtype=float)
+        edges = np.asarray(reference_edges, dtype=np.float64)
         if edges.ndim != 3 or edges.shape[-1] != edges.shape[-2]:
             raise ValueError("CPDI reference edges must have shape (particles, d, d).")
         self.reference_edges = jnp.asarray(edges)
@@ -283,9 +283,7 @@ class AffineCPDISplatAssignment(_AbstractBaseCPDIAssignment):
     def build(
         self, layout, axes, axis_bounds, position, active, *, assignment_input=None
     ):
-        self.validate_input(
-            assignment_input, int(position.shape[0]), int(position.shape[1])
-        )
+        self.validate_input(assignment_input, position.shape[0], position.shape[1])
         edges = assignment_input.current_edges
         dimension = position.shape[1]
         signs = _corner_signs(dimension).astype(position.dtype)
@@ -332,7 +330,7 @@ class CPDI2SplatAssignment(_AbstractBaseCPDIAssignment):
         maximum_extent_cells: float = 2.0,
         maximum_condition: float = 1.0e6,
     ):
-        offsets = np.asarray(reference_corner_offsets, dtype=float)
+        offsets = np.asarray(reference_corner_offsets, dtype=np.float64)
         if offsets.ndim != 3 or offsets.shape[1] != 2 ** offsets.shape[2]:
             raise ValueError("CPDI2 reference corners must contain all tensor corners.")
         self.reference_corner_offsets = jnp.asarray(offsets)
@@ -395,9 +393,7 @@ class CPDI2SplatAssignment(_AbstractBaseCPDIAssignment):
     def build(
         self, layout, axes, axis_bounds, position, active, *, assignment_input=None
     ):
-        self.validate_input(
-            assignment_input, int(position.shape[0]), int(position.shape[1])
-        )
+        self.validate_input(assignment_input, position.shape[0], position.shape[1])
         corners = assignment_input.corners
         dimension = position.shape[1]
         signs = _corner_signs(dimension).astype(position.dtype)

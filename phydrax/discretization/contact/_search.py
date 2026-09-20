@@ -118,8 +118,7 @@ class _AbstractContactSearchPlan(StrictModule, NonTrainableState):
         method: str,
     ):
         capacities = tuple(
-            int(value)
-            for value in (
+            (
                 edge_vertex_capacity,
                 edge_edge_capacity,
                 face_vertex_capacity,
@@ -411,7 +410,7 @@ def _pack_batch(
     right = np.zeros((capacity,), dtype=np.int64)
     separation = np.zeros((capacity,), dtype=dtype)
     feature_indices = np.zeros((capacity, 2), dtype=np.int32)
-    valid = np.zeros((capacity,), dtype=bool)
+    valid = np.zeros((capacity,), dtype=np.bool_)
     if records:
         feature_left = np.asarray([record[0][0] for record in records], dtype=np.int64)
         feature_right = np.asarray([record[0][1] for record in records], dtype=np.int64)
@@ -498,7 +497,7 @@ def _build_epoch(
     )
     feature_ids = np.asarray(scene.feature_ids, dtype=np.int64)
     feature_participants = np.asarray(scene.feature_participant_ids, dtype=np.int64)
-    feature_static = np.asarray(scene.feature_static_mask, dtype=bool)
+    feature_static = np.asarray(scene.feature_static_mask, dtype=np.bool_)
     contact_extent = np.asarray(scene.feature_contact_extent)
     maximum_pair_separation = 2.0 * float(np.max(contact_extent, initial=0.0))
     broad_radius = (
@@ -524,7 +523,7 @@ def _build_epoch(
         for vertex, edge_index in _bipartite_pairs(
             point_min, point_max, edge_min, edge_max, broad_radius, plan.method
         ):
-            edge = tuple(int(value) for value in edges[edge_index])
+            edge = tuple(edges[edge_index])
             point = (int(vertex),)
             edge_feature = edge_feature_offset + edge_index
             if not _primitive_allowed(
@@ -561,7 +560,7 @@ def _build_epoch(
         for vertex, face_index in _bipartite_pairs(
             point_min, point_max, face_min, face_max, broad_radius, plan.method
         ):
-            face = tuple(int(value) for value in faces[face_index])
+            face = tuple(faces[face_index])
             point = (int(vertex),)
             face_feature = face_feature_offset + face_index
             if not _primitive_allowed(
@@ -597,8 +596,8 @@ def _build_epoch(
         for first_edge, second_edge in _same_set_pairs(
             edge_min, edge_max, broad_radius, plan.method
         ):
-            first = tuple(int(value) for value in edges[first_edge])
-            second = tuple(int(value) for value in edges[second_edge])
+            first = tuple(edges[first_edge])
+            second = tuple(edges[second_edge])
             left_feature = edge_feature_offset + first_edge
             right_feature = edge_feature_offset + second_edge
             if not _primitive_allowed(

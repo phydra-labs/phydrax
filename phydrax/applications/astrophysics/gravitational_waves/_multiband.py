@@ -51,7 +51,7 @@ def _linear_reconstruction(
     nodes: np.ndarray,
 ) -> np.ndarray:
     node_frequency = frequency[nodes]
-    matrix = np.zeros((frequency.size, nodes.size), dtype=float)
+    matrix = np.zeros((frequency.size, nodes.size), dtype=np.float64)
     for index in np.flatnonzero(active):
         location = int(np.searchsorted(node_frequency, frequency[index], side="right"))
         if location == 0:
@@ -80,7 +80,7 @@ def prepare_multiband_likelihood(
     if not isinstance(exact, GravitationalWaveLikelihoodPlan):
         raise TypeError("exact must be GravitationalWaveLikelihoodPlan.")
     edges = tuple(float(value) for value in band_edges)
-    stride_values = tuple(int(value) for value in strides)
+    stride_values = tuple(strides)
     if (
         len(edges) < 2
         or len(stride_values) != len(edges) - 1

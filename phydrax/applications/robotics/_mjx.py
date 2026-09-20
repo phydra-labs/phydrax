@@ -167,10 +167,7 @@ MJX_JAX_PROFILE = _jax_profile(
     _MJX_DTYPES,
 )
 
-_MJX_WARP_NO_CALLABLE = (
-    "no MJX-Warp adapter callable is implemented; MJX-Warp remains a distinct "
-    "non-differentiable provider"
-)
+_MJX_WARP_NO_CALLABLE = "no MJX-Warp adapter callable is implemented; MJX-Warp remains a distinct non-differentiable provider"
 MJX_WARP_PROFILE = RoboticsBackendProfile(
     backend="mjx-warp",
     implementation="mjx-warp",
@@ -479,7 +476,7 @@ class MJXPreparedMuscleProjection(StrictModule, NonTrainableState):
         self.activation_indices = activation_indices
         digest = hashlib.sha256()
         digest.update(adapter.provenance.model.encode("utf-8"))
-        digest.update(b"\x00mjx-muscle-projection-v1\x00")
+        digest.update(b"\x00mjx-muscle-projection\x00")
         for name in names:
             digest.update(name.encode("utf-8"))
             digest.update(b"\x00")
@@ -527,8 +524,7 @@ class MJXPreparedMuscleProjection(StrictModule, NonTrainableState):
         expected_base = (self.adapter.control_map.size,)
         if base.shape[-1:] != expected_base:
             raise ValueError(
-                "complete_control must end in the complete model control size "
-                f"{expected_base[0]}."
+                f"complete_control must end in the complete model control size {expected_base[0]}."
             )
         expected_excitation = base.shape[:-1] + (self.muscle_count,)
         if values.shape != expected_excitation:
@@ -936,7 +932,7 @@ class MJXAdapter(AbstractDiscretePlant, NonTrainableState):
     ) -> PlantProposal:
         del keys, parameters, initial_time
         payload = _broadcast_tree(self.reset_fallback, case_shape)
-        successful = jnp.ones(case_shape, dtype=bool)
+        successful = jnp.ones(case_shape, dtype=jnp.bool_)
         status = jnp.zeros(case_shape, dtype=jnp.int32)
         return PlantProposal(payload, payload, successful, successful, status, status, ())
 
@@ -992,8 +988,7 @@ class MJXAdapter(AbstractDiscretePlant, NonTrainableState):
             device=self.device,
             dtype=self.dtype,
             detail=(
-                "controls must match the source epoch and every complete candidate "
-                "MJX payload case must remain finite"
+                "controls must match the source epoch and every complete candidate MJX payload case must remain finite"
             ),
         )
         return PlantProposal(
@@ -1044,7 +1039,7 @@ class MJXAdapter(AbstractDiscretePlant, NonTrainableState):
             *ids,
         )
         observation = self.observe(accepted_state, request)
-        attempted = jnp.ones(case_shape, dtype=bool)
+        attempted = jnp.ones(case_shape, dtype=jnp.bool_)
         status = jnp.where(
             finite,
             int(RoboticsOperationStatus.SUCCESS),
@@ -1059,8 +1054,7 @@ class MJXAdapter(AbstractDiscretePlant, NonTrainableState):
             device=self.device,
             dtype=self.dtype,
             detail=(
-                "each forwarded complete payload case is accepted and made fresh "
-                "only when all of its arrays are finite"
+                "each forwarded complete payload case is accepted and made fresh only when all of its arrays are finite"
             ),
         )
         return MJXRefreshResult(
@@ -1459,7 +1453,7 @@ def _muscle_actuator_manifest(
         & (bias == int(mujoco.mjtBias.mjBIAS_MUSCLE))
         & (dynamics == int(mujoco.mjtDyn.mjDYN_MUSCLE))
     )
-    actuator_indices = tuple(int(index) for index in np.flatnonzero(muscle_mask).tolist())
+    actuator_indices = tuple(np.flatnonzero(muscle_mask).tolist())
     activation_addresses = np.asarray(model.actuator_actadr)
     activation_counts = np.asarray(model.actuator_actnum)
     length_ranges = np.asarray(model.actuator_lengthrange)
@@ -1633,7 +1627,7 @@ def _observation_projection(
                 )
                 for entry in source_entries
             )
-            offset += int(array.shape[-1])
+            offset += array.shape[-1]
     if request.sensors:
         arrays.append(data.sensordata)
         sensor_entries = tuple(
@@ -1648,7 +1642,7 @@ def _observation_projection(
             )
             for entry in sensor_entries
         )
-        offset += int(data.sensordata.shape[-1])
+        offset += data.sensordata.shape[-1]
     values = arrays[0] if len(arrays) == 1 else jnp.concatenate(arrays, axis=-1)
     index_map = RoboticsProjectionMap("observation", offset, entries, full_map.provenance)
     return values, index_map

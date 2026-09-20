@@ -61,7 +61,7 @@ def sample_case_event(prediction: OperatorPredictiveField, /) -> Array:
         data = jnp.transpose(data, permutation)
     sample_count = 1
     for dim in sample_dims:
-        sample_count *= int(prediction.predictive.samples.data.shape[dims.index(dim)])
+        sample_count *= prediction.predictive.samples.data.shape[dims.index(dim)]
     return data.reshape((sample_count, case_count(prediction.case_shape), -1))
 
 
@@ -86,9 +86,9 @@ def operator_target_values(
             or not _queries_equal(target_query, query)
         ):
             raise ValueError("Operator target does not match the prediction contract.")
-        values = jnp.asarray(field.values, dtype=float)
+        values = jnp.asarray(field.values, dtype=jnp.float64)
     else:
-        values = jnp.asarray(target, dtype=float)
+        values = jnp.asarray(target, dtype=jnp.float64)
     expected = _expected_output_shape(query, output_spec, case_shape)
     if values.shape != expected:
         raise ValueError(
@@ -117,7 +117,7 @@ def measure_weights(
     if measure == "uniform":
         return jnp.ones(
             _expected_output_shape(query, output_spec, case_shape),
-            dtype=float,
+            dtype=jnp.float64,
         )
     return _output_weights(query, output_spec, case_shape, normalized=False)
 

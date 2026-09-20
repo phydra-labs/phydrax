@@ -402,7 +402,7 @@ def prepare_bidirectional_coupled_mode(
     composition_denominators = jnp.stack(tuple(denominators))
     local_reciprocity = jnp.abs(local[:, 0, 1] - local[:, 1, 0])
     local_passivity = jnp.stack(tuple(_passivity_excess(value) for value in local))
-    section_count = int(lengths.size)
+    section_count = lengths.size
     workspace_complex_elements = int(
         prod(local.shape) + prod(prefix.shape) + prod(suffix.shape)
     )

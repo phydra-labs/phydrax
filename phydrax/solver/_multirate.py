@@ -65,8 +65,8 @@ class PartitionedDifferentialProblem(StrictModule):
         state = jnp.asarray(initial_state)
         if state.shape != partition.state_shape:
             raise ValueError("Initial state must match the state partition.")
-        start = jnp.asarray(t0, dtype=float)
-        end = jnp.asarray(t1, dtype=float)
+        start = jnp.asarray(t0, dtype=jnp.float64)
+        end = jnp.asarray(t1, dtype=jnp.float64)
         if start.shape != () or end.shape != ():
             raise ValueError("Partitioned time bounds must be scalar.")
         end = eqx.error_if(

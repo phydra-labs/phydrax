@@ -42,7 +42,7 @@ class ExactMass(StrictModule):
     value: Array
 
     def __init__(self, value: ArrayLike, /):
-        value_ = jnp.asarray(value, dtype=float).reshape(())
+        value_ = jnp.asarray(value, dtype=jnp.float64).reshape(())
         self.value = _nonnegative(value_, "Measure mass must be non-negative.")
 
 
@@ -63,8 +63,8 @@ class EstimatedMass(StrictModule):
         evaluations: int,
         provenance: str,
     ):
-        value_ = jnp.asarray(value, dtype=float).reshape(())
-        uncertainty_ = jnp.asarray(uncertainty, dtype=float).reshape(())
+        value_ = jnp.asarray(value, dtype=jnp.float64).reshape(())
+        uncertainty_ = jnp.asarray(uncertainty, dtype=jnp.float64).reshape(())
         message = "Estimated mass and uncertainty must be non-negative."
         value_ = _nonnegative(value_, message)
         uncertainty_ = _nonnegative(uncertainty_, message)
@@ -141,9 +141,9 @@ class BaseMeasure(StrictModule):
 
 def product_mass(masses: Sequence[Mass], /) -> Mass:
     """Combine independent factor masses without hiding uncertainty."""
-    exact = jnp.asarray(1.0, dtype=float)
-    estimated_value = jnp.asarray(1.0, dtype=float)
-    estimated_relative_variance = jnp.asarray(0.0, dtype=float)
+    exact = jnp.asarray(1.0, dtype=jnp.float64)
+    estimated_value = jnp.asarray(1.0, dtype=jnp.float64)
+    estimated_relative_variance = jnp.asarray(0.0, dtype=jnp.float64)
     evaluations = 0
     provenance: list[str] = []
     for mass in masses:
@@ -154,7 +154,7 @@ def product_mass(masses: Sequence[Mass], /) -> Mass:
             estimated_value = estimated_value * mass.value
             continue
         estimated_value = estimated_value * mass.value
-        safe_value = jnp.maximum(mass.value, jnp.finfo(float).tiny)
+        safe_value = jnp.maximum(mass.value, jnp.finfo(jnp.float64).tiny)
         estimated_relative_variance = (
             estimated_relative_variance + (mass.uncertainty / safe_value) ** 2
         )
@@ -172,8 +172,8 @@ def product_mass(masses: Sequence[Mass], /) -> Mass:
 
 def sum_mass(masses: Sequence[Mass], /) -> Mass:
     """Combine disjoint additive masses without treating unknown values as zero."""
-    value = jnp.asarray(0.0, dtype=float)
-    variance = jnp.asarray(0.0, dtype=float)
+    value = jnp.asarray(0.0, dtype=jnp.float64)
+    variance = jnp.asarray(0.0, dtype=jnp.float64)
     evaluations = 0
     provenance: list[str] = []
     for mass in masses:
@@ -200,8 +200,7 @@ def require_exact_mass(mass: Mass, /, *, operation: str) -> Array:
         return mass.value
     if isinstance(mass, EstimatedMass):
         raise ValueError(
-            f"{operation} requires exact mass; received estimate from "
-            f"{mass.provenance!r}."
+            f"{operation} requires exact mass; received estimate from {mass.provenance!r}."
         )
     raise ValueError(f"{operation} requires exact mass: {mass.reason}")
 

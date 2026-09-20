@@ -11,7 +11,7 @@ software, tables, weights, or outputs.
 The Python implementation, documentation, synthetic examples, and synthetic
 qualification inputs in this repository are authored Phydrax content under the
 repository license. No external black-hole field archive, simulation checkpoint,
-opacity/greybody table, waveform catalog, image, visibility dataset, executable,
+opacity/graybody table, waveform catalog, image, visibility dataset, executable,
 model weight, or serialized Python object is bundled by the closure.
 
 No CFE4D source, Mathematica notebook, generated equation file, PAMR/AMRD
@@ -41,7 +41,7 @@ that external source code or datasets are part of the package.
 | Kerr perturbations and QNMs | Kinnersley tetrad, Teukolsky separation, Leaver continued fractions | [Kinnersley (1969)](https://doi.org/10.1063/1.1664958); [Teukolsky (1973)](https://doi.org/10.1086/152444); [Leaver (1985)](https://doi.org/10.1098/rspa.1985.0119) |
 | aligned BBH remnant | UIB2016v2 nonprecessing final-mass and final-spin fit inside a bounded calibration envelope | [Jiménez-Forteza et al. (2017)](https://doi.org/10.1103/PhysRevD.95.064024) |
 | aligned NR mode surrogates | caller-content-bound, explicitly unauthenticated/unqualified integer-polynomial empirical-node reconstruction with nonprecessing negative-m symmetry and spin-minus-two synthesis | [Field et al. (2014)](https://doi.org/10.1103/PhysRevX.4.031006); [Varma et al. (2019)](https://doi.org/10.1103/PhysRevD.99.064045) |
-| Hawking flux | Unruh-state mode occupations, signed greybody factors, bounded semiclassical balance | [Unruh (1976)](https://doi.org/10.1103/PhysRevD.14.870); [Page (1976)](https://doi.org/10.1103/PhysRevD.13.198) |
+| Hawking flux | Unruh-state mode occupations, signed graybody factors, bounded semiclassical balance | [Unruh (1976)](https://doi.org/10.1103/PhysRevD.14.870); [Page (1976)](https://doi.org/10.1103/PhysRevD.13.198) |
 | relativistic fluids | Michel accretion and Valencia conservative hydrodynamics | [Michel (1972)](https://doi.org/10.1007/BF02710092); [Banyuls et al. (1997)](https://doi.org/10.1086/303604) |
 | equilibrium torus | constant-angular-momentum Fishbone--Moncrief initial data | [Fishbone & Moncrief (1976)](https://doi.org/10.1086/154565) |
 | GRMHD magnetic update | finite-volume ideal GRMHD with compatible constrained transport | [Gammie, McKinney & Tóth (2003)](https://doi.org/10.1086/374594); [Evans & Hawley (1988)](https://doi.org/10.1086/166684) |
@@ -135,9 +135,9 @@ Examples exercise public APIs and print status; they are not qualification evide
 | `examples/kerr_horizon_thermodynamics.py` | stationary Kerr Killing horizon, SI entropy/temperature and first-law/Smarr evidence; no dynamical-horizon claim |
 | `examples/kerr_shadow_rays.py` | future-ingoing Kerr bounded observer-screen ray fan with capture/escape and conservation evidence; no rendering |
 | `examples/polarized_fast_light_grrt.py` | exact `GRRayResult` plus metric to `PolarizedRayPath`; snapshot chart matched to path chart; path/snapshot-bound active-segment midpoint sampling; invariant transfer; numerical path/transfer and MNY96 Stokes-$I$ support only; active polarization/Faraday and the composite prediction remain reference-unqualified |
-| `examples/qnm_scattering_hawking.py` | qualified Schwarzschild QNM kept separate from native real-frequency scalar radial solves; computed qualified greybody factors and neighboring-frequency slope feed the Hawking spectrum, whose omitted-tail evidence remains explicitly unqualified |
+| `examples/qnm_scattering_hawking.py` | qualified Schwarzschild QNM kept separate from native real-frequency scalar radial solves; computed qualified graybody factors and neighboring-frequency slope feed the Hawking spectrum, whose omitted-tail evidence remains explicitly unqualified |
 | `examples/compact_object_accretion.py` | transonic Michel and constant-angular-momentum Fishbone--Moncrief initial data; no evolution |
-| `examples/grrmhd_radiation_feedback.py` | conservative grey GRRMHD source solve followed by local polarized absorption/Faraday feedback with exact opposite material energy-momentum; no transport convergence or observational qualification |
+| `examples/grrmhd_radiation_feedback.py` | conservative gray GRRMHD source solve followed by local polarized absorption/Faraday feedback with exact opposite material energy-momentum; no transport convergence or observational qualification |
 | `examples/fixed_grid_z4c.py` | two bounded periodic fixed-grid SSPRK33 Z4c steps |
 | `examples/binary_black_hole_extraction.py` | Brill--Lindquist candidate-surface, null/quasilocal diagnostics and finite-radius $\Psi_4$ multipoles; no MOTS certification, evolution, or asymptotic waveform |
 | `examples/simulation_product_visibility.py` | physical Stokes image to neutral FITS/UVFITS payloads, direct visibilities, polarization and closures; no rendering or external files |
@@ -161,13 +161,13 @@ broader `api_domain` retained by the report.
 | `thermodynamics` | Kerr $M=2$, $J=0.8$; tangent $(dM,dJ)=(0.3,-0.2)$; SI scale | only that smooth directional derivative; stationary Killing horizon only |
 | `rays` | two analytic mostly-plus Minkowski null lanes with tangents $(1,\mp1,0,0)$; affine nodes $(0,0.125,0.25,0.375,0.5)$; event roots at $0.25$ | no curved-spacetime image convergence |
 | `grrt-interferometry` | scalar slab $(L,j,\alpha,I_0)=(2,4,0.5,1)$; $3.5$ Jy point at $(0.125,-0.25)$ rad, $230$ GHz, two listed UV points; four-station closure | synthetic scalar/visibility control; no slow-light or polarized-microphysics qualification |
-| `perturbations-scattering-hawking` | Schwarzschild $M=1$, spin-$-2$ $(\ell,m,n)=(2,2,0)$ Regge--Wheeler QNM against `schwarzschild-leaver-Momega-reference-v1`, 65 nodes, $r_{\rm out}=30M$, 32 fixed RK4 substeps/interval, order-12 infinity series, match tolerance $10^{-7}$ and relative ODE tolerance $10^{-5}$; achieved match $\approx1.9\times10^{-9}$ and relative ODE residual $\approx1.85\times10^{-7}$; separate scalar $(0,0)$ off-root radial control at $0.4-0.05i$ on 17 nodes to $40M$; scalar $(1,0)$ scattering at $0.2,0.4$ with $0.7/0.3$ reflected/transmitted flux; one massless-scalar Hawking mode | QNM evidence qualifies only that fundamental/plan; no external greybody reference; absent qualified tail evidence deliberately keeps Hawking unqualified |
+| `perturbations-scattering-hawking` | Schwarzschild $M=1$, spin-$-2$ $(\ell,m,n)=(2,2,0)$ Regge--Wheeler QNM against `schwarzschild-leaver-Momega-reference`, 65 nodes, $r_{\rm out}=30M$, 32 fixed RK4 substeps/interval, order-12 infinity series, match tolerance $10^{-7}$ and relative ODE tolerance $10^{-5}$; achieved match $\approx1.9\times10^{-9}$ and relative ODE residual $\approx1.85\times10^{-7}$; separate scalar $(0,0)$ off-root radial control at $0.4-0.05i$ on 17 nodes to $40M$; scalar $(1,0)$ scattering at $0.2,0.4$ with $0.7/0.3$ reflected/transmitted flux; one massless-scalar Hawking mode | QNM evidence qualifies only that fundamental/plan; no external graybody reference; absent qualified tail evidence deliberately keeps Hawking unqualified |
 | `grhd-grmhd` | gamma-law $5/3$ and $4/3$ EOS; Minkowski; 6-cell 1D periodic GRHD SSPRK33 at $dt=10^{-3}$; $2\times2$ periodic vector-potential CT GRMHD SSPRK33 at $dt=10^{-4}$; Michel critical-radius $M=1$ | uniform/runtime and critical-radius controls only; no shock/turbulence/production evidence |
 | `z4c-initial-data-horizons-waves` | periodic $5^3$ flat vacuum Z4c SSPRK33 at $dt=0.05$; isotropic Schwarzschild $M=1$ at $r=4$; spherical isotropic radius $0.5$, bandlimit 3; vacuum $\Psi_4$ sign control, bandlimit 3 | flat and single-hole controls only; no binary evolution or waveform convergence |
 | `coupling` | analytic same-stage SSPRK33 Z4c--GRHD participants; fixed two-lane topology; initial values $(0.4,1)$; $dt=0.1$; atomic commit | coordinator/ledger control; physical kernels retain separate qualification |
 | `scaling-restart` | one device; Z4c global $4^3$ with $(1,1,1)$ decomposition; $2^3$ checkpoint state; exact same-topology restart | no multi-device/multi-host scaling or performance evidence |
 | `production-interchange` | $5^3$ periodic flat-vacuum Z4c SSPRK33 at $dt=0.01$; float32/local JAX; one CPU and 1,000,000 host-memory bytes; 500,000-byte checkpoint/output staging bounds; one 1,024-byte input and one 1,024-byte output manifest/artifact; 64-byte cancellation detail; scientific support `qualification:fixed-grid-z4c`; locally generated CC0 checksum-pinned opaque inert bytes with `source_format="opaque-binary"`, producer `qualification:phydrax` at the installed version, model `qualification:opaque-field-byte-admission`, and coverage `checksum-rights-resource-and-production-binding-only` | no deployment support; bytes are not parsed or claimed to be openPMD/HDF5; technical binding only |
-| `advanced` | exact listed KN--AdS $(M,a,Q,L)=(2,0.3,0.2,10)$; Schwarzschild massive-field $(M,\mu,\ell,n)=(2,0.1,1,0)$; self-force $\ell_{max}=14$; Kerr inverse $(M,a)=(2,0.4)$ along $(0.25,-0.1)$; two-temperature $(100,400)$ for $dt=2$; single-cell grey M1/Ohm/force-free; characteristic $(9\text{ times},3\text{ radii},\ell=2,m=2)$; octahedral BMS through $\ell=1$; complete flat five-time/two-generator offline event control | only those controls; event result remains unqualified without a qualified terminal surface; no learned/posterior/external reference evidence |
+| `advanced` | exact listed KN--AdS $(M,a,Q,L)=(2,0.3,0.2,10)$; Schwarzschild massive-field $(M,\mu,\ell,n)=(2,0.1,1,0)$; self-force $\ell_{max}=14$; Kerr inverse $(M,a)=(2,0.4)$ along $(0.25,-0.1)$; two-temperature $(100,400)$ for $dt=2$; single-cell gray M1/Ohm/force-free; characteristic $(9\text{ times},3\text{ radii},\ell=2,m=2)$; octahedral BMS through $\ell=1$; complete flat five-time/two-generator offline event control | only those controls; event result remains unqualified without a qualified terminal surface; no learned/posterior/external reference evidence |
 
 For the gravitational radial gate, the order-12 infinity series is generated from
 $V/f=z^2W(z)$ coefficients. Regge--Wheeler contributes finite $W$ coefficients;
@@ -201,7 +201,7 @@ The landed code supports the exact domains documented in the focused guides:
 - [resource, artifact, qualification, and production boundaries](guides_black_hole_execution.md).
 
 There is no claim of unrestricted coordinates, arbitrary matter or quantum field
-content, complete QNM/greybody catalogs, quantum-gravity evaporation, generic nonlinear
+content, complete QNM/graybody catalogs, quantum-gravity evaporation, generic nonlinear
 characteristic evolution, second-order self-force, long-duration binary-black-hole
 accuracy, external-code parity, multi-host scale, real-observation validity, or a
 released deployment profile unless an exact current dossier states otherwise.

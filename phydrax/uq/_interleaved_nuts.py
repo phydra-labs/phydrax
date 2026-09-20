@@ -131,7 +131,7 @@ def build_interleaved_nuts_advancer(
                 scalar_shape,
                 dtype=current_states.logdensity.dtype,
             ),
-            is_divergent=jnp.zeros(scalar_shape, dtype=bool),
+            is_divergent=jnp.zeros(scalar_shape, dtype=jnp.bool_),
             energy=jnp.zeros(scalar_shape, dtype=current_states.logdensity.dtype),
             num_integration_steps=jnp.zeros(
                 scalar_shape,

@@ -70,7 +70,7 @@ def _solve_gamma_shape(
     lower, upper = jax.lax.fori_loop(0, 64, bracket_step, (lower, upper))
     shape = jnp.clip(initial, lower, upper)
     iterations = jnp.zeros(delta.shape, dtype=jnp.int32)
-    converged = jnp.zeros(delta.shape, dtype=bool)
+    converged = jnp.zeros(delta.shape, dtype=jnp.bool_)
 
     def condition(state):
         _, _, _, _, converged_values, loop_iteration = state
@@ -246,7 +246,7 @@ class GammaFamily(AbstractExponentialFamily):
         )
 
     def _log_base_density(self, value: ArrayLike, /) -> Array:
-        return jnp.zeros_like(jnp.asarray(value, dtype=float))
+        return jnp.zeros_like(jnp.asarray(value, dtype=jnp.float64))
 
     def _log_normalizer(self, natural_values: Array, /) -> Array:
         shape = natural_values[..., 0] + 1.0

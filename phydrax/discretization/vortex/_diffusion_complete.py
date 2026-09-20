@@ -82,7 +82,7 @@ class GaussianCoreSpreadingPlan(StrictModule, NonTrainableState):
         valid_pair = (
             source.active_mask[:, None]
             & source.active_mask[None, :]
-            & ~jnp.eye(source.capacity, dtype=bool)
+            & ~jnp.eye(source.capacity, dtype=jnp.bool_)
         )
         minimum_distance = jnp.min(jnp.where(valid_pair, distance, jnp.inf), axis=1)
         overlap = core / jnp.maximum(minimum_distance, jnp.finfo(core.dtype).tiny)

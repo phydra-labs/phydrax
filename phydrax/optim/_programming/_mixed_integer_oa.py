@@ -119,7 +119,7 @@ class ConicOuterApproximation(AbstractMixedIntegerMethod):
 
     @property
     def method_id(self) -> str:
-        return "native-conic-outer-approximation-v1"
+        return "native-conic-outer-approximation"
 
     @property
     def backend(self) -> str:

@@ -1,6 +1,6 @@
 # Scientific rendering
 
-`phydrax.rendering` maps physical geometry and fields to predicted measurements. It is not a plotting package, interactive viewer, asset scene graph, or display-colour system.
+`phydrax.rendering` maps physical geometry and fields to predicted measurements. It is not a plotting package, interactive viewer, asset scene graph, or display-color system.
 
 ## Point image formation
 

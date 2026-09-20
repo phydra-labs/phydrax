@@ -280,8 +280,8 @@ class DiagramQuadraturePlan(StrictModule, NonTrainableState):
         *,
         maximum_samples: int = 1_000_000,
     ):
-        points_ = np.asarray(points, dtype=float)
-        weights_ = np.asarray(weights, dtype=float)
+        points_ = np.asarray(points, dtype=np.float64)
+        weights_ = np.asarray(weights, dtype=np.float64)
         maximum = int(maximum_samples)
         if points_.ndim < 2 or points_.shape[0] < 2:
             raise ValueError("Quadrature points need at least two samples.")
@@ -300,7 +300,7 @@ class DiagramQuadraturePlan(StrictModule, NonTrainableState):
         self.points = jnp.asarray(points_)
         self.weights = jnp.asarray(weights_)
         self.maximum_samples = maximum
-        self.sample_count = int(points_.shape[0])
+        self.sample_count = points_.shape[0]
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "diagram-quadrature-plan",

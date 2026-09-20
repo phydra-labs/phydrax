@@ -21,7 +21,9 @@ def _candidate_sets(indices, valid):
 
 
 def test_packed_bvh_query_chunks_preserve_candidates_and_completeness() -> None:
-    lower = jnp.stack((jnp.arange(8, dtype=float), jnp.zeros(8), jnp.zeros(8)), axis=-1)
+    lower = jnp.stack(
+        (jnp.arange(8, dtype="float64"), jnp.zeros(8), jnp.zeros(8)), axis=-1
+    )
     upper = lower + jnp.asarray((0.75, 1.0, 1.0))
     bvh = build_packed_bvh(lower, upper, 0.5 * (lower + upper), leaf_size=2)
     points = jnp.asarray(((0.25, 0.5, 0.5), (3.25, 0.5, 0.5), (7.25, 0.5, 0.5)))

@@ -52,7 +52,7 @@ def _scalar(
     positive: bool = False,
     nonnegative: bool = False,
 ) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     host = float(np.asarray(jax.device_get(result)))
@@ -66,7 +66,7 @@ def _scalar(
 
 
 def _strict_times(value: ArrayLike, name: str, /) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     host = np.asarray(jax.device_get(result))
     if result.ndim != 1 or result.shape[0] < 2:
         raise ValueError(f"{name} must be a vector with at least two entries.")
@@ -168,7 +168,7 @@ class IntensityCreditModel(StrictModule):
     ):
         if not isinstance(base, ReducedFormCreditModel):
             raise TypeError("base must be a ReducedFormCreditModel.")
-        loadings = jnp.asarray(factor_loadings, dtype=float)
+        loadings = jnp.asarray(factor_loadings, dtype=jnp.float64)
         host = np.asarray(jax.device_get(loadings))
         if loadings.ndim != 1 or loadings.shape[0] == 0 or not np.all(np.isfinite(host)):
             raise ValueError("factor_loadings must be a non-empty finite vector.")
@@ -264,7 +264,7 @@ def default_probability(
 ) -> Array:
     """Unconditional pricing-measure default probability in ``(start, end]``."""
 
-    left = jnp.asarray(start, dtype=float)
+    left = jnp.asarray(start, dtype=jnp.float64)
     right = jnp.asarray(end, dtype=left.dtype)
     right = eqx.error_if(right, jnp.any(right < left), "end must not precede start.")
     return survival_probability(model, law, left) - survival_probability(
@@ -289,10 +289,10 @@ def intensity_from_factors(
         pricing_measure_id=model.base.pricing_measure_id,
         pricing_only=True,
     )
-    query = jnp.asarray(times, dtype=float)
+    query = jnp.asarray(times, dtype=jnp.float64)
     if query.ndim != 1:
         raise ValueError("times must be one-dimensional.")
-    factors = jnp.asarray(factor_values, dtype=float)
+    factors = jnp.asarray(factor_values, dtype=jnp.float64)
     if factors.shape[-2:] != (query.shape[0], model.factor_loadings.shape[0]):
         raise ValueError("factor_values must end in (time, factor) axes.")
     base = model.base.survival_curve.hazard_rate(query)
@@ -318,8 +318,8 @@ def state_dependent_intensity(
     if not isinstance(model, IntensityCreditModel):
         raise TypeError("model must be an IntensityCreditModel.")
     _require_law(law, factor_layout_id=model.factor_layout_id)
-    base = jnp.asarray(base_intensity, dtype=float)
-    factors = jnp.asarray(factor_values, dtype=float)
+    base = jnp.asarray(base_intensity, dtype=jnp.float64)
+    factors = jnp.asarray(factor_values, dtype=jnp.float64)
     if (
         factors.shape[:-1] != base.shape
         or factors.shape[-1] != model.factor_loadings.shape[0]
@@ -453,7 +453,7 @@ def default_events_from_intensity_paths(
     if not isinstance(realization, PoissonClockRealization):
         raise TypeError("realization must be a PoissonClockRealization.")
     nodes = _strict_times(times, "times")
-    rates = jnp.asarray(intensities, dtype=float)
+    rates = jnp.asarray(intensities, dtype=jnp.float64)
     path_count = realization.num_paths
     if rates.shape != (path_count, nodes.shape[0] - 1):
         raise ValueError("intensities must have shape (path, time_interval).")
@@ -502,7 +502,7 @@ def default_events_from_intensity_paths(
 
 
 def _face_units(amount, /) -> Array:
-    return amount.atoms.astype(float) / float(amount.currency.atoms_per_unit)
+    return amount.atoms.astype("float64") / float(amount.currency.atoms_per_unit)
 
 
 def _expected_credit_inputs(

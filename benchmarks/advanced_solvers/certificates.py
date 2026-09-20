@@ -144,7 +144,7 @@ def _eigen_certificate(
     reference_spectrum = np.linalg.eigvals(matrix)
     selected_indices = np.argsort(np.abs(reference_spectrum))[-problem.eigenpairs :]
     selected_reference = reference_spectrum[selected_indices]
-    returned_count = int(eigenvalues.size)
+    returned_count = eigenvalues.size
     count_satisfied = returned_count == problem.eigenpairs
     membership_error = _eigen_membership_error(eigenvalues, selected_reference)
     membership_tolerance = max(
@@ -232,7 +232,7 @@ def _continuation_certificate(
         relative_residual=residual_norm / max(1.0, float(np.linalg.norm(coordinates))),
         backward_error=residual_norm / scale,
         details={
-            "branch_points": int(states.shape[0]),
+            "branch_points": states.shape[0],
             "branch_successful": branch_successful,
             "finite_branch": finite_branch,
             "maximum_point_residual": float(np.max(point_norms)),

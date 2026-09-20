@@ -60,8 +60,7 @@ class GeneralizedAlphaMethod(StrictModule, NonTrainableState):
         if any(value is not None for value in explicit):
             if spectral_radius is not None or any(value is None for value in explicit):
                 raise ValueError(
-                    "Explicit generalized-alpha parameters require spectral_radius=None "
-                    "and all four coefficients."
+                    "Explicit generalized-alpha parameters require spectral_radius=None and all four coefficients."
                 )
             assert alpha_m is not None
             assert alpha_f is not None
@@ -109,7 +108,7 @@ class GeneralizedAlphaMethod(StrictModule, NonTrainableState):
         )
 
 
-class _InitialAccelerationResidual(eqx.Module):
+class _InitialAccelerationResidual(StrictModule):
     problem: SecondOrderDifferentialProblem
     precision: TemporalPrecisionPolicy
     time: Array
@@ -138,7 +137,7 @@ class _GeneralizedAlphaArguments(StrictModule):
     args: Any
 
 
-class _GeneralizedAlphaResidual(eqx.Module):
+class _GeneralizedAlphaResidual(StrictModule):
     problem: SecondOrderDifferentialProblem
     method: GeneralizedAlphaMethod
     precision: TemporalPrecisionPolicy
@@ -252,7 +251,7 @@ class GeneralizedAlphaSolution(StrictModule):
         problem_id: str,
         time_id: str,
     ):
-        count = int(jnp.asarray(times).size)
+        count = jnp.asarray(times).size
         prefix = (count,)
         if (
             configurations.shape[0] != count
@@ -268,7 +267,7 @@ class GeneralizedAlphaSolution(StrictModule):
         self.configurations = jnp.asarray(configurations)
         self.velocities = jnp.asarray(velocities)
         self.accelerations = jnp.asarray(accelerations)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.stage_residual_norm = jnp.asarray(stage_residual_norm)
         self.nonlinear_iterations = jnp.asarray(nonlinear_iterations, dtype=jnp.int32)
         self.precision_evidence = precision_evidence

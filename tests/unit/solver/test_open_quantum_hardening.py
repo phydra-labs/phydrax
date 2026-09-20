@@ -34,11 +34,11 @@ def test_shared_scalar_root_event_and_semantic_replay():
 
 def test_environment_mps_and_nonnormalizing_tebd():
     state = phx.tensor_network.product_mps(
-        jnp.asarray([[2.0, 0.0], [0.0, 1.0]], dtype=complex)
+        jnp.asarray([[2.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )
     assert jnp.allclose(state.norm(), jnp.linalg.norm(state.to_dense()))
     hamiltonian = phx.tensor_network.NearestNeighborHamiltonian(
-        (jnp.zeros((4, 4), dtype=complex),),
+        (jnp.zeros((4, 4), dtype="complex128"),),
         (2, 2),
         hamiltonian_id="zero",
     )
@@ -86,8 +86,8 @@ def test_bath_decomposition_scaled_and_implicit_heom():
     assert bool(scaled.valid)
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     problem = phx.solver.HEOMProblem(
-        jnp.zeros((2, 2), dtype=complex),
-        jnp.asarray([[1, 0], [0, -1]], dtype=complex),
+        jnp.zeros((2, 2), dtype="complex128"),
+        jnp.asarray([[1, 0], [0, -1]], dtype="complex128"),
         expansion,
         hierarchy,
         density,
@@ -100,8 +100,8 @@ def test_heom_continuation_uses_common_initial_state():
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.02, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
-        jnp.zeros((2, 2), dtype=complex),
-        jnp.asarray([[1, 0], [0, -1]], dtype=complex),
+        jnp.zeros((2, 2), dtype="complex128"),
+        jnp.asarray([[1, 0], [0, -1]], dtype="complex128"),
         expansion,
         phx.solver.HEOMHierarchy(1, 1),
         density,
@@ -116,7 +116,7 @@ def test_heom_continuation_uses_common_initial_state():
 
 
 def test_conditioned_map_and_matched_spin_boson():
-    identity = jnp.eye(4, dtype=complex)
+    identity = jnp.eye(4, dtype="complex128")
     report = phx.operators.quantum.analyze_dynamical_map_series(
         jnp.stack((identity, identity)), 2
     )
@@ -135,10 +135,10 @@ def test_causal_process_tomography_and_compression_status():
     process = phx.tensor_network.CausalProcessTensor(
         spec,
         density,
-        (jnp.eye(2, dtype=complex)[None, ...],),
+        (jnp.eye(2, dtype="complex128")[None, ...],),
         process_id="identity-process",
     )
-    kraus = jnp.eye(2, dtype=complex)[None, None, ...]
+    kraus = jnp.eye(2, dtype="complex128")[None, None, ...]
     instrument = phx.tensor_network.QuantumInstrument(
         kraus,
         jnp.asarray([True]),
@@ -150,7 +150,7 @@ def test_causal_process_tomography_and_compression_status():
     )
     problem = phx.solver.CausalProcessTomographyProblem(process, (experiment,))
     result = phx.solver.fit_causal_process_initial_state(
-        problem, jnp.eye(2, dtype=complex), iterations=1
+        problem, jnp.eye(2, dtype="complex128"), iterations=1
     )
     assert bool(result.underidentified)
     assert not bool(result.valid)

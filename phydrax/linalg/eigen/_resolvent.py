@@ -62,7 +62,7 @@ class ResolventScanProblem(StrictModule):
         if shifts_.ndim != 1 or shifts_.size == 0:
             raise ValueError("shifts must be one nonempty rank-one array.")
         if not jnp.issubdtype(shifts_.dtype, jnp.inexact):
-            shifts_ = shifts_.astype(float)
+            shifts_ = shifts_.astype("float64")
         shifts_ = shifts_.astype(jnp.result_type(shifts_.dtype, 1j))
         shifts_ = eqx.error_if(
             shifts_,
@@ -190,7 +190,7 @@ def plan_resolvent_scan(
     if not isinstance(policy_, ResolventScanPolicy):
         raise TypeError("policy must be a ResolventScanPolicy or None.")
     dimension = problem.operator.source.size
-    shift_count = int(problem.shifts.size)
+    shift_count = problem.shifts.size
     if shift_count > policy_.maximum_shifts:
         raise ValueError("Resolvent shift count exceeds maximum_shifts.")
     itemsize = np.dtype(
@@ -344,7 +344,7 @@ def _prepare_resolvent(
         problem.problem_id != plan.problem_id
         or problem.operator.operator_id != plan.operator_id
         or problem.operator.source.size != plan.dimension
-        or int(problem.shifts.size) != plan.shift_count
+        or problem.shifts.size != plan.shift_count
         or problem.operator.source.space_id != plan.source_space_id
     ):
         raise ValueError("Resolvent problem is incompatible with the symbolic plan.")
@@ -434,8 +434,7 @@ class PencilPerturbationNorm(StrictModule, NonTrainableState):
             or (operator == 0.0 and mass == 0.0)
         ):
             raise ValueError(
-                "Pencil perturbation scales must be finite and nonnegative, "
-                "and cannot both be zero."
+                "Pencil perturbation scales must be finite and nonnegative, and cannot both be zero."
             )
         self.operator_scale = operator
         self.mass_scale = mass
@@ -484,7 +483,7 @@ class PencilPseudospectrumProblem(StrictModule):
                 "homogeneous_shifts must have nonempty shape (shift_count, 2)."
             )
         if not jnp.issubdtype(shifts.dtype, jnp.inexact):
-            shifts = shifts.astype(float)
+            shifts = shifts.astype("float64")
         shifts = shifts.astype(jnp.result_type(shifts.dtype, 1j))
         if not bool(jnp.all(jnp.isfinite(shifts))):
             raise ValueError("Homogeneous pencil shifts must be finite.")
@@ -679,7 +678,7 @@ def plan_pencil_pseudospectrum(
     if not isinstance(policy_, PencilPseudospectrumPolicy):
         raise TypeError("policy must be a PencilPseudospectrumPolicy or None.")
     dimension = problem.eigenproblem.dimension
-    shift_count = int(problem.homogeneous_shifts.shape[0])
+    shift_count = problem.homogeneous_shifts.shape[0]
     if dimension > policy_.maximum_dimension:
         raise ValueError("Pencil dimension exceeds maximum_dimension.")
     if shift_count > policy_.maximum_shifts:
@@ -860,8 +859,7 @@ def pencil_pseudospectrum(
             pairing_id=problem.operator.source.pairing.pairing_id,
             perturbation_norm_id=norm.norm_id,
             norm_definition=(
-                "joint weighted unstructured complex Frobenius norm in "
-                "pairing-square-root coordinates"
+                "joint weighted unstructured complex Frobenius norm in pairing-square-root coordinates"
             ),
             operator_scale=norm.operator_scale,
             mass_scale=norm.mass_scale,
@@ -886,7 +884,7 @@ def _prepare_pencil_pseudospectrum(
     space = eigenproblem.operator.source
     if (
         eigenproblem.dimension != plan.dimension
-        or int(problem.homogeneous_shifts.shape[0]) != plan.shift_count
+        or problem.homogeneous_shifts.shape[0] != plan.shift_count
         or space.space_id != plan.source_space_id
         or space.pairing.pairing_id != plan.pairing_id
         or problem.perturbation_norm.norm_id != plan.perturbation_norm.norm_id

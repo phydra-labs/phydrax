@@ -56,7 +56,7 @@ def write_checkpoint_archive(
         "compatibility": dict(compatibility),
         "state": dict(state),
     }
-    return _write_array_archive(path, manifest=manifest, arrays=arrays)
+    return write_array_archive(path, manifest=manifest, arrays=arrays)
 
 
 def read_checkpoint_archive(
@@ -190,22 +190,10 @@ def unpack_array_tree(
         expected = jnp.asarray(template_leaf)
         if value.shape != expected.shape or value.dtype != expected.dtype:
             raise CheckpointCompatibilityError(
-                f"Checkpoint array {name!r} has shape or dtype incompatible with "
-                "the runtime template."
+                f"Checkpoint array {name!r} has shape or dtype incompatible with the runtime template."
             )
         leaves.append(value)
     return jax.tree_util.tree_unflatten(treedef, leaves)
-
-
-def _write_array_archive(
-    path: str | os.PathLike[str],
-    /,
-    *,
-    manifest: Mapping[str, Any],
-    arrays: Mapping[str, Any],
-) -> Path:
-    """Compatibility wrapper for the shared portable array archive."""
-    return write_array_archive(path, manifest=manifest, arrays=arrays)
 
 
 def _read_array_archive(

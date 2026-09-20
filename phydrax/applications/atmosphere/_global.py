@@ -414,7 +414,7 @@ class PreparedGlobalAtmosphere(StrictModule):
             self.work_space, mean_policy="project"
         )
         self.phase_simplex = SimplexProjection(tolerance=plan.water_projection_tolerance)
-        self.levels = int(plan.vertical.a.size) - 1
+        self.levels = plan.vertical.a.size - 1
         self.constant_mode = self.project(
             jnp.ones(self.work_space.sample_shape, dtype=jnp.float64)
         )
@@ -441,7 +441,7 @@ class PreparedGlobalAtmosphere(StrictModule):
             self.filter_multiplier = jnp.exp(
                 -plan.dt * plan.filter_rate * scale**plan.filter_order
             )[:, None, None]
-        # Gate the actual projected rest state, rather than labelling terrain "balanced".
+        # Gate the actual projected rest state, rather than labeling terrain "balanced".
         rest_ps = plan.reference_pressure * jnp.exp(
             -self.terrain / (plan.gas_constant * plan.reference_temperature)
         )

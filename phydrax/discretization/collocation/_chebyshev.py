@@ -86,7 +86,7 @@ class ChebyshevCollocation(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.nodes.size)
+        return self.nodes.size
 
     def derivative(self, values: ArrayLike, order: int = 1, /) -> Array:
         array = jnp.asarray(values)

@@ -15,7 +15,7 @@ import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ...pgm import (
     contrastive_divergence_loss,
     DiscreteFactorGraph,
@@ -28,7 +28,7 @@ from ...pgm import (
 
 
 class AbstractDiscreteNoisingKernel(StrictModule):
-    kernel_id: AbstractAttribute[str]
+    kernel_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def sample(self, key: Key[Array, ""], state: Array, cardinalities: Array, /) -> Array:
@@ -132,8 +132,8 @@ class FactorGraphReverseKernel(StrictModule):
             raise ValueError("Reverse kernels require input and output variables.")
         if set(map(int, inputs.tolist())) & set(map(int, outputs.tolist())):
             raise ValueError("Reverse input and output variables must be disjoint.")
-        input_host = tuple(int(value) for value in inputs.tolist())
-        output_host = tuple(int(value) for value in outputs.tolist())
+        input_host = tuple(inputs.tolist())
+        output_host = tuple(outputs.tolist())
         if (
             len(set(input_host)) != len(input_host)
             or len(set(output_host)) != len(output_host)
@@ -166,7 +166,7 @@ class FactorGraphReverseKernel(StrictModule):
         if initial.positions.shape[1:] != (self.graph.num_variables,):
             raise ValueError("initial Gibbs state does not match the reverse graph.")
         values = jnp.asarray(noisy, dtype=jnp.int32)
-        expected = (initial.num_chains, int(self.input_variables.shape[0]))
+        expected = (initial.num_chains, self.input_variables.shape[0])
         if values.shape != expected:
             raise ValueError(f"noisy must have shape {expected}; got {values.shape}.")
         input_cardinalities = self.graph.cardinalities[self.input_variables]
@@ -180,7 +180,7 @@ class FactorGraphReverseKernel(StrictModule):
             ),
         )
         clamped = (
-            jnp.zeros((self.graph.num_variables,), dtype=bool)
+            jnp.zeros((self.graph.num_variables,), dtype=jnp.bool_)
             .at[self.input_variables]
             .set(True)
         )
@@ -310,7 +310,7 @@ class AdaptiveMixingPenalty(StrictModule):
     def update(
         self, state: AdaptiveMixingState, correlation: ArrayLike, /
     ) -> AdaptiveMixingState:
-        values = jnp.asarray(correlation, dtype=float)
+        values = jnp.asarray(correlation, dtype=jnp.float64)
         if values.shape != state.penalties.shape:
             raise ValueError("correlation must match layer penalties.")
         base = jnp.maximum(state.penalties, self.minimum)

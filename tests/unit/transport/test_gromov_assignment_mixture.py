@@ -13,8 +13,8 @@ from phydrax.transport._gromov import gromov_wasserstein_problem, GromovWasserst
 
 def _weighted(points, probabilities, name):
     return phx.integration.weighted(
-        jnp.asarray(points, dtype=float),
-        jnp.log(jnp.asarray(probabilities, dtype=float)),
+        jnp.asarray(points, dtype="float64"),
+        jnp.log(jnp.asarray(probabilities, dtype="float64")),
         normalized=True,
         independent=False,
         sample_axes=0,

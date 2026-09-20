@@ -496,8 +496,7 @@ class OperatorArchitectureStatus:
         )
         if self.recommendation_eligible is not expected:
             raise ValueError(
-                "Recommendation eligibility must come from a current promoted "
-                "scenario decision."
+                "Recommendation eligibility must come from a current promoted scenario decision."
             )
         scenarios = tuple(value.scenario_id for value in self.scenario_promotions)
         if len(set(scenarios)) != len(scenarios):
@@ -1121,8 +1120,7 @@ def operator_architecture_contract(
         group_name = str(configured_group)
         if group_name not in capabilities.symmetry_groups:
             raise ValueError(
-                f"Configured symmetry group {group_name!r} is not supported by "
-                f"{status.architecture!r}."
+                f"Configured symmetry group {group_name!r} is not supported by {status.architecture!r}."
             )
         capabilities = replace(capabilities, symmetry_groups=(group_name,))
     return ConfiguredOperatorContract(

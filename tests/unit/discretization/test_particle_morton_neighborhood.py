@@ -23,7 +23,7 @@ def _particles(ids, dimension=1, *, active_mask=None):
 
 
 def _stable_pairs(state):
-    valid = np.asarray(state.pair_relation.valid, dtype=bool)
+    valid = np.asarray(state.pair_relation.valid, dtype="bool")
     left = np.asarray(state.pair_relation.left_particle_ids)[valid]
     right = np.asarray(state.pair_relation.right_particle_ids)[valid]
     return list(zip(left.tolist(), right.tolist(), strict=True))
@@ -117,7 +117,7 @@ def test_morton_neighborhood_build_is_filter_jittable() -> None:
         coarsening_factor=2,
         target_top_nodes=1,
     ).prepare(particles)
-    position = (jnp.arange(8, dtype=float) + 0.5)[:, None] / 8.0
+    position = (jnp.arange(8, dtype="float64") + 0.5)[:, None] / 8.0
     eager = prepared.build(position)
     compiled = eqx.filter_jit(prepared.build)(position)
     assert bool(compiled.successful)

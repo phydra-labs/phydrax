@@ -68,7 +68,7 @@ class GeometryTolerance:
             )
 
     def threshold(self, scale: Array, /) -> Array:
-        scale_ = jnp.asarray(scale, dtype=float)
+        scale_ = jnp.asarray(scale, dtype=jnp.float64)
         return self.absolute + self.relative * jnp.maximum(scale_, 1.0)
 
 
@@ -107,12 +107,12 @@ class ClosestPointResult(StrictModule):
         exact_to_physical: bool = False,
         normal_coordinate_valid: Array | None = None,
     ):
-        point = jnp.asarray(closest_point, dtype=float)
+        point = jnp.asarray(closest_point, dtype=jnp.float64)
         normal = jnp.asarray(oriented_normal, dtype=point.dtype)
         coordinate = jnp.asarray(normal_coordinate, dtype=point.dtype)
         entity = jnp.asarray(source_entity_id, dtype=jnp.int32)
-        unique_ = jnp.asarray(unique, dtype=bool)
-        regular_ = jnp.asarray(regular, dtype=bool)
+        unique_ = jnp.asarray(unique, dtype=jnp.bool_)
+        regular_ = jnp.asarray(regular, dtype=jnp.bool_)
         margin_ = jnp.asarray(margin, dtype=point.dtype)
         if point.ndim == 0:
             raise ValueError("closest_point must have a trailing coordinate axis.")
@@ -124,13 +124,12 @@ class ClosestPointResult(StrictModule):
             for value in (coordinate, entity, unique_, regular_, margin_)
         ):
             raise ValueError(
-                "Closest-point coordinates, entities, masks, and margins must "
-                "match the point leading shape."
+                "Closest-point coordinates, entities, masks, and margins must match the point leading shape."
             )
         coordinate_valid = (
             jnp.isfinite(coordinate)
             if normal_coordinate_valid is None
-            else jnp.asarray(normal_coordinate_valid, dtype=bool)
+            else jnp.asarray(normal_coordinate_valid, dtype=jnp.bool_)
         )
         if coordinate_valid.shape != leading:
             raise ValueError(
@@ -193,7 +192,7 @@ class ContactCurvatureResult(StrictModule):
         /,
     ):
         curvature = jnp.asarray(principal_curvatures)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         margin = jnp.asarray(regularity_margin, dtype=curvature.dtype)
         if curvature.ndim != 2 or curvature.shape[1] not in (1, 2):
             raise ValueError(
@@ -371,8 +370,7 @@ class CompiledGeometry(StrictModule):
     def require(self, capability: GeometryCapability, /) -> GeometryKernel:
         if not self.has_capability(capability):
             raise NotImplementedError(
-                f"Geometry kernel {type(self.kernel).__name__} does not provide "
-                f"{capability.value}."
+                f"Geometry kernel {type(self.kernel).__name__} does not provide {capability.value}."
             )
         return self.kernel
 
@@ -536,9 +534,9 @@ class AbstractGeometrySource(StrictModule):
         from .analytic._operations import RigidFrame, RigidTransform
 
         frame = RigidFrame.from_axis_angle(axis, angle, translation=center)
-        if np.any(np.asarray(center, dtype=float) != 0.0):
+        if np.any(np.asarray(center, dtype=np.float64) != 0.0):
             rotation = np.asarray(frame.rotation)
-            center_ = np.asarray(center, dtype=float)
+            center_ = np.asarray(center, dtype=np.float64)
             frame = RigidFrame(rotation, center_ - rotation @ center_)
         return RigidTransform(self, frame)
 

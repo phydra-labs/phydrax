@@ -24,7 +24,7 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, edges: ArrayLike, /):
-        values = np.asarray(edges, dtype=float)
+        values = np.asarray(edges, dtype=np.float64)
         if (
             values.ndim != 1
             or values.size < 3
@@ -80,7 +80,7 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
     def aggregation_rate(self, number_density: ArrayLike, kernel: ArrayLike, /) -> Array:
         density = jnp.asarray(number_density)
         coefficients = jnp.asarray(kernel)
-        bins = int(self.centers.size)
+        bins = self.centers.size
         if density.shape != (bins,) or coefficients.shape != (bins, bins):
             raise ValueError(
                 "This bounded aggregation route requires one sectional vector and square kernel."
@@ -105,7 +105,7 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
         density = jnp.asarray(number_density)
         rate_ = jnp.asarray(rate)
         daughters = jnp.asarray(daughter_matrix)
-        bins = int(self.centers.size)
+        bins = self.centers.size
         if (
             density.shape != (bins,)
             or rate_.shape != (bins,)

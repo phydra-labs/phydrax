@@ -174,13 +174,13 @@ class RichardsPlan(StrictModule):
             return _cell_array(
                 face_temperature_K, self.diffusion.face_count, "face_temperature_K"
             )
-        owner, neighbour = (
+        owner, neighbor = (
             self.discretization.owner_cells,
-            self.discretization.neighbour_cells,
+            self.discretization.neighbor_cells,
         )
         return jnp.where(
-            neighbour >= 0,
-            (temperature[owner] + temperature[jnp.maximum(neighbour, 0)]) / 2,
+            neighbor >= 0,
+            (temperature[owner] + temperature[jnp.maximum(neighbor, 0)]) / 2,
             temperature[owner],
         )
 
@@ -249,12 +249,12 @@ class RichardsPlan(StrictModule):
         )
         local = jnp.where(self.diffusion.valid, local * mobility[:, None], 0.0)
         face = self.diffusion.cell_faces
-        owner, neighbour = (
+        owner, neighbor = (
             self.discretization.owner_cells,
-            self.discretization.neighbour_cells,
+            self.discretization.neighbor_cells,
         )
         cells = jnp.arange(self.diffusion.cell_count)[:, None]
-        opposite = jnp.where(cells == owner[face], neighbour[face], owner[face])
+        opposite = jnp.where(cells == owner[face], neighbor[face], owner[face])
         boundary_density = self._face_density(face_pressure, face_temperature)
         incoming_density = jnp.where(
             opposite >= 0, density[jnp.maximum(opposite, 0)], boundary_density[face]
@@ -283,7 +283,7 @@ class RichardsPlan(StrictModule):
         )
         storage = capacity > 0
         if additional_anchored_cells is not None:
-            storage = storage | jnp.asarray(additional_anchored_cells, dtype=bool)
+            storage = storage | jnp.asarray(additional_anchored_cells, dtype=jnp.bool_)
         stored = (
             jnp.zeros(self.diffusion.component_count, dtype=jnp.int32)
             .at[self.diffusion.component_ids]
@@ -336,13 +336,13 @@ class RichardsPlan(StrictModule):
     ):
         pressure = _cell_array(pressure_Pa, self.diffusion.cell_count, "pressure_Pa")
         if face_pressure_Pa is None:
-            owner, neighbour = (
+            owner, neighbor = (
                 self.discretization.owner_cells,
-                self.discretization.neighbour_cells,
+                self.discretization.neighbor_cells,
             )
             face_pressure = jnp.where(
-                neighbour >= 0,
-                (pressure[owner] + pressure[jnp.maximum(neighbour, 0)]) / 2,
+                neighbor >= 0,
+                (pressure[owner] + pressure[jnp.maximum(neighbor, 0)]) / 2,
                 pressure[owner],
             )
         else:

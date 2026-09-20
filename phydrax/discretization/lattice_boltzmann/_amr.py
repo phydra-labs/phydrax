@@ -434,7 +434,7 @@ class LatticeBoltzmannAMRScalingPolicy(StrictModule, NonTrainableState):
     ):
         if kind not in ("acoustic", "diffusive", "declared"):
             raise ValueError("Unknown LBM AMR scaling kind.")
-        steps = tuple(int(value) for value in declared_substeps)
+        steps = tuple(declared_substeps)
         if any(value < 1 for value in steps):
             raise ValueError("Declared AMR substep counts must be positive.")
         if kind != "declared" and steps:
@@ -480,8 +480,8 @@ class LatticeBoltzmannAMRTemporalTracePlan(StrictModule, NonTrainableState):
         *,
         exactness_degree: int = 1,
     ):
-        nodes_ = np.asarray(nodes, dtype=float)
-        coefficients_ = np.asarray(coefficients, dtype=float)
+        nodes_ = np.asarray(nodes, dtype=np.float64)
+        coefficients_ = np.asarray(coefficients, dtype=np.float64)
         degree = int(exactness_degree)
         if (
             nodes_.ndim != 1
@@ -520,7 +520,7 @@ class LatticeBoltzmannAMRTemporalTracePlan(StrictModule, NonTrainableState):
 
     @property
     def node_count(self) -> int:
-        return int(self.nodes.shape[0])
+        return self.nodes.shape[0]
 
     def evaluate(self, values: Array, fraction: Array, /) -> Array:
         values_ = jnp.asarray(values)
@@ -546,7 +546,7 @@ class LatticeBoltzmannAMRState(StrictModule):
         subcycle_phases: Array | None = None,
     ):
         populations = tuple(jnp.asarray(value) for value in level_populations)
-        masks = tuple(jnp.asarray(value, dtype=bool) for value in active_masks)
+        masks = tuple(jnp.asarray(value, dtype=jnp.bool_) for value in active_masks)
         if not populations or len(populations) != len(masks):
             raise ValueError(
                 "AMR state requires matching nonempty level populations and masks."

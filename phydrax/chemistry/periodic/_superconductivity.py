@@ -93,13 +93,13 @@ class PairingChannelPlan(StrictModule):
             )
         minus = np.asarray(minus_k_indices)
         resolved_families = tuple(pairing_families)
-        coupling = np.asarray(coupling_matrix, dtype=complex)
+        coupling = np.asarray(coupling_matrix, dtype=np.complex128)
         labels = tuple(str(value).strip() for value in channel_labels)
         channels = len(labels)
         modes = mode_order.mode_count
         expected = (
             channels,
-            int(mesh.fractional_points.shape[0]),
+            mesh.fractional_points.shape[0],
             modes,
             modes,
         )
@@ -361,7 +361,7 @@ def solve_superconducting_mean_field(
 ) -> SuperconductingMeanFieldResult:
     if not isinstance(plan, SuperconductingMeanFieldPlan):
         raise TypeError("plan must be SuperconductingMeanFieldPlan.")
-    initial = np.asarray(initial_channel_amplitudes, dtype=complex)
+    initial = np.asarray(initial_channel_amplitudes, dtype=np.complex128)
     count = plan.channels.channel_count
     if initial.shape != (count,) or np.any(~np.isfinite(initial)):
         raise ValueError("Initial channel amplitudes must be one finite complex vector.")
@@ -559,7 +559,7 @@ class BdGChernPlan(StrictModule):
     ):
         if not isinstance(connectivity, PreparedReciprocalConnectivity):
             raise TypeError("connectivity must be PreparedReciprocalConnectivity.")
-        matrices = np.asarray(nambu_connection_matrices, dtype=complex)
+        matrices = np.asarray(nambu_connection_matrices, dtype=np.complex128)
         if (
             matrices.ndim != 3
             or matrices.shape[0] != connectivity.edge_count

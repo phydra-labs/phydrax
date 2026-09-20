@@ -370,7 +370,7 @@ def _run(profile: str, /) -> dict[str, Any]:
             "dataset_id": dataset.dataset_id,
             "parameters": dataset.parameters,
             "training_samples": training.sample_count,
-            "holdout_samples": int(validation_targets.shape[0]),
+            "holdout_samples": validation_targets.shape[0],
         },
         "circuit_cases": cases,
         "fit_cases": fits,

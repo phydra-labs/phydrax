@@ -14,12 +14,12 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ._fingerprint import canonical_fingerprint
-from ._strict import AbstractAttribute, StrictModule
+from ._strict import StrictModule
 from .domain._measure import MeasureKind
 
 
 def _shape(value, /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner} must contain positive dimensions.")
     return shape
@@ -30,16 +30,16 @@ def _real_inexact(value: ArrayLike, /, *, owner: str) -> Array:
     if jnp.iscomplexobj(array):
         raise TypeError(f"{owner} must be real-valued.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
 class AbstractEventLayout(StrictModule):
     """Invertible public-event to real-coordinate layout."""
 
-    coordinate_size: AbstractAttribute[int]
-    measure_kind: AbstractAttribute[MeasureKind]
-    layout_id: AbstractAttribute[str]
+    coordinate_size: eqx.AbstractVar[int]
+    measure_kind: eqx.AbstractVar[MeasureKind]
+    layout_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def to_real_coordinates(self, value: Any, /) -> Array:
@@ -82,7 +82,7 @@ class ArrayEventLayout(AbstractEventLayout):
 
     def from_real_coordinates(self, coordinates: ArrayLike, /) -> Array:
         array = _real_inexact(coordinates, owner="Event coordinates")
-        if array.ndim < 1 or int(array.shape[-1]) != self.coordinate_size:
+        if array.ndim < 1 or array.shape[-1] != self.coordinate_size:
             raise ValueError(
                 f"Coordinates must end in size {self.coordinate_size}; got {array.shape}."
             )
@@ -127,7 +127,7 @@ class ComplexEventLayout(AbstractEventLayout):
 
     def from_real_coordinates(self, coordinates: ArrayLike, /) -> Array:
         array = _real_inexact(coordinates, owner="Complex event coordinates")
-        if array.ndim < 1 or int(array.shape[-1]) != self.coordinate_size:
+        if array.ndim < 1 or array.shape[-1] != self.coordinate_size:
             raise ValueError(
                 f"Coordinates must end in size {self.coordinate_size}; got {array.shape}."
             )
@@ -158,12 +158,12 @@ class PyTreeEventLayout(AbstractEventLayout):
         paths = []
         for path, leaf in path_leaves:
             array = _real_inexact(leaf, owner="PyTree event leaf")
-            shape = tuple(int(size) for size in array.shape)
+            shape = tuple(array.shape)
             if any(size <= 0 for size in shape):
                 raise ValueError("PyTree event leaves cannot contain empty axes.")
             dtypes.append(array.dtype)
             shapes.append(shape)
-            sizes.append(int(array.size))
+            sizes.append(array.size)
             paths.append(jax.tree_util.keystr(path))
         coordinate_size = sum(sizes)
         resolved = layout_id or canonical_fingerprint(
@@ -209,13 +209,15 @@ class PyTreeEventLayout(AbstractEventLayout):
             if leading_shape is None:
                 leading_shape = leading
             elif tuple(leading) != tuple(leading_shape):
-                raise ValueError("Every PyTree event leaf must share leading sample axes.")
+                raise ValueError(
+                    "Every PyTree event leaf must share leading sample axes."
+                )
             flattened.append(array.reshape(tuple(leading) + (size,)))
         return jnp.concatenate(flattened, axis=-1)
 
     def from_real_coordinates(self, coordinates: ArrayLike, /) -> Any:
         array = _real_inexact(coordinates, owner="PyTree event coordinates")
-        if array.ndim < 1 or int(array.shape[-1]) != self.coordinate_size:
+        if array.ndim < 1 or array.shape[-1] != self.coordinate_size:
             raise ValueError(
                 f"Coordinates must end in size {self.coordinate_size}; got {array.shape}."
             )

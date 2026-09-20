@@ -103,14 +103,16 @@ class EarthquakeCyclePlan(StrictModule, NonTrainableState):
         *,
         termination: NonlinearTermination | None = None,
     ):
-        stiffness = np.asarray(stiffness_Pa_m, dtype=float)
+        stiffness = np.asarray(stiffness_Pa_m, dtype=np.float64)
         count = stiffness.shape[0] if stiffness.ndim == 2 else 0
-        loading = np.broadcast_to(np.asarray(loading_rate_Pa_s, dtype=float), (count,))
+        loading = np.broadcast_to(
+            np.asarray(loading_rate_Pa_s, dtype=np.float64), (count,)
+        )
         normal = np.broadcast_to(
-            np.asarray(effective_normal_stress_Pa, dtype=float), (count,)
+            np.asarray(effective_normal_stress_Pa, dtype=np.float64), (count,)
         )
         damping = np.broadcast_to(
-            np.asarray(radiation_damping_Pa_s_m, dtype=float), (count,)
+            np.asarray(radiation_damping_Pa_s_m, dtype=np.float64), (count,)
         )
         if (
             count == 0

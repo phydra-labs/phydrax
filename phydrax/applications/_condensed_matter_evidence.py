@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from .._fingerprint import canonical_fingerprint
+from .._validation import canonical_identifier as _identifier
 from ..chemistry._campaigns import periodic_chemistry_qualification_campaigns
 from ..chemistry.periodic._embedding_qualification import (
     green_embedding_candidate_campaigns,
@@ -70,12 +71,6 @@ from .superconductivity._qualification import (
     superconductivity_candidate_campaigns,
     superconductivity_candidate_profiles,
 )
-
-
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
 
 
 @dataclass(frozen=True, slots=True)

@@ -23,8 +23,8 @@ def test_antiunitary_magnetic_symmetry_compiles_real_linear_invariants():
         [False, True],
         [[0, 1], [1, 0]],
         [[0], [0]],
-        np.zeros((2, 1, 3), dtype=int),
-        np.ones((2, 1, 1), dtype=complex),
+        np.zeros((2, 1, 3), dtype="int64"),
+        np.ones((2, 1, 1), dtype="complex128"),
     )
     certificate = compile_magnetic_symmetry_constraints(plan)
     assert int(certificate.rank) == 1
@@ -49,8 +49,8 @@ def test_antiunitary_flags_must_form_group_homomorphism():
             [True, False],
             [[0], [0]],
             [[0], [0]],
-            np.zeros((2, 1, 3), dtype=int),
-            np.ones((2, 1, 1), dtype=complex),
+            np.zeros((2, 1, 3), dtype="int64"),
+            np.ones((2, 1, 1), dtype="complex128"),
         )
 
 

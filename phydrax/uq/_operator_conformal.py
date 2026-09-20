@@ -219,7 +219,7 @@ def _require_nonempty_calibration_cases(
     case_axis: str,
 ) -> None:
     position = case_axes.index(case_axis)
-    selected = jnp.moveaxis(jnp.asarray(mask, dtype=bool), position, 0)
+    selected = jnp.moveaxis(jnp.asarray(mask, dtype=jnp.bool_), position, 0)
     if bool(jnp.any(~jnp.any(selected.reshape((selected.shape[0], -1)), axis=-1))):
         raise ValueError("Every calibration case must contain positive physical support.")
 

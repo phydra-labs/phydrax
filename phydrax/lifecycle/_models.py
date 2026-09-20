@@ -15,7 +15,7 @@ from .._trainable import NonTrainableState
 
 
 RunStatus: TypeAlias = Literal[
-    "planned", "queued", "running", "completed", "failed", "cancelled"
+    "planned", "queued", "running", "completed", "failed", "canceled"
 ]
 MetadataRecord: TypeAlias = tuple[tuple[str, str], ...]
 PayloadRecord: TypeAlias = tuple[str, str]
@@ -271,7 +271,7 @@ class RunRecord(StrictModule, NonTrainableState):
             "running",
             "completed",
             "failed",
-            "cancelled",
+            "canceled",
         ):
             raise ValueError("Unknown run status.")
         self.run_id = run

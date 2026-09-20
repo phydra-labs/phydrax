@@ -44,8 +44,8 @@ def export_vortex_population(state: VortexPopulationState, /) -> VortexExportPay
     identifier = canonical_fingerprint(
         {
             "kind": "vortex-population-export",
-            "active_count": int(indices.size),
-            "dimension": int(state.positions.shape[1]),
+            "active_count": indices.size,
+            "dimension": state.positions.shape[1],
         }
     )
     return VortexExportPayload(
@@ -82,7 +82,7 @@ def export_vortex_ring_sheet(state: VortexRingSheetState, /) -> VortexExportPayl
         {
             "kind": "vortex-ring-sheet-export",
             "topology": state.topology.topology_id,
-            "active_edges": int(edge_indices.size),
+            "active_edges": edge_indices.size,
         }
     )
     return VortexExportPayload(

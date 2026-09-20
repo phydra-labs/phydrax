@@ -456,7 +456,7 @@ def test_ledger_integrates_charge_rc_dissipation_and_thermal_storage():
     native_solution = SimpleNamespace(
         times=times,
         states=states,
-        valid=jnp.ones(times.shape, dtype=bool),
+        valid=jnp.ones(times.shape, dtype="bool"),
         backend_successful=jnp.asarray(True),
     )
     ledger = adapter.ledger(prepared, native_solution, runtime)
@@ -504,7 +504,7 @@ def test_ledger_integrates_charge_rc_dissipation_and_thermal_storage():
     nonfinite = SimpleNamespace(
         times=times,
         states=nonfinite_states,
-        valid=jnp.ones(times.shape, dtype=bool),
+        valid=jnp.ones(times.shape, dtype="bool"),
         backend_successful=jnp.asarray(True),
     )
     assert not bool(adapter.ledger(prepared, nonfinite, runtime).successful)

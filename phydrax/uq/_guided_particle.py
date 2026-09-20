@@ -98,7 +98,7 @@ class BootstrapParticleProposal(AbstractParticleProposal):
     proposal_id: str = eqx.field(static=True)
 
     def __init__(self, state_shape: tuple[int, ...], /):
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("state_shape dimensions must be positive.")
         self.state_shape = shape
@@ -176,7 +176,7 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
             raise TypeError("sample and log_prob must be callable.")
         if lookahead is not None and not callable(lookahead):
             raise TypeError("lookahead must be callable or None.")
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("state_shape dimensions must be positive.")
         if not isinstance(proposal_id, str) or not proposal_id:
@@ -283,7 +283,7 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
     proposal_id: str = eqx.field(static=True)
 
     def __init__(self, state_shape: tuple[int, ...], /):
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("state_shape dimensions must be positive.")
         self.state_shape = shape
@@ -452,8 +452,7 @@ def _linear_gaussian_condition(
         observation, LinearGaussianObservationModel
     ):
         raise TypeError(
-            "LinearGaussianGuidedParticleProposal requires linear-Gaussian "
-            "transition and observation models."
+            "LinearGaussianGuidedParticleProposal requires linear-Gaussian transition and observation models."
         )
     state_size = prod(problem.model.state_shape)
     observation_size = prod(problem.model.observation_shape)
@@ -467,7 +466,7 @@ def _linear_gaussian_condition(
     )
     transition_mean = transition_matrix @ previous + transition_offset
     values = jnp.asarray(observation_value).reshape((observation_size,))
-    mask = jnp.asarray(mask_value, dtype=bool).reshape((observation_size,))
+    mask = jnp.asarray(mask_value, dtype=jnp.bool_).reshape((observation_size,))
     active = mask.astype(transition_mean.dtype)
     effective_matrix = observation_matrix * active[:, None]
     effective_covariance = observation_covariance * active[:, None] * active[
@@ -667,7 +666,7 @@ def guided_particle_filter(
                 step_proposal_ancestors.append(identity)
                 step_ancestors.append(identity)
                 step_proposal_valid.append(
-                    jnp.full((count,), alive[case_index], dtype=bool)
+                    jnp.full((count,), alive[case_index], dtype=jnp.bool_)
                 )
                 step_ess.append(effective_sample_size(log_weights[case_index]))
                 step_auxiliary_resampled.append(jnp.asarray(False))

@@ -56,10 +56,9 @@ class _MatrixVectorActionCallable(StrictModule):
             self.state.func(*state_args, key=key, **kwargs),
             role="quantum state",
         )
-        if int(hamiltonian.shape[1]) != int(state.shape[0]):
+        if hamiltonian.shape[1] != state.shape[0]:
             raise ValueError(
-                "Hamiltonian and state dimensions must match; "
-                f"got {hamiltonian.shape} and {state.shape}."
+                f"Hamiltonian and state dimensions must match; got {hamiltonian.shape} and {state.shape}."
             )
         return hamiltonian @ state
 
@@ -142,8 +141,7 @@ def schrodinger_residual(
         action = hamiltonian(state)
         if not isinstance(action, DomainFunction):
             raise TypeError(
-                "Hamiltonian action must return a DomainFunction; "
-                f"got {type(action).__name__}."
+                f"Hamiltonian action must return a DomainFunction; got {type(action).__name__}."
             )
     else:
         raise TypeError(

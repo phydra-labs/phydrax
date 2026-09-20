@@ -43,14 +43,14 @@ class NollZernikeOPD(StrictModule):
         *,
         pupil_center: ArrayLike = (0.0, 0.0),
     ):
-        indices = tuple(int(index) for index in noll_indices)
+        indices = tuple(noll_indices)
         if not indices or any(index <= 0 for index in indices):
             raise ValueError("noll_indices must contain positive one-based indices.")
         if len(set(indices)) != len(indices):
             raise ValueError("noll_indices must be unique.")
         coefficients_ = jnp.asarray(coefficients)
         if not jnp.issubdtype(coefficients_.dtype, jnp.floating):
-            coefficients_ = coefficients_.astype(float)
+            coefficients_ = coefficients_.astype("float64")
         radius = jnp.asarray(pupil_radius, dtype=coefficients_.dtype)
         center = jnp.asarray(pupil_center, dtype=coefficients_.dtype)
         if coefficients_.shape != (len(indices),):

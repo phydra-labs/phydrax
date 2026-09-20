@@ -66,8 +66,7 @@ class DifferentiableMap(StrictModule):
         )
         if result.shape[-1:] != (self.target.dimension,):
             raise ValueError(
-                "Differentiable map output must have trailing dimension "
-                f"{self.target.dimension}; got {result.shape}."
+                f"Differentiable map output must have trailing dimension {self.target.dimension}; got {result.shape}."
             )
         return result
 
@@ -209,8 +208,8 @@ class ImmersionValidationReport(StrictModule):
         finite: ArrayLike,
         minimum_singular_value: ArrayLike,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.minimum_singular_value = jnp.asarray(minimum_singular_value)
 
 

@@ -205,7 +205,7 @@ def _signing_message(payload: bytes, purpose: str, signed_at: int) -> bytes:
     if type(signed_at) is not int or signed_at < 0:
         raise ValueError("Signature timestamp must be a nonnegative integer.")
     return (
-        b"phydrax-signature-v1\x00"
+        b"phydrax-signature\x00"
         + purpose.encode("utf-8")
         + b"\x00"
         + str(signed_at).encode("ascii")

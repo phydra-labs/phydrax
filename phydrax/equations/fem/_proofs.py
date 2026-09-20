@@ -508,7 +508,7 @@ def _solve_hdg_local_system(
         right_hand_side = right_hand_side.at[safe].add(
             jnp.where(valid[cell], condensed.right_hand_side[cell], 0.0)
         )
-    boundary = jnp.asarray(boundary_mask, dtype=bool)
+    boundary = jnp.asarray(boundary_mask, dtype=jnp.bool_)
     prescribed = jnp.asarray(boundary_values)
     if boundary.shape != (count,) or prescribed.shape != (count,):
         raise ValueError("HDG boundary masks/values must match trace coordinates.")
@@ -585,7 +585,7 @@ def solve_hdg_poisson(
     cell_count = block.cell_count
     local_field_size = element.local_dof_count
     trace_space = HDGTraceSpace(discretization.mesh)
-    local_trace_size = int(trace_space.cell_trace_dofs.shape[1])
+    local_trace_size = trace_space.cell_trace_dofs.shape[1]
     plan = HDGCondensationPlan(trace_space, local_field_size)
     local_size = local_field_size + local_trace_size
     matrices = jnp.zeros((cell_count, local_size, local_size), dtype=weights.dtype)

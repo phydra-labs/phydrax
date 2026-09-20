@@ -696,8 +696,7 @@ class PlantStateVectorCodec(StrictModule):
             getattr(mode, name, None) != value for name, value in expected_static.items()
         ):
             raise ValueError(
-                f"{owner} dynamic mode sidecar provenance, schema, paths, or role "
-                "does not match this codec operation."
+                f"{owner} dynamic mode sidecar provenance, schema, paths, or role does not match this codec operation."
             )
         expected_mode_id = _mode_identity(
             self.dynamic_mode_paths,
@@ -1246,8 +1245,7 @@ class ControlVectorCodec(StrictModule):
             )
         if np.dtype(vector.dtype) != self.command_dtype:
             raise TypeError(
-                f"Encoded control dtype {vector.dtype} does not match "
-                f"{self.command_dtype}."
+                f"Encoded control dtype {vector.dtype} does not match {self.command_dtype}."
             )
         case_shape = vector.shape[: self.schema.case_ndim]
         leaves: list[Array] = []

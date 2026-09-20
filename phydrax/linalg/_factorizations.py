@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, PyTree
 
-import phydrax.ein as ein
+from phydrax import ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -103,15 +103,16 @@ class FactorizationPolicy(StrictModule):
         if not isinstance(differentiation_, DifferentiationPolicy):
             raise TypeError("differentiation must be a DifferentiationPolicy or None.")
         self.differentiation = differentiation_
-        self.derivative_solve = (
+        derivative_solve_ = (
             LinearDerivativeSolvePolicy()
             if derivative_solve is None
             else derivative_solve
         )
-        if not isinstance(self.derivative_solve, LinearDerivativeSolvePolicy):
+        if not isinstance(derivative_solve_, LinearDerivativeSolvePolicy):
             raise TypeError(
                 "derivative_solve must be a LinearDerivativeSolvePolicy or None."
             )
+        self.derivative_solve = derivative_solve_
         self.failure = FailurePolicy() if failure is None else failure
         self.resources = SolveResourcePolicy() if resources is None else resources
         self.precision = precision
@@ -836,8 +837,7 @@ def _nullspace(
     )
     if basis_bytes > factorization.policy.resources.factorization_bytes:
         raise ValueError(
-            f"Nullspace basis requires {basis_bytes} bytes, exceeding the "
-            "factorization budget."
+            f"Nullspace basis requires {basis_bytes} bytes, exceeding the factorization budget."
         )
     if workspace_bytes > factorization.policy.resources.workspace_bytes:
         raise ValueError(

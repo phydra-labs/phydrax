@@ -30,7 +30,6 @@ def write_triangle_fv_archive(
         path,
         manifest={
             "archive_kind": "triangle-finite-volume-mesh",
-            "schema_version": 1,
             "plan_id": plan.plan_id,
             "field_name": plan.field_name,
             "component_names": list(plan.component_names),
@@ -42,10 +41,7 @@ def write_triangle_fv_archive(
 
 def read_triangle_fv_archive(path: str | Path, /) -> TriangleFiniteVolumePlan:
     manifest, arrays = read_array_archive(path)
-    if (
-        manifest.get("archive_kind") != "triangle-finite-volume-mesh"
-        or manifest.get("schema_version") != 1
-    ):
+    if manifest.get("archive_kind") != "triangle-finite-volume-mesh":
         raise ValueError("Unsupported triangle finite-volume mesh archive.")
     vertices = arrays["vertices"]
     triangles = arrays["triangles"]

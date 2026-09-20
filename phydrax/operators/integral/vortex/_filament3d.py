@@ -140,7 +140,7 @@ class PreparedFilamentVelocity3D(StrictModule):
                 {
                     "kind": "filament-velocity-evaluation",
                     "evaluator": self.evaluator_id,
-                    "target_count": int(target.shape[0]),
+                    "target_count": target.shape[0],
                 }
             ),
         )

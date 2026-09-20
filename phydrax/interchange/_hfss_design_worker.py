@@ -82,8 +82,7 @@ def _distribution_evidence(name, expected_version):
     distribution = importlib.metadata.distribution(name)
     if distribution.version != expected_version:
         raise RuntimeError(
-            f"Pinned dependency mismatch for {name}: "
-            f"expected {expected_version}, observed {distribution.version}."
+            f"Pinned dependency mismatch for {name}: expected {expected_version}, observed {distribution.version}."
         )
     metadata = distribution.read_text("METADATA")
     record = distribution.read_text("RECORD")
@@ -192,7 +191,7 @@ def main():
     from qdesignoptimizer.design_analysis import DesignAnalysis
     from qdesignoptimizer.design_analysis_types import DesignAnalysisState, MeshingMap
     from qdesignoptimizer.utils.chip_generation import create_chip_base
-    from qiskit_metal.analyses.quantization import LOManalysis
+    from qiskit_metal.analyzes.quantization import LOManalysis
 
     if qdesignoptimizer.__version__ != "0.2.0":
         raise RuntimeError(

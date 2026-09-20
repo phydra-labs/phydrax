@@ -37,7 +37,7 @@ def test_epw_subhour_tmy_leap_and_interval_endings():
         )
 
 
-def test_observed_year_rollover_is_not_relabelled_as_typical_year():
+def test_observed_year_rollover_is_not_relabeled_as_typical_year():
     rows = energyplus_reference_weather().decode().splitlines()
     rows[7] = "DATA PERIODS,1,1,Data,Monday,12/31,1/1"
     first = rows[8].split(",")

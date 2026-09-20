@@ -328,7 +328,7 @@ def _solve_differential_flow(
         return solved, solver_valid, finite, backend_status
 
     breakpoints = jnp.asarray(context.input_breakpoints, dtype=start.dtype)
-    breakpoint_valid = jnp.asarray(context.input_breakpoint_valid, dtype=bool)
+    breakpoint_valid = jnp.asarray(context.input_breakpoint_valid, dtype=jnp.bool_)
     padding_step = jnp.abs(end - start) + jnp.asarray(1.0, dtype=start.dtype)
     padding = end + padding_step * (
         jnp.arange(breakpoints.shape[0], dtype=start.dtype) + 1.0
@@ -815,7 +815,7 @@ def _observation_update(
     unscented_beta: float,
     unscented_kappa: float,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array]:
-    observation_size = prod(observation_shape) if observation_shape else 1
+    prod(observation_shape) if observation_shape else 1
     (
         observation_mean,
         observation_covariance,

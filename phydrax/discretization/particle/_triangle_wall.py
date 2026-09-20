@@ -179,7 +179,7 @@ class PreparedTriangleWall(StrictModule, NonTrainableState):
 
     @property
     def face_count(self) -> int:
-        return int(self.face_vertices.shape[0])
+        return self.face_vertices.shape[0]
 
 
 def _segment_closest(point, start, end, /):

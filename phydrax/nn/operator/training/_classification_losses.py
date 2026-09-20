@@ -96,8 +96,7 @@ def _resolve_fields(
     truth = targets.field(target_name)
     if predicted.query_name != truth.query_name:
         raise ValueError(
-            f"Prediction {prediction_name!r} and target {target_name!r} must use "
-            "the same query."
+            f"Prediction {prediction_name!r} and target {target_name!r} must use the same query."
         )
     for label, field in (("prediction", predicted), ("target", truth)):
         actual = field.spec.classification
@@ -148,7 +147,7 @@ def _reduce_cases(
         return jnp.sum(values)
     if active is None:
         return jnp.mean(values)
-    included = jnp.asarray(active, dtype=bool)
+    included = jnp.asarray(active, dtype=jnp.bool_)
     safe = jnp.where(included, values, 0.0)
     mass = jnp.sum(included)
     return jnp.where(mass > 0, jnp.sum(safe) / mass, 0.0)
@@ -167,7 +166,7 @@ def _reduce_pointwise(
 ) -> Array:
     scores = jnp.asarray(pointwise)
     expected = case_shape + query.sample_shape
-    if tuple(int(size) for size in scores.shape) != expected:
+    if tuple(scores.shape) != expected:
         raise ValueError(
             "Pointwise classification loss must have one scalar per query sample; "
             f"expected {expected}, got {scores.shape}."
@@ -225,7 +224,7 @@ def _pointwise_term(
     alpha: float | tuple[float, ...] | None = None,
 ) -> Array:
     if term.weight == 0.0:
-        return jnp.zeros((), dtype=float)
+        return jnp.zeros((), dtype=jnp.float64)
     logits, target, query = _resolve_fields(
         prediction,
         targets,
@@ -418,8 +417,7 @@ class OperatorFocalClassificationLoss(AbstractOperatorLossTerm):
                     not jnp.isfinite(value) or value <= 0.0 for value in resolved
                 ):
                     raise ValueError(
-                        "Multiclass focal alpha must provide one finite positive "
-                        "value per class."
+                        "Multiclass focal alpha must provide one finite positive value per class."
                     )
                 alpha_value: float | tuple[float, ...] = resolved
             else:
@@ -427,8 +425,7 @@ class OperatorFocalClassificationLoss(AbstractOperatorLossTerm):
                     jnp.isfinite(resolved[0]) and 0.0 < resolved[0] < 1.0
                 ):
                     raise ValueError(
-                        "Binary and multilabel focal alpha must be a scalar inside "
-                        "(0, 1)."
+                        "Binary and multilabel focal alpha must be a scalar inside (0, 1)."
                     )
                 alpha_value = resolved[0]
             object.__setattr__(self, "alpha", alpha_value)
@@ -571,7 +568,7 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
         context: OperatorLossContext,
     ) -> Array:
         if self.weight == 0.0:
-            return jnp.zeros((), dtype=float)
+            return jnp.zeros((), dtype=jnp.float64)
         del model, batch, key, step, training
         logits, target, query = _resolve_fields(
             prediction,
@@ -669,7 +666,7 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
         intersections = []
         predicted_masses = []
         target_masses = []
-        channel_count = int(probability_channels.shape[-1])
+        channel_count = probability_channels.shape[-1]
         for index in range(channel_count):
             probability = jnp.where(
                 mask,

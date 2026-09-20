@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
 from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
@@ -21,7 +22,7 @@ from ._core import LayerDiscretizationReport
 from ._surface3d import SurfacePanelization3D
 
 
-class HelmholtzLayerKernel3D(eqx.Module):
+class HelmholtzLayerKernel3D(StrictModule):
     """Outgoing three-dimensional Helmholtz fundamental solution."""
 
     wavenumber: float = eqx.field(static=True)
@@ -34,7 +35,7 @@ class HelmholtzLayerKernel3D(eqx.Module):
         self.wavenumber = value
         self._kernel_id = canonical_fingerprint(
             {
-                "kind": "helmholtz-layer-kernel-3d-v1",
+                "kind": "helmholtz-layer-kernel-3d",
                 "fundamental_solution": "exp(i*k*r)/(4*pi*r)",
                 "normal": "outward-source",
                 "radiation": "outgoing",
@@ -100,16 +101,16 @@ class HelmholtzLayerPotential3D(AbstractArrayModel):
         if kind not in ("single", "double"):
             raise ValueError("3D Helmholtz layer kind must be 'single' or 'double'.")
         density_ = (
-            jnp.zeros((panelization.node_count,), dtype=complex)
+            jnp.zeros((panelization.node_count,), dtype=jnp.complex128)
             if density is None
-            else jnp.asarray(density, dtype=complex)
+            else jnp.asarray(density, dtype=jnp.complex128)
         )
         if density_.shape != (panelization.node_count,):
             raise ValueError("Layer density must match surface node count.")
         kernel = HelmholtzLayerKernel3D(wavenumber)
         representation_id = canonical_fingerprint(
             {
-                "kind": "discrete-helmholtz-layer-potential-3d-v1",
+                "kind": "discrete-helmholtz-layer-potential-3d",
                 "kernel_id": kernel.kernel_id,
                 "panelization_id": panelization.panelization_id,
                 "layer_kind": kind,
@@ -154,7 +155,7 @@ class HelmholtzLayerPotential3D(AbstractArrayModel):
 
     def __call__(self, target: Array, /, *, key=None) -> Array:
         del key
-        value = jnp.asarray(target, dtype=float)
+        value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (3,):
             raise ValueError(f"3D layer target must have shape (3,); got {value.shape}.")
         differences = value[None, :] - self.panelization.points
@@ -181,7 +182,7 @@ class HelmholtzLayerPotential3D(AbstractArrayModel):
         return contract("n,n,n->", kernels, self.panelization.weights, self.density)
 
     def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
             raise ValueError("3D Helmholtz targets must have shape (target_count, 3).")
         return jax.vmap(self)(values)
@@ -221,12 +222,12 @@ class HelmholtzCombinedField3D(AbstractArrayModel):
         if not jnp.isfinite(coupling) or coupling <= 0.0:
             raise ValueError("eta must be finite and positive.")
         kernel = HelmholtzLayerKernel3D(wavenumber)
-        density_ = jnp.asarray(density, dtype=complex)
+        density_ = jnp.asarray(density, dtype=jnp.complex128)
         if density_.shape != (panelization.node_count,):
             raise ValueError("Combined-field density must match surface node count.")
         representation_id = canonical_fingerprint(
             {
-                "kind": "helmholtz-brakhage-werner-field-3d-v1",
+                "kind": "helmholtz-brakhage-werner-field-3d",
                 "kernel_id": kernel.kernel_id,
                 "panelization_id": panelization.panelization_id,
                 "eta": coupling,
@@ -267,7 +268,7 @@ class HelmholtzCombinedField3D(AbstractArrayModel):
 
     def __call__(self, target: Array, /, *, key=None) -> Array:
         del key
-        value = jnp.asarray(target, dtype=float)
+        value = jnp.asarray(target, dtype=jnp.float64)
         differences = value[None, :] - self.panelization.points
         squared = jnp.sum(differences * differences, axis=-1)
         value = eqx.error_if(
@@ -291,7 +292,7 @@ class HelmholtzCombinedField3D(AbstractArrayModel):
         )
 
     def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
             raise ValueError(
                 "3D combined-field targets must have shape (target_count, 3)."

@@ -78,9 +78,7 @@ def _shape_product(shape: tuple[int, ...], /) -> int:
 def _flatten_targets(batch: MLBatch, /) -> tuple[Array, Array]:
     targets = batch.require_targets()
     sample_shape = batch.case_shape + (batch.sample_count,)
-    width = _shape_product(
-        tuple(int(size) for size in targets.shape[len(sample_shape) :])
-    )
+    width = _shape_product(tuple(targets.shape[len(sample_shape) :]))
     if width <= 0:
         width = 1
     values = targets.reshape(sample_shape + (width,))
@@ -130,7 +128,7 @@ def _canonicalize_columns(columns: Array, /) -> Array:
 
 
 def _center_value(value: Array, mean: Array, case_shape: tuple[int, ...], /) -> Array:
-    leading = tuple(int(size) for size in value.shape[:-1])
+    leading = tuple(value.shape[:-1])
     if case_shape and leading[: len(case_shape)] != case_shape:
         raise ValueError(f"Input must begin with fitted case shape {case_shape}.")
     sample_ndim = len(leading) - len(case_shape)
@@ -143,7 +141,7 @@ def _apply_matrix(
     case_shape: tuple[int, ...],
     /,
 ) -> Array:
-    leading = tuple(int(size) for size in value.shape[:-1])
+    leading = tuple(value.shape[:-1])
     cases = _shape_product(case_shape)
     flat = value.reshape((cases, -1, value.shape[-1]))
     matrix_flat = matrix.reshape((cases, matrix.shape[-2], matrix.shape[-1]))
@@ -180,10 +178,10 @@ class CCAModel(AbstractArrayModel):
         self.x_rotations = jnp.asarray(x_rotations)
         self.y_rotations = jnp.asarray(y_rotations)
         self.canonical_correlations = jnp.asarray(canonical_correlations)
-        self.in_size = int(self.x_mean.shape[-1])
-        self.target_size = int(self.y_mean.shape[-1])
-        self.out_size = int(self.x_rotations.shape[-1])
-        self.case_shape = tuple(int(size) for size in self.x_mean.shape[:-1])
+        self.in_size = self.x_mean.shape[-1]
+        self.target_size = self.y_mean.shape[-1]
+        self.out_size = self.x_rotations.shape[-1]
+        self.case_shape = tuple(self.x_mean.shape[:-1])
 
     def _apply(self, value: Array, mean: Array, rotations: Array, width: int, /) -> Array:
         if value.shape[-1:] != (width,):
@@ -274,7 +272,7 @@ class CCA(AbstractRecipe):
         y_whitener, y_rank = _hermitian_inverse_root(cyy, self.regularization)
         whitened = x_whitener @ cxy @ y_whitener
         u, correlations, vh = jnp.linalg.svd(whitened, full_matrices=False)
-        available = min(int(x.shape[-1]), int(y.shape[-1]))
+        available = min(x.shape[-1], y.shape[-1])
         if self.n_components > available:
             raise ValueError(f"n_components cannot exceed {available}.")
         rank = self.n_components
@@ -388,11 +386,11 @@ class PLSModel(AbstractArrayModel):
         self.x_weights = jnp.asarray(x_weights)
         self.x_decoder = jnp.asarray(x_decoder)
         self.y_loadings = jnp.asarray(y_loadings)
-        self.in_size = int(self.x_mean.shape[-1])
-        self.out_size = int(self.x_weights.shape[-1])
-        self.target_size = int(self.y_mean.shape[-1])
+        self.in_size = self.x_mean.shape[-1]
+        self.out_size = self.x_weights.shape[-1]
+        self.target_size = self.y_mean.shape[-1]
 
-        self.case_shape = tuple(int(size) for size in self.x_mean.shape[:-1])
+        self.case_shape = tuple(self.x_mean.shape[:-1])
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -453,7 +451,7 @@ class PLS(AbstractRecipe):
         )
         cross = ein.contract("...ni,...n,...nj->...ij", jnp.conj(xc), weights, yc)
         u, singular, _vh = jnp.linalg.svd(cross, full_matrices=False)
-        available = min(int(x.shape[-1]), int(y.shape[-1]))
+        available = min(x.shape[-1], y.shape[-1])
         if self.n_components > available:
             raise ValueError(f"n_components cannot exceed {available}.")
         rank = self.n_components

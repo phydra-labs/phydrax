@@ -28,12 +28,12 @@ def test_event_driven_jump_finds_norm_threshold_events():
 
 def test_mps_canonicalization_and_tebd_identity():
     state = phx.tensor_network.product_mps(
-        jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=complex)
+        jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )
     canonical, evidence = phx.tensor_network.canonicalize_mps(state, center=1)
     assert bool(evidence.valid)
     hamiltonian = phx.tensor_network.NearestNeighborHamiltonian(
-        (jnp.zeros((4, 4), dtype=complex),),
+        (jnp.zeros((4, 4), dtype="complex128"),),
         (2, 2),
         hamiltonian_id="zero-two-site",
     )
@@ -49,14 +49,14 @@ def test_mps_canonicalization_and_tebd_identity():
 
 def test_mps_jump_and_locally_purified_channel():
     state = phx.tensor_network.product_mps(
-        jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
+        jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
     )
     hamiltonian = phx.tensor_network.NearestNeighborHamiltonian(
-        (jnp.zeros((4, 4), dtype=complex),),
+        (jnp.zeros((4, 4), dtype="complex128"),),
         (2, 2),
         hamiltonian_id="zero",
     )
-    lowering = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=complex)
+    lowering = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype="complex128")
     problem = phx.solver.MPSQuantumJumpProblem(
         hamiltonian,
         (phx.solver.LocalMPSJump(0, lowering, jump_id="loss"),),
@@ -72,7 +72,7 @@ def test_mps_jump_and_locally_purified_channel():
     assert bool(result.valid)
 
     purification = phx.tensor_network.LocallyPurifiedDensity(
-        (jnp.asarray([[[[0.0]], [[1.0]]]], dtype=complex),)
+        (jnp.asarray([[[[0.0]], [[1.0]]]], dtype="complex128"),)
     )
     gamma = 0.2
     kraus = jnp.asarray(
@@ -80,7 +80,7 @@ def test_mps_jump_and_locally_purified_channel():
             [[1.0, 0.0], [0.0, jnp.sqrt(1.0 - gamma)]],
             [[0.0, jnp.sqrt(gamma)], [0.0, 0.0]],
         ],
-        dtype=complex,
+        dtype="complex128",
     )
     channel = phx.solver.LocalKrausChannel(0, kraus, channel_id="amplitude-damping")
     purified = phx.solver.solve_purified_lindblad(
@@ -95,8 +95,8 @@ def test_heom_continuation_and_nonmarkovian_comparison():
     density = jnp.asarray([[0.6 + 0.0j, 0.0j], [0.0j, 0.4 + 0.0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.05, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
-        jnp.zeros((2, 2), dtype=complex),
-        jnp.asarray([[1, 0], [0, -1]], dtype=complex),
+        jnp.zeros((2, 2), dtype="complex128"),
+        jnp.asarray([[1, 0], [0, -1]], dtype="complex128"),
         expansion,
         phx.solver.HEOMHierarchy(1, 1),
         density,
@@ -112,7 +112,7 @@ def test_heom_continuation_and_nonmarkovian_comparison():
 
 
 def test_map_level_nonmarkovian_physicality():
-    identity = jnp.eye(4, dtype=complex)
+    identity = jnp.eye(4, dtype="complex128")
     report = phx.operators.quantum.analyze_dynamical_map_series(
         jnp.stack((identity, identity)), 2
     )
@@ -144,18 +144,18 @@ def test_adaptive_fock_continuation_and_fermionic_gaussian():
 
 
 def test_process_causality_and_neural_jump_projection():
-    identity = jnp.eye(4, dtype=complex)
+    identity = jnp.eye(4, dtype="complex128")
     density = jnp.asarray([[0.7 + 0.0j, 0.0j], [0.0j, 0.3 + 0.0j]])
     process = phx.tensor_network.markov_process_tensor((identity,), density)
     causality = phx.tensor_network.validate_process_comb_causality(process)
     assert bool(causality.valid)
 
-    sigma_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
+    sigma_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
     operator = phx.solver.StateVectorOperator.from_matrix(sigma_x, operator_id="x")
     problem = phx.solver.NeuralJumpProjectionProblem(
         lambda parameters: jnp.asarray(
             [jnp.cos(parameters[0]), jnp.sin(parameters[0])]
-        ).astype(complex),
+        ).astype("complex128"),
         jnp.asarray([0.1]),
         operator,
     )

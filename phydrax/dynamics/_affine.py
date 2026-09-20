@@ -97,7 +97,7 @@ def _finite_by_batch(
     /,
 ) -> Array:
     batch_ndim = len(batch_shape)
-    finite = jnp.ones(batch_shape if batch_shape else (), dtype=bool)
+    finite = jnp.ones(batch_shape if batch_shape else (), dtype=jnp.bool_)
     for leaf in jax.tree.leaves(value):
         axes = tuple(range(batch_ndim, leaf.ndim))
         leaf_finite = (

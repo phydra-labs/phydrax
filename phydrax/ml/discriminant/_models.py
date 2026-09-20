@@ -61,7 +61,7 @@ class DiscriminantDiagnostics(StrictModule):
         raw_singular: Any,
         method: str,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.effective_samples = jnp.asarray(effective_samples)
         self.class_mass = jnp.asarray(class_mass)
@@ -71,7 +71,7 @@ class DiscriminantDiagnostics(StrictModule):
         self.minimum_eigenvalue = jnp.asarray(minimum_eigenvalue)
         self.maximum_eigenvalue = jnp.asarray(maximum_eigenvalue)
         self.log_determinant = jnp.asarray(log_determinant)
-        self.raw_singular = jnp.asarray(raw_singular, dtype=bool)
+        self.raw_singular = jnp.asarray(raw_singular, dtype=jnp.bool_)
         self.method = str(method)
 
 
@@ -227,8 +227,8 @@ class LinearDiscriminantModel(AbstractArrayModel):
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
         self.case_shape = tuple(case_shape)
-        self.in_size = int(self.coefficients.shape[-1])
-        self.out_size = int(self.coefficients.shape[-2])
+        self.in_size = self.coefficients.shape[-1]
+        self.out_size = self.coefficients.shape[-2]
 
     def decision_function(self, x: Any, /) -> Array:
         values = jnp.asarray(x)
@@ -292,8 +292,8 @@ class QuadraticDiscriminantModel(AbstractArrayModel):
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
         self.case_shape = tuple(case_shape)
-        self.in_size = int(self.means.shape[-1])
-        self.out_size = int(self.means.shape[-2])
+        self.in_size = self.means.shape[-1]
+        self.out_size = self.means.shape[-2]
 
     def decision_function(self, x: Any, /) -> Array:
         values = jnp.asarray(x)
@@ -339,7 +339,7 @@ def _fit_discriminant(
     method: str,
 ) -> FitResult:
     labels, schema = _labels_for(batch, recipe.num_classes)
-    classes = int(labels.shape[0])
+    classes = labels.shape[0]
     x, y, weight, case_finite = _training_arrays(batch, labels, recipe.weight_policy)
     mass, means, scatter, empirical_priors = _class_statistics(x, y, weight, classes)
     tiny = jnp.finfo(weight.dtype).tiny
@@ -461,8 +461,8 @@ def _validate_recipe(
             or abs(sum(prior_values) - 1.0) > 1e-6
         ):
             raise ValueError("priors must be positive and sum to one.")
-    shrink = jnp.asarray(shrinkage, dtype=float)
-    ridge = jnp.asarray(regularization, dtype=float)
+    shrink = jnp.asarray(shrinkage, dtype=jnp.float64)
+    ridge = jnp.asarray(regularization, dtype=jnp.float64)
     if shrink.ndim != 0 or not 0.0 <= float(shrink) <= 1.0:
         raise ValueError("shrinkage must be a scalar in [0, 1].")
     if ridge.ndim != 0 or float(ridge) < 0.0:

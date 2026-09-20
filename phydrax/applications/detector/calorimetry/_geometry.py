@@ -58,10 +58,10 @@ class CalorimeterGeometry(StrictModule, NonTrainableState):
         subdetectors = np.asarray(subdetector_ids)
         materials = np.asarray(material_ids)
         readouts = np.asarray(readout_ids)
-        centroids_ = np.asarray(centroids, dtype=float)
-        volumes_ = np.asarray(volumes, dtype=float)
-        active_ = np.asarray(active, dtype=bool)
-        dead_ = np.asarray(dead, dtype=bool)
+        centroids_ = np.asarray(centroids, dtype=np.float64)
+        volumes_ = np.asarray(volumes, dtype=np.float64)
+        active_ = np.asarray(active, dtype=np.bool_)
+        dead_ = np.asarray(dead, dtype=np.bool_)
         senders_ = np.asarray(senders)
         receivers_ = np.asarray(receivers)
         if (
@@ -70,7 +70,7 @@ class CalorimeterGeometry(StrictModule, NonTrainableState):
             or not np.issubdtype(cells.dtype, np.integer)
         ):
             raise ValueError("cell_ids must be a non-empty integer vector.")
-        count = int(cells.size)
+        count = cells.size
         scalar_arrays = (
             channels,
             layers,
@@ -125,9 +125,9 @@ class CalorimeterGeometry(StrictModule, NonTrainableState):
             (
                 centroids_ / scales,
                 (layers / maximum_layer)[:, None],
-                np.log(np.maximum(volumes_, np.finfo(float).tiny))[:, None],
-                active_[:, None].astype(float),
-                dead_[:, None].astype(float),
+                np.log(np.maximum(volumes_, np.finfo(np.float64).tiny))[:, None],
+                active_[:, None].astype("float64"),
+                dead_[:, None].astype("float64"),
             ),
             axis=1,
         )
@@ -146,7 +146,7 @@ class CalorimeterGeometry(StrictModule, NonTrainableState):
         self.geometry_features = jnp.asarray(features)
         self.conditions_id = conditions
         self.cell_count = count
-        self.edge_count = int(senders_.size)
+        self.edge_count = senders_.size
         self.geometry_id = canonical_fingerprint(
             {
                 "kind": "calorimeter-geometry",

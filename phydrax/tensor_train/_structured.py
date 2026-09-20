@@ -49,7 +49,7 @@ def kronecker_operator(factors: Sequence[ArrayLike], /) -> TensorTrainOperator:
 def identity_operator(
     mode_sizes: Sequence[int], /, *, dtype=jnp.float32
 ) -> TensorTrainOperator:
-    modes = tuple(int(size) for size in mode_sizes)
+    modes = tuple(mode_sizes)
     if not modes or any(size <= 0 for size in modes):
         raise ValueError("Identity operator modes must be nonempty and positive.")
     return kronecker_operator(tuple(jnp.eye(size, dtype=dtype) for size in modes))
@@ -93,7 +93,7 @@ def shift_operator(
     boundary: BoundaryPolicy,
     dtype=jnp.float32,
 ) -> TensorTrainOperator:
-    modes = tuple(int(size) for size in mode_sizes)
+    modes = tuple(mode_sizes)
     position = int(axis)
     if not modes or any(size <= 0 for size in modes):
         raise ValueError("Shift operator modes must be nonempty and positive.")
@@ -138,7 +138,7 @@ def laplacian_operator(
     dtype=jnp.float32,
 ) -> TensorTrainOperator:
     """Exact Kronecker-sum negative Cartesian Laplacian."""
-    modes = tuple(int(size) for size in mode_sizes)
+    modes = tuple(mode_sizes)
     if not modes or any(size <= 1 for size in modes):
         raise ValueError("Laplacian modes must all exceed one.")
     spacings = (

@@ -27,7 +27,6 @@ from benchmarks._runtime import (
 
 @dataclass(frozen=True)
 class SphericalSpectralBenchmarkRecord:
-    schema_version: int
     bandlimit: int
     sampling: str
     execution: str
@@ -383,7 +382,6 @@ def run_spherical_spectral_benchmark(
     )
     resources = dict(space.preparation.resource_counts)
     return SphericalSpectralBenchmarkRecord(
-        schema_version=1,
         bandlimit=limit,
         sampling=space.transform.sampling,
         execution=space.transform.execution,
@@ -397,8 +395,8 @@ def run_spherical_spectral_benchmark(
         project_steady_ms=float(project_steady),
         laplacian_first_jit_ms=float(laplacian_first),
         laplacian_steady_ms=float(laplacian_steady),
-        dynamic_point_count=int(space.points.shape[0]),
-        dynamic_direction_bytes=int(space.points.nbytes),
+        dynamic_point_count=space.points.shape[0],
+        dynamic_direction_bytes=space.points.nbytes,
         dynamic_directions_are_runtime_inputs=True,
         dynamic_evaluate_first_jit_ms=float(dynamic_first),
         dynamic_evaluate_steady_ms=float(dynamic_steady),
@@ -448,7 +446,7 @@ def spherical_completion_metrics(
         "sample_design_bytes": samples.report.design_bytes,
         "sample_factor_bytes": samples.report.factor_bytes,
         "sample_condition_number": samples.report.condition_number,
-        "wigner_block_bytes": int(identity_blocks.nbytes),
+        "wigner_block_bytes": identity_blocks.nbytes,
         "cg_coupling_count": coupling.report.coupling_count,
         "cg_coefficient_bytes": coupling.report.coefficient_bytes,
         "cg_recurrence_residual": coupling.report.recurrence_residual,

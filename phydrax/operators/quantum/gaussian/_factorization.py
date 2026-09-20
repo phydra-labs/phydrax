@@ -71,11 +71,11 @@ class FactorizedERITensor(StrictModule, NonTrainableState):
 
     @property
     def rank(self) -> int:
-        return int(self.factors.shape[0])
+        return self.factors.shape[0]
 
     @property
     def orbital_count(self) -> int:
-        return int(self.factors.shape[1])
+        return self.factors.shape[1]
 
     def reconstruct(self, /) -> Array:
         return contract("Pab,Pcd->abcd", self.factors, self.factors)
@@ -209,7 +209,7 @@ class DensityFittingPlan(StrictModule, NonTrainableState):
             ),
             policy=EigenSolvePolicy(
                 DenseEigh(),
-                count=int(metric_.shape[0]),
+                count=metric_.shape[0],
                 which="smallest-algebraic",
             ),
         )

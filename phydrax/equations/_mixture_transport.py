@@ -219,7 +219,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
             )
         binary = properties.binary_diffusion_coefficients
         mole = thermo.mole_fraction
-        off_diagonal = ~jnp.eye(species_count, dtype=bool)
+        off_diagonal = ~jnp.eye(species_count, dtype=jnp.bool_)
         resistance = jnp.where(
             off_diagonal,
             mole[..., None, :] / binary,
@@ -386,7 +386,7 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
             / reciprocal_mixture_mass[..., None, None]
         )
         binary = self.binary_diffusion(temperature_, pressure_)
-        off_diagonal = ~jnp.eye(species_count, dtype=bool)
+        off_diagonal = ~jnp.eye(species_count, dtype=jnp.bool_)
         matrix = jnp.where(
             off_diagonal,
             -mole[..., None, :] / binary,

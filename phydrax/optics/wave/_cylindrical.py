@@ -544,8 +544,7 @@ def _prepare_response(
         resolved = response
     else:
         raise TypeError(
-            "response must implement AbstractCarrierResolvedResponse or "
-            "PreparedCarrierResolvedResponse."
+            "response must implement AbstractCarrierResolvedResponse or PreparedCarrierResolvedResponse."
         )
     if resolved.field_kind != "scalar":
         raise TypeError("Cylindrical m=0 propagation requires a scalar response.")

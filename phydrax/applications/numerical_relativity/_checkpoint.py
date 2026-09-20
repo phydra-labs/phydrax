@@ -381,10 +381,7 @@ def _restart_state_signature(
 ) -> tuple[str, tuple[tuple[tuple[int, ...], str], ...]]:
     leaves, structure = jax.tree.flatten((state.time, state.step_index, state.fields))
     structure_record = str(structure)
-    signatures = tuple(
-        (tuple(int(size) for size in leaf.shape), np.dtype(leaf.dtype).str)
-        for leaf in leaves
-    )
+    signatures = tuple((tuple(leaf.shape), np.dtype(leaf.dtype).str) for leaf in leaves)
     if len(structure_record.encode("utf-8")) > 65_536 or len(signatures) > 4096:
         raise ValueError("Restart PyTree reconstruction metadata exceeds fixed bounds.")
     return structure_record, signatures
@@ -536,8 +533,7 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
             or state.field_names != self.field_names
         ):
             raise ValueError(
-                "Checkpoint state runtime/formulation/geometry/topology/epoch does not "
-                "match its plan."
+                "Checkpoint state runtime/formulation/geometry/topology/epoch does not match its plan."
             )
         if not all(
             bool(jnp.all(jnp.isfinite(leaf)))
@@ -607,7 +603,7 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
                     )
                 )
                 or terminal.shape != ()
-                or terminal.dtype != jnp.dtype(bool)
+                or terminal.dtype != jnp.dtype(jnp.bool_)
                 or bool(accepted_steps < 0)
                 or bool(rejected_steps < 0)
                 or bool(failures < 0)
@@ -1023,7 +1019,7 @@ def _array_tree_records(tree: Any, /) -> tuple[dict[str, Any], ...]:
         records.append(
             {
                 "path": jax.tree_util.keystr(path) or "<root>",
-                "shape": [int(size) for size in leaf.shape],
+                "shape": [size for size in leaf.shape],
                 "dtype": np.dtype(leaf.dtype).str,
             }
         )
@@ -1340,7 +1336,7 @@ def _manifest_inventory(
             or len(dtype.encode("utf-8")) > 128
         ):
             raise ValueError("Distributed checkpoint shard metadata exceeds bounds.")
-        shape = tuple(int(size) for size in json.loads(shape_record))
+        shape = tuple(json.loads(shape_record))
         record = (shape, dtype)
         if path in inventory and inventory[path] != record:
             raise ValueError("Distributed checkpoint array inventory is inconsistent.")
@@ -1364,7 +1360,7 @@ def _restore_tree(
     leaves = []
     for path, leaf in flattened:
         array_path = jax.tree_util.keystr(path) or "<root>"
-        expected = (tuple(int(size) for size in leaf.shape), np.dtype(leaf.dtype).str)
+        expected = (tuple(leaf.shape), np.dtype(leaf.dtype).str)
         if inventory[array_path] != expected:
             raise ValueError("Distributed checkpoint array shape or dtype changed.")
         sharding = (

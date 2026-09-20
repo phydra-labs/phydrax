@@ -39,7 +39,7 @@ def test_horizon_scores_preserve_horizons_and_reject_biased_forecasts():
 
 
 def test_uniform_pit_and_exchangeable_observable_ranks_pass_dkw_gate():
-    pit = (jnp.arange(400, dtype=float) + 0.5) / 400.0
+    pit = (jnp.arange(400, dtype="float64") + 0.5) / 400.0
     analytic = phx.uq.pit_diagnostics(pit, bins=20)
 
     draws = jr.normal(jr.key(1), (32, 512))
@@ -88,7 +88,7 @@ def test_temporal_moments_detect_ar1_dependence():
 
     diagnostics = phx.uq.temporal_moment_diagnostics(
         trajectories,
-        jnp.arange(6, dtype=float),
+        jnp.arange(6, dtype="float64"),
     )
 
     assert diagnostics.mean.shape == (6,)

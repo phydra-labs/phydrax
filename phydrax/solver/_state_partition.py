@@ -36,8 +36,8 @@ class StatePartition(StrictModule, NonTrainableState):
         names = tuple(str(name) for name in masks)
         if any(not name for name in names) or len(set(names)) != len(names):
             raise ValueError("Partition names must be unique and non-empty.")
-        arrays = tuple(np.asarray(value, dtype=bool) for value in masks.values())
-        shape = tuple(int(size) for size in arrays[0].shape)
+        arrays = tuple(np.asarray(value, dtype=np.bool_) for value in masks.values())
+        shape = tuple(arrays[0].shape)
         if any(array.shape != shape for array in arrays):
             raise ValueError("Every state-partition mask must share one shape.")
         if any(not np.any(array) for array in arrays):

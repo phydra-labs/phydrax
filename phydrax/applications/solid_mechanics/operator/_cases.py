@@ -136,7 +136,7 @@ class MechanicsGeometryMap(StrictModule, NonTrainableState):
         coordinates = jnp.asarray(reference_coordinates)
         if coordinates.ndim < 1:
             raise ValueError("Reference coordinates require a coordinate axis.")
-        dimension = int(coordinates.shape[-1])
+        dimension = coordinates.shape[-1]
         jacobian = jnp.asarray(self.jacobian_map(coordinates, realization))
         expected = coordinates.shape[:-1] + (dimension, dimension)
         if jacobian.shape != expected:
@@ -175,7 +175,7 @@ class MechanicsGeometryMap(StrictModule, NonTrainableState):
         normal = jnp.asarray(reference_normal, dtype=jacobian.dtype)
         expected = jacobian.shape[:-2] + (jacobian.shape[-1],)
         normal = jnp.broadcast_to(normal, expected)
-        dimension = int(jacobian.shape[-1])
+        dimension = jacobian.shape[-1]
         solve_result = la.solve_small_linear(
             la.SmallLinearSolvePlan(dimension),
             jnp.swapaxes(jacobian, -1, -2),
@@ -406,8 +406,7 @@ class OperatorTrialFieldAdapter(StrictModule, NonTrainableState):
                     envelope = jnp.broadcast_to(envelope, raw.shape)
                 except ValueError as error:
                     raise ValueError(
-                        f"Hard-constraint lift/envelope for field {name!r} cannot "
-                        "broadcast to its prediction shape."
+                        f"Hard-constraint lift/envelope for field {name!r} cannot broadcast to its prediction shape."
                     ) from error
                 conditioned = lift + envelope * raw
                 valid = jnp.all(jnp.isfinite(lift)) & jnp.all(jnp.isfinite(envelope))
@@ -419,7 +418,7 @@ class OperatorTrialFieldAdapter(StrictModule, NonTrainableState):
                                 query,
                                 realization,
                             ),
-                            dtype=bool,
+                            dtype=jnp.bool_,
                         )
                     )
                 raw = eqx.error_if(
@@ -607,7 +606,7 @@ class MechanicsCaseBuilder:
             raise TypeError("case_factory must return phydrax.nn.operator.OperatorCase.")
         if self.validity is not None:
             valid = jnp.asarray(
-                self.validity(realization, geometry, canonical), dtype=bool
+                self.validity(realization, geometry, canonical), dtype=jnp.bool_
             )
             if valid.shape != () or not bool(valid):
                 raise ValueError(
@@ -784,8 +783,7 @@ def _require_finite_case(case: CanonicalOperatorCase, case_id: str, /) -> None:
         array = np.asarray(value)
         if not np.all(np.isfinite(array)):
             raise ValueError(
-                f"Mechanics case {case_id!r} has nonfinite {label}; invalid cases "
-                "cannot be omitted or renormalized."
+                f"Mechanics case {case_id!r} has nonfinite {label}; invalid cases cannot be omitted or renormalized."
             )
 
 

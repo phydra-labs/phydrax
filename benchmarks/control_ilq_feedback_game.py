@@ -39,14 +39,14 @@ def _problem(
         control_sizes,
     )
     time_grid = phx.dynamics.TimeGrid(
-        jnp.arange(horizon + 1, dtype=float),
+        jnp.arange(horizon + 1, dtype="float64"),
         time_id=(
             f"benchmark-ilq-feedback:T{horizon}:n{state_size}:"
             f"m{control_size}:p{players}:c{case_count}"
         ),
     )
-    state_index = jnp.arange(state_size, dtype=float)
-    control_index = jnp.arange(control_size, dtype=float)
+    state_index = jnp.arange(state_size, dtype="float64")
+    control_index = jnp.arange(control_size, dtype="float64")
     dynamics_matrix = 0.82 * jnp.eye(state_size)
     control_matrix = 0.08 * jnp.cos(
         (state_index[:, None] + 1.0) * (control_index[None, :] + 1.0)

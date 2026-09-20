@@ -47,8 +47,8 @@ class NonLTELevelPopulationPlan(StrictModule, NonTrainableState):
     ):
         count = int(species_count)
         owners = np.asarray(level_species, dtype=np.int32)
-        energies = np.asarray(level_energies, dtype=float)
-        degeneracies = np.asarray(level_degeneracies, dtype=float)
+        energies = np.asarray(level_energies, dtype=np.float64)
+        degeneracies = np.asarray(level_degeneracies, dtype=np.float64)
         if (
             count <= 0
             or owners.ndim != 1
@@ -203,9 +203,9 @@ class NonLTERadiationCoefficientPlan(StrictModule, NonTrainableState):
         lower = np.asarray(lower_levels, dtype=np.int32)
         upper = np.asarray(upper_levels, dtype=np.int32)
         group = np.asarray(group_indices, dtype=np.int32)
-        frequency = np.asarray(photon_frequencies, dtype=float)
-        rates = np.asarray(spontaneous_rates, dtype=float)
-        cross_sections = np.asarray(absorption_cross_sections, dtype=float)
+        frequency = np.asarray(photon_frequencies, dtype=np.float64)
+        rates = np.asarray(spontaneous_rates, dtype=np.float64)
+        cross_sections = np.asarray(absorption_cross_sections, dtype=np.float64)
         shape = lower.shape
         if (
             not isinstance(populations, NonLTELevelPopulationPlan)

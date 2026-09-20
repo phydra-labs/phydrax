@@ -39,7 +39,7 @@ def _require_key(key: Any, /) -> Any:
 
 
 def _sample_complement(num_samples: int, validation: Array, /) -> Array:
-    keep = jnp.ones((num_samples,), dtype=bool).at[validation].set(False)
+    keep = jnp.ones((num_samples,), dtype=jnp.bool_).at[validation].set(False)
     return jnp.nonzero(keep)[0].astype(jnp.int32)
 
 
@@ -56,9 +56,10 @@ def _validate_fold_indices(
         jnp.any((validation < 0) | (validation >= num_samples))
     ):
         raise ValueError("Fold indices lie outside the batch sample axis.")
-    if int(jnp.unique(train).size) != int(train.size) or int(
-        jnp.unique(validation).size
-    ) != int(validation.size):
+    if (
+        jnp.unique(train).size != train.size
+        or jnp.unique(validation).size != validation.size
+    ):
         raise ValueError("Fold indices must not contain duplicates.")
     if bool(jnp.any(jnp.isin(train, validation))):
         raise ValueError("Training and validation indices must be disjoint.")
@@ -116,7 +117,7 @@ class SplitPlanResult(StrictModule):
             raise ValueError("sample_indices must be a non-empty one-dimensional array.")
         if bool(jnp.any(samples < 0)):
             raise ValueError("sample_indices must be non-negative.")
-        if int(jnp.unique(samples).size) != int(samples.size):
+        if jnp.unique(samples).size != samples.size:
             raise ValueError("sample_indices must not contain duplicates.")
         for fold in folds:
             if bool(jnp.any(~jnp.isin(fold.train_indices, samples))) or bool(
@@ -241,11 +242,11 @@ class StratifiedKFoldPlan(AbstractSplitPlan):
         classes = jnp.unique(labels)
         validation_parts: list[list[Array]] = [list() for _ in range(self.num_folds)]
         offset = 0
-        for class_id in range(int(classes.size)):
+        for class_id in range(classes.size):
             indices = jnp.nonzero(labels == classes[class_id])[0].astype(jnp.int32)
             if self.shuffle:
                 indices = jr.permutation(jr.fold_in(key, class_id), indices)
-            count = int(indices.size)
+            count = indices.size
             for local_index in range(count):
                 fold_id = (offset + local_index) % self.num_folds
                 validation_parts[fold_id].append(indices[local_index : local_index + 1])
@@ -291,7 +292,7 @@ class GroupKFoldPlan(AbstractSplitPlan):
         key = _require_key(key)
         groups = _shared_groups(batch)
         unique_groups = jnp.unique(groups)
-        if int(unique_groups.size) < self.num_folds:
+        if unique_groups.size < self.num_folds:
             raise ValueError("num_folds cannot exceed the number of distinct groups.")
         if self.shuffle:
             unique_groups = jr.permutation(key, unique_groups)
@@ -299,7 +300,7 @@ class GroupKFoldPlan(AbstractSplitPlan):
         order = jnp.argsort(-counts, stable=True)
         fold_groups: list[list[Array]] = [list() for _ in range(self.num_folds)]
         fold_sizes = [0] * self.num_folds
-        for position in range(int(order.size)):
+        for position in range(order.size):
             group_position = int(order[position])
             fold_id = min(range(self.num_folds), key=lambda i: (fold_sizes[i], i))
             fold_groups[fold_id].append(

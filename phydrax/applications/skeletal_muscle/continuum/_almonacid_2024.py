@@ -151,7 +151,8 @@ class Almonacid2024InputHistory(StrictModule):
 
     def __init__(self, activation_table, strain_table, /, *, source_id):
         tables = [
-            np.asarray(table, dtype=float) for table in (activation_table, strain_table)
+            np.asarray(table, dtype=np.float64)
+            for table in (activation_table, strain_table)
         ]
         for table in tables:
             if table.ndim != 2 or table.shape[1] != 2 or table.shape[0] < 2:
@@ -569,7 +570,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
         """Accepted raw fields in source column conventions, retaining step rates.
 
         The source's ``orientation`` is F*a0 (not a unit direction), and both
-        strain-rate columns are normalized by the maximum fibre strain rate.
+        strain-rate columns are normalized by the maximum fiber strain rate.
         """
         g, s = self.geometry, self.state
         dt = _scalar(dt_s, "dt_s")
@@ -629,7 +630,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
     ):
         """Physical unconstrained residual: N, m³, J in its three blocks.
 
-        No penalty, interface spring, fibre force, or pressure smoothing is added.
+        No penalty, interface spring, fiber force, or pressure smoothing is added.
         Dirichlet reaction rows remain available to the work/reaction owner.
         """
         g = self.geometry
@@ -829,16 +830,16 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
             input_valid & density_valid,
         )
 
-    def _trace_fields(self, u, p, j, control, *, neighbour=False):
+    def _trace_fields(self, u, p, j, control, *, neighbor=False):
         g, t = self.geometry, self.geometry.traces
         cells = (
-            jnp.where(t.neighbour_cells >= 0, t.neighbour_cells, t.cells)
-            if neighbour
+            jnp.where(t.neighbor_cells >= 0, t.neighbor_cells, t.cells)
+            if neighbor
             else t.cells
         )
-        basis = t.neighbour_basis if neighbour else t.basis
-        grad = t.neighbour_gradients if neighbour else t.gradients
-        scalar = t.neighbour_scalar_basis if neighbour else t.scalar_basis
+        basis = t.neighbor_basis if neighbor else t.basis
+        grad = t.neighbor_gradients if neighbor else t.gradients
+        scalar = t.neighbor_scalar_basis if neighbor else t.scalar_basis
         displacement = contract("fqa,fai->fqi", basis, u[g.displacement_dofs[cells]])
         F = jnp.eye(3, dtype=u.dtype) + contract(
             "fai,fqaJ->fqiJ", u[g.displacement_dofs[cells]], grad
@@ -866,17 +867,17 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
         g, t = self.geometry, self.geometry.traces
         dt = control.time_s - self.state.time_s
         owner_u, owner_p, owner = self._trace_fields(u, p, j, control)
-        neighbour_u, neighbour_p, neighbour = self._trace_fields(
-            u, p, j, control, neighbour=True
+        neighbor_u, neighbor_p, neighbor = self._trace_fields(
+            u, p, j, control, neighbor=True
         )
-        interface = t.neighbour_cells >= 0
+        interface = t.neighbor_cells >= 0
         weights = t.weights_m2 * interface[:, None]
         area = jnp.sum(weights)
-        jump_u = owner_u - neighbour_u
+        jump_u = owner_u - neighbor_u
         jump_t = contract(
-            "fqiJ,fqJ->fqi", owner.first_piola_Pa - neighbour.first_piola_Pa, t.normals
+            "fqiJ,fqJ->fqi", owner.first_piola_Pa - neighbor.first_piola_Pa, t.normals
         )
-        jump_p = owner_p - neighbour_p
+        jump_p = owner_p - neighbor_p
         step_velocity = (u - self.state.displacement_m) / dt
         vface = contract(
             "fqa,fai->fqi", t.basis, step_velocity[g.displacement_dofs[t.cells]]
@@ -965,7 +966,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
         admissible = (
             jnp.all(response.admissible)
             & jnp.all(owner.admissible)
-            & jnp.all(jnp.where(interface[:, None], neighbour.admissible, True))
+            & jnp.all(jnp.where(interface[:, None], neighbor.admissible, True))
         )
         return Almonacid2024Diagnostics(
             jnp.sum(residual[0][g.fixed_dofs], axis=0),

@@ -35,7 +35,7 @@ def _canonical_coefficients(coefficients: ArrayLike) -> np.ndarray:
             "Harmonic coefficients must have shape (count, periodic_dimension), "
             "with periodic_dimension equal to one or two."
         )
-    rows = [tuple(int(value) for value in row) for row in values]
+    rows = [tuple(row) for row in values]
     if len(set(rows)) != len(rows):
         raise ValueError("Harmonic coefficients must be unique.")
     zero = (0,) * values.shape[1]
@@ -50,10 +50,7 @@ def _canonical_coefficients(coefficients: ArrayLike) -> np.ndarray:
 
 
 def _conjugate_indices(coefficients: np.ndarray) -> np.ndarray:
-    lookup = {
-        tuple(int(value) for value in row): index
-        for index, row in enumerate(coefficients)
-    }
+    lookup = {tuple(row): index for index, row in enumerate(coefficients)}
     return np.asarray(
         [lookup[tuple(-int(value) for value in row)] for row in coefficients],
         dtype=np.int64,
@@ -127,8 +124,8 @@ class LatticeHarmonicLayout(StrictModule, NonTrainableState):
         self.conjugate_indices = jnp.asarray(conjugates_host, dtype=jnp.int32)
         self.difference_coefficients = jnp.asarray(differences_host, dtype=jnp.int32)
         self.mode_ids = mode_ids
-        self.periodic_dimension = int(coefficients_host.shape[1])
-        self.harmonic_count = int(coefficients_host.shape[0])
+        self.periodic_dimension = coefficients_host.shape[1]
+        self.harmonic_count = coefficients_host.shape[0]
         self.zero_index = 0
         self.truncation = truncation
         self.layout_id = canonical_fingerprint(
@@ -169,7 +166,7 @@ class LatticeHarmonicPlan(StrictModule, NonTrainableState):
         max_convolution_bytes: int = 2**31,
     ):
         layout = LatticeHarmonicLayout(coefficients, truncation=truncation)
-        shape = tuple(int(value) for value in sample_shape)
+        shape = tuple(sample_shape)
         if len(shape) != layout.periodic_dimension or any(value < 1 for value in shape):
             raise ValueError(
                 "sample_shape must contain one positive size per periodic dimension."
@@ -215,7 +212,7 @@ class LatticeHarmonicPlan(StrictModule, NonTrainableState):
         /,
         **kwargs,
     ) -> "LatticeHarmonicPlan":
-        counts = tuple(int(value) for value in mode_counts)
+        counts = tuple(mode_counts)
         if len(counts) not in (1, 2) or any(
             value < 1 or value % 2 == 0 for value in counts
         ):
@@ -421,8 +418,7 @@ class LatticeHarmonicDiscretization(StrictModule, NonTrainableState):
         value = self.plan.precision.transform(values)
         if value.shape[: self.periodic_dimension] != self.sample_shape:
             raise ValueError(
-                "values must begin with the prepared physical sample shape "
-                f"{self.sample_shape}; got {value.shape}."
+                f"values must begin with the prepared physical sample shape {self.sample_shape}; got {value.shape}."
             )
         axes = tuple(range(self.periodic_dimension))
         spectrum = jnp.fft.fftn(value, axes=axes) / np.prod(self.sample_shape)
@@ -481,8 +477,7 @@ class LatticeHarmonicDiscretization(StrictModule, NonTrainableState):
         value = self.plan.precision.transform(values)
         if value.shape[: self.periodic_dimension] != self.sample_shape:
             raise ValueError(
-                "values must begin with the prepared physical sample shape "
-                f"{self.sample_shape}; got {value.shape}."
+                f"values must begin with the prepared physical sample shape {self.sample_shape}; got {value.shape}."
             )
         axes = tuple(range(self.periodic_dimension))
         spectrum = jnp.fft.fftn(value, axes=axes) / np.prod(self.sample_shape)
@@ -549,7 +544,7 @@ class BrillouinZonePlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, grid_shape: tuple[int, ...], /):
-        shape = tuple(int(value) for value in grid_shape)
+        shape = tuple(grid_shape)
         if len(shape) not in (1, 2) or any(value < 1 for value in shape):
             raise ValueError("grid_shape must contain one or two positive sizes.")
         self.grid_shape = shape

@@ -8,7 +8,7 @@ operators may subsequently participate in native differentiable calculations.
 
 ## Physical source and explicit RC reduction
 
-All native thermal arrays use seconds, Kelvin, watts, joules, and metres.
+All native thermal arrays use seconds, Kelvin, watts, joules, and meters.
 Heat inputs are **positive into the building node**. Each `Adjacency` reports
 positive heat from `left` to `right`; `right=None` uses an explicitly named
 environmental `boundary_id` (the single-boundary default is `"outdoor"`).
@@ -50,7 +50,7 @@ there is no hidden air-change-rate conversion or moisture model.
 A `Construction` declares resistance in m² K/W and areal capacity in J/(m² K):
 
 - `massive=False`, zero areal capacity: direct opaque-area/resistance conductance.
-- `massive=True`, positive areal capacity: one wall-centre state with two
+- `massive=True`, positive areal capacity: one wall-center state with two
   half-resistances. Capacity is opaque area times areal capacity.
 - Surface area is **gross** area. Apertures subtract from opaque area, have their
   own W/(m² K) U-value, and cannot exceed the parent area.
@@ -241,7 +241,7 @@ method uses the shared pinned isolated runtime, requires real executable success
 and retains `.err` diagnostics. `parse_energyplus_csv` imports **exactly named**
 variables with caller-declared reporting interval, units, quantity meaning,
 calendar, and Celsius conversion offset. Missing cells stay invalid. Mixed
-frequencies or missing timestamps fail rather than get relabelled.
+frequencies or missing timestamps fail rather than get relabeled.
 `compare_energyplus_reference` requires matching physical quantity, meaning,
 origin, timezone, and aligned coordinates; all samples must be valid for a pass.
 Unit conversion is explicit and tolerances are supplied before comparison.

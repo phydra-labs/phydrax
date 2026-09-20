@@ -193,8 +193,8 @@ class HighOrderSurfaceFrameEvidence(StrictModule, NonTrainableState):
         nondegenerate: Array,
         report: HighOrderSurfaceReport,
     ):
-        finite_ = jnp.asarray(finite, dtype=bool)
-        nondegenerate_ = jnp.asarray(nondegenerate, dtype=bool)
+        finite_ = jnp.asarray(finite, dtype=jnp.bool_)
+        nondegenerate_ = jnp.asarray(nondegenerate, dtype=jnp.bool_)
         self.chart_indices = jnp.asarray(chart_indices, dtype=jnp.int32)
         self.cell_global_ids = jnp.asarray(cell_global_ids, dtype=jnp.int64)
         self.reference_coordinates = jnp.asarray(reference_coordinates)
@@ -240,11 +240,11 @@ class _PatchTriangleMap(AbstractBoundaryMap):
 
     def __init__(self, patch: BSplineSurfacePatch, cell_parameters: ArrayLike, /):
         self.patch = patch
-        self.cell_parameters = jnp.asarray(cell_parameters, dtype=float)
+        self.cell_parameters = jnp.asarray(cell_parameters, dtype=jnp.float64)
 
     @property
     def num_charts(self) -> int:
-        return int(self.cell_parameters.shape[0])
+        return self.cell_parameters.shape[0]
 
     @property
     def reference_dimension(self) -> int:
@@ -285,11 +285,11 @@ class _AtlasTriangleMap(AbstractBoundaryMap):
     ):
         self.atlas = atlas
         self.source_chart_indices = jnp.asarray(source_chart_indices, dtype=jnp.int32)
-        self.cell_parameters = jnp.asarray(cell_parameters, dtype=float)
+        self.cell_parameters = jnp.asarray(cell_parameters, dtype=jnp.float64)
 
     @property
     def num_charts(self) -> int:
-        return int(self.cell_parameters.shape[0])
+        return self.cell_parameters.shape[0]
 
     @property
     def reference_dimension(self) -> int:
@@ -323,14 +323,14 @@ class _IsoparametricTriangleMap(AbstractBoundaryMap):
     order: int = eqx.field(static=True)
 
     def __init__(self, coordinate_nodes, coefficients, exponents, order: int, /):
-        self.coordinate_nodes = jnp.asarray(coordinate_nodes, dtype=float)
-        self.coefficients = jnp.asarray(coefficients, dtype=float)
+        self.coordinate_nodes = jnp.asarray(coordinate_nodes, dtype=jnp.float64)
+        self.coefficients = jnp.asarray(coefficients, dtype=jnp.float64)
         self.exponents = jnp.asarray(exponents, dtype=jnp.int32)
         self.order = int(order)
 
     @property
     def num_charts(self) -> int:
-        return int(self.coordinate_nodes.shape[0])
+        return self.coordinate_nodes.shape[0]
 
     @property
     def reference_dimension(self) -> int:
@@ -392,7 +392,7 @@ class HighOrderSurfaceRealization(StrictModule, NonTrainableState):
             raise ValueError(
                 "High-order chart count must equal authoritative cell count."
             )
-        signs = np.asarray(orientation, dtype=float)
+        signs = np.asarray(orientation, dtype=np.float64)
         if signs.shape != (mapping.num_charts,) or np.any(
             (signs != 1.0) & (signs != -1.0)
         ):
@@ -420,7 +420,7 @@ class HighOrderSurfaceRealization(StrictModule, NonTrainableState):
 
     def _inputs(self, chart_indices: ArrayLike, reference: ArrayLike, /):
         indices = jnp.asarray(chart_indices, dtype=jnp.int32)
-        coordinates = jnp.asarray(reference, dtype=float)
+        coordinates = jnp.asarray(reference, dtype=jnp.float64)
         if coordinates.ndim < 1 or coordinates.shape[-1] != 2:
             raise ValueError("reference coordinates require trailing dimension 2.")
         if indices.shape != coordinates.shape[:-1]:
@@ -489,11 +489,11 @@ def _policy(value: HighOrderSurfacePolicy | None, /) -> HighOrderSurfacePolicy:
 
 def _authoritative_corners(model: SurfaceModel, /) -> np.ndarray:
     faces = np.asarray(model.mesh.connectivity.cell_vertices, dtype=np.int32)[:, :3]
-    return np.asarray(model.mesh.coordinates, dtype=float)[faces]
+    return np.asarray(model.mesh.coordinates, dtype=np.float64)[faces]
 
 
 def _validate_parameter_triangles(value: ArrayLike, cell_count: int, /) -> np.ndarray:
-    parameters = np.asarray(value, dtype=float)
+    parameters = np.asarray(value, dtype=np.float64)
     if parameters.shape != (cell_count, 3, 2) or not np.all(np.isfinite(parameters)):
         raise ValueError(
             "cell_parameters must have shape (cell_count, 3, 2) and be finite."
@@ -613,7 +613,7 @@ def isoparametric_triangle_reference_nodes(order: int, /) -> np.ndarray:
             for first in range(degree + 1)
             for second in range(degree + 1 - first)
         ],
-        dtype=float,
+        dtype=np.float64,
     )
 
 
@@ -632,9 +632,9 @@ def realize_isoparametric_triangles(
     if degree < 1 or degree > policy_.maximum_order:
         raise HighOrderResourceLimitError("Isoparametric order exceeds policy.")
     reference = isoparametric_triangle_reference_nodes(degree)
-    nodes_per_cell = int(reference.shape[0])
+    nodes_per_cell = reference.shape[0]
     count = _preflight(model, policy_, nodes_per_cell)
-    nodes = np.asarray(coordinate_nodes, dtype=float)
+    nodes = np.asarray(coordinate_nodes, dtype=np.float64)
     if nodes.shape != (count, nodes_per_cell, 3) or not np.all(np.isfinite(nodes)):
         raise ValueError("coordinate_nodes have incompatible shape or non-finite data.")
     exponents = np.asarray(

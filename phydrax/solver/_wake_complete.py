@@ -89,7 +89,7 @@ class WakeAdaptationPlan(StrictModule, NonTrainableState):
             active[:, None]
             & active[None, :]
             & ~share_vertex
-            & ~jnp.eye(state.topology.edge_capacity, dtype=bool)
+            & ~jnp.eye(state.topology.edge_capacity, dtype=jnp.bool_)
             & (separation < self.reconnection_distance)
         )
         quality = jnp.all(jnp.where(active, jnp.isfinite(length) & (length > 0.0), True))
@@ -204,7 +204,7 @@ class VortexWakeIntegratorPlan(StrictModule, NonTrainableState):
             core,
             state.edge_age + jnp.where(state.topology.edge_active, dt, 0.0),
         )
-        before, after = ring_sheet_evidence(state), ring_sheet_evidence(candidate)
+        _before, after = ring_sheet_evidence(state), ring_sheet_evidence(candidate)
         adaptation = (
             None if self.adaptation is None else self.adaptation.evaluate(candidate)
         )

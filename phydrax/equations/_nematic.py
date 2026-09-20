@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -34,13 +35,13 @@ class NematicTensorBasis(StrictModule, NonTrainableState):
                 )
             )
         else:
-            matrices = np.zeros((5, 3, 3), dtype=float)
+            matrices = np.zeros((5, 3, 3), dtype=np.float64)
             matrices[0] = np.diag((1.0, -1.0, 0.0)) / np.sqrt(2.0)
             matrices[1] = np.diag((1.0, 1.0, -2.0)) / np.sqrt(6.0)
             matrices[2, 0, 1] = matrices[2, 1, 0] = 1.0 / np.sqrt(2.0)
             matrices[3, 0, 2] = matrices[3, 2, 0] = 1.0 / np.sqrt(2.0)
             matrices[4, 1, 2] = matrices[4, 2, 1] = 1.0 / np.sqrt(2.0)
-        gram = np.einsum("aij,bij->ab", matrices, matrices)
+        gram = ein.contract("aij,bij->ab", matrices, matrices)
         if not np.allclose(gram, np.eye(matrices.shape[0]), rtol=0.0, atol=1e-14):
             raise ValueError("Nematic tensor basis is not orthonormal.")
         self.orientation_dimension = dimension

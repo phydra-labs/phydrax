@@ -1116,8 +1116,7 @@ class FiniteElementForm(StrictModule, NonTrainableState):
                 isinstance(action, LocalFunctionalAction) for action in action_values
             ):
                 raise ValueError(
-                    "A functional finite-element form may contain only "
-                    "LocalFunctionalAction values."
+                    "A functional finite-element form may contain only LocalFunctionalAction values."
                 )
             if tuple(action.term.term_id for action in action_values) != tuple(
                 term.term_id for term in functional_.terms
@@ -1308,12 +1307,12 @@ def _sipg_constant_subspace(
         if first_root != second_root:
             parents[second_root] = first_root
 
-    for owner, neighbour in zip(
+    for owner, neighbor in zip(
         np.asarray(discretization.interior_facet_domain.owner_cells),
-        np.asarray(discretization.interior_facet_domain.neighbour_cells),
+        np.asarray(discretization.interior_facet_domain.neighbor_cells),
         strict=True,
     ):
-        union(int(owner), int(neighbour))
+        union(int(owner), int(neighbor))
     roots = tuple(sorted({root(cell) for cell in range(cell_count)}))
     component_by_root = {value: index for index, value in enumerate(roots)}
     dtype = np.asarray(space.zeros()).dtype
@@ -1545,8 +1544,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             isinstance(term, SIPGFacetAction) for term in form.actions
         ):
             raise ValueError(
-                "DG SIPG Dirichlet data must use Nitsche boundary terms, "
-                "not strong finite-element constraints."
+                "DG SIPG Dirichlet data must use Nitsche boundary terms, not strong finite-element constraints."
             )
         constraint_values = []
         lifts = []
@@ -1565,8 +1563,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 if isinstance(constraint_value, ConstraintMap):
                     if boundary_values is not None:
                         raise ValueError(
-                            "Plain ConstraintMap values are homogeneous and do not "
-                            "accept Dirichlet values."
+                            "Plain ConstraintMap values are homogeneous and do not accept Dirichlet values."
                         )
                     constraint_map = constraint_value
                     lift_value = full_space.zeros()
@@ -1583,21 +1580,18 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     if isinstance(constraint_value, FiniteElementLinearConstraint):
                         if boundary_values is not None:
                             raise ValueError(
-                                "Homogeneous hp constraints do not accept "
-                                "Dirichlet values."
+                                "Homogeneous hp constraints do not accept Dirichlet values."
                             )
                         lift_value = constraint_value.lift()
                     else:
                         if boundary_values is None:
                             raise ValueError(
-                                f"Constraint for {field_name!r} requires "
-                                "Dirichlet values."
+                                f"Constraint for {field_name!r} requires Dirichlet values."
                             )
                         lift_value = constraint_value.lift(boundary_values)
                 else:
                     raise TypeError(
-                        "constraints must contain ConstraintMap or finite-element "
-                        "constraint values."
+                        "constraints must contain ConstraintMap or finite-element constraint values."
                     )
                 if not constraint_map.full_space.compatible(full_space):
                     raise ValueError(
@@ -2025,8 +2019,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             )
             if not isinstance(auxiliary, FiniteElementAuxiliaryEvaluation):
                 raise TypeError(
-                    "Form auxiliary evaluator must return "
-                    "FiniteElementAuxiliaryEvaluation."
+                    "Form auxiliary evaluator must return FiniteElementAuxiliaryEvaluation."
                 )
         return residual, auxiliary
 
@@ -2437,7 +2430,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             relation = relation.as_edge_relation()
         elif not isinstance(relation, EdgeRelation):
             raise TypeError("Sparse coordinate storage has an unknown relation type.")
-        valid = np.asarray(relation.valid, dtype=bool)
+        valid = np.asarray(relation.valid, dtype=np.bool_)
         rows = np.asarray(relation.target_indices)[valid]
         columns = np.asarray(relation.source_indices)[valid]
         values = np.asarray(sparse.coefficients)[valid]
@@ -2711,8 +2704,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     or len(set(counts)) != 1
                 ):
                     raise ValueError(
-                        "Collocated diagonal mass requires isotropic point-value "
-                        "tensor elements."
+                        "Collocated diagonal mass requires isotropic point-value tensor elements."
                     )
                 axis_rule = GaussLobattoLegendreRule(counts[0])
                 rule = (

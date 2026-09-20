@@ -23,6 +23,7 @@ from phydrax import ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...algebraic import SparsePolynomialSystem
+from ...linalg import FactorizationPolicy, inverse as invert_matrix
 
 
 ProjectiveVarietyKind: TypeAlias = Literal[
@@ -123,7 +124,8 @@ def evaluate_calabi_yau_ricci(
         raise ValueError("Ricci and positivity tolerances must be finite.")
     metric = jet.metric
     hermitian = 0.5 * (metric + jnp.conj(jnp.swapaxes(metric, -1, -2)))
-    inverse = jnp.linalg.inv(hermitian)
+    inverse_result = invert_matrix(hermitian, FactorizationPolicy("lu"))
+    inverse = inverse_result.value
     dimension = metric.shape[-1]
     ricci_samples = []
     for sample in range(metric.shape[0]):
@@ -155,7 +157,8 @@ def evaluate_calabi_yau_ricci(
     minimum = jnp.min(eigenvalues, axis=-1)
     norms = jnp.linalg.norm(ricci.reshape((ricci.shape[0], -1)), axis=-1)
     finite = (
-        jnp.all(jnp.isfinite(ricci))
+        jnp.all(inverse_result.successful)
+        & jnp.all(jnp.isfinite(ricci))
         & jnp.all(jnp.isfinite(scalars))
         & jnp.all(jnp.isfinite(norms))
     )
@@ -332,7 +335,7 @@ def prepare_harmonic_kodaira_spencer(
         coclosure_residuals=jnp.asarray(coclosure_residuals),
         gram_matrix=jnp.asarray(gram),
         orthonormality_residual=jnp.asarray(orthonormality),
-        harmonic_dimension=int(harmonic_basis.shape[1]),
+        harmonic_dimension=harmonic_basis.shape[1],
         representative_rank=representative_rank,
         accepted=jnp.asarray(accepted),
         evidence_id=evidence_id,
@@ -464,7 +467,7 @@ class ComplexModuliPatch:
         mapping = np.asarray(global_to_local, dtype=np.complex128)
         offset_ = np.asarray(offset, dtype=np.complex128)
         normals = np.asarray(domain_normals, dtype=np.complex128)
-        bounds = np.asarray(domain_offsets, dtype=float)
+        bounds = np.asarray(domain_offsets, dtype=np.float64)
         if mapping.ndim != 2 or mapping.shape[0] != mapping.shape[1]:
             raise ValueError("global_to_local must be square and invertible.")
         dimension = mapping.shape[0]
@@ -605,7 +608,7 @@ class PeriodTransportPlan(StrictModule):
         /,
     ):
         connection = np.asarray(connection_samples, dtype=np.complex128)
-        steps = np.asarray(step_sizes, dtype=float)
+        steps = np.asarray(step_sizes, dtype=np.float64)
         initial = np.asarray(initial_periods, dtype=np.complex128)
         pairing_ = np.asarray(pairing, dtype=np.complex128)
         if connection.ndim != 3 or connection.shape[-1] != connection.shape[-2]:
@@ -701,8 +704,8 @@ class KahlerModuliPlan(StrictModule):
         /,
     ):
         labels = tuple(_identifier(value, "divisor label") for value in divisor_labels)
-        intersections = np.asarray(intersection_tensor, dtype=float)
-        cone = np.asarray(cone_normals, dtype=float)
+        intersections = np.asarray(intersection_tensor, dtype=np.float64)
+        cone = np.asarray(cone_normals, dtype=np.float64)
         dimension = len(labels)
         if not labels or len(set(labels)) != dimension:
             raise ValueError("Divisor labels must be unique and non-empty.")
@@ -939,8 +942,8 @@ class ProjectiveVarietyPlan(StrictModule):
             raise ValueError("Unknown projective variety kind.")
         if not isinstance(system, SparsePolynomialSystem):
             raise TypeError("system must be SparsePolynomialSystem.")
-        weights = tuple(int(value) for value in ambient_weights)
-        degrees = tuple(int(value) for value in equation_degrees)
+        weights = tuple(ambient_weights)
+        degrees = tuple(equation_degrees)
         if not weights or any(value <= 0 for value in weights):
             raise ValueError("Ambient weights must be positive.")
         if system.support.variable_count != len(weights):

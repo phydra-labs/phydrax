@@ -123,7 +123,7 @@ class ConstantCOPHeatPumpLaw(HeatConversionLaw):
         if cop.ndim != 0:
             raise ValueError("coefficient_of_performance must be scalar.")
         if not jnp.issubdtype(cop.dtype, jnp.inexact):
-            cop = cop.astype(float)
+            cop = cop.astype("float64")
         self.coefficient_of_performance = eqx.error_if(
             cop,
             ~jnp.isfinite(cop) | (cop < 1.0),
@@ -151,7 +151,7 @@ class ResistiveHeatingLaw(HeatConversionLaw):
         if efficiency_value.ndim != 0:
             raise ValueError("efficiency must be scalar.")
         if not jnp.issubdtype(efficiency_value.dtype, jnp.inexact):
-            efficiency_value = efficiency_value.astype(float)
+            efficiency_value = efficiency_value.astype("float64")
         self.efficiency = eqx.error_if(
             efficiency_value,
             ~jnp.isfinite(efficiency_value)
@@ -400,7 +400,7 @@ def heat_conversion_component(
     if power.ndim != 0:
         raise ValueError("electrical_power must be scalar.")
     if not jnp.issubdtype(power.dtype, jnp.inexact):
-        power = power.astype(float)
+        power = power.astype("float64")
     power = eqx.error_if(
         power,
         ~jnp.isfinite(power) | (power < 0.0),

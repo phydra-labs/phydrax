@@ -162,8 +162,8 @@ def test_free_energy_adapters_agree_with_exact_constant_energy_shift():
     delta = 2.4
     work = workflow.work_dataset(
         jnp.asarray([delta] * 12 + [-delta] * 12),
-        jnp.ones((24,), dtype=bool),
-        jnp.ones((24,), dtype=bool),
+        jnp.ones((24,), dtype="bool"),
+        jnp.ones((24,), dtype="bool"),
         jnp.asarray([0] * 12 + [1] * 12),
         jnp.asarray([1] * 12 + [0] * 12),
         jnp.zeros((24,), dtype=jnp.int32),
@@ -182,8 +182,8 @@ def test_free_energy_adapters_agree_with_exact_constant_energy_shift():
     potentials = jnp.stack((jnp.zeros(12), jnp.full(12, delta)))
     multistate = workflow.potential_dataset(
         potentials,
-        jnp.ones_like(potentials, dtype=bool),
-        jnp.ones((12,), dtype=bool),
+        jnp.ones_like(potentials, dtype="bool"),
+        jnp.ones((12,), dtype="bool"),
         jnp.asarray([0] * 6 + [1] * 6),
         jnp.zeros((12,), dtype=jnp.int32),
         jnp.arange(12),
@@ -206,7 +206,7 @@ def test_free_energy_adapters_agree_with_exact_constant_energy_shift():
         workflow.potential_dataset(
             potentials,
             jnp.asarray([[True] * 12, [True] * 11 + [False]]),
-            jnp.ones((12,), dtype=bool),
+            jnp.ones((12,), dtype="bool"),
             jnp.asarray([0] * 6 + [1] * 6),
             jnp.zeros((12,), dtype=jnp.int32),
             jnp.arange(12),

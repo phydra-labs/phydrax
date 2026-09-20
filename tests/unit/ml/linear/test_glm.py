@@ -147,7 +147,7 @@ def test_binary_logistic_probabilities_labels_sparse_jit_vmap_and_declared_gradi
         MLBatch(
             features,
             labeled_targets,
-            target_mask=jnp.ones_like(targets, dtype=bool).at[2].set(False),
+            target_mask=jnp.ones_like(targets, dtype="bool").at[2].set(False),
             sample_weight=weights,
             target_schema=schema,
         )
@@ -275,7 +275,7 @@ def test_log_link_glm_families_multioutput_sparse_prediction_and_all_fit_gradien
         MLBatch(
             features,
             multioutput,
-            target_mask=jnp.ones_like(multioutput, dtype=bool).at[1, 1].set(False),
+            target_mask=jnp.ones_like(multioutput, dtype="bool").at[1, 1].set(False),
             sample_weight=weights,
         )
     )

@@ -83,7 +83,7 @@ class VortexParticleProperties(StrictModule):
     ) -> Array:
         if self.core_radius is None:
             raise ValueError("Vortex-particle core_radius is unavailable.")
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if active.shape != self.core_radius.shape:
             raise ValueError("active_mask must match core_radius shape.")
         value = jnp.asarray(self.core_radius, dtype=dtype)
@@ -100,7 +100,7 @@ class VortexParticleProperties(StrictModule):
     ) -> Array:
         if self.volume is None:
             raise ValueError("Vortex-particle volume is unavailable.")
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if active.shape != self.volume.shape:
             raise ValueError("active_mask must match volume shape.")
         value = jnp.asarray(self.volume, dtype=dtype)

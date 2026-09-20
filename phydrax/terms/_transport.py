@@ -83,8 +83,7 @@ class SpatialSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
         source = self.measure_builder(functions)
         if not isinstance(source, (DiscreteMeasureTarget, WeightedSampleTarget)):
             raise TypeError(
-                "measure_builder must return a DiscreteMeasureTarget or "
-                "WeightedSampleTarget."
+                "measure_builder must return a DiscreteMeasureTarget or WeightedSampleTarget."
             )
         result = sinkhorn_divergence_against(
             source,
@@ -165,7 +164,7 @@ class EmpiricalSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
             )
             if axis < 0 or axis >= leaf.ndim:
                 raise ValueError("sample_axis is out of range for empirical samples.")
-            log_weights = jnp.zeros((leaf.shape[axis],), dtype=float)
+            log_weights = jnp.zeros((leaf.shape[axis],), dtype=jnp.float64)
         source = weighted(
             samples,
             log_weights,
@@ -297,7 +296,7 @@ class SlicedWassersteinTerm(AbstractEvaluatedScalarTerm):
         self.source_weights = source_weights
         self.target_weights = target_weights
         self.projections = (
-            None if projections is None else jnp.asarray(projections, dtype=float)
+            None if projections is None else jnp.asarray(projections, dtype=jnp.float64)
         )
         self.weight = _scalar_weight(weight)
         self.p = float(p)
@@ -378,8 +377,8 @@ class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
         self.objective_vars = () if objective_vars is None else tuple(objective_vars)
         self.values = values
         self.weights = weights
-        self.q = jnp.asarray(q, dtype=float)
-        self.target_quantiles = jnp.asarray(target_quantiles, dtype=float)
+        self.q = jnp.asarray(q, dtype=jnp.float64)
+        self.target_quantiles = jnp.asarray(target_quantiles, dtype=jnp.float64)
         if self.target_quantiles.shape != self.q.shape:
             raise ValueError("target_quantiles must have the same shape as q.")
         self.solver = solver
@@ -459,7 +458,7 @@ def _sample_leaf(samples: Any, /) -> Array:
 
 
 def _scalar_weight(value: ArrayLike, /) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if result.shape != ():
         raise ValueError("Term weight must be scalar.")
     return result

@@ -92,8 +92,8 @@ class TimedRadiationHistoryProfile:
         for value in tuples:
             _text(value, "physical tuple ID")
         event_counts = np.asarray(physical_event_counts)
-        doses = np.asarray(dose_gy, dtype=float)
-        dose_errors = np.asarray(dose_standard_errors_gy, dtype=float)
+        doses = np.asarray(dose_gy, dtype=np.float64)
+        dose_errors = np.asarray(dose_standard_errors_gy, dtype=np.float64)
         if (
             event_counts.shape != (len(histories),)
             or event_counts.dtype.kind not in "iu"
@@ -114,7 +114,7 @@ class TimedRadiationHistoryProfile:
                 "Dose and positive dosimetric uncertainty are required per history."
             )
         species = tuple(species_ids)
-        times = np.asarray(sample_times, dtype=float)
+        times = np.asarray(sample_times, dtype=np.float64)
         if (
             not species
             or len(set(species)) != len(species)

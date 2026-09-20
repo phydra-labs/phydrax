@@ -1,7 +1,7 @@
 # Relativistic solver runtimes
 
 Bounded conserved-to-primitive recovery; boundary-aware Valencia GRHD/GRMHD;
-compatible constrained transport; grey, multigroup, neutrino, and polarized radiation;
+compatible constrained transport; gray, multigroup, neutrino, and polarized radiation;
 and atomic ideal, radiation-coupled, resistive, and force-free-transition runtimes.
 Equation semantics remain in `phydrax.equations`; Z4c/matter coupling remains in
 `phydrax.applications.numerical_relativity`.

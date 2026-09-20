@@ -116,7 +116,7 @@ def test_qhvi_filters_each_member_instead_of_rejecting_a_partly_feasible_batch()
     gains = _sample_hvi(
         baseline,
         candidates,
-        jnp.ones((1, 3), dtype=bool),
+        jnp.ones((1, 3), dtype="bool"),
         jnp.asarray([[True, False]]),
         jnp.asarray([5.0, 5.0]),
     )

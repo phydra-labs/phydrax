@@ -107,9 +107,9 @@ class MineralKinetics(StrictModule):
         ):
             raise ValueError("Minerals require unique nonempty names.")
         nu, constants, rates = (
-            jnp.asarray(stoichiometry, dtype=float),
-            jnp.asarray(log_k, dtype=float),
-            jnp.asarray(rate_constants, dtype=float),
+            jnp.asarray(stoichiometry, dtype=jnp.float64),
+            jnp.asarray(log_k, dtype=jnp.float64),
+            jnp.asarray(rate_constants, dtype=jnp.float64),
         )
         count = len(names)
         if (
@@ -230,15 +230,15 @@ class MineralKinetics(StrictModule):
         termination: NonlinearTermination | None = None,
     ) -> MineralReactionResult:
         """One coupled aqueous-equilibrium/kinetic-mineral cell step."""
-        old = jnp.asarray(previous_component_inventory, dtype=float)
-        minerals = jnp.asarray(previous_mineral_inventory, dtype=float)
+        old = jnp.asarray(previous_component_inventory, dtype=jnp.float64)
+        minerals = jnp.asarray(previous_mineral_inventory, dtype=jnp.float64)
         volume, time = (
-            jnp.asarray(water_volume, dtype=float),
-            jnp.asarray(dt, dtype=float),
+            jnp.asarray(water_volume, dtype=jnp.float64),
+            jnp.asarray(dt, dtype=jnp.float64),
         )
         area, initial = (
-            jnp.asarray(reactive_area, dtype=float),
-            jnp.asarray(initial_concentrations, dtype=float),
+            jnp.asarray(reactive_area, dtype=jnp.float64),
+            jnp.asarray(initial_concentrations, dtype=jnp.float64),
         )
         if (
             old.shape != (self.chemistry.component_count,)

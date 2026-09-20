@@ -409,7 +409,7 @@ def _cut_cell_route(maximum_leakage_proxy):
     )
     masks = []
     for axis, layout in enumerate(finite_volume.face_layouts):
-        mask = jnp.zeros(layout.shape, dtype=bool)
+        mask = jnp.zeros(layout.shape, dtype="bool")
         if axis == 0:
             mask = mask.at[2, :].set(True)
         masks.append(mask)

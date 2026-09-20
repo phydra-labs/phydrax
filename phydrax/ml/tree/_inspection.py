@@ -77,12 +77,12 @@ class TreeConvergenceDiagnostics(StrictModule):
         converged: Any,
         capacity_exhausted: Any,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
-        self.converged = jnp.asarray(converged, dtype=bool)
-        self.capacity_exhausted = jnp.asarray(capacity_exhausted, dtype=bool)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
+        self.capacity_exhausted = jnp.asarray(capacity_exhausted, dtype=jnp.bool_)
 
 
 class PartialDependenceResult(StrictModule):
@@ -313,7 +313,7 @@ def tree_shap(
     coalition_values = []
     for subset in range(subset_count):
         included = jnp.asarray(
-            [(subset >> feature) & 1 for feature in range(feature_count)], dtype=bool
+            [(subset >> feature) & 1 for feature in range(feature_count)], dtype=jnp.bool_
         )
         coalition = jnp.where(included, flat_x, flat_baseline)
         prediction = model(coalition)

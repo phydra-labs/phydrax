@@ -59,9 +59,7 @@ class WalkForwardSplit(StrictModule):
     def __init__(
         self, train_start: int, train_stop: int, test_start: int, test_stop: int, /
     ):
-        values = tuple(
-            int(value) for value in (train_start, train_stop, test_start, test_stop)
-        )
+        values = tuple((train_start, train_stop, test_start, test_stop))
         if values[0] < 0 or not values[0] < values[1] <= values[2] < values[3]:
             raise ValueError(
                 "Split indices require train_start < train_stop <= test_start < test_stop."
@@ -248,7 +246,7 @@ def evaluate_walk_forward(
     wealth0 = float(initial_wealth)
     if not np.isfinite(wealth0) or wealth0 <= 0.0:
         raise ValueError("initial_wealth must be finite and positive.")
-    splits = walk_forward_splits(int(returns.shape[0]), plan)
+    splits = walk_forward_splits(returns.shape[0], plan)
     validate_no_lookahead(splits, decisions)
     realized: list[Array] = []
     indices: list[Array] = []
@@ -321,7 +319,7 @@ def evaluate_nested_backtest(
     returns = returns.astype(jnp.result_type(returns.dtype, jnp.float32))
     if not np.all(np.isfinite(np.asarray(returns))):
         raise ValueError("asset_returns must be finite.")
-    splits = nested_backtest_splits(int(returns.shape[0]), plan)
+    splits = nested_backtest_splits(returns.shape[0], plan)
     outer_count = len(splits.outer)
     inner_counts = tuple(len(group) for group in splits.inner)
     if len(set(inner_counts)) != 1:

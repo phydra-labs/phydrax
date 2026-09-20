@@ -74,11 +74,11 @@ def hinfinity_state_feedback(
 ) -> RobustStateFeedbackResult:
     """Continuous-time bounded-real state-feedback synthesis for fixed gamma."""
 
-    a = np.asarray(dynamics, dtype=float)
-    b = np.asarray(control, dtype=float)
-    w = np.asarray(disturbance, dtype=float)
-    q = np.asarray(state_cost, dtype=float)
-    r = np.asarray(control_cost, dtype=float)
+    a = np.asarray(dynamics, dtype=np.float64)
+    b = np.asarray(control, dtype=np.float64)
+    w = np.asarray(disturbance, dtype=np.float64)
+    q = np.asarray(state_cost, dtype=np.float64)
+    r = np.asarray(control_cost, dtype=np.float64)
     gamma_ = float(gamma)
     if a.ndim != 2 or a.shape[0] != a.shape[1]:
         raise ValueError("H-infinity dynamics must be square.")
@@ -101,7 +101,7 @@ def hinfinity_state_feedback(
     )
     residual = np.linalg.norm(bounded_real)
     stable = bool(np.all(np.real(eigenvalues) < 0.0))
-    tolerance = 1.0e3 * np.finfo(float).eps * max(1.0, np.linalg.norm(q))
+    tolerance = 1.0e3 * np.finfo(np.float64).eps * max(1.0, np.linalg.norm(q))
     payload = {
         "kind": "hinfinity-state-feedback",
         "gamma": gamma_,
@@ -149,10 +149,10 @@ def prepare_tube_mpc(
     maximum_terms: int = 256,
     tolerance: float = 1.0e-12,
 ) -> TubeMPCPlan:
-    a = np.asarray(dynamics, dtype=float)
-    b = np.asarray(control, dtype=float)
-    gain = np.asarray(feedback_gain, dtype=float)
-    radius = np.asarray(disturbance_radius, dtype=float)
+    a = np.asarray(dynamics, dtype=np.float64)
+    b = np.asarray(control, dtype=np.float64)
+    gain = np.asarray(feedback_gain, dtype=np.float64)
+    radius = np.asarray(disturbance_radius, dtype=np.float64)
     closed = a - b @ gain
     if np.any(radius < 0.0) or not np.all(np.isfinite(radius)):
         raise ValueError("disturbance_radius must be finite and non-negative.")
@@ -166,10 +166,10 @@ def prepare_tube_mpc(
     else:
         raise ValueError("Tube invariant-radius series did not converge.")
     control_radius = np.abs(gain) @ accumulated
-    state_lower_ = np.asarray(state_lower, dtype=float) + accumulated
-    state_upper_ = np.asarray(state_upper, dtype=float) - accumulated
-    control_lower_ = np.asarray(control_lower, dtype=float) + control_radius
-    control_upper_ = np.asarray(control_upper, dtype=float) - control_radius
+    state_lower_ = np.asarray(state_lower, dtype=np.float64) + accumulated
+    state_upper_ = np.asarray(state_upper, dtype=np.float64) - accumulated
+    control_lower_ = np.asarray(control_lower, dtype=np.float64) + control_radius
+    control_upper_ = np.asarray(control_upper, dtype=np.float64) - control_radius
     if np.any(state_lower_ > state_upper_) or np.any(control_lower_ > control_upper_):
         raise ValueError("Robust tube tightening makes the constraints infeasible.")
     payload = {
@@ -199,8 +199,10 @@ class GaussianChanceConstraint:
         mean_ = jnp.asarray(mean)
         covariance_ = jnp.asarray(covariance)
         variance = self.coefficients @ covariance_ @ self.coefficients
-        return self.bound - self.coefficients @ mean_ - self.quantile * jnp.sqrt(
-            jnp.maximum(variance, 0.0)
+        return (
+            self.bound
+            - self.coefficients @ mean_
+            - self.quantile * jnp.sqrt(jnp.maximum(variance, 0.0))
         )
 
 
@@ -245,14 +247,16 @@ def linear_moving_horizon_estimate(
     c = jnp.asarray(observation)
     values = jnp.asarray(measurements)
     prior = jnp.asarray(prior_mean)
-    horizon = int(values.shape[0])
-    state_size = int(a.shape[0])
+    horizon = values.shape[0]
+    state_size = a.shape[0]
     if a.shape != (state_size, state_size) or c.shape[1] != state_size:
         raise ValueError("Moving-horizon matrices have incompatible state dimensions.")
     rows = []
     targets = []
     prior_factor = jnp.linalg.cholesky(jnp.asarray(prior_precision))
-    first = jnp.zeros((state_size, horizon * state_size)).at[:, :state_size].set(prior_factor)
+    first = (
+        jnp.zeros((state_size, horizon * state_size)).at[:, :state_size].set(prior_factor)
+    )
     rows.append(first)
     targets.append(prior_factor @ prior)
     process_factor = jnp.linalg.cholesky(jnp.asarray(process_precision))
@@ -309,7 +313,11 @@ def project_control_halfspaces(
     nominal = jnp.asarray(nominal_control)
     matrix = jnp.asarray(coefficients)
     right = jnp.asarray(bounds)
-    if matrix.ndim != 2 or matrix.shape[1] != nominal.size or right.shape != (matrix.shape[0],):
+    if (
+        matrix.ndim != 2
+        or matrix.shape[1] != nominal.size
+        or right.shape != (matrix.shape[0],)
+    ):
         raise ValueError("Safety halfspaces do not match the control dimension.")
     corrections = jnp.zeros_like(matrix)
     control = nominal
@@ -319,7 +327,9 @@ def project_control_halfspaces(
             shifted = control + corrections[index]
             violation = normal @ shifted - right[index]
             scale = jnp.vdot(normal, normal)
-            adjustment = jnp.maximum(violation, 0.0) * normal / jnp.maximum(scale, 1.0e-30)
+            adjustment = (
+                jnp.maximum(violation, 0.0) * normal / jnp.maximum(scale, 1.0e-30)
+            )
             projected = shifted - adjustment
             corrections = corrections.at[index].set(shifted - projected)
             control = projected

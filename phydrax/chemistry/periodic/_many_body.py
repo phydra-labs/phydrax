@@ -45,7 +45,7 @@ class GWQuasiparticleEvidence(StrictModule, NonTrainableState):
         /,
     ):
         residuals = jnp.asarray(root_residuals)
-        roots = jnp.asarray(successful_roots, dtype=bool)
+        roots = jnp.asarray(successful_roots, dtype=jnp.bool_)
         tolerance = float(residual_tolerance)
         if (
             residuals.ndim != 1
@@ -261,7 +261,7 @@ class DiagonalGWPlan(StrictModule, NonTrainableState):
         factors = []
         residuals = []
         successful = []
-        for index in range(int(self.mean_field_energies.size)):
+        for index in range(self.mean_field_energies.size):
             state_index = index
 
             def equation(energy, _, state_index=state_index):
@@ -355,7 +355,7 @@ class BSEPostprocessEvidence(StrictModule, NonTrainableState):
             )
         maximum = jnp.max(jnp.abs(residuals), initial=0.0)
         admitted = (
-            jnp.asarray(successful, dtype=bool).reshape(())
+            jnp.asarray(successful, dtype=jnp.bool_).reshape(())
             & jnp.all(jnp.isfinite(residuals))
             & jnp.all(residuals >= 0.0)
             & (maximum <= tolerance)
@@ -481,7 +481,7 @@ class BetheSalpeterPlan(StrictModule, NonTrainableState):
         dipoles = jnp.asarray(transition_dipoles).astype(
             jnp.result_type(kernel_dtype, jnp.asarray(transition_dipoles).dtype)
         )
-        count = int(transitions.size)
+        count = transitions.size
         provider = str(provider_id).strip()
         capacity = int(maximum_transitions)
         eigenpair_tolerance_ = float(eigenpair_tolerance)

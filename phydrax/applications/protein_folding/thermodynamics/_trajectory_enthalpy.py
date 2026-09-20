@@ -40,8 +40,8 @@ def native_enthalpy_series(
         conversion_factor(pressure_unit, trajectory.units.pressure_unit)
     )
     volume_factor = float(conversion_factor(volume_unit, reference_volume))
-    pressure_values = np.asarray(pressure, dtype=float)
-    volume_values = np.asarray(volumes, dtype=float)
+    pressure_values = np.asarray(pressure, dtype=np.float64)
+    volume_values = np.asarray(volumes, dtype=np.float64)
     shape = tuple(trajectory.times.shape)
     if pressure_values.shape not in ((), shape) or volume_values.shape not in ((), shape):
         raise ValueError(

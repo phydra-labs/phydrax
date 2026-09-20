@@ -46,8 +46,7 @@ def _open3d():
     except (ImportError, OSError) as exc:
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-            "Poisson reconstruction requires the optional Open3D Python bindings "
-            "(open3d>=0.19,<0.20).",
+            "Poisson reconstruction requires the optional Open3D Python bindings (open3d>=0.19,<0.20).",
         ) from exc
     return open3d
 

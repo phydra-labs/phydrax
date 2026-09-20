@@ -122,8 +122,8 @@ def _combine(
 ) -> _Result:
     names = tuple(component_names)
     values_ = tuple(components)
-    factors = np.asarray(weights, dtype=float)
-    matrix = np.asarray(covariance, dtype=float)
+    factors = np.asarray(weights, dtype=np.float64)
+    matrix = np.asarray(covariance, dtype=np.float64)
     count = len(values_)
     if len(names) != count or factors.shape != (count,):
         raise ValueError("Protocol component names and weights must align.")
@@ -136,7 +136,9 @@ def _combine(
         raise ValueError(
             "Protocol covariance diagonal must equal the authenticated component variances."
         )
-    tolerance = 128.0 * np.finfo(matrix.dtype).eps * max(1.0, float(np.max(np.abs(matrix))))
+    tolerance = (
+        128.0 * np.finfo(matrix.dtype).eps * max(1.0, float(np.max(np.abs(matrix))))
+    )
     if count and float(np.min(np.linalg.eigvalsh(matrix))) < -tolerance:
         raise ValueError("Protocol covariance must be positive semidefinite.")
     component_values = jnp.stack(tuple(jnp.asarray(value.value) for value in values_))
@@ -207,13 +209,14 @@ class SeparatedTopologyPlan(StrictModule, NonTrainableState):
         if not isinstance(coupled, FreeEnergyStatePlan) or not isinstance(
             decoupled, FreeEnergyStatePlan
         ):
-            raise TypeError("Separated topology requires coupled and decoupled state plans.")
+            raise TypeError(
+                "Separated topology requires coupled and decoupled state plans."
+            )
         if coupled.measure_id != decoupled.measure_id:
-            raise ValueError("Separated topology states require one exact measure identity.")
-        if (
-            not coupled.neutral_control_evidence
-            or not decoupled.neutral_control_evidence
-        ):
+            raise ValueError(
+                "Separated topology states require one exact measure identity."
+            )
+        if not coupled.neutral_control_evidence or not decoupled.neutral_control_evidence:
             raise ValueError(
                 "Separated topology states require neutral bound-system evidence."
             )
@@ -288,9 +291,13 @@ class NeutralAbsoluteSolvationPlan(StrictModule, NonTrainableState):
         if not isinstance(vacuum_decoupling, FreeEnergyProtocolLegPlan) or not isinstance(
             solvent_decoupling, FreeEnergyProtocolLegPlan
         ):
-            raise TypeError("Absolute solvation requires vacuum and solvent protocol legs.")
+            raise TypeError(
+                "Absolute solvation requires vacuum and solvent protocol legs."
+            )
         correction_plans = tuple(corrections)
-        if any(not isinstance(value, FreeEnergyCorrectionPlan) for value in correction_plans):
+        if any(
+            not isinstance(value, FreeEnergyCorrectionPlan) for value in correction_plans
+        ):
             raise TypeError("corrections must contain FreeEnergyCorrectionPlan values.")
         self.vacuum_decoupling = vacuum_decoupling
         self.solvent_decoupling = solvent_decoupling
@@ -313,7 +320,10 @@ class NeutralAbsoluteSolvationPlan(StrictModule, NonTrainableState):
         covariance: ArrayLike,
         /,
     ) -> NeutralAbsoluteSolvationResult:
-        if vacuum_decoupling.plan_id != self.vacuum_decoupling.plan_id or solvent_decoupling.plan_id != self.solvent_decoupling.plan_id:
+        if (
+            vacuum_decoupling.plan_id != self.vacuum_decoupling.plan_id
+            or solvent_decoupling.plan_id != self.solvent_decoupling.plan_id
+        ):
             raise ValueError("Absolute-solvation leg results do not match the plan.")
         correction_values = _corrections(self.corrections, corrections)
         components = (vacuum_decoupling, solvent_decoupling, *correction_values)
@@ -343,15 +353,22 @@ class AbsoluteBindingPlan(StrictModule, NonTrainableState):
         corrections: Sequence[FreeEnergyCorrectionPlan],
         /,
     ):
-        if not isinstance(solvent_decoupling, FreeEnergyProtocolLegPlan) or not isinstance(
-            complex_decoupling, FreeEnergyProtocolLegPlan
-        ):
-            raise TypeError("Absolute binding requires solvent and complex decoupling legs.")
+        if not isinstance(
+            solvent_decoupling, FreeEnergyProtocolLegPlan
+        ) or not isinstance(complex_decoupling, FreeEnergyProtocolLegPlan):
+            raise TypeError(
+                "Absolute binding requires solvent and complex decoupling legs."
+            )
         correction_plans = tuple(corrections)
-        if any(not isinstance(value, FreeEnergyCorrectionPlan) for value in correction_plans):
+        if any(
+            not isinstance(value, FreeEnergyCorrectionPlan) for value in correction_plans
+        ):
             raise TypeError("corrections must contain FreeEnergyCorrectionPlan values.")
         correction_kinds = {value.correction_kind for value in correction_plans}
-        if FreeEnergyCorrectionKind.RESTRAINT not in correction_kinds or FreeEnergyCorrectionKind.STANDARD_STATE not in correction_kinds:
+        if (
+            FreeEnergyCorrectionKind.RESTRAINT not in correction_kinds
+            or FreeEnergyCorrectionKind.STANDARD_STATE not in correction_kinds
+        ):
             raise ValueError(
                 "Absolute binding requires explicit restraint and standard-state corrections."
             )
@@ -365,8 +382,7 @@ class AbsoluteBindingPlan(StrictModule, NonTrainableState):
                 "complex": complex_decoupling.plan_id,
                 "corrections": [value.plan_id for value in correction_plans],
                 "formula": (
-                    "D_solv - D_complex + C_restraint + "
-                    "C_standard_state + C_symmetry"
+                    "D_solv - D_complex + C_restraint + C_standard_state + C_symmetry"
                 ),
             }
         )
@@ -379,20 +395,26 @@ class AbsoluteBindingPlan(StrictModule, NonTrainableState):
         covariance: ArrayLike,
         /,
     ) -> AbsoluteBindingResult:
-        if solvent_decoupling.plan_id != self.solvent_decoupling.plan_id or complex_decoupling.plan_id != self.complex_decoupling.plan_id:
+        if (
+            solvent_decoupling.plan_id != self.solvent_decoupling.plan_id
+            or complex_decoupling.plan_id != self.complex_decoupling.plan_id
+        ):
             raise ValueError("Absolute-binding leg results do not match the plan.")
         correction_values = _corrections(self.corrections, corrections)
         components = (solvent_decoupling, complex_decoupling, *correction_values)
         return _combine(
             AbsoluteBindingResult,
             self.plan_id,
-            ("D_solv", "D_complex", *(value.correction_name for value in correction_values)),
+            (
+                "D_solv",
+                "D_complex",
+                *(value.correction_name for value in correction_values),
+            ),
             components,
             (1.0, -1.0, *(1.0 for _ in correction_values)),
             covariance,
             (
-                "binding = D_solv - D_complex + C_restraint + "
-                "C_standard_state + C_symmetry"
+                "binding = D_solv - D_complex + C_restraint + C_standard_state + C_symmetry"
             ),
         )
 
@@ -493,7 +515,9 @@ class MappedRelativeSolvationPlan(StrictModule, NonTrainableState):
         ):
             raise TypeError("Relative solvation requires solvent and vacuum mappings.")
         if solvent.mapping_id != vacuum.mapping_id:
-            raise ValueError("Relative-solvation legs require one exact mapping identity.")
+            raise ValueError(
+                "Relative-solvation legs require one exact mapping identity."
+            )
         self.solvent = solvent
         self.vacuum = vacuum
         self.plan_id = canonical_fingerprint(

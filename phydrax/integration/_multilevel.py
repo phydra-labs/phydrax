@@ -35,7 +35,7 @@ from ._targets import MultilevelTarget
 
 
 _ACTIVE_STATUS = -1
-_RESULT_FORMAT = "phydrax-multilevel-result-v2"
+_RESULT_FORMAT = "phydrax-multilevel-result"
 _CHECKPOINT_KIND = "multilevel-monte-carlo"
 
 
@@ -70,7 +70,7 @@ def _counts(
     resolved = (value,) * num_levels if isinstance(value, int) else tuple(value)
     if len(resolved) != num_levels:
         raise ValueError(f"{name} must contain one value per hierarchy level.")
-    return tuple(int(item) for item in resolved)
+    return tuple(resolved)
 
 
 def _finite_sample_mask(values: Array, /) -> Array:
@@ -131,19 +131,19 @@ class MultilevelSampleBatch(StrictModule):
             raise ValueError("sample_indices must be a non-empty vector.")
         if bool(jnp.any(indices < 0)) or bool(jnp.any(jnp.diff(indices) != 1)):
             raise ValueError("sample_indices must be consecutive and non-negative.")
-        count = int(indices.size)
-        cost_values = jnp.broadcast_to(jnp.asarray(costs, dtype=float), (count,))
+        count = indices.size
+        cost_values = jnp.broadcast_to(jnp.asarray(costs, dtype=jnp.float64), (count,))
         if bool(jnp.any(~jnp.isfinite(cost_values) | (cost_values <= 0.0))):
             raise ValueError("costs must be finite and strictly positive.")
         fine_mask = (
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype=jnp.bool_)
             if fine_valid is None
-            else jnp.asarray(fine_valid, dtype=bool)
+            else jnp.asarray(fine_valid, dtype=jnp.bool_)
         )
         coarse_mask = (
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype=jnp.bool_)
             if coarse_valid is None
-            else jnp.asarray(coarse_valid, dtype=bool)
+            else jnp.asarray(coarse_valid, dtype=jnp.bool_)
         )
         if fine_mask.shape != (count,) or coarse_mask.shape != (count,):
             raise ValueError("Validity arrays must contain one entry per sample pair.")
@@ -165,7 +165,7 @@ class MultilevelSampleBatch(StrictModule):
 
     @property
     def num_samples(self) -> int:
-        return int(self.sample_indices.size)
+        return self.sample_indices.size
 
 
 class MultilevelRealization(StrictModule):
@@ -291,7 +291,7 @@ def materialize_multilevel(
                 "otherwise provide terminal_bias_bound."
             )
     fingerprint = _plan_fingerprint(plan)
-    key_tuple = tuple(int(value) for value in np.asarray(key_data).reshape((-1,)))
+    key_tuple = tuple(np.asarray(key_data).reshape((-1,)))
     realization_id = _digest(
         target.hierarchy.fingerprint,
         target.sampler_id,
@@ -326,7 +326,7 @@ def initialize_multilevel(
         jnp.zeros((num_levels,), dtype=jnp.int64),
         jnp.zeros(
             (num_levels,),
-            dtype=jnp.dtype(realization.precision.accumulation_dtype or float),
+            dtype=jnp.dtype(realization.precision.accumulation_dtype or jnp.float64),
         ),
         jnp.zeros((num_levels,), dtype=jnp.int64),
         jnp.asarray(realization.initial_samples, dtype=jnp.int64),
@@ -561,7 +561,7 @@ def _sample_level(
         correction,
         jnp.zeros(
             (count,),
-            dtype=jnp.dtype(realization.precision.accumulation_dtype or float),
+            dtype=jnp.dtype(realization.precision.accumulation_dtype or jnp.float64),
         ),
         mask=valid,
         accumulation_dtype=realization.precision.accumulation_dtype,

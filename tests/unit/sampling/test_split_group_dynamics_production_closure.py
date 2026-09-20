@@ -192,7 +192,7 @@ def test_su_n_is_supported_and_noncompact_geometry_fails_before_execution():
         target, SplitGroupDynamicsPlan(step_size=0.03)
     )
     state = initialize_split_group_dynamics_state(
-        prepared, jnp.eye(2, dtype=complex)[None]
+        prepared, jnp.eye(2, dtype="complex128")[None]
     )
     assert state.valid
 

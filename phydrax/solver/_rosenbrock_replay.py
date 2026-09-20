@@ -202,8 +202,7 @@ def _linear_plan(
         )
     if policy.preconditioning is not None or policy.recycling is not None:
         raise ValueError(
-            "The first qualified Rosenbrock replay route excludes preconditioning "
-            "and recycling."
+            "The first qualified Rosenbrock replay route excludes preconditioning and recycling."
         )
     time = jnp.asarray(problem.t0, dtype=problem.initial_state.real.dtype)
     jacobian = _JacobianAction(problem.drift, time, problem.initial_state, problem.args)
@@ -328,8 +327,8 @@ def _empty_stage_metrics(state: Array, /) -> tuple[Array, ...]:
         jnp.full((4,), -1, dtype=jnp.int32),
         jnp.zeros((4,), dtype=real_dtype),
         jnp.zeros((4,), dtype=real_dtype),
-        jnp.ones((4,), dtype=bool),
-        jnp.ones((4,), dtype=bool),
+        jnp.ones((4,), dtype=jnp.bool_),
+        jnp.ones((4,), dtype=jnp.bool_),
         jnp.zeros((4,), dtype=jnp.int32),
     )
 
@@ -351,7 +350,7 @@ def _run_replay(
     controller = prepared.adaptive
     if controller is None:
         raise ValueError("Adaptive policy is required for accepted-schedule replay.")
-    length = int(step_sizes.shape[0])
+    length = step_sizes.shape[0]
     output_count = prepared.time_grid.num_steps
     if replay.mode == "scheduled":
         assert replay.schedule is not None
@@ -378,7 +377,7 @@ def _run_replay(
         successful=input_finite,
         output_index=jnp.asarray(0, dtype=jnp.int32),
         output_states=output_states,
-        output_valid=jnp.zeros((output_count,), dtype=bool),
+        output_valid=jnp.zeros((output_count,), dtype=jnp.bool_),
         first_failed_step=jnp.asarray(-1, dtype=jnp.int32),
         status=initial_status,
     )
@@ -602,7 +601,7 @@ def _solve_adaptive(
         save_index=jnp.asarray(0, dtype=jnp.int32),
         step_sizes=jnp.zeros((controller.maximum_accepted_steps,), dtype=times.dtype),
         accepted_times=jnp.zeros((controller.maximum_accepted_steps,), dtype=times.dtype),
-        step_valid=jnp.zeros((controller.maximum_accepted_steps,), dtype=bool),
+        step_valid=jnp.zeros((controller.maximum_accepted_steps,), dtype=jnp.bool_),
         save_steps=jnp.full((prepared.time_grid.num_steps,), -1, dtype=jnp.int32),
         successful=input_finite,
     )
@@ -987,7 +986,7 @@ def solve_scheduled_rosenbrock(
     runtime_args = scheduled.reference_args if args is _DEFAULT_ARGS else args
     state, runtime_args, finite = _runtime_inputs(prepared, runtime_args, state)
     count = scheduled.temporal_mesh.interval_count
-    active = jnp.ones((count,), dtype=bool)
+    active = jnp.ones((count,), dtype=jnp.bool_)
     states, valid, terminal_time, terminal_state, status, adequacy = _run_replay(
         prepared,
         state,

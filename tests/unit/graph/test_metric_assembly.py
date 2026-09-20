@@ -19,7 +19,7 @@ def test_metric_cochain_assembly_uses_paired_primal_and_dual_measures():
         0,
         2,
         1,
-        lambda cell, reference: jnp.asarray([cell], dtype=float),
+        lambda cell, reference: jnp.asarray([cell], dtype="float64"),
         lambda cell, reference: jnp.zeros((1, 0)),
         jnp.zeros((1, 0)),
         jnp.ones((1,)),

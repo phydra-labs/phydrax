@@ -270,10 +270,10 @@ def _vertex_links_valid(faces: np.ndarray, vertex_count: int, /) -> bool:
         frontier = list(reached)
         while frontier:
             current = frontier.pop()
-            for neighbour in adjacency[current]:
-                if neighbour not in reached:
-                    reached.add(neighbour)
-                    frontier.append(neighbour)
+            for neighbor in adjacency[current]:
+                if neighbor not in reached:
+                    reached.add(neighbor)
+                    frontier.append(neighbor)
         if reached != link_vertices:
             return False
     return True
@@ -321,18 +321,18 @@ def _closed_topology(
         opposites.append((left[3], right[3]))
         adjacent.append((left[0], right[0]))
 
-    neighbours: list[list[int]] = [[] for _ in range(faces.shape[0])]
+    neighbors: list[list[int]] = [[] for _ in range(faces.shape[0])]
     for left, right in adjacent:
-        neighbours[left].append(right)
-        neighbours[right].append(left)
+        neighbors[left].append(right)
+        neighbors[right].append(left)
     reached = {0}
     frontier = [0]
     while frontier:
         current = frontier.pop()
-        for neighbour in neighbours[current]:
-            if neighbour not in reached:
-                reached.add(neighbour)
-                frontier.append(neighbour)
+        for neighbor in neighbors[current]:
+            if neighbor not in reached:
+                reached.add(neighbor)
+                frontier.append(neighbor)
     if len(reached) != faces.shape[0]:
         raise ValueError("A biomembrane must have one connected closed component.")
     return (
@@ -754,7 +754,7 @@ class BiomembranePlan(StrictModule, NonTrainableState):
         if np.any(topology < 0):
             raise ValueError("face vertex indices must be nonnegative.")
         vertex_count = int(np.max(topology)) + 1
-        face_count = int(topology.shape[0])
+        face_count = topology.shape[0]
         edges, opposites, adjacent = _closed_topology(topology, vertex_count)
         identifiers = _stable_ids(vertex_ids, vertex_count, "vertex_ids")
         face_identifiers = _stable_ids(face_ids, face_count, "face_ids")
@@ -780,7 +780,7 @@ class BiomembranePlan(StrictModule, NonTrainableState):
             raise ValueError("species_diffusivity must be one-dimensional.")
         if np.any(~np.isfinite(diffusivity)) or np.any(diffusivity < 0.0):
             raise ValueError("species_diffusivity must be finite and nonnegative.")
-        species_count = int(diffusivity.shape[0])
+        species_count = diffusivity.shape[0]
         if reaction_matrix is None:
             reaction = np.zeros((species_count, species_count), dtype=np.float64)
         else:
@@ -905,7 +905,7 @@ class BiomembranePlan(StrictModule, NonTrainableState):
         self.adhesion_length = jnp.asarray(scalars["adhesion_length"], dtype=dtype)
         self.vertex_count = vertex_count
         self.face_count = face_count
-        self.edge_count = int(edges.shape[0])
+        self.edge_count = edges.shape[0]
         self.species_count = species_count
         self.target_area, self.target_volume = targets
         self.geometry_tolerance = scalars["geometry_tolerance"]
@@ -1063,7 +1063,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
                 tolerance**2,
             )
         )
-        face_count = int(self.plan.faces.shape[0])
+        face_count = self.plan.faces.shape[0]
         face_relation = EdgeRelation(
             jnp.repeat(jnp.arange(face_count, dtype=jnp.int32), 3),
             self.plan.faces.reshape((-1,)),
@@ -1127,7 +1127,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
 
         cotangent_sum = cotangent(first_opposite) + cotangent(second_opposite)
         weighted = cotangent_sum[:, None] * (first - second)
-        edge_count = int(edge.shape[0])
+        edge_count = edge.shape[0]
         edge_relation = EdgeRelation(
             jnp.repeat(jnp.arange(edge_count, dtype=jnp.int32), 2),
             edge.reshape((-1,)),
@@ -1160,7 +1160,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             (angle(edge_ab, edge_ac), angle(edge_ba, edge_bc), angle(edge_ca, edge_cb)),
             axis=1,
         )
-        face_count = int(self.plan.faces.shape[0])
+        face_count = self.plan.faces.shape[0]
         face_relation = EdgeRelation(
             jnp.repeat(jnp.arange(face_count, dtype=jnp.int32), 3),
             self.plan.faces.reshape((-1,)),
@@ -1842,19 +1842,19 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
                     for uses in edge_uses.values()
                 )
                 if manifold:
-                    neighbours: list[list[int]] = [[] for _ in range(faces.shape[0])]
+                    neighbors: list[list[int]] = [[] for _ in range(faces.shape[0])]
                     for uses in edge_uses.values():
                         left, right = uses[0][2], uses[1][2]
-                        neighbours[left].append(right)
-                        neighbours[right].append(left)
+                        neighbors[left].append(right)
+                        neighbors[right].append(left)
                     reached = {0}
                     frontier = [0]
                     while frontier:
                         current = frontier.pop()
-                        for neighbour in neighbours[current]:
-                            if neighbour not in reached:
-                                reached.add(neighbour)
-                                frontier.append(neighbour)
+                        for neighbor in neighbors[current]:
+                            if neighbor not in reached:
+                                reached.add(neighbor)
+                                frontier.append(neighbor)
                     manifold = len(reached) == faces.shape[0] and _vertex_links_valid(
                         faces, positions.shape[0]
                     )
@@ -1993,7 +1993,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
                 "kind": "biomembrane-remesh-proposal",
                 "source": self.prepared_id,
                 "operation": int(selected),
-                "edge_vertex_ids": tuple(int(value) for value in edge_vertex_ids),
+                "edge_vertex_ids": tuple(edge_vertex_ids),
                 "candidate": candidate.prepared_id,
                 "manifold": manifold,
                 "oriented": oriented,
@@ -2027,7 +2027,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             self_intersection_free,
             stencil_valid,
             selected,
-            tuple(int(value) for value in edge_vertex_ids),
+            tuple(edge_vertex_ids),
             proposal_id,
         )
 

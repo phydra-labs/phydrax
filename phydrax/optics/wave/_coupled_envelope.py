@@ -81,19 +81,19 @@ class CoupledEnvelopePlan(StrictModule):
         maximum_steps: int = 100_000,
         maximum_workspace_bytes: int = 1 << 30,
     ):
-        time = np.asarray(time_points, dtype=float)
-        x = np.asarray(x_points, dtype=float)
-        y = np.asarray(y_points, dtype=float)
-        carrier = np.asarray(carrier_frequencies, dtype=float)
+        time = np.asarray(time_points, dtype=np.float64)
+        x = np.asarray(x_points, dtype=np.float64)
+        y = np.asarray(y_points, dtype=np.float64)
+        carrier = np.asarray(carrier_frequencies, dtype=np.float64)
         modes = carrier.size
-        dispersion_ = np.asarray(dispersion, dtype=float)
-        loss_ = np.asarray(loss, dtype=float)
-        diffraction_ = np.asarray(diffraction, dtype=float)
+        dispersion_ = np.asarray(dispersion, dtype=np.float64)
+        loss_ = np.asarray(loss, dtype=np.float64)
+        diffraction_ = np.asarray(diffraction, dtype=np.float64)
         overlap = np.asarray(nonlinear_overlap, dtype=np.complex128)
         quadratic = np.asarray(quadratic_coupling, dtype=np.complex128)
-        mismatch = np.asarray(phase_mismatch, dtype=float)
+        mismatch = np.asarray(phase_mismatch, dtype=np.float64)
         raman = np.asarray(raman_frequency_response, dtype=np.complex128)
-        steepening = np.asarray(self_steepening, dtype=float)
+        steepening = np.asarray(self_steepening, dtype=np.float64)
         for name, values, minimum in (
             ("time_points", time, 16),
             ("x_points", x, 1),
@@ -213,15 +213,15 @@ class CoupledEnvelopePlan(StrictModule):
 
     @property
     def mode_count(self) -> int:
-        return int(self.carrier_frequencies.shape[0])
+        return self.carrier_frequencies.shape[0]
 
     @property
     def field_shape(self) -> tuple[int, int, int, int]:
         return (
-            int(self.x_points.shape[0]),
-            int(self.y_points.shape[0]),
+            self.x_points.shape[0],
+            self.y_points.shape[0],
             self.mode_count,
-            int(self.time_points.shape[0]),
+            self.time_points.shape[0],
         )
 
 

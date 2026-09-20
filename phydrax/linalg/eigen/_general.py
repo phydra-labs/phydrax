@@ -341,8 +341,7 @@ class GeneralEigenResourcePolicy(StrictModule):
         operator_matvecs: int = 10_000_000,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 max_dimension,
                 preparation_bytes,
                 workspace_bytes,
@@ -622,8 +621,7 @@ def plan_general_eigensolve(
     dimension = problem.dimension
     if dimension > selected.resources.max_dimension:
         raise ValueError(
-            f"General eigen dimension {dimension} exceeds limit "
-            f"{selected.resources.max_dimension}."
+            f"General eigen dimension {dimension} exceeds limit {selected.resources.max_dimension}."
         )
     if selected.initial_vector is not None and selected.initial_vector.shape != (
         dimension,
@@ -648,8 +646,7 @@ def plan_general_eigensolve(
             raise ValueError("RestartedArnoldi requires count < dimension - 1.")
         if 2 * count > dimension:
             raise ValueError(
-                "RestartedArnoldi requires room for at least two retained blocks "
-                "(2 * count <= dimension)."
+                "RestartedArnoldi requires room for at least two retained blocks (2 * count <= dimension)."
             )
         if selected.max_steps < 2 * count:
             raise ValueError(
@@ -668,8 +665,7 @@ def plan_general_eigensolve(
             or not selected.transform_solve.require_device_binding
         ):
             raise ValueError(
-                "Matrix-free spectral transforms require a device-bound GMRES "
-                "transform_solve policy."
+                "Matrix-free spectral transforms require a device-bound GMRES transform_solve policy."
             )
         if problem.mass_operator is not None:
             properties = problem.mass_operator.properties
@@ -703,8 +699,7 @@ def plan_general_eigensolve(
                 )
         elif selected.selection.kind == "closest" and selected.selection.target != 0.0:
             raise ValueError(
-                "A nonzero closest target requires ShiftInvertTransform or "
-                "CayleyTransform."
+                "A nonzero closest target requires ShiftInvertTransform or CayleyTransform."
             )
         subspace = _arnoldi_subspace_dimension(selected.method, count, dimension)
         if subspace < 2 * count:
@@ -876,7 +871,7 @@ def general_eigensolve(
         right_np,
         left_np,
     )
-    selected_count = int(alpha_np.size)
+    selected_count = alpha_np.size
     selection_satisfied = selected_count == requested
     tolerance = prepared.plan.policy.tolerance
     residual_ok = bool(
@@ -959,7 +954,7 @@ def general_eigensolve(
         converged_mask=jnp.full(
             (selected_count,),
             status == GeneralEigenSolveStatus.SUCCESS,
-            dtype=bool,
+            dtype=jnp.bool_,
         ),
         converged_count=jnp.asarray(
             selected_count if status == GeneralEigenSolveStatus.SUCCESS else 0,
@@ -1018,8 +1013,7 @@ def general_eigensolve(
             target_space_id=prepared.problem.operator.target.space_id,
             selection_id=prepared.plan.policy.selection.selection_id,
             coordinate_convention=(
-                "canonical-coordinate homogeneous alpha/beta; left vectors are "
-                "canonical Euclidean covectors"
+                "canonical-coordinate homogeneous alpha/beta; left vectors are canonical Euclidean covectors"
             ),
             capabilities=prepared.plan.capabilities,
             numeric_version=prepared.numeric_version,
@@ -1215,9 +1209,9 @@ def _general_eigensolve_native(
         pairing_matrix=pairing_matrix,
         biorthogonality_error=pairing_error,
         eigenvalue_condition_estimates=conditions,
-        finite_mask=jnp.ones((count,), dtype=bool),
-        infinite_mask=jnp.zeros((count,), dtype=bool),
-        indeterminate_mask=jnp.zeros((count,), dtype=bool),
+        finite_mask=jnp.ones((count,), dtype=jnp.bool_),
+        infinite_mask=jnp.zeros((count,), dtype=jnp.bool_),
+        indeterminate_mask=jnp.zeros((count,), dtype=jnp.bool_),
         input_finite=jnp.asarray(True),
         output_finite=output_finite,
         converged=status == int(GeneralEigenSolveStatus.SUCCESS),
@@ -1275,8 +1269,7 @@ def _general_eigensolve_native(
             target_space_id=prepared.problem.operator.target.space_id,
             selection_id=policy.selection.selection_id,
             coordinate_convention=(
-                "canonical-coordinate homogeneous alpha/beta; left vectors are "
-                "canonical Euclidean covectors"
+                "canonical-coordinate homogeneous alpha/beta; left vectors are canonical Euclidean covectors"
             ),
             capabilities=prepared.plan.capabilities,
             numeric_version=prepared.numeric_version,
@@ -1288,7 +1281,7 @@ def _jax_greedy_eigenvalue_pairing(right: Array, left: Array, /) -> Array:
     count = right.size
     initial = (
         jnp.zeros((count,), dtype=jnp.int32),
-        jnp.zeros((count,), dtype=bool),
+        jnp.zeros((count,), dtype=jnp.bool_),
     )
 
     def pair(index, state):
@@ -1868,7 +1861,7 @@ def _native_restarted_arnoldi_evidence(
         initial,
         initial_values,
         initial_residuals,
-        jnp.zeros((count,), dtype=bool),
+        jnp.zeros((count,), dtype=jnp.bool_),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(True),
     )

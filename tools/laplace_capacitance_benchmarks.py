@@ -65,10 +65,9 @@ def _region(case: str):
             subdivisions=_SPHERE_SUBDIVISIONS[sphere_faces],
             radius=1.0,
         )
-        if int(mesh.faces.shape[0]) != sphere_faces:
+        if mesh.faces.shape[0] != sphere_faces:
             raise ValueError(
-                "[geometry] Deterministic icosphere refinement produced an "
-                "unexpected face count."
+                "[geometry] Deterministic icosphere refinement produced an unexpected face count."
             )
         return phx.geometry.MeshRegion(np.asarray(mesh.vertices), np.asarray(mesh.faces))
     raise ValueError(f"[geometry] Unknown benchmark case {case!r}.")
@@ -79,24 +78,24 @@ def _selections(prepared, case: str):
         return {
             "body": phx.discretization.EntitySelection(
                 prepared.surface_entities,
-                jnp.ones((prepared.face_count,), dtype=bool),
+                jnp.ones((prepared.face_count,), dtype="bool"),
             )
         }
     return {
         "left": phx.discretization.EntitySelection(
             prepared.surface_entities,
-            jnp.asarray([1, 1, 1, 1, 0, 0, 0, 0], dtype=bool),
+            jnp.asarray([1, 1, 1, 1, 0, 0, 0, 0], dtype="bool"),
         ),
         "right": phx.discretization.EntitySelection(
             prepared.surface_entities,
-            jnp.asarray([0, 0, 0, 0, 1, 1, 1, 1], dtype=bool),
+            jnp.asarray([0, 0, 0, 0, 1, 1, 1, 1], dtype="bool"),
         ),
     }
 
 
 def _case(case: str):
     region = _region(case)
-    face_count = int(region.faces.shape[0])
+    face_count = region.faces.shape[0]
     policy = phx.operators.LaplaceSingleLayerDP0GalerkinPolicy3D(
         singular_order=3,
         near_ratio=1.0,

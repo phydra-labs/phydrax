@@ -206,7 +206,7 @@ def sample_markov_chunked(
             state.position,
         )
         log_target_values = jnp.zeros((state.num_chains, 0), dtype=state.log_target.dtype)
-        accepted = jnp.zeros((state.num_chains, 0, plan.steps_per_draw), dtype=bool)
+        accepted = jnp.zeros((state.num_chains, 0, plan.steps_per_draw), dtype=jnp.bool_)
         target_valid = jnp.zeros_like(accepted)
     padding = plan.capacity - consumed
     samples = jax.tree_util.tree_map(
@@ -227,7 +227,7 @@ def sample_markov_chunked(
                 MarkovChunkIterationMetrics(
                     jnp.asarray(consumed, dtype=jnp.int32),
                     (
-                        jnp.mean(accepted[:, :consumed].astype(float), axis=(1, 2))
+                        jnp.mean(accepted[:, :consumed].astype("float64"), axis=(1, 2))
                         if consumed
                         else jnp.zeros_like(state.log_target)
                     ),

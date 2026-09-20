@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Pinned external source, licence, publication, and absorption records."""
+"""Pinned external source, license, publication, and absorption records."""
 
 from __future__ import annotations
 
@@ -46,8 +46,8 @@ class SourceReference:
     repository_url: str
     revision: str
     archive_digest: str
-    licence: str
-    licence_digest: str
+    license: str
+    license_digest: str
     reuse_class: SourceReuseClass
     concepts: tuple[str, ...]
     relevant_paths: tuple[str, ...] = ()
@@ -69,13 +69,13 @@ class SourceReference:
         source_id,
         repository_url,
         revision,
-        licence,
+        license,
         reuse_class,
         /,
         *,
         concepts,
         archive_digest="unresolved",
-        licence_digest="unresolved",
+        license_digest="unresolved",
         relevant_paths=(),
         relevant_documents=(),
         publications=(),
@@ -94,8 +94,8 @@ class SourceReference:
             str(repository_url).strip(),
             _identifier(revision, "revision"),
             _identifier(archive_digest, "archive digest"),
-            _identifier(licence, "licence"),
-            _identifier(licence_digest, "licence digest"),
+            _identifier(license, "license"),
+            _identifier(license_digest, "license digest"),
             SourceReuseClass(reuse_class),
             _strings(concepts, "source concept"),
             _strings(relevant_paths, "source path"),
@@ -128,7 +128,7 @@ class SourceReference:
             if (
                 self.revision in unresolved
                 or self.archive_digest in unresolved
-                or self.licence_digest in unresolved
+                or self.license_digest in unresolved
                 or self.technical_reviewer in unresolved
                 or self.legal_reviewer in unresolved
             ):
@@ -145,8 +145,8 @@ class SourceReference:
             "repository_url": self.repository_url,
             "revision": self.revision,
             "archive_digest": self.archive_digest,
-            "licence": self.licence,
-            "licence_digest": self.licence_digest,
+            "license": self.license,
+            "license_digest": self.license_digest,
             "reuse_class": self.reuse_class.value,
             "concepts": list(self.concepts),
             "relevant_paths": list(self.relevant_paths),

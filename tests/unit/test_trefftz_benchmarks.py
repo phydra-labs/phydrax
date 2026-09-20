@@ -18,7 +18,6 @@ def test_trefftz_benchmark_schema_and_replay():
         evaluation_points=16,
         seed=21,
     )
-    assert first["schema_version"] == 1
     assert first["dimensions"] == [2, 4]
     assert first["passed"]
     assert second["passed"]

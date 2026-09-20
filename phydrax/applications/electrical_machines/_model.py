@@ -36,7 +36,7 @@ VACUUM_PERMEABILITY = 4.0e-7 * np.pi
 class LinearMagneticRegion(StrictModule):
     """One isotropic region; remanence is in its material coordinate frame.
 
-    ``winding_turn_density[k]`` is signed turns per square metre along +z
+    ``winding_turn_density[k]`` is signed turns per square meter along +z
     for circuit k. Negative density is the return side of that winding.
     ``rotating`` rotates the region's remanence with the rotor, not its currents;
     this profile supports stationary windings only.
@@ -58,8 +58,8 @@ class LinearMagneticRegion(StrictModule):
         rotating: bool = False,
     ):
         mu = float(relative_permeability)
-        br = np.asarray(remanence, dtype=float)
-        winding = np.asarray(winding_turn_density, dtype=float)
+        br = np.asarray(remanence, dtype=np.float64)
+        winding = np.asarray(winding_turn_density, dtype=np.float64)
         if not name or not isfinite(mu) or mu <= 0.0:
             raise ValueError("Regions require a name and positive finite permeability.")
         if br.shape != (2,) or not np.all(np.isfinite(br)):
@@ -157,8 +157,8 @@ class PlanarMachine(StrictModule):
         counts = {r.winding_turn_density.size for r in region_values}
         if len(counts) != 1:
             raise ValueError("Every region must declare the same winding count.")
-        weights = np.asarray(rotation_weights, dtype=float)
-        radial = np.asarray(radial_velocity, dtype=float)
+        weights = np.asarray(rotation_weights, dtype=np.float64)
+        radial = np.asarray(radial_velocity, dtype=np.float64)
         air = np.asarray(airgap_cells)
         if weights.shape != (len(points),) or np.any(
             ~np.isfinite(weights) | (weights < 0) | (weights > 1)
@@ -224,16 +224,16 @@ class PlanarMachine(StrictModule):
             adjacency[c].update((int(a), int(b)))
         reached, pending = {0}, [0]
         while pending:
-            for neighbour in adjacency[pending.pop()]:
-                if neighbour not in reached:
-                    reached.add(neighbour)
-                    pending.append(neighbour)
+            for neighbor in adjacency[pending.pop()]:
+                if neighbor not in reached:
+                    reached.add(neighbor)
+                    pending.append(neighbor)
         if len(reached) != len(points):
             raise ValueError("Machine mesh must be connected without unused vertices.")
         prepared = FiniteElementPlan(
             mesh, FiniteElementFieldSpec("Az", lagrange_element("triangle", 1))
         ).prepare()
-        boundary = np.asarray(prepared.dof_maps[0].boundary_dof_mask, dtype=bool)
+        boundary = np.asarray(prepared.dof_maps[0].boundary_dof_mask, dtype=np.bool_)
         if not np.any(boundary) or np.all(boundary):
             raise ValueError(
                 "Machine mesh needs exterior gauge and interior field degrees of freedom."
@@ -241,33 +241,31 @@ class PlanarMachine(StrictModule):
         if np.any(weights[boundary] != 0.0) or np.any(radial[boundary] != 0.0):
             raise ValueError("The exterior magnetic boundary must remain stationary.")
         raw_edges = np.asarray(contour_edges)
-        raw_neighbours = np.asarray(contour_cells)
+        raw_neighbors = np.asarray(contour_cells)
         if raw_edges.size and (
             raw_edges.ndim != 2
             or raw_edges.shape[1] != 2
             or not np.issubdtype(raw_edges.dtype, np.integer)
         ):
             raise ValueError("Air contour edges must be integer vertex pairs.")
-        if raw_neighbours.size and (
-            raw_neighbours.ndim != 2
-            or raw_neighbours.shape[1] != 2
-            or not np.issubdtype(raw_neighbours.dtype, np.integer)
+        if raw_neighbors.size and (
+            raw_neighbors.ndim != 2
+            or raw_neighbors.shape[1] != 2
+            or not np.issubdtype(raw_neighbors.dtype, np.integer)
         ):
-            raise ValueError("Air contour neighbours must be integer cell pairs.")
+            raise ValueError("Air contour neighbors must be integer cell pairs.")
         edges = raw_edges.astype(np.int32, copy=False).reshape((-1, 2))
-        neighbours = raw_neighbours.astype(np.int32, copy=False).reshape((-1, 2))
-        if edges.shape != neighbours.shape:
+        neighbors = raw_neighbors.astype(np.int32, copy=False).reshape((-1, 2))
+        if edges.shape != neighbors.shape:
             raise ValueError("Each air contour edge requires its two adjacent cells.")
         if edges.size:
             if len(edges) < 3 or len(np.unique(edges[:, 0])) != len(edges):
                 raise ValueError("The air stress contour must be one simple polygon.")
             if np.any((edges < 0) | (edges >= len(points))) or np.any(
-                (neighbours < 0) | (neighbours >= len(cells))
+                (neighbors < 0) | (neighbors >= len(cells))
             ):
                 raise ValueError("Air contour indices are out of range.")
-            if not np.all(air[neighbours]) or np.any(
-                neighbours[:, 0] == neighbours[:, 1]
-            ):
+            if not np.all(air[neighbors]) or np.any(neighbors[:, 0] == neighbors[:, 1]):
                 raise ValueError(
                     "Both distinct sides of a stress contour must be vacuum air."
                 )
@@ -294,11 +292,11 @@ class PlanarMachine(StrictModule):
                     second_ = int(second)
                     key = (min(first_, second_), max(first_, second_))
                     edge_adjacency.setdefault(key, []).append(cell_index)
-            for edge, adjacent in zip(edges, neighbours, strict=True):
+            for edge, adjacent in zip(edges, neighbors, strict=True):
                 actual = edge_adjacency.get(tuple(sorted(map(int, edge))), ())
                 if len(actual) != 2 or set(actual) != set(map(int, adjacent)):
                     raise ValueError(
-                        "Stress contour neighbours must be the edge's two actual cells."
+                        "Stress contour neighbors must be the edge's two actual cells."
                     )
         self.discretization = prepared
         self.cell_regions = jnp.asarray(ids, dtype=jnp.int32)
@@ -309,7 +307,7 @@ class PlanarMachine(StrictModule):
         self.radial_velocity = jnp.asarray(radial)
         self.airgap_cells = jnp.asarray(air)
         self.contour_edges = jnp.asarray(edges)
-        self.contour_cells = jnp.asarray(neighbours)
+        self.contour_cells = jnp.asarray(neighbors)
         self.reference_angle = float(reference_angle)
         self.reference_radius = radius
         self.radius_bounds = (lower, upper)
@@ -404,8 +402,7 @@ def polar_machine(
         or ns < 1
     ):
         raise ValueError(
-            "Use sectors divisible by four (at least eight), positive material "
-            "layers, and at least two airgap layers."
+            "Use sectors divisible by four (at least eight), positive material layers, and at least two airgap layers."
         )
     r, rs, rw, ro = map(
         float,
@@ -418,8 +415,7 @@ def polar_machine(
         0 < low <= r <= high < rs < rw < ro
     ):
         raise ValueError(
-            "Rotor bounds must preserve a strictly positive airgap and ordered "
-            "machine radii."
+            "Rotor bounds must preserve a strictly positive airgap and ordered machine radii."
         )
     if turns_value <= 0 or remanence_value < 0:
         raise ValueError("Turns must be positive and remanence nonnegative.")

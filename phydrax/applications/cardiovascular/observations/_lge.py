@@ -58,7 +58,7 @@ def _floating_array(value: ArrayLike, /) -> Array:
 
 
 def _volume_shape(value: tuple[int, int, int], /) -> tuple[int, int, int]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if len(shape) != 3 or any(size < 1 for size in shape):
         raise ValueError(
             "volume_shape must contain three positive sizes in (z, y, x) order."
@@ -69,7 +69,7 @@ def _volume_shape(value: tuple[int, int, int], /) -> tuple[int, int, int]:
 def _normalized_kernel(
     value: ArrayLike, dimensions: int, name: str, /
 ) -> tuple[Array, float]:
-    host = np.asarray(value, dtype=float)
+    host = np.asarray(value, dtype=np.float64)
     if (
         host.ndim != dimensions
         or any(size % 2 != 1 for size in host.shape)
@@ -381,7 +381,7 @@ class LGEObservationPlan(StrictModule, NonTrainableState):
         )
         profile, slice_error = _normalized_kernel(slice_profile, 1, "slice_profile")
         voxel_count = int(np.prod(shape))
-        motion = np.asarray(motion_matrix, dtype=float)
+        motion = np.asarray(motion_matrix, dtype=np.float64)
         if motion.shape != (voxel_count, voxel_count) or np.any(~np.isfinite(motion)):
             raise ValueError("motion_matrix must be a finite square voxel-to-voxel map.")
         motion_nonnegative = bool(np.all(motion >= 0.0))

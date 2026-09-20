@@ -137,10 +137,7 @@ def macaulay2_availability(
     environment: Macaulay2Environment | None = None, /
 ) -> BackendAvailability:
     """Check only an explicit pin; never search PATH, install, or select a fallback."""
-    requirement = (
-        "supply a user-installed hash-pinned Macaulay2 executable and exact "
-        "installation inventory"
-    )
+    requirement = "supply a user-installed hash-pinned Macaulay2 executable and exact installation inventory"
     if environment is None:
         return BackendAvailability(
             capabilities=MACAULAY2_CAPABILITIES,

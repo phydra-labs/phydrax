@@ -30,7 +30,7 @@ def _axis_shape(value: Array, axis: int, count: int, /) -> tuple[int, ...]:
 
 def _axis_values(values: Array, dimension: int, axis: int, /) -> Array:
     shape = [1] * dimension
-    shape[axis] = int(values.size)
+    shape[axis] = values.size
     return values.reshape(tuple(shape))
 
 
@@ -334,9 +334,7 @@ class PreparedMACMomentumOperators(StrictModule, NonTrainableState):
                 return difference / widths
             interior = moved[1:] - moved[:-1]
             result = jnp.zeros(
-                _axis_shape(
-                    flux, derivative_axis, int(grid_axis.interval_widths.size) + 1
-                ),
+                _axis_shape(flux, derivative_axis, grid_axis.interval_widths.size + 1),
                 dtype=flux.dtype,
             )
             interior_widths = self.face_dual_widths[component_axis][1:-1]

@@ -210,7 +210,7 @@ class MUSCLReconstruction(AbstractFaceReconstructionPlan):
         cell_widths: ArrayLike | None = None,
     ) -> tuple[Array, Array]:
         values = _move_front(state, axis)
-        count = int(values.shape[0])
+        count = values.shape[0]
         widths = (
             jnp.ones((count,), dtype=values.dtype)
             if cell_widths is None

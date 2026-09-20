@@ -192,7 +192,7 @@ def _trace(case_id, family, preparation, plate, concentration, values):
         ),
         np.linspace(0.0, 20.0, len(values)),
         values,
-        np.zeros(len(values), dtype=bool),
+        np.zeros(len(values), dtype="bool"),
         ("invader", "substrate"),
         (concentration, concentration),
         temperature_kelvin=300.0,

@@ -12,15 +12,15 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._phase_field import AbstractBulkFreeEnergy, DoubleWellFreeEnergy
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
 class AbstractBulkEvolutionLaw(StrictModule, NonTrainableState):
     """Energy-compatible current/previous bulk discretization."""
 
-    law_id: AbstractAttribute[str]
-    exact_identity: AbstractAttribute[bool]
+    law_id: eqx.AbstractVar[str]
+    exact_identity: eqx.AbstractVar[bool]
 
     @abc.abstractmethod
     def derivative(

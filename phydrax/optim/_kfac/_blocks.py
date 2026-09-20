@@ -101,7 +101,7 @@ def estimate_kron_factors_from_chunks(
         assert sensitivity_sum is not None
         assert target_trace is not None
         matrices = jacobian.reshape(
-            (int(jacobian.shape[0]), block.output_size, block.input_size)
+            (jacobian.shape[0], block.output_size, block.input_size)
         )
         left, singular_values, right = jnp.linalg.svd(matrices, full_matrices=False)
         if approximation == "reduce":
@@ -116,7 +116,7 @@ def estimate_kron_factors_from_chunks(
         activation_sum = activation_sum + activations.T @ activations
         sensitivity_sum = sensitivity_sum + sensitivities.T @ sensitivities
         target_trace = target_trace + jnp.sum(jnp.square(jacobian))
-        count += int(activations.shape[0])
+        count += activations.shape[0]
     if activation_sum is None or sensitivity_sum is None or target_trace is None:
         raise ValueError("KFAC factor estimation requires at least one Jacobian chunk.")
     activation = activation_sum / float(max(count, 1))
@@ -308,8 +308,8 @@ def kron_dense_matrix(
 ) -> Array:
     """Materialize one small block for tests and numerical diagnostics only."""
 
-    output_size = int(factors[0].sensitivity.shape[0])
-    input_size = int(factors[0].activation.shape[0])
+    output_size = factors[0].sensitivity.shape[0]
+    input_size = factors[0].activation.shape[0]
     dense = jnp.eye(output_size * input_size, dtype=factors[0].activation.dtype)
     dense = float(damping) * dense
     for factor in factors:

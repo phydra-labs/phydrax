@@ -402,7 +402,7 @@ def test_tiny_unit_mass_redistribution_requires_dynamic_pm_refresh():
         jnp.ones((2,)),
         microscopic,
         microscopic[:, None] * 0.5 * velocities,
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         jnp.asarray((501, 502), dtype=jnp.int64),
         jnp.full((2,), -1, dtype=jnp.int64),
         jnp.zeros((2,), dtype=jnp.int32),
@@ -470,11 +470,11 @@ def test_units_and_identical_final_state_normalization_are_explicit():
         forward,
         reverse,
         conserved_charge_names=("dark",),
-        forward_outgoing_convention="labelled-full-sphere",
+        forward_outgoing_convention="labeled-full-sphere",
         speed_of_light=10.0,
         maximum_speed_fraction=0.2,
     )
-    assert bound.forward_outgoing_convention == "labelled-full-sphere"
+    assert bound.forward_outgoing_convention == "labeled-full-sphere"
     assert (
         bound.forward_outgoing_convention
         == bound.reverse_kernel.identical_particle_convention

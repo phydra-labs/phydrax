@@ -16,7 +16,7 @@ from phydrax.applications.skeletal_muscle.fibers import (
 
 
 def qualify() -> dict[str, object]:
-    mask = jnp.zeros((1, 2, 7), dtype=bool).at[0, 0, 0].set(True)
+    mask = jnp.zeros((1, 2, 7), dtype="bool").at[0, 0, 0].set(True)
     schedule = PrescribedFiberStimulusSchedule(
         jnp.asarray([0.0]),
         jnp.asarray([0.05]),

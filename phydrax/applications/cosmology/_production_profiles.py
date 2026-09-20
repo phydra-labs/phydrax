@@ -45,7 +45,7 @@ def _fixed_schedule(
     values = np.asarray(scale_factors)
     if values.ndim != 1 or values.size < 2 or not np.issubdtype(values.dtype, np.inexact):
         raise ValueError("Production scale-factor schedule must be an inexact vector.")
-    differences = np.diff(values.astype(float))
+    differences = np.diff(values.astype("float64"))
     if (
         np.any(~np.isfinite(values))
         or np.any(values <= 0.0)
@@ -65,7 +65,7 @@ def _fixed_schedule(
     return (
         jax.lax.stop_gradient(jnp.asarray(values)),
         step,
-        int(values.size - 1),
+        values.size - 1,
         tolerance,
     )
 

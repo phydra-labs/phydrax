@@ -51,8 +51,8 @@ class UniformTimeSamplingPolicy(AbstractTimeSamplingPolicy):
         *,
         policy_id: str | None = None,
     ):
-        lower = jnp.asarray(minimum_time, dtype=float).reshape(())
-        upper = jnp.asarray(maximum_time, dtype=float).reshape(())
+        lower = jnp.asarray(minimum_time, dtype=jnp.float64).reshape(())
+        upper = jnp.asarray(maximum_time, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(lower) & jnp.isfinite(upper)):
             raise ValueError("Time-sampling bounds must be finite.")
         if not bool(upper > lower):
@@ -78,7 +78,7 @@ class UniformTimeSamplingPolicy(AbstractTimeSamplingPolicy):
         *,
         dtype,
     ) -> Array:
-        sample_shape = tuple(int(size) for size in shape)
+        sample_shape = tuple(shape)
         if any(size <= 0 for size in sample_shape):
             raise ValueError("Time sample dimensions must be positive.")
         return jr.uniform(
@@ -106,8 +106,8 @@ class LogitNormalTimeSamplingPolicy(AbstractTimeSamplingPolicy):
         scale: float = 1.0,
         policy_id: str | None = None,
     ):
-        lower = jnp.asarray(minimum_time, dtype=float).reshape(())
-        upper = jnp.asarray(maximum_time, dtype=float).reshape(())
+        lower = jnp.asarray(minimum_time, dtype=jnp.float64).reshape(())
+        upper = jnp.asarray(maximum_time, dtype=jnp.float64).reshape(())
         location_ = float(location)
         scale_ = float(scale)
         if not bool(jnp.isfinite(lower) & jnp.isfinite(upper)) or not bool(upper > lower):
@@ -139,7 +139,7 @@ class LogitNormalTimeSamplingPolicy(AbstractTimeSamplingPolicy):
         *,
         dtype,
     ) -> Array:
-        sample_shape = tuple(int(size) for size in shape)
+        sample_shape = tuple(shape)
         if any(size <= 0 for size in sample_shape):
             raise ValueError("Time sample dimensions must be positive.")
         normal = self.location + self.scale * jr.normal(

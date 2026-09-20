@@ -71,7 +71,7 @@ compiled = phx.equations.compile_barotropic_sph_problem(
     ),
 )
 
-position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
 velocity = jnp.zeros_like(position)
 ivp = compiled.as_differential_problem(
     position,

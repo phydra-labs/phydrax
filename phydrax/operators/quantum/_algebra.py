@@ -54,8 +54,7 @@ class _BinaryMatrixCallable(StrictModule):
         )
         if left.shape != right.shape:
             raise ValueError(
-                "Quantum-bracket matrix dimensions must match; "
-                f"got {left.shape} and {right.shape}."
+                f"Quantum-bracket matrix dimensions must match; got {left.shape} and {right.shape}."
             )
         product_lr = left @ right
         product_rl = right @ left

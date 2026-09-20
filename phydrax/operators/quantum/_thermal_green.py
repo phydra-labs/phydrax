@@ -105,12 +105,12 @@ class ImaginaryTimeGreenFunction(StrictModule):
             raise ValueError("tau must be rank one.")
         if values_.ndim < 1 or values_.shape[0] != tau_.shape[0]:
             raise ValueError("values must have one leading entry per tau sample.")
-        active = _active_mask(sample_active, int(tau_.shape[0]))
+        active = _active_mask(sample_active, tau_.shape[0])
         domain_valid = jnp.all((tau_ >= 0.0) & (tau_ <= beta_) | ~active)
         finite = jnp.all(jnp.isfinite(values_) | _inactive_broadcast(~active, values_))
         evidence_ = (
             _representation_evidence(
-                int(tau_.shape[0]),
+                tau_.shape[0],
                 finite & domain_valid,
                 source="samples",
                 representation="imaginary-time",
@@ -145,7 +145,7 @@ class ImaginaryTimeGreenFunction(StrictModule):
 
 
 class MatsubaraGreenFunction(StrictModule):
-    """Integer-labelled Matsubara samples with optional high-frequency moments."""
+    """Integer-labeled Matsubara samples with optional high-frequency moments."""
 
     indices: Array
     values: Array
@@ -179,11 +179,11 @@ class MatsubaraGreenFunction(StrictModule):
             raise TypeError("Matsubara indices must have integer dtype.")
         if values_.ndim < 1 or values_.shape[0] != indices_.shape[0]:
             raise ValueError("values must have one leading entry per Matsubara index.")
-        active = _active_mask(sample_active, int(indices_.shape[0]))
+        active = _active_mask(sample_active, indices_.shape[0])
         finite = jnp.all(jnp.isfinite(values_) | _inactive_broadcast(~active, values_))
         evidence_ = (
             _representation_evidence(
-                int(indices_.shape[0]),
+                indices_.shape[0],
                 finite,
                 source="samples",
                 representation="matsubara",
@@ -249,7 +249,7 @@ class SelfEnergyMoments(StrictModule):
             raise ValueError(
                 "Self-energy static_limit and tail_values payload shapes must match."
             )
-        active_ = _active_mask(active, int(tail.shape[0]))
+        active_ = _active_mask(active, tail.shape[0])
         if not np.all(np.isfinite(np.asarray(static))) or not np.all(
             np.isfinite(np.asarray(tail))
         ):
@@ -320,7 +320,7 @@ class MatsubaraSelfEnergy(StrictModule):
             )
         if values_.shape[0] != indices_.shape[0]:
             raise ValueError("Self-energy values require one leading entry per index.")
-        active = _active_mask(sample_active, int(indices_.shape[0]))
+        active = _active_mask(sample_active, indices_.shape[0])
         if moments is not None and not isinstance(moments, SelfEnergyMoments):
             raise TypeError("moments must be SelfEnergyMoments or None.")
         causal_tolerance = float(causality_tolerance)
@@ -334,7 +334,7 @@ class MatsubaraSelfEnergy(StrictModule):
             raise ValueError("Self-energy tolerances must be finite and non-negative.")
         frequency_unit_ = str(frequency_unit)
         modes = tuple(str(label) for label in mode_axis)
-        dimension = 1 if scalar else int(values_.shape[-1])
+        dimension = 1 if scalar else values_.shape[-1]
         if (
             not frequency_unit_
             or len(modes) != dimension
@@ -352,7 +352,7 @@ class MatsubaraSelfEnergy(StrictModule):
             )
         else:
             violations = []
-            for sample in range(int(indices_.shape[0])):
+            for sample in range(indices_.shape[0]):
                 spectral_matrix = (
                     -jnp.sign(frequency[sample])
                     * (values_[sample] - jnp.conj(values_[sample].T))
@@ -458,7 +458,7 @@ class RetardedGreenFunction(StrictModule):
             broadening_ = jnp.full(frequency.shape, broadening_)
         if broadening_.shape != frequency.shape:
             raise ValueError("broadening must be scalar or match frequencies.")
-        active = _active_mask(sample_active, int(frequency.shape[0]))
+        active = _active_mask(sample_active, frequency.shape[0])
         if not np.all(np.asarray(broadening_)[np.asarray(active)] > 0.0):
             raise ValueError(
                 "Active retarded samples require strictly positive broadening."
@@ -640,7 +640,7 @@ class DLRGreenFunction(StrictModule):
         finite = jnp.all(jnp.isfinite(masked))
         if evidence is None:
             evidence_ = _representation_evidence(
-                int(values.shape[0]),
+                values.shape[0],
                 finite & basis.valid,
                 source="coefficients",
                 representation="dlr",
@@ -653,7 +653,7 @@ class DLRGreenFunction(StrictModule):
                 evidence.finite,
                 evidence.valid & basis.valid,
                 evidence.status,
-                int(values.shape[0]),
+                values.shape[0],
                 "sample-fit",
                 "dlr",
             )
@@ -910,8 +910,8 @@ def _positive_int(value: int, name: str, /) -> int:
 
 def _active_mask(value: ArrayLike | None, count: int, /) -> Array:
     if value is None:
-        return jnp.ones((count,), dtype=bool)
-    active = jnp.asarray(value, dtype=bool)
+        return jnp.ones((count,), dtype=jnp.bool_)
+    active = jnp.asarray(value, dtype=jnp.bool_)
     if active.shape != (count,):
         raise ValueError(f"sample_active must have shape {(count,)}.")
     return active
@@ -933,7 +933,7 @@ def _representation_evidence(
     source: str,
     representation: str,
 ) -> GreenRepresentationEvidence:
-    valid_ = jnp.asarray(valid, dtype=bool)
+    valid_ = jnp.asarray(valid, dtype=jnp.bool_)
     dtype = jnp.asarray(0.0).dtype
     status = jnp.where(
         valid_, int(GreenFunctionStatus.SUCCESS), int(GreenFunctionStatus.NONFINITE)
@@ -1001,7 +1001,7 @@ def _moments_from_coefficients(
     values = contract("kr,r...->k...", powers, coefficients)
     return GreenFunctionMoments(
         values,
-        jnp.ones((count,), dtype=bool),
+        jnp.ones((count,), dtype=jnp.bool_),
         basis.statistics,
         "inverse-frequency",
     )
@@ -1083,7 +1083,7 @@ def dlr_from_poles(
             fit.evidence.status,
             int(GreenFunctionStatus.INCOMPATIBLE_REPRESENTATION),
         ).astype(jnp.int32),
-        int(labels.shape[0]),
+        labels.shape[0],
         "physical-poles",
         "dlr",
     )
@@ -1196,7 +1196,9 @@ def dlr_to_imaginary_time(
     """Materialize DLR values on caller points or the prepared fixed design."""
 
     points = green.basis.tau_nodes if tau is None else jnp.asarray(tau)
-    active = green.basis.active if tau is None else jnp.ones(points.shape, dtype=bool)
+    active = (
+        green.basis.active if tau is None else jnp.ones(points.shape, dtype=jnp.bool_)
+    )
     values = evaluate_dlr_tau(green, points)
     evidence = GreenRepresentationEvidence(
         green.evidence.residual_norm,
@@ -1205,7 +1207,7 @@ def dlr_to_imaginary_time(
         green.evidence.finite,
         green.evidence.valid,
         green.evidence.status,
-        int(points.size),
+        points.size,
         "dlr",
         "imaginary-time",
     )
@@ -1228,7 +1230,9 @@ def dlr_to_matsubara(
     """Materialize DLR values on caller labels or the prepared fixed design."""
 
     labels = green.basis.matsubara_indices if indices is None else jnp.asarray(indices)
-    active = green.basis.active if indices is None else jnp.ones(labels.shape, dtype=bool)
+    active = (
+        green.basis.active if indices is None else jnp.ones(labels.shape, dtype=jnp.bool_)
+    )
     values = evaluate_dlr_matsubara(green, labels)
     evidence = GreenRepresentationEvidence(
         green.evidence.residual_norm,
@@ -1237,7 +1241,7 @@ def dlr_to_matsubara(
         green.evidence.finite,
         green.evidence.valid,
         green.evidence.status,
-        int(labels.size),
+        labels.size,
         "dlr",
         "matsubara",
     )
@@ -1267,7 +1271,7 @@ def differentiate_dlr(
     return DLRGreenFunction(
         green.basis,
         coefficients,
-        moment_count=int(green.moments.values.shape[0]),
+        moment_count=green.moments.values.shape[0],
         evidence=green.evidence,
     )
 
@@ -1368,7 +1372,7 @@ def fermionic_thermal_sector_channel(
         raise ValueError("annihilation must have shape (target_state, source_state).")
     if log_partition.shape != ():
         raise ValueError("global_log_partition_function must be scalar.")
-    transition_count = int(source.shape[0] * target.shape[0])
+    transition_count = source.shape[0] * target.shape[0]
     maximum = _positive_int(maximum_transitions, "maximum_transitions")
     if transition_count > maximum:
         raise ValueError("Sector channel exceeds maximum_transitions before allocation.")
@@ -1478,9 +1482,9 @@ def plan_thermal_lehmann(
     operator = jnp.asarray(operators)
     if energy.ndim != 1 or energy.shape[0] == 0:
         raise ValueError("energies must be one nonempty rank-one array.")
-    count = int(energy.shape[0])
+    count = energy.shape[0]
     scalar = operator.ndim == 2
-    channel_count = 1 if scalar else int(operator.shape[0]) if operator.ndim == 3 else 0
+    channel_count = 1 if scalar else operator.shape[0] if operator.ndim == 3 else 0
     if operator.ndim not in (2, 3) or operator.shape[-2:] != (count, count):
         raise ValueError(
             "operators must have shape (state,state) or (channel,state,state)."
@@ -1790,7 +1794,7 @@ def lehmann_moments(
     values = contract("kr,r...->k...", powers, lehmann.residues)
     return GreenFunctionMoments(
         values,
-        jnp.ones((count_,), dtype=bool),
+        jnp.ones((count_,), dtype=jnp.bool_),
         lehmann.statistics,
         "inverse-frequency",
     )
@@ -1872,14 +1876,14 @@ def plan_dyson_solve(
     policy_ = DysonPolicy() if policy is None else policy
     if not isinstance(policy_, DysonPolicy):
         raise TypeError("policy must be a DysonPolicy or None.")
-    sample_count = int(noninteracting.indices.shape[0])
+    sample_count = noninteracting.indices.shape[0]
     scalar = noninteracting.values.ndim == 1
     if not scalar and (
         noninteracting.values.ndim != 3
         or noninteracting.values.shape[-1] != noninteracting.values.shape[-2]
     ):
         raise ValueError("Dyson values must be scalar samples or square matrix samples.")
-    dimension = 1 if scalar else int(noninteracting.values.shape[-1])
+    dimension = 1 if scalar else noninteracting.values.shape[-1]
     if sample_count > policy_.maximum_samples:
         raise ValueError("Dyson sample count exceeds maximum_samples.")
     if dimension > policy_.maximum_matrix_dimension:
@@ -1918,7 +1922,7 @@ def prepare_dyson_solve(
     if not isinstance(plan, DysonPlan):
         raise TypeError("plan must be a DysonPlan.")
     _aligned_green_self_energy(noninteracting, self_energy)
-    if int(noninteracting.indices.shape[0]) != plan.sample_count:
+    if noninteracting.indices.shape[0] != plan.sample_count:
         raise ValueError("Dyson inputs do not match the planned sample count.")
     if plan.scalar:
         denominator = jnp.reciprocal(noninteracting.values) - self_energy.values

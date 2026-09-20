@@ -341,7 +341,7 @@ class BatteryProtocolPlan(StrictModule, NonTrainableState):
             else:
                 current_indices.append(-1)
             guard_steps.extend((step_index,) * len(step.stop_guards))
-        boundary_array = np.asarray(boundaries, dtype=float)
+        boundary_array = np.asarray(boundaries, dtype=np.float64)
         if not np.all(np.isfinite(boundary_array)) or np.any(
             np.diff(boundary_array) <= 0.0
         ):
@@ -446,7 +446,7 @@ class BatteryProtocolValues(StrictModule):
         threshold_input = jnp.asarray(stop_thresholds)
         if jnp.iscomplexobj(current_input) or jnp.iscomplexobj(threshold_input):
             raise TypeError("Battery protocol values must be real-valued.")
-        dtype = jnp.result_type(current_input, threshold_input, float)
+        dtype = jnp.result_type(current_input, threshold_input, jnp.float64)
         currents = current_input.astype(dtype)
         thresholds = threshold_input.astype(dtype)
         if currents.shape != (protocol.current_step_count,):

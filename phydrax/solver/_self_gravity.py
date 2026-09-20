@@ -42,7 +42,7 @@ from ._balance_law_transport import (
 )
 
 
-class NewtonianGravityDiagnostics(eqx.Module):
+class NewtonianGravityDiagnostics(StrictModule):
     potential: Array
     face_acceleration: tuple[Array, ...]
     cell_acceleration: Array

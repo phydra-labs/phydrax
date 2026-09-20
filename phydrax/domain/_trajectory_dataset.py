@@ -73,9 +73,9 @@ def _bind_trajectory_component(
         if isinstance(time_selection, Interior):
             value = jnp.mean(factor.durations)
         elif isinstance(time_selection, Boundary):
-            value = jnp.asarray(2.0, dtype=float)
+            value = jnp.asarray(2.0, dtype=jnp.float64)
         else:
-            value = jnp.asarray(1.0, dtype=float)
+            value = jnp.asarray(1.0, dtype=jnp.float64)
         if factor.measure_mode == "time_integral_sum":
             value = value * float(factor.size)
         measure = BaseMeasure("trajectory", ExactMass(value))
@@ -90,7 +90,7 @@ def _tree_leading_axis_size(tree: PyTree[ArrayLike], /) -> int:
     first = jnp.asarray(leaves[0])
     if first.ndim == 0:
         raise ValueError("Trajectory input leaves must have a leading dataset axis.")
-    n = int(first.shape[0])
+    n = first.shape[0]
     if n <= 0:
         raise ValueError("Trajectory input leading axis must be non-empty.")
 
@@ -98,10 +98,10 @@ def _tree_leading_axis_size(tree: PyTree[ArrayLike], /) -> int:
         arr = jnp.asarray(leaf)
         if arr.ndim == 0:
             raise ValueError("Trajectory input leaves must have a leading dataset axis.")
-        if int(arr.shape[0]) != n:
+        if arr.shape[0] != n:
             raise ValueError(
                 "TrajectoryDatasetDomain requires all input leaves to share the same "
-                f"leading axis; got {int(arr.shape[0])} and {n}."
+                f"leading axis; got {arr.shape[0]} and {n}."
             )
     return n
 
@@ -110,8 +110,8 @@ def _as_lengths(lengths: ArrayLike, n: int, /) -> Array:
     arr = jnp.asarray(lengths)
     if arr.ndim != 1:
         raise ValueError(f"lengths must have shape (N,), got {arr.shape}.")
-    if int(arr.shape[0]) != n:
-        raise ValueError(f"lengths must have length {n}, got {int(arr.shape[0])}.")
+    if arr.shape[0] != n:
+        raise ValueError(f"lengths must have length {n}, got {arr.shape[0]}.")
     arr_i = arr.astype(jnp.int32)
     if bool(jnp.any(arr_i <= 0)):
         raise ValueError("All trajectory lengths must be positive.")
@@ -121,7 +121,7 @@ def _as_lengths(lengths: ArrayLike, n: int, /) -> Array:
 
 
 def _as_scalar(name: str, value: ArrayLike, /) -> Array:
-    arr = jnp.asarray(value, dtype=float)
+    arr = jnp.asarray(value, dtype=jnp.float64)
     if arr.shape != ():
         raise ValueError(f"{name} must be scalar, got shape {arr.shape}.")
     return arr.reshape(())
@@ -149,14 +149,12 @@ def _single_axis_for_trajectory(
     structure = structure.canonicalize(domain.labels, fixed_labels=frozenset())
     if len(structure.blocks) != 1:
         raise ValueError(
-            "TrajectoryDatasetDomain sampling requires the data and time labels to be "
-            "sampled in one paired block."
+            "TrajectoryDatasetDomain sampling requires the data and time labels to be sampled in one paired block."
         )
     block = frozenset(structure.blocks[0])
     if block != frozenset(domain.labels):
         raise ValueError(
-            "TrajectoryDatasetDomain sampling requires a paired block containing "
-            f"{domain.labels}."
+            f"TrajectoryDatasetDomain sampling requires a paired block containing {domain.labels}."
         )
     axis_names = structure.axis_names
     if axis_names is None:
@@ -236,8 +234,7 @@ class TrajectoryDatasetDomain(JointFactor):
             "time_integral_sum",
         ):
             raise ValueError(
-                "measure must be one of 'case_time_probability', "
-                "'time_integral_average', or 'time_integral_sum'."
+                "measure must be one of 'case_time_probability', 'time_integral_average', or 'time_integral_sum'."
             )
         measure_value: TrajectoryMeasure
         if measure_str == "case_time_probability":
@@ -350,7 +347,7 @@ class TrajectoryDatasetDomain(JointFactor):
     @property
     def size(self) -> int:
         """Number of trajectory cases."""
-        return int(self.lengths.shape[0])
+        return self.lengths.shape[0]
 
     def field(self, values: ArrayLike, /) -> "DomainFunction":
         """Expose case-aligned target values at every sampled trajectory time."""
@@ -405,7 +402,7 @@ class TrajectoryDatasetDomain(JointFactor):
     @property
     def durations(self) -> Array:
         """Per-case trajectory duration, `(length - 1) * dt`."""
-        return (self.lengths.astype(float) - 1.0) * self.dt
+        return (self.lengths.astype("float64") - 1.0) * self.dt
 
     @property
     def end_times(self) -> Array:
@@ -457,7 +454,7 @@ class TrajectoryDatasetDomain(JointFactor):
     ) -> Array:
         """Convert local time indices to physical times."""
         del case_indices
-        return self.start + self.dt * jnp.asarray(time_indices, dtype=float)
+        return self.start + self.dt * jnp.asarray(time_indices, dtype=jnp.float64)
 
     def points_from_case_time(
         self,
@@ -472,14 +469,14 @@ class TrajectoryDatasetDomain(JointFactor):
         structure_in = structure or SampleLayout((self.labels,))
         structure_, axis = _single_axis_for_trajectory(self, structure_in)
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
-        time_arr = jnp.asarray(times, dtype=float).reshape((-1,))
-        if int(case_idx.shape[0]) != int(time_arr.shape[0]):
+        time_arr = jnp.asarray(times, dtype=jnp.float64).reshape((-1,))
+        if case_idx.shape[0] != time_arr.shape[0]:
             raise ValueError("case_indices and times must have the same length.")
         if time_indices is None:
             time_idx = jnp.rint((time_arr - self.start) / self.dt).astype(jnp.int32)
         else:
             time_idx = jnp.asarray(time_indices, dtype=jnp.int32).reshape((-1,))
-            if int(time_idx.shape[0]) != int(case_idx.shape[0]):
+            if time_idx.shape[0] != case_idx.shape[0]:
                 raise ValueError(
                     "time_indices must have the same length as case_indices."
                 )
@@ -519,7 +516,7 @@ def _sample_valid_cases(
     key: Key[Array, ""],
     /,
 ) -> Array:
-    valid_f = jnp.asarray(valid, dtype=float)
+    valid_f = jnp.asarray(valid, dtype=jnp.float64)
     valid_count = jnp.sum(valid_f)
     checked_count = eqx.error_if(
         valid_count,
@@ -527,7 +524,7 @@ def _sample_valid_cases(
         "No trajectories are valid for this fixed time component.",
     )
     probs = valid_f / checked_count
-    return jr.choice(key, int(valid.shape[0]), shape=(n,), p=probs).astype(jnp.int32)
+    return jr.choice(key, valid.shape[0], shape=(n,), p=probs).astype(jnp.int32)
 
 
 def _component_times(
@@ -540,7 +537,7 @@ def _component_times(
 ) -> tuple[Array, Array]:
     comp = component.spec.selection_for(domain.time_label)
     lengths = domain.lengths[case_indices]
-    durations = (lengths.astype(float) - 1.0) * domain.dt
+    durations = (lengths.astype("float64") - 1.0) * domain.dt
 
     if isinstance(comp, Interior):
         if domain.sampling_mode == "observation_uniform":
@@ -561,17 +558,19 @@ def _component_times(
         return times, time_idx
 
     if isinstance(comp, FixedStart):
-        return jnp.full((n,), domain.start, dtype=float), jnp.zeros((n,), dtype=jnp.int32)
+        return jnp.full((n,), domain.start, dtype=jnp.float64), jnp.zeros(
+            (n,), dtype=jnp.int32
+        )
 
     if isinstance(comp, FixedEnd):
         time_idx = lengths - 1
         return domain.end_times[case_indices], time_idx
 
     if isinstance(comp, Fixed):
-        value = jnp.asarray(comp.value, dtype=float).reshape(())
+        value = jnp.asarray(comp.value, dtype=jnp.float64).reshape(())
         time_idx = jnp.rint((value - domain.start) / domain.dt).astype(jnp.int32)
         return (
-            jnp.full((n,), value, dtype=float),
+            jnp.full((n,), value, dtype=jnp.float64),
             jnp.full((n,), time_idx, dtype=jnp.int32),
         )
 
@@ -608,7 +607,7 @@ def sample_trajectory_component(
     if n == 0:
         return domain.points_from_case_time(
             jnp.zeros((0,), dtype=jnp.int32),
-            jnp.zeros((0,), dtype=float),
+            jnp.zeros((0,), dtype=jnp.float64),
             structure=structure_,
             time_indices=jnp.zeros((0,), dtype=jnp.int32),
         )
@@ -616,7 +615,7 @@ def sample_trajectory_component(
     case_key, time_key = jr.split(key)
     time_comp = component.spec.selection_for(domain.time_label)
     if isinstance(time_comp, Fixed):
-        fixed_value = jnp.asarray(time_comp.value, dtype=float).reshape(())
+        fixed_value = jnp.asarray(time_comp.value, dtype=jnp.float64).reshape(())
         valid = (domain.start <= fixed_value) & (fixed_value <= domain.end_times)
         case_indices = _sample_valid_cases(valid, n, case_key)
     elif domain.sampling_mode == "observation_uniform" and isinstance(
@@ -666,9 +665,9 @@ def trajectory_default_quadrature_total_weight(
             "Trajectory case indices must be stored as a phydrax.axes.AxisArray."
         )
     case_idx = jnp.asarray(case_field.data, dtype=jnp.int32)
-    n = int(case_idx.shape[0])
+    n = case_idx.shape[0]
     if n == 0:
-        return cx.AxisArray(jnp.zeros((0,), dtype=float), dims=(axis,))
+        return cx.AxisArray(jnp.zeros((0,), dtype=jnp.float64), dims=(axis,))
 
     time_comp = component.spec.selection_for(domain.time_label)
     point_mass = isinstance(time_comp, (FixedStart, FixedEnd, Fixed))
@@ -676,11 +675,11 @@ def trajectory_default_quadrature_total_weight(
     durations = domain.durations[case_idx]
 
     if domain.measure_mode == "case_time_probability":
-        per_sample = jnp.ones((n,), dtype=float)
+        per_sample = jnp.ones((n,), dtype=jnp.float64)
     elif point_mass:
-        per_sample = jnp.ones((n,), dtype=float)
+        per_sample = jnp.ones((n,), dtype=jnp.float64)
     elif boundary:
-        per_sample = jnp.full((n,), 2.0, dtype=float)
+        per_sample = jnp.full((n,), 2.0, dtype=jnp.float64)
     else:
         per_sample = durations
 

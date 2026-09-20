@@ -40,7 +40,7 @@ def test_ragged_series_model_returns_case_axis_field():
     def exact(payload, *, key=None):
         del key
         return payload.static[:, 0] + jnp.sum(
-            payload.series[..., 0] * payload.mask.astype(float),
+            payload.series[..., 0] * payload.mask.astype("float64"),
             axis=1,
         )
 

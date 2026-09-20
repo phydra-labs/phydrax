@@ -95,7 +95,7 @@ def _record(
         support,
         SamplingSemantics(SpatialSamplingKind.POINT),
         array,
-        np.ones(array.shape, dtype=bool),
+        np.ones(array.shape, dtype="bool"),
     )
     return ObservationRecord(record_id, modality, field)
 

@@ -10,7 +10,7 @@ The implementation follows Eqs. (15), (16), (20), and (25)--(27), and the GASAM 
 
 The passive generalized-invariant energy originates in:
 
-- Ehret AE, Böl M, Itskov M. *A continuum constitutive model for the active behaviour of skeletal muscle*. J Mech Phys Solids. 2011;59:625--636. [doi:10.1016/j.jmps.2010.12.008](https://doi.org/10.1016/j.jmps.2010.12.008).
+- Ehret AE, Böl M, Itskov M. *A continuum constitutive model for the active behavior of skeletal muscle*. J Mech Phys Solids. 2011;59:625--636. [doi:10.1016/j.jmps.2010.12.008](https://doi.org/10.1016/j.jmps.2010.12.008).
 
 The original 2011 active route is not exposed separately. Engelhardt et al. document that the earlier GASA stress omits the deformation derivative of its activation parameter. GASAM includes that derivative and provides the explicit activation weight used here, making stress the derivative of the complete potential. This is the exact reason the implementation selects the later source-named GASAM fidelity rather than silently correcting or partially reproducing the original route.
 

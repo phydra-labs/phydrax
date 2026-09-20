@@ -98,10 +98,10 @@ class ParticleGridSplatState(StrictModule):
         if not isinstance(assignment_state, SplatAssignmentState):
             raise TypeError("assignment_state must be SplatAssignmentState.")
         source_shape = stencil.support.shape
-        supported = jnp.asarray(supported_mask, dtype=bool)
-        truncated = jnp.asarray(truncated_support_mask, dtype=bool)
-        outside = jnp.asarray(out_of_domain_mask, dtype=bool)
-        invalid = jnp.asarray(invalid_geometry_mask, dtype=bool)
+        supported = jnp.asarray(supported_mask, dtype=jnp.bool_)
+        truncated = jnp.asarray(truncated_support_mask, dtype=jnp.bool_)
+        outside = jnp.asarray(out_of_domain_mask, dtype=jnp.bool_)
+        invalid = jnp.asarray(invalid_geometry_mask, dtype=jnp.bool_)
         partitions = jnp.asarray(partition_sums)
         if any(
             value.shape != source_shape
@@ -110,7 +110,7 @@ class ParticleGridSplatState(StrictModule):
             raise ValueError(
                 "Splat state source arrays must match the particle capacity."
             )
-        source_active = jnp.asarray(source_active_mask, dtype=bool)
+        source_active = jnp.asarray(source_active_mask, dtype=jnp.bool_)
         if source_active.shape != supported.shape:
             raise ValueError("source_active_mask must match particle capacity.")
         identifier = str(prepared_id)
@@ -129,7 +129,7 @@ class ParticleGridSplatState(StrictModule):
         self.valid_route_count = jnp.asarray(valid_route_count, dtype=jnp.int32)
         self.dropped_source_count = jnp.asarray(dropped_source_count, dtype=jnp.int32)
         self.invalid_geometry_count = jnp.asarray(invalid_geometry_count, dtype=jnp.int32)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.prepared_id = identifier
 
     @property
@@ -450,7 +450,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             )
         active = self.particles.active_mask
         if active_mask is not None:
-            runtime_active = jnp.asarray(active_mask, dtype=bool)
+            runtime_active = jnp.asarray(active_mask, dtype=jnp.bool_)
             if runtime_active.shape != active.shape:
                 raise ValueError("active_mask must have particle-capacity shape.")
             active = active & runtime_active
@@ -544,7 +544,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         array = jnp.asarray(value)
-        if array.ndim < 1 or int(array.shape[0]) != self.particles.capacity:
+        if array.ndim < 1 or array.shape[0] != self.particles.capacity:
             raise ValueError(
                 f"{name} must begin with particle capacity {self.particles.capacity}."
             )
@@ -696,13 +696,9 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         self._require_materialized_target()
         values = jnp.asarray(payload)
         route_shape = state.stencil.indices.shape
-        if (
-            values.ndim < 2
-            or tuple(int(size) for size in values.shape[:2]) != route_shape
-        ):
+        if values.ndim < 2 or tuple(values.shape[:2]) != route_shape:
             raise ValueError(
-                f"Route payload must begin with route shape {route_shape}; "
-                f"got {values.shape}."
+                f"Route payload must begin with route shape {route_shape}; got {values.shape}."
             )
         evaluated = cast_stage(values, self.plan.precision.evaluation_dtype)
         payload_shape = evaluated.shape[2:]
@@ -917,8 +913,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         array = jnp.asarray(target_values)
         if (
             array.ndim < len(self.target_shape)
-            or tuple(int(size) for size in array.shape[: len(self.target_shape)])
-            != self.target_shape
+            or tuple(array.shape[: len(self.target_shape)]) != self.target_shape
         ):
             raise ValueError(
                 f"target_values must begin with target shape {self.target_shape}."

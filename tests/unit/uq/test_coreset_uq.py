@@ -42,7 +42,7 @@ def _gaussian_mcmc_result():
         unconstrained_samples=unconstrained,
         log_density=log_density,
         acceptance_rate=jnp.full((chains, draws), 0.9),
-        divergent=jnp.zeros((chains, draws), dtype=bool),
+        divergent=jnp.zeros((chains, draws), dtype="bool"),
         energy=jnp.zeros((chains, draws)),
         num_integration_steps=jnp.ones((chains, draws), dtype=jnp.int32),
         num_trajectory_expansions=jnp.zeros((chains, draws), dtype=jnp.int32),

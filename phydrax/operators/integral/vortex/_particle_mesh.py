@@ -91,8 +91,7 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
             raise TypeError("assignment must be an AbstractStructuredSplatAssignment.")
         if not np.all(np.asarray(particles.active_mask)):
             raise ValueError(
-                "Periodic VIC binds capacity only; runtime activity belongs to "
-                "VortexSourceState."
+                "Periodic VIC binds capacity only; runtime activity belongs to VortexSourceState."
             )
         dimension = particles.ambient_dimension
         if dimension not in (2, 3) or len(grid.structured_axes) != dimension:
@@ -111,7 +110,7 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
             grid_nodes = np.asarray(grid_axis.point_coordinates)
             spectral_nodes = np.asarray(spectral_axis.nodes)
             if grid_nodes.shape != spectral_nodes.shape or not np.allclose(
-                grid_nodes, spectral_nodes, rtol=0.0, atol=64 * np.finfo(float).eps
+                grid_nodes, spectral_nodes, rtol=0.0, atol=64 * np.finfo(np.float64).eps
             ):
                 raise ValueError("VIC grid and Fourier nodes must coincide exactly.")
         tolerance = float(compatibility_tolerance)

@@ -179,10 +179,10 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
         ase = require_ase_calculator()
         system = self.calculation.system
         coordinate = np.asarray(positions, dtype=np.dtype(system.coordinate_dtype))
-        expected = (int(system.particle_ids.shape[0]), 3)
+        expected = (system.particle_ids.shape[0], 3)
         if coordinate.shape != expected:
             raise ValueError(f"positions must have shape {expected}.")
-        active = np.asarray(system.active_mask, dtype=bool)
+        active = np.asarray(system.active_mask, dtype=np.bool_)
         length_to_angstrom = float(
             conversion_factor(system.units.scale.length_unit, ANGSTROM)
         )
@@ -199,9 +199,9 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
         periodic_axes = (
             None
             if cell is None
-            else np.zeros((3,), dtype=bool)
+            else np.zeros((3,), dtype=np.bool_)
             if system.cell is None
-            else np.asarray(system.cell.periodic_axes, dtype=bool)
+            else np.asarray(system.cell.periodic_axes, dtype=np.bool_)
         )
         structure = AtomicStructure(
             np.asarray(system.atomic_numbers)[active],
@@ -222,7 +222,7 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
                 np.zeros((3, 3)) if structure.cell is None else np.asarray(structure.cell)
             ),
             pbc=(
-                np.zeros((3,), dtype=bool)
+                np.zeros((3,), dtype=np.bool_)
                 if structure.periodic_axes is None
                 else np.asarray(structure.periodic_axes)
             ),
@@ -233,7 +233,7 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
             raise TypeError("ASE calculator factory returned None.")
         atoms.calc = calculator
         energy_source = float(atoms.get_potential_energy())
-        active_forces_source = np.asarray(atoms.get_forces(), dtype=float)
+        active_forces_source = np.asarray(atoms.get_forces(), dtype=np.float64)
         if active_forces_source.shape != (int(np.count_nonzero(active)), 3):
             raise ValueError("ASE calculator returned an invalid force shape.")
         energy_factor = float(
@@ -247,9 +247,9 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
         forces[active] = active_forces_source * force_factor
         dipole = None
         if self.calculation.task.requires(ElectronicProperty.DIPOLE):
-            dipole_source = np.asarray(atoms.get_dipole_moment(), dtype=float).reshape(
-                (3,)
-            )
+            dipole_source = np.asarray(
+                atoms.get_dipole_moment(), dtype=np.float64
+            ).reshape((3,))
             charge_factor = float(
                 conversion_factor(ELEMENTARY_CHARGE, system.units.charge_unit)
             )

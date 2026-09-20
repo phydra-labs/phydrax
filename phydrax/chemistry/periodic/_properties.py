@@ -48,7 +48,7 @@ class PeriodicEnergyDerivativeResult(StrictModule, NonTrainableState):
         balance = jnp.max(jnp.abs(jnp.sum(force, axis=0)), initial=0.0)
         symmetry = jnp.max(jnp.abs(stress_ - stress_.T), initial=0.0)
         valid = (
-            jnp.asarray(successful, dtype=bool)
+            jnp.asarray(successful, dtype=jnp.bool_)
             & jnp.isfinite(energy_)
             & jnp.all(jnp.isfinite(force))
             & jnp.all(jnp.isfinite(stress_))

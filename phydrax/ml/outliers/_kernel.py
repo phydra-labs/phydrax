@@ -53,9 +53,9 @@ def _fit_ocsvm_one(
     learning_rate: float,
 ) -> tuple[Array, Array, Array, Array, Array]:
     total_weight = jnp.sum(weights)
-    caps = weights / jnp.maximum(float(nu) * total_weight, jnp.finfo(float).tiny)
+    caps = weights / jnp.maximum(float(nu) * total_weight, jnp.finfo(jnp.float64).tiny)
     alpha = _project_capped_simplex(
-        weights / jnp.maximum(total_weight, jnp.finfo(float).tiny), caps
+        weights / jnp.maximum(total_weight, jnp.finfo(jnp.float64).tiny), caps
     )
     lipschitz_bound = jnp.maximum(
         jnp.max(jnp.sum(jnp.abs(gram), axis=-1)), jnp.asarray(1.0, dtype=gram.dtype)
@@ -111,10 +111,10 @@ class OneClassSVMModel(AbstractArrayModel):
         self.training_features = train
         self.dual_coefficients = jnp.asarray(dual_coefficients)
         self.rho = jnp.asarray(rho)
-        self.active = jnp.asarray(active, dtype=bool)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
         self.kernel = kernel
         self.case_shape = tuple(case_shape)
-        self.in_size = int(train.shape[-1])
+        self.in_size = train.shape[-1]
         self.out_size = "scalar"
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
@@ -150,7 +150,7 @@ class OneClassSVMModel(AbstractArrayModel):
 
     def smooth_membership(self, x: Any, /, *, temperature: ArrayLike = 1.0) -> Array:
         return jax.nn.sigmoid(
-            self(x) / jnp.maximum(jnp.asarray(temperature), jnp.finfo(float).tiny)
+            self(x) / jnp.maximum(jnp.asarray(temperature), jnp.finfo(jnp.float64).tiny)
         )
 
 

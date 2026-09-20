@@ -26,7 +26,7 @@ def _ising_operator(coupling=0.7, field=0.4):
         return phx.operators.ConnectedConfigurations(
             connected,
             -field * jnp.ones(shape),
-            jnp.ones(shape, dtype=bool),
+            jnp.ones(shape, dtype="bool"),
             configuration_shape=(2,),
         )
 
@@ -53,7 +53,7 @@ def test_connected_local_estimator_matches_dense_complex_hamiltonian():
 
     coupling = 0.7
     field = 0.4
-    dense = jnp.zeros((4, 4), dtype=complex)
+    dense = jnp.zeros((4, 4), dtype="complex128")
     for index, configuration in enumerate(configurations):
         dense = dense.at[index, index].set(
             -coupling * configuration[0] * configuration[1]
@@ -75,7 +75,7 @@ def test_connected_local_estimator_matches_dense_complex_hamiltonian():
 
 def test_padded_connections_do_not_change_local_estimate():
     configurations = _configurations()
-    model = _TableAmplitude(jnp.zeros((4,)), jnp.ones((4,), dtype=complex))
+    model = _TableAmplitude(jnp.zeros((4,)), jnp.ones((4,), dtype="complex128"))
 
     def diagonal(values):
         return jnp.zeros(values.shape[:-1])
@@ -88,7 +88,7 @@ def test_padded_connections_do_not_change_local_estimate():
         return phx.operators.ConnectedConfigurations(
             connected,
             jnp.asarray([1.0, jnp.nan]) * jnp.ones(shape),
-            jnp.asarray([True, False]) * jnp.ones(shape, dtype=bool),
+            jnp.asarray([True, False]) * jnp.ones(shape, dtype="bool"),
             configuration_shape=(2,),
         )
 
@@ -120,7 +120,7 @@ def test_zero_current_amplitude_invalidates_local_estimator():
     configurations = _configurations()
     model = _TableAmplitude(
         jnp.asarray([-jnp.inf, 0.0, 0.0, 0.0]),
-        jnp.ones((4,), dtype=complex),
+        jnp.ones((4,), dtype="complex128"),
     )
     local = phx.operators.evaluate_local_operator(
         model, _ising_operator(), configurations

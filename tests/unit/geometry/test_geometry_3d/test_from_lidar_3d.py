@@ -37,7 +37,7 @@ def test_geometry3d_from_lidar_scene_basic():
     assert geom.reconstruction_report.retained_points < pts.shape[0]
 
     # Bounds are finite
-    bounds = np.asarray(geom.bounds, dtype=float)
+    bounds = np.asarray(geom.bounds, dtype="float64")
     assert bounds.shape == (2, 3)
     assert float(bounds[0, 0]) < float(bounds[1, 0])
 

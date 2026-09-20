@@ -63,7 +63,7 @@ def test_contact_and_prescribed_velocity_overlap_rejects_compilation():
     splat = phx.discretization.ParticleGridSplatPlan(
         grid, assignment=phx.discretization.TensorBSplineSplatAssignment(2)
     ).prepare(particles)
-    mask = jnp.ones(grid.vertices().shape + (2,), dtype=bool)
+    mask = jnp.ones(grid.vertices().shape + (2,), dtype="bool")
     boundary = phx.discretization.PrescribedGridVelocityPlan(mask)
     contact = phx.discretization.RigidMPMContactPlan(
         phx.geometry.Circle((0.0, 0.0), 0.5).compile(),

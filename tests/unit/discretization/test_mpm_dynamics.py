@@ -46,7 +46,7 @@ def _compiled(
     if clamp_x:
         if boundary is not None:
             raise ValueError("clamp_x and boundary are mutually exclusive.")
-        mask = jnp.zeros(grid.vertices().shape + (dimension,), dtype=bool)
+        mask = jnp.zeros(grid.vertices().shape + (dimension,), dtype="bool")
         boundary = phx.discretization.PrescribedGridVelocityPlan(
             mask.at[..., 0].set(True)
         )

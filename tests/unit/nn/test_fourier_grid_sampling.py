@@ -12,14 +12,13 @@ import phydrax as phx
 
 def test_fourier_grid_sampler_is_owned_by_layer_namespace():
     assert "sample_fourier_grid" in phx.nn.layers.__all__
-    assert "FourierEvaluationMethod" in phx.nn.layers.__all__
     assert "sample_fourier_grid" not in vars(phx.nn.models)
     assert "sample_fourier_grid" not in vars(phx.nn)
 
 
 def test_fourier_grid_sampler_uses_normalized_periodic_coordinates():
     size = 9
-    nodes = -1.0 + 2.0 * jnp.arange(size, dtype=float) / size
+    nodes = -1.0 + 2.0 * jnp.arange(size, dtype="float64") / size
     values = jnp.stack(
         (
             jnp.cos(jnp.pi * nodes),
@@ -49,12 +48,12 @@ def test_fourier_grid_sampler_uses_normalized_periodic_coordinates():
     assert jnp.allclose(output, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_fourier_grid_sampler_supports_physical_nodes_batches_and_nufft():
+def test_fourier_grid_sampler_supports_physical_nodes_batches_and_chunking():
     batch_size = 2
     size = 8
     origin = 3.0
     period = 5.0
-    nodes = origin + period * jnp.arange(size, dtype=float) / size
+    nodes = origin + period * jnp.arange(size, dtype="float64") / size
     base = jnp.stack(
         (
             jnp.cos(2.0 * jnp.pi * (nodes - origin) / period),
@@ -77,21 +76,19 @@ def test_fourier_grid_sampler_supports_physical_nodes_batches_and_nufft():
         axis_nodes=(nodes,),
         periods=(period,),
     )
-    approximate = phx.nn.layers.sample_fourier_grid(
+    chunked = phx.nn.layers.sample_fourier_grid(
         values,
         query,
         spatial_ndim=1,
         axis_nodes=(nodes,),
         periods=(period,),
-        method="nufft",
-        tolerance=1e-10,
         query_chunk_size=2,
     )
     direct = cast(jax.Array, direct)
-    approximate = cast(jax.Array, approximate)
+    chunked = cast(jax.Array, chunked)
 
     assert direct.shape == (batch_size, 3, 2)
-    assert jnp.allclose(approximate, direct, rtol=2e-8, atol=2e-8)
+    assert jnp.allclose(chunked, direct, rtol=2e-8, atol=2e-8)
     assert jnp.allclose(direct[1], 2.0 * direct[0], rtol=1e-12, atol=1e-12)
 
 
@@ -99,7 +96,7 @@ def test_public_fourier_resample_evaluates_shifted_uniform_grid():
     source_size = 8
     target_size = 11
     offset = 0.125
-    source = jnp.arange(source_size, dtype=float) / source_size
+    source = jnp.arange(source_size, dtype="float64") / source_size
     values = jnp.stack(
         (
             jnp.cos(2.0 * jnp.pi * source),
@@ -107,7 +104,7 @@ def test_public_fourier_resample_evaluates_shifted_uniform_grid():
         ),
         axis=-1,
     )
-    target = offset + jnp.arange(target_size, dtype=float) / target_size
+    target = offset + jnp.arange(target_size, dtype="float64") / target_size
 
     output = phx.signal.fourier_resample(
         values,
@@ -128,7 +125,7 @@ def test_public_fourier_resample_evaluates_shifted_uniform_grid():
 
 
 def test_fourier_grid_sampler_is_jittable_and_differentiable_in_queries():
-    nodes = -1.0 + 2.0 * jnp.arange(7, dtype=float) / 7.0
+    nodes = -1.0 + 2.0 * jnp.arange(7, dtype="float64") / 7.0
     values = jnp.cos(jnp.pi * nodes)[:, None]
     query = jnp.asarray([[-0.4], [0.3]])
 
@@ -139,8 +136,7 @@ def test_fourier_grid_sampler_is_jittable_and_differentiable_in_queries():
                 values,
                 points,
                 spatial_ndim=1,
-                method="nufft",
-                tolerance=1e-10,
+                query_chunk_size=2,
             ),
         )
         return jnp.sum(sampled)

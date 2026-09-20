@@ -207,7 +207,7 @@ ownership is split by output geometry:
 - `phydrax.signal.fourier_resample` transfers one or more periodic grid axes to
   aligned or phase-shifted endpoint-excluded uniform grids;
 - `fourier_interpolate(values, coordinates, spatial_ndim=...)` evaluates paired
-  arbitrary coordinates directly or with native NUFFT Type 2.
+  arbitrary coordinates with exact nonuniform Fourier sums.
 
 Both are reconstruction operations, not sampling policies. Domain sampling
 still chooses sites, keys, masks, and measures. Fourier reconstruction consumes
@@ -269,28 +269,23 @@ sampled, support = phx.nn.layers.sample_fourier_grid(
 )
 ```
 
-`method="direct"` is the exact, roundoff-limited reference implementation and
-is appropriate for small query sets or small mode products. It supports any
-positive number of spatial dimensions. `method="nufft"` delegates one-, two-,
-or three-dimensional point evaluation to native NUFFT Type 2 and requires an
-explicit approximation tolerance:
+Evaluation is exact and roundoff-limited. Without `query_chunk_size`, the direct
+reference route is used and supports any positive number of spatial dimensions.
+For one through three dimensions, `query_chunk_size` selects the exact bounded
+nonuniform Fourier route:
 
 ```python
 sampled = phx.nn.layers.sample_fourier_grid(
     values,
     sensor_coordinates,
     spatial_ndim=2,
-    method="nufft",
-    tolerance=1e-6,
     query_chunk_size=4096,
 )
 ```
 
-`query_chunk_size` is static and uses padded `jax.lax.map` chunks, bounding the
-largest point batch seen by either backend without exposing padded outputs.
-NUFFT tolerance controls kernel construction; it is not a strict pointwise
-error guarantee. Use the direct method as an oracle when calibrating a
-tolerance for a new dtype, dimensionality, spectrum, or workload.
+The chunk capacity is static and uses padded `jax.lax.map` chunks, bounding the
+largest point batch without exposing padded outputs or changing numerical
+semantics.
 
 Even source axes need special treatment because one real-grid Nyquist
 coefficient represents both signed frequencies away from the source grid.
@@ -301,8 +296,8 @@ odd/even, real/complex, and multidimensional Nyquist-corner semantics.
 Fourier interpolation is global and signed. It therefore cannot be represented
 faithfully as a local nonnegative `GatherStencil`, and it does not support
 source-hole masking or local mask renormalization. Use rectilinear or
-inverse-distance reconstruction for those contracts. NUFFT Type 1 is an adjoint
-point-to-coefficient operation, not interpolation, and is intentionally not
+inverse-distance reconstruction for those contracts. Point-to-coefficient Type
+1 is an adjoint/transpose result, not interpolation, and is intentionally not
 part of this API.
 
 ## Smolyak interpolation
@@ -436,10 +431,10 @@ without adding SmolyAX as a dependency.
 `FourierScatteredFitPlan` defines the current Fourier mode, period, origin,
 Nyquist, weighting, and regularization conventions. `fit_fourier_scattered`
 solves the weighted problem through a matrix-free PhydraX
-`FunctionLinearOperator`/`LeastSquaresProblem` and LSMR. Direct Type-1/Type-2
-actions are the reference in any finite dimension; `method="nufft"` is explicit
-for one through three dimensions and records its tolerance. A raw Type-1 action
-is an adjoint/transpose result, not an arbitrary scattered interpolant.
+`FunctionLinearOperator`/`LeastSquaresProblem` and LSMR. Exact direct and bounded
+Type-1/Type-2 actions share one canonical convention; `query_chunk_size`
+controls the bounded working set. A Type-1 action is an adjoint/transpose result,
+not an arbitrary scattered interpolant.
 
 ## Mixed tensor reconstruction
 

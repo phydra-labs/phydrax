@@ -385,26 +385,26 @@ sensors, exact state/control codecs, atomic replay)`.
 The manifest uses these exact capability IDs when the corresponding route is
 present:
 
-- `phydrax.soft-fem.constitutive.linear-elasticity.v1`,
-  `phydrax.soft-fem.constitutive.hyperelasticity.v1`, or
-  `phydrax.soft-fem.constitutive.viscoelasticity.v1`;
-- `phydrax.soft-fem.actuation.region-pressure.v1`;
-- `phydrax.soft-fem.actuation.region-fiber.v1`;
-- `phydrax.soft-fem.actuation.region-body-force.v1`;
-- `phydrax.soft-fem.sensor.region-displacement.v1`;
-- `phydrax.soft-fem.sensor.region-force.v1`;
-- `phydrax.soft-fem.codec.complete-state-exact.v1`;
-- `phydrax.soft-fem.codec.control-exact.v1`;
-- `phydrax.soft-fem.transaction.atomic-replay.v1`.
+- `phydrax.soft-fem.constitutive.linear-elasticity`,
+  `phydrax.soft-fem.constitutive.hyperelasticity`, or
+  `phydrax.soft-fem.constitutive.viscoelasticity`;
+- `phydrax.soft-fem.actuation.region-pressure`;
+- `phydrax.soft-fem.actuation.region-fiber`;
+- `phydrax.soft-fem.actuation.region-body-force`;
+- `phydrax.soft-fem.sensor.region-displacement`;
+- `phydrax.soft-fem.sensor.region-force`;
+- `phydrax.soft-fem.codec.complete-state-exact`;
+- `phydrax.soft-fem.codec.control-exact`;
+- `phydrax.soft-fem.transaction.atomic-replay`.
 
 Its robotics profile supports only `step` and `sensors` on the prepared device
 and dtype; step names solver `implicit-newmark`. Differentiability is
 `conditional` only when the FEM plan has a derivative policy, otherwise `none`.
 `forward-kinematics`, `smooth-dynamics`, `contact`, `model-batching`, `jit`,
 `vmap`, `jvp`, and `vjp` expose no callable. The manifest explicitly rejects
-`phydrax.soft-fem.topology.remesh.v1`,
-`phydrax.soft-fem.topology.fracture.v1`, and
-`phydrax.soft-fem.contact.v1`.
+`phydrax.soft-fem.topology.remesh`,
+`phydrax.soft-fem.topology.fracture`, and
+`phydrax.soft-fem.contact`.
 
 ### Fixed-topology MPM
 

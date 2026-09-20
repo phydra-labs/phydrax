@@ -554,7 +554,7 @@ def test_stage_full_fluid_effective_geometry_matches_background_geometry():
     )
     np.testing.assert_array_equal(
         effective.open_face_active,
-        np.ones_like(np.asarray(effective.open_face_active), dtype=bool),
+        np.ones_like(np.asarray(effective.open_face_active), dtype="bool"),
     )
     assert background.effective_geometry_id == discretization.prepared_id
     assert effective.effective_geometry_id == full_fluid.metrics_id

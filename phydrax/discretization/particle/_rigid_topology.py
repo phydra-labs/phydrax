@@ -102,9 +102,9 @@ class BreakableRigidJointLawPlan(StrictModule, NonTrainableState):
             minimum_loading_rate, count, "minimum_loading_rate"
         )
         active = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if initial_active_mask is None
-            else np.asarray(initial_active_mask, dtype=bool)
+            else np.asarray(initial_active_mask, dtype=np.bool_)
         )
         if active.shape != (count,):
             raise ValueError("initial_active_mask must have joint-capacity shape.")
@@ -118,8 +118,7 @@ class BreakableRigidJointLawPlan(StrictModule, NonTrainableState):
             or np.any(derivative <= 0.0)
         ):
             raise ValueError(
-                "Damage thresholds, fracture energy, and derivative margins "
-                "must be finite and strictly admissible."
+                "Damage thresholds, fracture energy, and derivative margins must be finite and strictly admissible."
             )
         generated = canonical_fingerprint(
             {
@@ -143,14 +142,14 @@ class BreakableRigidJointLawPlan(StrictModule, NonTrainableState):
         self.arming_loading = jnp.asarray(arming)
         self.fracture_energy = jnp.asarray(fracture)
         self.minimum_loading_rate = jnp.asarray(derivative)
-        self.initial_active_mask = jnp.asarray(active, dtype=bool)
+        self.initial_active_mask = jnp.asarray(active, dtype=jnp.bool_)
         self.plan_id = generated if plan_id is None else str(plan_id)
         if not self.plan_id:
             raise ValueError("plan_id must be nonempty.")
 
     @property
     def capacity(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
     def initialize_state(
         self,
@@ -371,7 +370,7 @@ def _transaction_table(
             raise ValueError(f"{name}_valid requires a corresponding ID table.")
         return (
             np.empty((transaction_count, 0), dtype=np.int64),
-            np.empty((transaction_count, 0), dtype=bool),
+            np.empty((transaction_count, 0), dtype=np.bool_),
         )
     array = np.asarray(value)
     if array.ndim == 1:
@@ -384,9 +383,9 @@ def _transaction_table(
         raise TypeError(f"{name} must be a rank-2 integer transaction table.")
     array = array.astype(np.int64, copy=False)
     mask = (
-        np.ones(array.shape, dtype=bool)
+        np.ones(array.shape, dtype=np.bool_)
         if valid is None
-        else np.asarray(valid, dtype=bool)
+        else np.asarray(valid, dtype=np.bool_)
     )
     if mask.shape != array.shape:
         raise ValueError(f"{name}_valid must match its ID table shape.")
@@ -512,13 +511,13 @@ class RigidTopologyPlan(StrictModule, NonTrainableState):
         self.breakable_joints = breakable_joints
         self.transaction_ids = jnp.asarray(transactions, dtype=jnp.int64)
         self.predecessor_body_ids = jnp.asarray(predecessors, dtype=jnp.int64)
-        self.predecessor_body_valid = jnp.asarray(predecessor_mask, dtype=bool)
+        self.predecessor_body_valid = jnp.asarray(predecessor_mask, dtype=jnp.bool_)
         self.successor_body_ids = jnp.asarray(successors, dtype=jnp.int64)
-        self.successor_body_valid = jnp.asarray(successor_mask, dtype=bool)
+        self.successor_body_valid = jnp.asarray(successor_mask, dtype=jnp.bool_)
         self.deactivated_joint_ids = jnp.asarray(deactivated, dtype=jnp.int64)
-        self.deactivated_joint_valid = jnp.asarray(deactivated_mask, dtype=bool)
+        self.deactivated_joint_valid = jnp.asarray(deactivated_mask, dtype=jnp.bool_)
         self.activated_joint_ids = jnp.asarray(activated, dtype=jnp.int64)
-        self.activated_joint_valid = jnp.asarray(activated_mask, dtype=bool)
+        self.activated_joint_valid = jnp.asarray(activated_mask, dtype=jnp.bool_)
         self.event_capacity = events
         self.initial_contact_cache_epoch = epoch
         self.initial_replay_digest = digest
@@ -528,7 +527,7 @@ class RigidTopologyPlan(StrictModule, NonTrainableState):
 
     @property
     def transaction_capacity(self) -> int:
-        return int(self.transaction_ids.shape[0])
+        return self.transaction_ids.shape[0]
 
     def prepare(
         self,
@@ -641,7 +640,7 @@ class PreparedRigidTopology(StrictModule, NonTrainableState):
         law_to_graph = np.empty((law_ids.size,), dtype=np.int32)
         law_to_graph[graph_to_law] = np.arange(joint_ids.size, dtype=np.int32)
         body_ids = np.asarray(bodies.particles.particle_ids, dtype=np.int64)
-        endpoint_valid = np.ones(left_ids.shape, dtype=bool)
+        endpoint_valid = np.ones(left_ids.shape, dtype=np.bool_)
         left_indices = _map_predeclared_ids(
             left_ids, endpoint_valid, body_ids, "joint left endpoints"
         )
@@ -675,7 +674,7 @@ class PreparedRigidTopology(StrictModule, NonTrainableState):
         initial_graph_active = np.asarray(plan.breakable_joints.initial_active_mask)[
             graph_to_law
         ]
-        initial_body_active = np.asarray(bodies.particles.active_mask, dtype=bool)
+        initial_body_active = np.asarray(bodies.particles.active_mask, dtype=np.bool_)
         if np.any(
             initial_graph_active
             & ~(initial_body_active[left_indices] & initial_body_active[right_indices])
@@ -745,7 +744,7 @@ class PreparedRigidTopology(StrictModule, NonTrainableState):
             guard_margins=jnp.zeros((events,), dtype=dtype_),
             predecessor_ids=-jnp.ones((events,), dtype=jnp.int64),
             successor_ids=-jnp.ones((events,), dtype=jnp.int64),
-            valid=jnp.zeros((events,), dtype=bool),
+            valid=jnp.zeros((events,), dtype=jnp.bool_),
             prepared_id=self.prepared_id,
         )
         return RigidTopologyState(
@@ -766,7 +765,7 @@ class PreparedRigidTopology(StrictModule, NonTrainableState):
         expected_replay_digest: ArrayLike,
         /,
     ) -> RigidTopologyProposal:
-        requested = jnp.asarray(requested_transactions, dtype=bool)
+        requested = jnp.asarray(requested_transactions, dtype=jnp.bool_)
         if requested.shape != (self.plan.transaction_capacity,):
             raise ValueError(
                 "requested_transactions must have transaction-capacity shape."
@@ -779,7 +778,7 @@ class PreparedRigidTopology(StrictModule, NonTrainableState):
     def dual_gauge(
         self, joint_active_mask: ArrayLike, dtype: np.dtype | None = None, /
     ) -> InactiveRigidJointDualGauge:
-        active = jnp.asarray(joint_active_mask, dtype=bool)
+        active = jnp.asarray(joint_active_mask, dtype=jnp.bool_)
         if active.shape != self.joints.row_layout.joint_ids.shape:
             raise ValueError("joint_active_mask must have prepared joint capacity.")
         dtype_ = self.bodies.particles.safe_masses.dtype if dtype is None else dtype

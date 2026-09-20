@@ -54,13 +54,13 @@ def _normalized_triangles(vertices: np.ndarray, triangles: np.ndarray) -> np.nda
     return normalized
 
 
-def _owner_neighbour(connectivity: PolygonalConnectivity, cell_count: int):
+def _owner_neighbor(connectivity: PolygonalConnectivity, cell_count: int):
     cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
-    cell_signs = np.asarray(connectivity.cell_edge_signs, dtype=float)
+    cell_signs = np.asarray(connectivity.cell_edge_signs, dtype=np.float64)
     edge_count = np.asarray(connectivity.edges).shape[0]
     owner = np.full((edge_count,), -1, dtype=np.int32)
-    neighbour = np.full((edge_count,), -1, dtype=np.int32)
-    owner_sign = np.zeros((edge_count,), dtype=float)
+    neighbor = np.full((edge_count,), -1, dtype=np.int32)
+    owner_sign = np.zeros((edge_count,), dtype=np.float64)
     for cell in range(cell_count):
         for local in range(3):
             edge = int(cell_edges[cell, local])
@@ -68,14 +68,14 @@ def _owner_neighbour(connectivity: PolygonalConnectivity, cell_count: int):
                 owner[edge] = cell
                 owner_sign[edge] = cell_signs[cell, local]
             else:
-                if neighbour[edge] >= 0:
+                if neighbor[edge] >= 0:
                     raise ValueError("Triangle mesh contains a non-manifold edge.")
                 if cell_signs[cell, local] == owner_sign[edge]:
                     raise ValueError(
                         "Interior triangle incidences must have opposite orientation."
                     )
-                neighbour[edge] = cell
-    return owner, neighbour, owner_sign
+                neighbor[edge] = cell
+    return owner, neighbor, owner_sign
 
 
 def evaluate_triangle_fv_geometry(
@@ -159,7 +159,7 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
         field_name: str = "state",
         component_names: Sequence[str] = ("value",),
     ):
-        points = np.asarray(vertices, dtype=float)
+        points = np.asarray(vertices, dtype=np.float64)
         cells = np.asarray(triangles, dtype=np.int32)
         if points.ndim != 2 or points.shape[1] != 2 or points.shape[0] < 3:
             raise ValueError("Triangle FV vertices must have shape (n >= 3, 2).")
@@ -171,7 +171,7 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
         mesh = CellMesh.from_triangles(points, cells)
         connectivity = mesh.connectivity
         edges = np.asarray(connectivity.edges, dtype=np.int32)
-        boundary_mask = np.asarray(connectivity.boundary_edges, dtype=bool)
+        boundary_mask = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
         patches = {} if boundary_patches is None else dict(boundary_patches)
         if not patches:
             patches = {"boundary": edges[boundary_mask]}
@@ -255,7 +255,7 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     face_quadrature_weights: Array
     owner_cells: Array
     owner_signs: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     boundary_patch_ids: Array
     boundary_patch_names: tuple[str, ...] = eqx.field(static=True)
     cell_space: DiscreteFieldSpace
@@ -280,7 +280,7 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)
         connectivity = triangle_connectivity(cells, points.shape[0])
         topology = mesh.topology
-        owner, neighbour, owner_sign = _owner_neighbour(connectivity, cells.shape[0])
+        owner, neighbor, owner_sign = _owner_neighbor(connectivity, cells.shape[0])
         area, centers, face_centers, area_vectors, measures, closure = (
             evaluate_triangle_fv_geometry(
                 plan.vertices, plan.triangles, connectivity, owner, owner_sign
@@ -347,12 +347,12 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         face_block = FiniteVolumeFaceBlock(
             face_ids=jnp.arange(owner.shape[0], dtype=jnp.int32),
             owner_cells=jnp.asarray(owner),
-            neighbour_cells=jnp.asarray(neighbour),
+            neighbor_cells=jnp.asarray(neighbor),
             boundary_patch_ids=jnp.asarray(boundary_patch_ids),
             face_centers=face_centers,
             area_vectors=area_vectors,
             face_measures=measures,
-            active_mask=jnp.ones((owner.shape[0],), dtype=bool),
+            active_mask=jnp.ones((owner.shape[0],), dtype=jnp.bool_),
             block_id=canonical_fingerprint(
                 {"kind": "triangle-face-block", "plan": plan.plan_id}
             ),
@@ -365,7 +365,7 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             measures,
             closure,
             owner,
-            neighbour,
+            neighbor,
         )
         preparation = PreparationReport(
             capabilities=plan.capabilities,
@@ -378,7 +378,7 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
                 "vertices": points.shape[0],
                 "faces": owner.shape[0],
                 "cells": cells.shape[0],
-                "boundary_faces": int(np.sum(neighbour < 0)),
+                "boundary_faces": int(np.sum(neighbor < 0)),
             },
         )
         measures_metadata = (
@@ -419,7 +419,7 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self.face_quadrature_weights = face_quadrature_weights
         self.owner_cells = jnp.asarray(owner)
         self.owner_signs = jnp.asarray(owner_sign)
-        self.neighbour_cells = jnp.asarray(neighbour)
+        self.neighbor_cells = jnp.asarray(neighbor)
         self.boundary_patch_ids = jnp.asarray(boundary_patch_ids)
         self.boundary_patch_names = plan.patch_names
         self.cell_space = cell_space
@@ -462,7 +462,7 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
 
     @property
     def cell_count(self) -> int:
-        return int(self.triangles.shape[0])
+        return self.triangles.shape[0]
 
     @property
     def component_count(self) -> int:
@@ -481,7 +481,7 @@ def _triangle_quality(
     face_measures,
     closure,
     owner,
-    neighbour,
+    neighbor,
 ):
     points = jnp.asarray(vertices)[jnp.asarray(triangles, dtype=jnp.int32)]
     lengths = jnp.linalg.norm(jnp.roll(points, -1, axis=1) - points, axis=-1)
@@ -492,9 +492,9 @@ def _triangle_quality(
     altitude = 2.0 * area[:, None] / lengths
     aspect = jnp.max(lengths, axis=1) / jnp.min(altitude, axis=1)
     owner_ = jnp.asarray(owner, dtype=jnp.int32)
-    neighbour_ = jnp.asarray(neighbour, dtype=jnp.int32)
-    interior = neighbour_ >= 0
-    connector = centers[jnp.maximum(neighbour_, 0)] - centers[owner_]
+    neighbor_ = jnp.asarray(neighbor, dtype=jnp.int32)
+    interior = neighbor_ >= 0
+    connector = centers[jnp.maximum(neighbor_, 0)] - centers[owner_]
     denominator = jnp.linalg.norm(connector, axis=-1) * face_measures
     cosine = jnp.abs(jnp.sum(connector * area_vectors, axis=-1)) / jnp.where(
         denominator > 0.0, denominator, 1.0

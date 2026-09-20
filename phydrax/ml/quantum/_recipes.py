@@ -82,7 +82,7 @@ class FittedCircuitFeatureTransform(AbstractArrayModel):
             )
         if mask is not None:
             values = jnp.where(
-                jnp.broadcast_to(jnp.asarray(mask, dtype=bool), values.shape),
+                jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), values.shape),
                 values,
                 jnp.zeros((), dtype=values.dtype),
             )
@@ -258,12 +258,15 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             raise ValueError("Variational binary classification requires scalar targets.")
         if batch.target_schema.class_labels and tuple(
             batch.target_schema.class_labels
-        ) != (self.negative_label, self.positive_label):
+        ) != (
+            self.negative_label,
+            self.positive_label,
+        ):
             raise ValueError("Target-schema labels do not match recipe class_labels.")
         features = batch.dense_features()
         targets = batch.require_targets()
         target_mask = (
-            jnp.ones_like(targets, dtype=bool)
+            jnp.ones_like(targets, dtype=jnp.bool_)
             if batch.target_mask is None
             else batch.target_mask
         )

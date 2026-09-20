@@ -48,10 +48,7 @@ _FORMULATION = (
     "<psi,(1/2-K)P0(gamma u)+V phi>=0, with exact facet-average P0"
 )
 _PDE = "scalar interior Poisson / homogeneous decaying exterior Laplace"
-_GEOMETRY = (
-    "complete affine P1 tetrahedral exterior matched bijectively to one closed "
-    "outward triangular DP0 surface"
-)
+_GEOMETRY = "complete affine P1 tetrahedral exterior matched bijectively to one closed outward triangular DP0 surface"
 _NORMAL = (
     "n points from the FEM interior into the exterior; phi is gamma1+ using this "
     "same n, not the exterior-domain outward normal"
@@ -230,8 +227,7 @@ def prepare_scalar_laplace_fem_bem_3d(
         or convention.double_layer_dirichlet_jump("exterior") != 0.5
     ):
         raise ValueError(
-            "The scalar Calderon provider has an incompatible exterior trace "
-            "or normal convention."
+            "The scalar Calderon provider has an incompatible exterior trace or normal convention."
         )
     if (
         calderon.face_count != calderon.space.size

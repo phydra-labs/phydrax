@@ -265,8 +265,7 @@ class DAEEventPlan(StrictModule, NonTrainableState):
             raise TypeError("schedule must be a HybridSchedulePlan.")
         if any(scheduled.event is not None for scheduled in schedule.events):
             raise ValueError(
-                "DAE schedules must contain guard metadata only; the DAE reset map "
-                "is the sole event action."
+                "DAE schedules must contain guard metadata only; the DAE reset map is the sole event action."
             )
         if len(resets) != len(schedule.events) or any(
             not isinstance(value, DAEResetMap) for value in resets
@@ -509,7 +508,7 @@ def prepare_dae_event_plan(
     if not isinstance(plan, DAEEventPlan):
         raise TypeError("plan must be a DAEEventPlan.")
     state = problem.initial_state
-    state_size = int(state.size)
+    state_size = state.size
     augmented_shape = (state_size + 1,)
     augmented_scale = jnp.concatenate(
         (problem.system.state_scale.reshape((state_size,)), jnp.ones((1,)))
@@ -632,7 +631,7 @@ def empty_dae_event_result(
     scalar_shape = (capacity,)
     states = jnp.zeros(scalar_shape + state.shape, dtype=state.dtype)
     real_dtype = state.real.dtype
-    active = jnp.zeros(scalar_shape, dtype=bool)
+    active = jnp.zeros(scalar_shape, dtype=jnp.bool_)
     replay = DAEEventReplayEvidence(
         jnp.full(scalar_shape, -1, dtype=jnp.int32),
         jnp.zeros(scalar_shape, dtype=real_dtype),
@@ -782,7 +781,7 @@ def localize_dae_event(
         order,
         history_depth,
     )
-    state_size = int(left_state.size)
+    state_size = left_state.size
     guess = jnp.concatenate(
         ((predictor - left_state).reshape((state_size,)), guess_time[None])
     )
@@ -891,7 +890,7 @@ def localize_dae_event(
             consistency.initialization,
             event_time,
             args,
-            int(state_before.size),
+            state_before.size,
             solve_policy.regularity.condition_limit,
         )
         consistency_regularity_valid = localized & consistency.admissible
@@ -928,8 +927,8 @@ def localize_dae_event(
         args,
         inputs=post_inputs,
     )
-    pre_norm = _masked_rms(pre, jnp.ones(pre.shape, dtype=bool))
-    post_norm = _masked_rms(post, jnp.ones(post.shape, dtype=bool))
+    pre_norm = _masked_rms(pre, jnp.ones(pre.shape, dtype=jnp.bool_))
+    post_norm = _masked_rms(post, jnp.ones(post.shape, dtype=jnp.bool_))
     successful = localized & consistency.admissible
     finite = (
         finite_guards
@@ -1074,7 +1073,7 @@ def resolve_dae_event(
         )
         for event_index in range(len(prepared.plan.schedule.events))
     )
-    first = candidates[0]
+    candidates[0]
     neutral = DAEEventTransition(
         jnp.asarray(False),
         jnp.asarray(False),
@@ -1335,8 +1334,8 @@ class DAERegularityDomain(StrictModule, NonTrainableState):
             {
                 "kind": "dae-regularity-domain",
                 "user_id": domain_id,
-                "cells": int(lower_.shape[0]),
-                "coordinates": int(lower_.shape[1]),
+                "cells": lower_.shape[0],
+                "coordinates": lower_.shape[1],
                 "bounds": array_tree_fingerprint((lower_, upper_)),
             }
         )
@@ -1499,7 +1498,7 @@ def manifold_bdf_stage(
         (local,),
         (local_rate,),
     )
-    contained = jnp.asarray(geometry.contains(state), dtype=bool)
+    contained = jnp.asarray(geometry.contains(state), dtype=jnp.bool_)
     chart_valid = (
         contained
         & jnp.all(jnp.isfinite(state))

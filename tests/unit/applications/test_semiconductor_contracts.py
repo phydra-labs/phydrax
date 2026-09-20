@@ -149,7 +149,7 @@ def test_native_affine_simplex_preserves_linear_energy_and_persistent_identity(
         "reservoir", MeshPatch("vertex", support.node_scope(support.node_ids[:1]))
     )
     plan = DevicePlan(support, materials=(material,), contacts=(contact,))
-    np.testing.assert_array_equal(plan.semiconductor_mask, np.ones(count, dtype=bool))
+    np.testing.assert_array_equal(plan.semiconductor_mask, np.ones(count, dtype="bool"))
     stale_scope = MeshingScope(
         support.source_id,
         "revision-8",

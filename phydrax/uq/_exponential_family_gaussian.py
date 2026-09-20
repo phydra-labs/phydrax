@@ -37,7 +37,7 @@ def multivariate_normal_from_gaussian_factor(
     location_array = jnp.asarray(location)
     if jnp.issubdtype(location_array.dtype, jnp.complexfloating):
         raise TypeError("location must be real-valued.")
-    if location_array.ndim == 0 or int(location_array.shape[-1]) != family.event_size:
+    if location_array.ndim == 0 or location_array.shape[-1] != family.event_size:
         raise ValueError(
             f"location must end in event_size={family.event_size}; got {location_array.shape}."
         )

@@ -116,7 +116,7 @@ def model_objective_values(
                 f"labels but returned {len(local_values)} values."
             )
         values.extend(
-            jnp.asarray(value, dtype=float).reshape(()) for value in local_values
+            jnp.asarray(value, dtype=jnp.float64).reshape(()) for value in local_values
         )
         site += len(local_values)
     return tuple(values)

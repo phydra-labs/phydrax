@@ -143,12 +143,14 @@ class CorrelatedContinuumData(StrictModule, NonTrainableState):
         maximum_data_points: int = 4096,
         symmetry_tolerance: float = 1.0e-10,
     ):
-        observable = np.asarray(bare_observable, dtype=float).reshape((-1,))
-        inverse = np.asarray(inverse_scale, dtype=float).reshape((-1,))
-        renormalization = np.asarray(renormalization_factor, dtype=float).reshape((-1,))
+        observable = np.asarray(bare_observable, dtype=np.float64).reshape((-1,))
+        inverse = np.asarray(inverse_scale, dtype=np.float64).reshape((-1,))
+        renormalization = np.asarray(renormalization_factor, dtype=np.float64).reshape(
+            (-1,)
+        )
         sites = np.asarray(spatial_site_counts, dtype=np.int64).reshape((-1,))
         count = observable.size
-        covariance = np.asarray(joint_covariance, dtype=float)
+        covariance = np.asarray(joint_covariance, dtype=np.float64)
         identifiers = tuple(_identifier(value, "datum_id") for value in datum_ids)
         covariance_identity = _identifier(covariance_id, "covariance_id")
         maximum = int(maximum_data_points)
@@ -557,12 +559,12 @@ def _variation_indices(
     physical_extent: np.ndarray,
     /,
 ) -> tuple[int, ...]:
-    mask = np.ones(lattice_spacing.shape, dtype=bool)
+    mask = np.ones(lattice_spacing.shape, dtype=np.bool_)
     if variation.maximum_lattice_spacing is not None:
         mask &= lattice_spacing <= variation.maximum_lattice_spacing
     if variation.minimum_physical_extent is not None:
         mask &= physical_extent >= variation.minimum_physical_extent
-    return tuple(int(value) for value in np.flatnonzero(mask))
+    return tuple(np.flatnonzero(mask))
 
 
 def _design_matrix(
@@ -647,9 +649,11 @@ def run_continuum_study(
             indices = _variation_indices(variation, spacing_host, extent_host)
             parameter_count = 2 + int(variation.finite_volume_power is not None)
             degrees = len(indices) - parameter_count
-            spacing_count = np.unique(spacing_host[np.asarray(indices, dtype=int)]).size
+            spacing_count = np.unique(
+                spacing_host[np.asarray(indices, dtype=np.int64)]
+            ).size
             volume_count = np.unique(
-                np.asarray(data.spatial_site_counts)[np.asarray(indices, dtype=int)]
+                np.asarray(data.spatial_site_counts)[np.asarray(indices, dtype=np.int64)]
             ).size
             if len(indices) < parameter_count + plan.minimum_degrees_of_freedom:
                 rejected.append((variation.variation_id, "fit-window-has-too-few-data"))

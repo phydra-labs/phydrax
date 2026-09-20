@@ -57,9 +57,9 @@ class RigidSphereSetPlan(StrictModule, NonTrainableState):
             if np.any(~np.isfinite(inertia_host)) or np.any(inertia_host <= 0.0):
                 raise ValueError("Sphere inertias must be finite and positive.")
         fixed_host = (
-            np.zeros(radii_host.shape, dtype=bool)
+            np.zeros(radii_host.shape, dtype=np.bool_)
             if fixed_mask is None
-            else np.asarray(fixed_mask, dtype=bool)
+            else np.asarray(fixed_mask, dtype=np.bool_)
         )
         if fixed_host.shape != radii_host.shape:
             raise ValueError("fixed_mask must have the radii shape.")
@@ -91,7 +91,7 @@ class RigidSphereSetPlan(StrictModule, NonTrainableState):
         self.radii = jnp.asarray(radii_host)
         self.material_ids = jnp.asarray(material_host, dtype=jnp.int32)
         self.inertias = None if inertia_host is None else jnp.asarray(inertia_host)
-        self.fixed_mask = jnp.asarray(fixed_host, dtype=bool)
+        self.fixed_mask = jnp.asarray(fixed_host, dtype=jnp.bool_)
         self.key = key
         self.plan_id = identifier
 

@@ -94,7 +94,7 @@ class ColumnParameterSpace(StrictModule):
         names = tuple(names)
         if not names or len(set(names)) != len(names) or set(names) - set(_PARAMETERS):
             raise ValueError("Parameters must be unique supported native column leaves.")
-        arrays = tuple(np.asarray(x, dtype=float) for x in (scales, lower, upper))
+        arrays = tuple(np.asarray(x, dtype=np.float64) for x in (scales, lower, upper))
         if any(x.shape != (len(names),) or not np.all(np.isfinite(x)) for x in arrays):
             raise ValueError("Scales and bounds require finite vectors matching names.")
         scale, lo, hi = arrays
@@ -196,7 +196,7 @@ class ColumnObservationBinding:
             raise ValueError(
                 "Observation quantity kind, sign or reference differs from physical signal."
             )
-        times = np.asarray(self.times, dtype=float)
+        times = np.asarray(self.times, dtype=np.float64)
         if (
             times.ndim != 1
             or not times.size
@@ -451,7 +451,7 @@ class ColumnExperiment:
             ticks = np.rint(
                 (np.asarray(binding.times) * self.time.seconds_per_unit - self.start)
                 / self.dt
-            ).astype(int)
+            ).astype("int64")
             selected = jax.tree.map(lambda x, ticks=ticks: x[jnp.asarray(ticks)], states)
 
             def sample(state, binding=binding):
@@ -582,7 +582,7 @@ class ColumnObservationData:
         full = (
             np.diag(variances)
             if covariance is None
-            else np.asarray(covariance, dtype=float)
+            else np.asarray(covariance, dtype=np.float64)
         )
         if full.shape != (values.size, values.size) or not np.all(np.isfinite(full)):
             raise ValueError(
@@ -998,7 +998,7 @@ def design_column_intervention(problem, result, candidates, *, reference_covaria
     candidates = tuple(candidates)
     if not candidates:
         raise ValueError("At least one prospective intervention is required.")
-    covariance = np.asarray(reference_covariance, dtype=float)
+    covariance = np.asarray(reference_covariance, dtype=np.float64)
     n = problem.space.scales.size
     if covariance.shape != (n, n) or not np.allclose(covariance, covariance.T):
         raise ValueError(

@@ -107,8 +107,7 @@ class BackendUnavailableError(RuntimeError):
         self.capability = capability_
         self.requirement = requirement_
         super().__init__(
-            f"Backend {backend_!r} cannot provide {capability_!r}: "
-            f"requirement {requirement_!r}; {reason_}"
+            f"Backend {backend_!r} cannot provide {capability_!r}: requirement {requirement_!r}; {reason_}"
         )
 
 

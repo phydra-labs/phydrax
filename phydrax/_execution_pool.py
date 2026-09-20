@@ -120,7 +120,7 @@ def refill_completed_tasks(
 ) -> PoolRefill:
     """Route completed lanes to pending task IDs with deterministic lane priority."""
     ids = jnp.asarray(task_ids, dtype=jnp.int32)
-    terminal_ = jnp.asarray(terminal, dtype=bool)
+    terminal_ = jnp.asarray(terminal, dtype=jnp.bool_)
     if ids.ndim != 1 or terminal_.shape != ids.shape:
         raise ValueError("task_ids and terminal must be matching rank-one arrays.")
     count = int(task_count)

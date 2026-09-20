@@ -36,7 +36,7 @@ class PreparedLayerOperator(StrictModule):
 
     @property
     def harmonic_count(self) -> int:
-        return int(self.matrix.shape[-1] // 4)
+        return self.matrix.shape[-1] // 4
 
 
 def _relative_residual(matrix: Array, solution: Array, right_hand_side: Array) -> Array:

@@ -111,7 +111,7 @@ def main():
     parser.add_argument("--shape", default="6,6,3")
     parser.add_argument("--repeats", type=int, default=2)
     arguments = parser.parse_args()
-    shape = tuple(int(value) for value in arguments.shape.split(","))
+    shape = tuple(arguments.shape.split(","))
     if len(shape) != 3 or any(value < 3 for value in shape):
         raise ValueError("Hydrodynamic benchmark shape needs three counts >= 3.")
     if arguments.repeats <= 0:

@@ -38,7 +38,7 @@ class BSplineGrid(StrictModule, NonTrainableState):
             raise ValueError("B-spline grid knots must be a rank-one array.")
         if jnp.issubdtype(knots_raw.dtype, jnp.complexfloating):
             raise TypeError("B-spline grid knots must be real-valued.")
-        knots_host = np.asarray(knots_raw, dtype=float)
+        knots_host = np.asarray(knots_raw, dtype=np.float64)
         if not np.all(np.isfinite(knots_host)):
             raise ValueError("B-spline grid knots must be finite.")
         if np.any(np.diff(knots_host) < 0.0):
@@ -47,7 +47,7 @@ class BSplineGrid(StrictModule, NonTrainableState):
         if np.any(multiplicities > degree_ + 1):
             raise ValueError("B-spline knot multiplicity cannot exceed degree + 1.")
 
-        coefficient_count = int(knots_host.size) - degree_ - 1
+        coefficient_count = knots_host.size - degree_ - 1
         if coefficient_count <= degree_:
             raise ValueError(
                 "B-spline grid knots must define at least degree + 1 coefficients."
@@ -66,7 +66,7 @@ class BSplineGrid(StrictModule, NonTrainableState):
             degree_ - int(np.count_nonzero(knots_host == knot)) for knot in interior
         )
 
-        dtype = jnp.result_type(knots_raw, float)
+        dtype = jnp.result_type(knots_raw, jnp.float64)
         self.knots = knots_raw.astype(dtype)
         self.breakpoints = jnp.asarray(breakpoints, dtype=dtype)
         self.degree = degree_
@@ -107,7 +107,7 @@ class BSplineGrid(StrictModule, NonTrainableState):
 
     @property
     def coefficient_count(self) -> int:
-        return int(self.knots.shape[0]) - self.degree - 1
+        return self.knots.shape[0] - self.degree - 1
 
     @property
     def active_interval(self) -> tuple[Array, Array]:
@@ -115,7 +115,7 @@ class BSplineGrid(StrictModule, NonTrainableState):
 
     @property
     def num_intervals(self) -> int:
-        return int(self.breakpoints.shape[0]) - 1
+        return self.breakpoints.shape[0] - 1
 
     @property
     def is_uniform(self) -> bool:
@@ -197,13 +197,13 @@ class TrainableBSplineGrid(StrictModule):
             raise ValueError("raw_span_logits must be a nonempty rank-one array.")
         if jnp.issubdtype(logits.dtype, jnp.complexfloating):
             raise TypeError("raw_span_logits must be real-valued.")
-        logits_host = np.asarray(logits, dtype=float)
+        logits_host = np.asarray(logits, dtype=np.float64)
         if not np.all(np.isfinite(logits_host)):
             raise ValueError("raw_span_logits must be finite.")
         lower, upper = (float(value) for value in interval)
         if not isfinite(lower) or not isfinite(upper) or not upper > lower:
             raise ValueError("Trainable B-spline interval must be finite and increasing.")
-        intervals = int(logits.size)
+        intervals = logits.size
         minimum = (
             (upper - lower) / (1000.0 * intervals)
             if minimum_span is None
@@ -217,7 +217,7 @@ class TrainableBSplineGrid(StrictModule):
             raise ValueError(
                 "minimum_span must be positive and leave movable interval length."
             )
-        self.raw_span_logits = logits.astype(jnp.result_type(logits, float))
+        self.raw_span_logits = logits.astype(jnp.result_type(logits, jnp.float64))
         self.degree = degree_
         self.lower = lower
         self.upper = upper
@@ -289,7 +289,7 @@ class TrainableBSplineGrid(StrictModule):
 
     @property
     def num_intervals(self) -> int:
-        return int(self.raw_span_logits.size)
+        return self.raw_span_logits.size
 
     @property
     def coefficient_count(self) -> int:

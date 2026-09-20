@@ -104,8 +104,7 @@ class GaussianFunctionOperator(AbstractProbabilisticOperatorModel):
         base_channels = base.operator_output_specs["output"].channels
         if base_channels == "scalar" or int(base_channels) != required:
             raise ValueError(
-                "Gaussian operator base must emit "
-                f"{required} channel-last parameters; got {base_channels!r}."
+                f"Gaussian operator base must emit {required} channel-last parameters; got {base_channels!r}."
             )
         self.base = base
         self.output_spec = output_spec
@@ -144,8 +143,7 @@ class GaussianFunctionOperator(AbstractProbabilisticOperatorModel):
         )
         if raw.shape != expected:
             raise ValueError(
-                f"Gaussian operator parameter output must have shape {expected}; "
-                f"got {raw.shape}."
+                f"Gaussian operator parameter output must have shape {expected}; got {raw.shape}."
             )
         parameters = raw.reshape(
             batch.case_shape

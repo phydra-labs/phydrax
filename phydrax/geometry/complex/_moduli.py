@@ -141,9 +141,9 @@ class HypersurfaceEpochEvidence(StrictModule):
         self.root_residuals = jnp.asarray(root_residuals)
         self.root_derivative_margins = jnp.asarray(root_derivative_margins)
         self.pivot_margin = jnp.asarray(pivot_margin)
-        self.chart_valid = jnp.asarray(chart_valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.chart_valid = jnp.asarray(chart_valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 class PreparedHypersurfaceEpoch(StrictModule):
@@ -290,15 +290,15 @@ class CalabiYauCertificate(StrictModule):
         tolerance: float,
     ):
         exact_degree = jnp.asarray(int(degree) == int(projective_dimension) + 1)
-        nonzero = jnp.asarray(nonzero_polynomial, dtype=bool)
-        cover = jnp.asarray(cellular_cover_certified, dtype=bool)
+        nonzero = jnp.asarray(nonzero_polynomial, dtype=jnp.bool_)
+        cover = jnp.asarray(cellular_cover_certified, dtype=jnp.bool_)
         gradient = jnp.asarray(gradient_lower_bound)
         transition = jnp.asarray(transition_residual)
         residue = jnp.asarray(residue_residual)
         metric = jnp.asarray(metric_minimum_eigenvalue)
         volume = jnp.asarray(volume_error_bound)
         monge = jnp.asarray(monge_ampere_sup_bound)
-        topology = jnp.asarray(topology_certified, dtype=bool)
+        topology = jnp.asarray(topology_certified, dtype=jnp.bool_)
         smooth = cover & (gradient > float(tolerance))
         global_metric = (
             smooth
@@ -377,7 +377,7 @@ class CalabiYauModuliResult(StrictModule):
         self.hypersurface = hypersurface
         self.roots = jnp.asarray(roots)
         self.loss_history = jnp.asarray(loss_history)
-        self.accepted_steps = jnp.asarray(accepted_steps, dtype=bool)
+        self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.bool_)
         self.epoch_evidence = epoch_evidence
 
 

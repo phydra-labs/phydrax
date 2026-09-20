@@ -60,9 +60,9 @@ class PulseChaseSchedule:
         rate_unit: UnitDefinition,
         time_unit: UnitDefinition = SECOND,
     ):
-        raw_boundaries = np.asarray(boundaries, dtype=float)
+        raw_boundaries = np.asarray(boundaries, dtype=np.float64)
         raw_rates = np.asarray(rates)
-        fractions = np.asarray(label_fractions, dtype=float)
+        fractions = np.asarray(label_fractions, dtype=np.float64)
         if (
             raw_boundaries.ndim != 1
             or raw_boundaries.size < 2
@@ -96,7 +96,9 @@ class PulseChaseSchedule:
             raise ValueError("Each interval needs a finite labeling fraction in [0, 1].")
         runtime_unit = derived_unit(f"1/({time_unit.symbol})", ((time_unit, -1),))
         runtime_rates = convert_value(
-            jnp.asarray(raw_rates, dtype=float), source=rate_unit, target=runtime_unit
+            jnp.asarray(raw_rates, dtype=jnp.float64),
+            source=rate_unit,
+            target=runtime_unit,
         )
         runtime_host = np.asarray(runtime_rates)
         if not np.all(np.isfinite(runtime_host)) or np.any(runtime_host < 0.0):
@@ -229,8 +231,8 @@ class PulseChasePrediction:
         fit_culture_ids: tuple[str, ...],
         fit_plate_ids: tuple[str, ...],
     ):
-        means = np.asarray(latent_means, dtype=float)
-        covariance = np.asarray(latent_covariance, dtype=float)
+        means = np.asarray(latent_means, dtype=np.float64)
+        covariance = np.asarray(latent_covariance, dtype=np.float64)
         expected_covariance_shape = (*means.shape[:-1], 4, 4)
         if (
             means.ndim < 2
@@ -329,7 +331,7 @@ def pulse_chase_identifiability(
     """Diagnose combinations for one exact pulse/chase fit and no other."""
 
     names = tuple(parameter_names)
-    values = np.asarray(sensitivity, dtype=float)
+    values = np.asarray(sensitivity, dtype=np.float64)
     if (
         not names
         or len(set(names)) != len(names)

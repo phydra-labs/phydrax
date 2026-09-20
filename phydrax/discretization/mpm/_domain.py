@@ -32,7 +32,7 @@ class MPMParticleDomainPlan(StrictModule, NonTrainableState):
         periodic: Sequence[bool] | None = None,
         support_margin: float | Sequence[float],
     ):
-        bounds_ = np.asarray(bounds, dtype=float)
+        bounds_ = np.asarray(bounds, dtype=np.float64)
         if (
             bounds_.ndim != 2
             or bounds_.shape[0] != 2
@@ -43,7 +43,7 @@ class MPMParticleDomainPlan(StrictModule, NonTrainableState):
             )
         if np.any(~np.isfinite(bounds_)) or np.any(bounds_[1] <= bounds_[0]):
             raise ValueError("MPM particle bounds must be finite and strictly ordered.")
-        dimension = int(bounds_.shape[1])
+        dimension = bounds_.shape[1]
         periodic_ = (
             (False,) * dimension
             if periodic is None
@@ -74,13 +74,13 @@ class MPMParticleDomainPlan(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return int(self.bounds.shape[1])
+        return self.bounds.shape[1]
 
     def contains(self, position: ArrayLike, /) -> Array:
         value = jnp.asarray(position)
         if value.ndim < 1 or value.shape[-1] != self.dimension:
             raise ValueError("Particle positions must end in the MPM domain dimension.")
-        contained = jnp.ones(value.shape[:-1], dtype=bool)
+        contained = jnp.ones(value.shape[:-1], dtype=jnp.bool_)
         for axis, periodic in enumerate(self.periodic):
             if not periodic:
                 contained = contained & (value[..., axis] >= self.bounds[0, axis])

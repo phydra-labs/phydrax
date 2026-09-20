@@ -49,12 +49,12 @@ class SpatialOptomechanicalSystem:
         *,
         tolerance: float = 1e-10,
     ) -> SpatialOptomechanicalSystem:
-        thermal = np.asarray(thermal_stiffness_w_k, dtype=float)
-        mechanical = np.asarray(mechanical_stiffness_n_m, dtype=float)
-        coupling = np.asarray(thermoelastic_load_n_k, dtype=float)
-        displacement_map = np.asarray(displacement_to_opd, dtype=float)
-        temperature_map = np.asarray(temperature_to_opd_m_k, dtype=float)
-        weights = np.asarray(optical_weights, dtype=float)
+        thermal = np.asarray(thermal_stiffness_w_k, dtype=np.float64)
+        mechanical = np.asarray(mechanical_stiffness_n_m, dtype=np.float64)
+        coupling = np.asarray(thermoelastic_load_n_k, dtype=np.float64)
+        displacement_map = np.asarray(displacement_to_opd, dtype=np.float64)
+        temperature_map = np.asarray(temperature_to_opd_m_k, dtype=np.float64)
+        weights = np.asarray(optical_weights, dtype=np.float64)
         if thermal.ndim != 2 or thermal.shape[0] != thermal.shape[1]:
             raise ValueError("STOP thermal stiffness must be square.")
         if mechanical.ndim != 2 or mechanical.shape[0] != mechanical.shape[1]:

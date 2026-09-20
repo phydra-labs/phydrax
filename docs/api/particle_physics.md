@@ -1,6 +1,6 @@
 # Particle-physics semantics
 
-::: phydrax.particle_physics.ParticleCatalogueReference
+::: phydrax.particle_physics.ParticleCatalogReference
 
 ::: phydrax.particle_physics.ParticleSpeciesTable
 

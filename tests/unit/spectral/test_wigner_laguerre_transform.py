@@ -41,7 +41,7 @@ def test_wigner_plan_locks_raw_haar_and_spherical_normalization():
     )
 
     expected = (
-        jnp.zeros(plan.coefficient_shape, dtype=complex)
+        jnp.zeros(plan.coefficient_shape, dtype="complex128")
         .at[center_n, 0, center_m]
         .set(8.0 * jnp.pi**2)
     )

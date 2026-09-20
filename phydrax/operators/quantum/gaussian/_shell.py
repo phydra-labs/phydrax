@@ -87,8 +87,8 @@ class GaussianShellPlan(StrictModule, NonTrainableState):
     ):
         center = int(center_particle_id)
         angular = int(angular_momentum)
-        exponent = np.asarray(exponents, dtype=float).reshape((-1,))
-        coefficient = np.asarray(coefficients, dtype=float)
+        exponent = np.asarray(exponents, dtype=np.float64).reshape((-1,))
+        coefficient = np.asarray(coefficients, dtype=np.float64)
         if coefficient.ndim == 1:
             coefficient = coefficient[None, :]
         if angular < 0 or angular > 12:
@@ -102,9 +102,9 @@ class GaussianShellPlan(StrictModule, NonTrainableState):
                 "Gaussian shell contractions must align with primitive exponents."
             )
         mask = (
-            np.ones(exponent.shape, dtype=bool)
+            np.ones(exponent.shape, dtype=np.bool_)
             if primitive_mask is None
-            else np.asarray(primitive_mask, dtype=bool)
+            else np.asarray(primitive_mask, dtype=np.bool_)
         )
         if mask.shape != exponent.shape:
             raise ValueError("primitive_mask must align with shell exponents.")
@@ -150,11 +150,11 @@ class GaussianShellPlan(StrictModule, NonTrainableState):
 
     @property
     def primitive_count(self) -> int:
-        return int(self.exponents.size)
+        return self.exponents.size
 
     @property
     def contraction_count(self) -> int:
-        return int(self.coefficients.shape[0])
+        return self.coefficients.shape[0]
 
     @property
     def cartesian_component_count(self) -> int:

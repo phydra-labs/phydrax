@@ -79,8 +79,8 @@ def test_projected_semiconductor_state_drives_replayable_reduced_laser_workflow(
 
     initial = TravelingWaveSemiconductorLaserState(
         jnp.full((4,), threshold.threshold_carrier_pair_density),
-        jnp.zeros((4,), dtype=complex),
-        jnp.zeros((4,), dtype=complex),
+        jnp.zeros((4,), dtype="complex128"),
+        jnp.zeros((4,), dtype="complex128"),
     )
     forcing = TravelingWaveLaserNoisePlan(
         1.0e-10,

@@ -19,7 +19,7 @@ from phydrax.nn.operator.architectures import FNO
 def _num_params(model) -> int:
     dynamic, _ = eqx.partition(model, eqx.is_array)
     leaves = jtu.tree_leaves(dynamic)
-    return sum(int(x.size) for x in leaves)
+    return sum(x.size for x in leaves)
 
 
 def test_mlp_scan_parameter_count_matches_loop():

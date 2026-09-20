@@ -77,8 +77,7 @@ def _validate_fixed_selection_terms(
         if isinstance(term, (ResidualPenalty, MomentPenalty)):
             if not isinstance(term.source, FixedIntegration):
                 raise ValueError(
-                    "Functional selection residual and moment terms require "
-                    "FixedIntegration sources."
+                    "Functional selection residual and moment terms require FixedIntegration sources."
                 )
         elif isinstance(term, AbstractSamplingTerm):
             raise TypeError(
@@ -539,8 +538,7 @@ class FunctionalSolver(StrictModule):
             parameter_dtypes: tuple[str, ...] = ()
             if contains_low_rank_updates(self.functions):
                 raise ValueError(
-                    "Low-rank FunctionalSolver training requires an explicit "
-                    "parameter_subspace."
+                    "Low-rank FunctionalSolver training requires an explicit parameter_subspace."
                 )
         else:
             if not isinstance(parameter_subspace, ParameterSubspace):

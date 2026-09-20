@@ -141,7 +141,7 @@ def _real_scalar(value: ArrayLike, name: str, /, *, dtype=None) -> Array:
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
     if not eqx.is_inexact_array(result):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 
@@ -277,7 +277,7 @@ class NamedStressEnergyComponent(StrictModule):
                 (unitarity_defect, "unitarity_defect"),
             )
         )
-        evidence = _scalar(evidence_valid, "evidence_valid", dtype=bool)
+        evidence = _scalar(evidence_valid, "evidence_valid", dtype=jnp.bool_)
         self.projection = projection
         (
             self.conservation_defect,
@@ -1404,9 +1404,7 @@ class FullDarkSectorResourceEvidence(StrictModule, NonTrainableState):
         leaves = tuple(
             value for value in jax.tree.leaves(state) if isinstance(value, jax.Array)
         )
-        resident = sum(
-            int(value.size) * np.dtype(value.dtype).itemsize for value in leaves
-        )
+        resident = sum(value.size * np.dtype(value.dtype).itemsize for value in leaves)
         epoch = plan.epoch
         payload = resident
         identity = canonical_fingerprint(
@@ -1588,7 +1586,7 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
             dtype = metadata.get("dtype")
             if path is None or shape is None or dtype is None:
                 raise ValueError("Checkpoint shard lacks array reconstruction metadata.")
-            record = (tuple(int(value) for value in json.loads(shape)), dtype)
+            record = (tuple(json.loads(shape)), dtype)
             if path in inventory and inventory[path] != record:
                 raise ValueError("Checkpoint array inventory is inconsistent.")
             inventory[path] = record
@@ -1602,7 +1600,7 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
         restored = []
         for path, leaf in flattened:
             array_path = jax.tree_util.keystr(path) or "<root>"
-            expected = (tuple(int(size) for size in leaf.shape), np.dtype(leaf.dtype).str)
+            expected = (tuple(leaf.shape), np.dtype(leaf.dtype).str)
             if inventory[array_path] != expected:
                 raise ValueError(
                     "Checkpoint shape or dtype differs from the target state."

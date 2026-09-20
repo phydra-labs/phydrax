@@ -45,7 +45,7 @@ class TriangleBVH(StrictModule):
         self.right = packed.right
         self.leaf_id = packed.leaf_id
         self.leaf_items = packed.leaf_items
-        self.num_nodes = int(packed.left.shape[0])
+        self.num_nodes = packed.left.shape[0]
 
     def _query_one(self, point: Array) -> tuple[Array, Array, Array]:
         triangles = self.mesh.triangles

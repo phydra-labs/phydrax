@@ -150,7 +150,7 @@ def prepare_complex_optimizer_state_layout(
     return ComplexOptimizerStateLayout(
         treedef=treedef,
         paths=paths,
-        shapes=tuple(tuple(int(size) for size in value.shape) for value in arrays),
+        shapes=tuple(tuple(value.shape) for value in arrays),
         dtypes=tuple(value.dtype.name for value in arrays),
         groups=groups_,
         layout_id=layout_id,
@@ -462,22 +462,39 @@ def _import_optimizer(
     return jax.tree.unflatten(treedef, leaves)
 
 
-def _import_rng(template: Any, state: RNGInterchangeState, /):
+def _rebuild_rng_tree(
+    template: Any,
+    key_data: tuple[Array, ...],
+    key_impls: tuple[str, ...],
+    paths: tuple[str, ...],
+    /,
+):
     path_leaves, treedef = jax.tree_util.tree_flatten_with_path(template)
-    paths = tuple(jax.tree_util.keystr(path) or "<root>" for path, _ in path_leaves)
-    if paths != state.paths or len(path_leaves) != len(state.key_data):
+    expected_paths = tuple(
+        jax.tree_util.keystr(path) or "<root>" for path, _ in path_leaves
+    )
+    if expected_paths != paths or len(path_leaves) != len(key_data):
         raise ValueError("RNG interchange tree does not match its destination.")
     keys = []
     for (_, target), data, implementation in zip(
         path_leaves,
-        state.key_data,
-        state.key_impls,
+        key_data,
+        key_impls,
         strict=True,
     ):
         if str(jr.key_impl(target)) != implementation:
             raise ValueError("RNG implementation changed across interchange.")
         keys.append(jr.wrap_key_data(data, impl=implementation))
     return jax.tree.unflatten(treedef, keys)
+
+
+def _import_rng(template: Any, state: RNGInterchangeState, /):
+    return _rebuild_rng_tree(
+        template,
+        state.key_data,
+        state.key_impls,
+        state.paths,
+    )
 
 
 def import_complex_training_state(
@@ -659,24 +676,16 @@ def read_complex_training_checkpoint(
         optimizer_entries,
     )
     rng_manifest = manifest["rng"]
-    rng = object.__new__(RNGInterchangeState)
-    object.__setattr__(
-        rng, "key_data", tuple(arrays[name] for name in rng_manifest["arrays"])
+    rng_data = tuple(arrays[name] for name in rng_manifest["arrays"])
+    rng_impls = tuple(rng_manifest["implementations"])
+    rng_paths = tuple(rng_manifest["paths"])
+    rng_tree = _rebuild_rng_tree(
+        prepared.rng_template,
+        rng_data,
+        rng_impls,
+        rng_paths,
     )
-    object.__setattr__(rng, "key_impls", tuple(rng_manifest["implementations"]))
-    object.__setattr__(rng, "paths", tuple(rng_manifest["paths"]))
-    object.__setattr__(
-        rng,
-        "content_id",
-        canonical_fingerprint(
-            {
-                "kind": "rng-interchange-state",
-                "paths": tuple(rng_manifest["paths"]),
-                "implementations": tuple(rng_manifest["implementations"]),
-                "data": array_tree_fingerprint(rng.key_data),
-            }
-        ),
-    )
+    rng = RNGInterchangeState(rng_tree)
     auxiliary = unpack_array_tree(
         manifest["auxiliary"],
         arrays,

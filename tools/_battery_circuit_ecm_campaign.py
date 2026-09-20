@@ -111,7 +111,7 @@ def _analytic_segment(times, initial, a, b, /):
     The fixed cases avoid coincident thermal/electrical rates. This reference
     integrates the equations directly and never calls the production model law.
     """
-    t = np.asarray(times, dtype=float)
+    t = np.asarray(times, dtype="float64")
     q0, w0, temperature0 = initial
     resistance, capacitance, series, heat_capacity, ambient_rate = (
         0.1,
@@ -150,7 +150,7 @@ def _analytic_segment(times, initial, a, b, /):
 
 def analytic_outputs(case: str, times, /) -> np.ndarray:
     initial = (400.0, 0.0, 300.0)
-    times = np.asarray(times, dtype=float)
+    times = np.asarray(times, dtype="float64")
     if case in ("charge-rest", "discharge-rest"):
         current = 2.0 if case == "charge-rest" else -2.0
         before = _analytic_segment(np.minimum(times, 1.0), initial, current, 0.0)
@@ -167,7 +167,7 @@ def analytic_outputs(case: str, times, /) -> np.ndarray:
 
 
 def prepare_campaign(sample_times_s: Sequence[float], /) -> PreparedCampaign:
-    times = np.asarray(tuple(sample_times_s), dtype=float)
+    times = np.asarray(tuple(sample_times_s), dtype="float64")
     if (
         times.ndim != 1
         or times.size < 3

@@ -55,9 +55,9 @@ def _canonical_weights(
     permutation = axes + batch_axes
     transposed = jnp.transpose(weights, permutation)
     included = (
-        jnp.ones(weights.shape, dtype=bool)
+        jnp.ones(weights.shape, dtype=jnp.bool_)
         if mask is None
-        else jnp.broadcast_to(jnp.asarray(mask, dtype=bool), weights.shape)
+        else jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), weights.shape)
     )
     included = jnp.transpose(included, permutation)
     sample_shape = tuple(weights.shape[axis] for axis in axes)

@@ -51,13 +51,13 @@ def _canonical_hard_targets(
     width: int,
 ) -> Array:
     encoded = jnp.asarray(targets)
-    if kind != "multilabel" and encoded.ndim == 2 and int(encoded.shape[1]) == 1:
+    if kind != "multilabel" and encoded.ndim == 2 and encoded.shape[1] == 1:
         encoded = encoded[:, 0]
     expected_ndim = 2 if kind == "multilabel" else 1
     if encoded.ndim != expected_ndim:
         expected = "(N, L)" if kind == "multilabel" else "(N,) or (N, 1)"
         raise ValueError(f"{kind} classification targets must have shape {expected}.")
-    if kind == "multilabel" and int(encoded.shape[-1]) != width:
+    if kind == "multilabel" and encoded.shape[-1] != width:
         raise ValueError(f"Multilabel targets must end in label count {width}.")
     if encoded.dtype != jnp.bool_ and not jnp.issubdtype(encoded.dtype, jnp.integer):
         raise TypeError("Hard classification targets must be integer or Boolean labels.")
@@ -80,7 +80,7 @@ def _fold_case_target_mask(
     if sample_mask is None:
         return mask, None
     cases = jnp.asarray(sample_mask)
-    if cases.dtype != jnp.bool_ or cases.shape != (int(target.shape[0]),):
+    if cases.dtype != jnp.bool_ or cases.shape != (target.shape[0],):
         raise ValueError("sample_mask must be Boolean with shape (N,).")
     return cases & mask, None
 
@@ -95,7 +95,7 @@ def _validate_active_hard_targets(
 ) -> None:
     selected = values[configured]
     mask = (
-        jnp.ones(selected.shape, dtype=bool)
+        jnp.ones(selected.shape, dtype=jnp.bool_)
         if target_mask is None
         else target_mask[configured]
     )
@@ -116,9 +116,9 @@ def _configured(term: _AbstractSupervisedDatasetObservationTerm, /) -> Array:
 
 def _weights(batch: SupervisedDatasetBatch, /) -> Array:
     return (
-        jnp.ones((int(batch.target.shape[0]),), dtype=float)
+        jnp.ones((batch.target.shape[0],), dtype=jnp.float64)
         if batch.sample_weight is None
-        else jnp.asarray(batch.sample_weight, dtype=float)
+        else jnp.asarray(batch.sample_weight, dtype=jnp.float64)
     )
 
 
@@ -155,10 +155,11 @@ def _hard_metrics(
         probabilities = binary_probabilities_from_logits(logits)
         prediction = probabilities >= 0.5
         accuracy = _weighted_mean(
-            (prediction == jnp.asarray(target, dtype=bool)).astype(float), sample_weight
+            (prediction == jnp.asarray(target, dtype=jnp.bool_)).astype("float64"),
+            sample_weight,
         )
         brier = _weighted_mean(
-            (probabilities - jnp.asarray(target, dtype=float)) ** 2,
+            (probabilities - jnp.asarray(target, dtype=jnp.float64)) ** 2,
             sample_weight,
         )
         metric_mass = jnp.sum(sample_weight)
@@ -170,7 +171,7 @@ def _hard_metrics(
         labels = jnp.asarray(target, dtype=jnp.int32)
         selected = jnp.take_along_axis(probabilities, labels[..., None], axis=-1)[..., 0]
         prediction = jnp.argmax(probabilities, axis=-1)
-        accuracy = _weighted_mean((prediction == labels).astype(float), sample_weight)
+        accuracy = _weighted_mean((prediction == labels).astype("float64"), sample_weight)
         per_case_brier = jnp.sum(probabilities**2, axis=-1) - 2.0 * selected + 1.0
         brier = _weighted_mean(per_case_brier, sample_weight)
         metric_mass = jnp.sum(sample_weight)
@@ -178,47 +179,47 @@ def _hard_metrics(
     else:
         raw_logits = jnp.asarray(logits)
         mask = (
-            jnp.ones(raw_logits.shape, dtype=bool)
+            jnp.ones(raw_logits.shape, dtype=jnp.bool_)
             if target_mask is None
             else jnp.asarray(target_mask)
         )
         safe_logits = jnp.where(mask, raw_logits, 0.0)
         safe_target = jnp.where(mask, jnp.asarray(target), 0)
         probabilities = independent_bernoulli_probabilities_from_logits(safe_logits)
-        label_weight = sample_weight[..., None] * mask.astype(float)
+        label_weight = sample_weight[..., None] * mask.astype("float64")
         metric_mass = jnp.sum(label_weight)
         prediction = probabilities >= 0.5
-        target_bool = jnp.asarray(safe_target, dtype=bool)
+        target_bool = jnp.asarray(safe_target, dtype=jnp.bool_)
         accuracy = (
-            jnp.sum(label_weight * (prediction == target_bool).astype(float))
+            jnp.sum(label_weight * (prediction == target_bool).astype("float64"))
             / metric_mass
         )
         brier = (
             jnp.sum(
                 label_weight
-                * (probabilities - jnp.asarray(safe_target, dtype=float)) ** 2
+                * (probabilities - jnp.asarray(safe_target, dtype=jnp.float64)) ** 2
             )
             / metric_mass
         )
         accuracy_key = "data_binary_accuracy"
     valid, status = _metric_state(per_case_nll, accuracy, brier)
     result = {
-        "data_negative_log_likelihood": jnp.asarray(nll, dtype=float).reshape(()),
-        accuracy_key: jnp.asarray(accuracy, dtype=float).reshape(()),
-        "data_brier_score": jnp.asarray(brier, dtype=float).reshape(()),
+        "data_negative_log_likelihood": jnp.asarray(nll, dtype=jnp.float64).reshape(()),
+        accuracy_key: jnp.asarray(accuracy, dtype=jnp.float64).reshape(()),
+        "data_brier_score": jnp.asarray(brier, dtype=jnp.float64).reshape(()),
         "data_effective_weight": jnp.sum(sample_weight).reshape(()),
-        "data_valid": jnp.asarray(valid, dtype=bool).reshape(()),
+        "data_valid": jnp.asarray(valid, dtype=jnp.bool_).reshape(()),
         "data_status": status.reshape(()),
     }
     if kind == "multilabel":
         result["data_effective_label_weight"] = jnp.asarray(
-            metric_mass, dtype=float
+            metric_mass, dtype=jnp.float64
         ).reshape(())
         result["data_observed_label_count"] = jnp.sum(
-            jnp.asarray(target_mask, dtype=bool)
+            jnp.asarray(target_mask, dtype=jnp.bool_)
             if target_mask is not None
-            else jnp.ones(jnp.asarray(target).shape, dtype=bool)
-        ).astype(float)
+            else jnp.ones(jnp.asarray(target).shape, dtype=jnp.bool_)
+        ).astype("float64")
     return result
 
 
@@ -268,8 +269,7 @@ class SupervisedClassificationTerm(_AbstractSupervisedLikelihoodTerm):
             likelihood = IndependentBernoulliLikelihood(class_count)
         else:
             raise ValueError(
-                "SupervisedClassificationTerm supports binary, multiclass, and "
-                "multilabel TargetSchema kinds."
+                "SupervisedClassificationTerm supports binary, multiclass, and multilabel TargetSchema kinds."
             )
         encoded = _canonical_hard_targets(
             targets,
@@ -363,11 +363,11 @@ class SupervisedSoftClassificationTerm(_AbstractSupervisedDatasetObservationTerm
         kind = target_schema.kind
         class_count = 2 if kind == "binary" else target_schema.num_classes
         values = jnp.asarray(targets)
-        if kind == "binary" and values.ndim == 2 and int(values.shape[-1]) == 1:
+        if kind == "binary" and values.ndim == 2 and values.shape[-1] == 1:
             values = values[:, 0]
         expected_ndim = 1 if kind == "binary" else 2
         if values.ndim != expected_ndim or (
-            kind == "multiclass" and int(values.shape[-1]) != class_count
+            kind == "multiclass" and values.shape[-1] != class_count
         ):
             raise ValueError(
                 "Soft classification target shape is incompatible with schema."
@@ -393,7 +393,7 @@ class SupervisedSoftClassificationTerm(_AbstractSupervisedDatasetObservationTerm
         probe_logits = (
             jnp.zeros_like(self.values[configured])
             if kind == "binary"
-            else jnp.zeros(self.values[configured].shape, dtype=float)
+            else jnp.zeros(self.values[configured].shape, dtype=jnp.float64)
         )
         probe = pointwise_classification_loss(
             probe_logits,
@@ -436,7 +436,7 @@ class SupervisedSoftClassificationTerm(_AbstractSupervisedDatasetObservationTerm
     ) -> dict[str, Array]:
         batch_value = self.sample(key=key) if batch is None else batch
         logits = self._location(functions, batch_value, key=key, **kwargs)
-        target = jnp.asarray(batch_value.target, dtype=float)
+        target = jnp.asarray(batch_value.target, dtype=jnp.float64)
         per_case = pointwise_classification_loss(
             logits,
             target,
@@ -661,7 +661,7 @@ class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
             encoded = jnp.asarray(targets)
             if (
                 encoded.ndim != 2
-                or int(encoded.shape[-1]) != class_count
+                or encoded.shape[-1] != class_count
                 or not jnp.issubdtype(encoded.dtype, jnp.inexact)
                 or jnp.issubdtype(encoded.dtype, jnp.complexfloating)
             ):
@@ -698,7 +698,7 @@ class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
         else:
             probe = jnp.zeros(
                 self.values[configured].shape[:-1] + (class_count - 1,),
-                dtype=float,
+                dtype=jnp.float64,
             )
             losses = pointwise_classification_loss(
                 probe,
@@ -748,7 +748,7 @@ class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
         )
         weights = _weights(batch_value)
         nll = _weighted_mean(per_case_nll, weights)
-        accuracy = _weighted_mean((prediction == labels).astype(float), weights)
+        accuracy = _weighted_mean((prediction == labels).astype("float64"), weights)
         brier = _weighted_mean(per_case_brier, weights)
         mean_expected_rank = _weighted_mean(expected_rank, weights)
         rank_mae = _weighted_mean(jnp.abs(expected_rank - target_rank), weights)

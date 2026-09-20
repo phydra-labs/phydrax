@@ -107,7 +107,7 @@ def benchmark_case(dimension: float, recursion_order: int, repeats: int):
         "axes": {
             "spacetime_dimension": dimension,
             "recursion_order": recursion_order,
-            "point_count": int(points.shape[0]),
+            "point_count": points.shape[0],
             "derivative_count": len(plan.derivative_orders),
         },
         "ids": {

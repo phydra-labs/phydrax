@@ -39,7 +39,7 @@ SIGN_FREE_CTINT_SUPPORT, SIGN_FREE_CTINT_CANDIDATE = _candidate(
 )
 LOW_ORDER_DIAGRAM_MC_SUPPORT, LOW_ORDER_DIAGRAM_MC_CANDIDATE = _candidate(
     "diagrammatic-field.low-order-fermion-diagram-monte-carlo",
-    {"catalogue": "finite-caller-supplied", "proposal": "reversible-metropolis-hastings"},
+    {"catalog": "finite-caller-supplied", "proposal": "reversible-metropolis-hastings"},
     ("proposal-ratio", "detailed-balance", "order-evidence", "raw-sign-evidence"),
 )
 

@@ -47,7 +47,7 @@ def _axis_difference(shape: tuple[int, ...], axis: int, /) -> np.ndarray:
     target_shape = tuple(
         size - 1 if index == axis else size for index, size in enumerate(shape)
     )
-    matrix = np.zeros((prod(target_shape), prod(shape)), dtype=float)
+    matrix = np.zeros((prod(target_shape), prod(shape)), dtype=np.float64)
     for target_index in np.ndindex(target_shape):
         lower = list(target_index)
         upper = list(target_index)
@@ -66,7 +66,7 @@ def _face_restriction(
     /,
 ) -> np.ndarray:
     face_shape = shape[:axis] + shape[axis + 1 :]
-    matrix = np.zeros((prod(face_shape), prod(shape)), dtype=float)
+    matrix = np.zeros((prod(face_shape), prod(shape)), dtype=np.float64)
     fixed = 0 if side == "lower" else shape[axis] - 1
     for face_index in np.ndindex(face_shape):
         volume_index = face_index[:axis] + (fixed,) + face_index[axis:]
@@ -83,7 +83,7 @@ def _rank(matrix: np.ndarray, tolerance: float, /) -> int:
 
 
 def _nullspace(matrix: np.ndarray, tolerance: float, /) -> np.ndarray:
-    column_count = int(matrix.shape[1])
+    column_count = matrix.shape[1]
     if matrix.shape[0] == 0:
         return np.eye(column_count)
     _, singular_values, right = np.linalg.svd(matrix, full_matrices=True)
@@ -118,7 +118,7 @@ class SplineFormComponent(StrictModule, NonTrainableState):
         /,
     ):
         degree = int(form_degree)
-        axes = tuple(int(axis) for axis in component_axes)
+        axes = tuple(component_axes)
         grids_ = tuple(grids)
         dimension = len(grids_)
         if degree < 0 or degree > dimension or len(axes) != degree:
@@ -198,7 +198,7 @@ class SplineDifferentialSpace(StrictModule, NonTrainableState):
         )
 
     def component_slice(self, component_axes: Sequence[int], /) -> slice:
-        axes = tuple(int(axis) for axis in component_axes)
+        axes = tuple(component_axes)
         for offset, component in zip(
             self.component_offsets, self.components, strict=True
         ):
@@ -233,9 +233,7 @@ class SignedSplineTrace(StrictModule, NonTrainableState):
         axis = int(normal_axis)
         side_ = str(side)
         count = int(source_dof_count)
-        target_axes = tuple(
-            tuple(int(value) for value in axes) for axes in target_component_axes
-        )
+        target_axes = tuple(tuple(axes) for axes in target_component_axes)
         matrix_ = jnp.asarray(matrix)
         if side_ not in ("lower", "upper"):
             raise ValueError("Spline trace side must be lower or upper.")
@@ -466,7 +464,7 @@ class AssembledSplineDeRhamComplex(AbstractSplineDeRhamComplex):
         boundary_traces: Sequence[SignedSplineTrace] = (),
     ):
         dimension_ = int(dimension)
-        counts = tuple(int(value) for value in dof_counts)
+        counts = tuple(dof_counts)
         derivatives = tuple(jnp.asarray(value) for value in exterior_derivatives)
         source_ids = tuple(str(value) for value in source_complex_ids)
         assembly_id_ = str(assembly_id).strip()
@@ -595,7 +593,7 @@ class CommutingProjectorContract(StrictModule, NonTrainableState):
             raise TypeError(
                 "Commuting projector target must be a spline de Rham complex."
             )
-        source_counts = tuple(int(value) for value in source_dof_counts)
+        source_counts = tuple(source_dof_counts)
         source_d = tuple(jnp.asarray(value) for value in source_derivatives)
         projectors_ = tuple(jnp.asarray(value) for value in projectors)
         inclusions_ = tuple(jnp.asarray(value) for value in inclusions)
@@ -791,7 +789,7 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
             full_quotient = restrictions[degree] @ quotient
             nullspaces.append(full_kernel)
             cohomologies.append(full_quotient)
-            nullity = int(kernel.shape[1])
+            nullity = kernel.shape[1]
             nullities.append(nullity)
             betti.append(nullity - (derivative_ranks[degree - 1] if degree > 0 else 0))
 
@@ -864,7 +862,7 @@ class CompatibleQualificationPolicy(StrictModule, NonTrainableState):
         maximum_projector_norm: float = 1e4,
         maximum_discrete_compactness_bound: float = 1e10,
     ):
-        betti = tuple(int(value) for value in expected_relative_betti)
+        betti = tuple(expected_relative_betti)
         tolerance = float(algebra_tolerance)
         friedrichs = float(maximum_friedrichs_constant)
         projector = float(maximum_projector_norm)
@@ -955,10 +953,8 @@ class CompatibleQualificationEvidence(StrictModule, NonTrainableState):
         self.projector_retraction_defects = jnp.asarray(projector_retraction_defects)
         self.source_projection_defects = jnp.asarray(source_projection_defects)
         self.relative_closure_defects = jnp.asarray(relative_closure_defects)
-        self.relative_betti_numbers = tuple(
-            int(value) for value in relative_betti_numbers
-        )
-        self.complement_dimensions = tuple(int(value) for value in complement_dimensions)
+        self.relative_betti_numbers = tuple(relative_betti_numbers)
+        self.complement_dimensions = tuple(complement_dimensions)
         self.minimum_complement_singular_values = jnp.asarray(
             minimum_complement_singular_values
         )
@@ -1042,14 +1038,16 @@ def qualify_compatible_complex(
         raise ValueError("Expected relative Betti numbers have the wrong dimension.")
 
     tolerance = policy.algebra_tolerance
-    d_squared = np.asarray(complex_.d_squared_defects, dtype=float)
-    projector_defect = np.asarray(projector.projection_commuting_defects, dtype=float)
-    inclusion_defect = np.asarray(projector.inclusion_commuting_defects, dtype=float)
-    retraction_defect = np.asarray(projector.retraction_defects, dtype=float)
-    source_projection_defect = np.asarray(
-        projector.source_projection_defects, dtype=float
+    d_squared = np.asarray(complex_.d_squared_defects, dtype=np.float64)
+    projector_defect = np.asarray(
+        projector.projection_commuting_defects, dtype=np.float64
     )
-    relative_closure = np.asarray(relative.closure_defects, dtype=float)
+    inclusion_defect = np.asarray(projector.inclusion_commuting_defects, dtype=np.float64)
+    retraction_defect = np.asarray(projector.retraction_defects, dtype=np.float64)
+    source_projection_defect = np.asarray(
+        projector.source_projection_defects, dtype=np.float64
+    )
+    relative_closure = np.asarray(relative.closure_defects, dtype=np.float64)
 
     minimum_singular_values: list[float] = []
     friedrichs_constants: list[float] = []
@@ -1057,7 +1055,7 @@ def qualify_compatible_complex(
     for derivative in complex_.exterior_derivatives:
         singular_values = np.linalg.svd(np.asarray(derivative), compute_uv=False)
         positive = singular_values[singular_values > tolerance]
-        complement_dimensions.append(int(positive.size))
+        complement_dimensions.append(positive.size)
         if positive.size:
             minimum = float(np.min(positive))
             minimum_singular_values.append(minimum)

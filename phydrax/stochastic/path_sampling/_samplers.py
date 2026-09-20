@@ -132,7 +132,7 @@ class TPSPlan(StrictModule, NonTrainableState):
             )
         identity = plan_id or canonical_fingerprint(
             {
-                "kind": "transition-path-sampling-plan-v1",
+                "kind": "transition-path-sampling-plan",
                 "ensemble": ensemble.ensemble_id,
                 "kernel": kernel.kernel_id,
                 "action": action.action_id,
@@ -284,7 +284,7 @@ def prepare_tps(plan: TPSPlan, initial_path: PathBuffer, /) -> PreparedTPS:
     trajectory_id = path_trajectory_id(initial_path)
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-transition-path-sampling-v1",
+            "kind": "prepared-transition-path-sampling",
             "plan": plan.plan_id,
             "trajectory": trajectory_id,
             "capacity": initial_path.capacity,
@@ -464,7 +464,7 @@ class TISPlan(StrictModule, NonTrainableState):
             raise ValueError("lineage_capacity must be positive.")
         identity = plan_id or canonical_fingerprint(
             {
-                "kind": "transition-interface-sampling-plan-v1",
+                "kind": "transition-interface-sampling-plan",
                 "network": network.network_id,
                 "kernel": kernel.kernel_id,
                 "action": action.action_id,
@@ -525,7 +525,7 @@ def prepare_tis(plan: TISPlan, initial_paths: Sequence[PathBuffer], /) -> Prepar
     )
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-transition-interface-sampling-v1",
+            "kind": "prepared-transition-interface-sampling",
             "plan": plan.plan_id,
             "replicas": [replica.prepared_id for replica in replicas],
         }
@@ -582,7 +582,7 @@ class RETISPlan(StrictModule, NonTrainableState):
         if not isinstance(tis, TISPlan):
             raise TypeError("tis must be TISPlan.")
         identity = plan_id or canonical_fingerprint(
-            {"kind": "replica-exchange-tis-plan-v1", "tis": tis.plan_id, "minus": True}
+            {"kind": "replica-exchange-tis-plan", "tis": tis.plan_id, "minus": True}
         )
         self.tis = tis
         self.plan_id = _identity(identity, "plan_id")
@@ -667,7 +667,7 @@ def prepare_retis(
     )
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-replica-exchange-tis-v1",
+            "kind": "prepared-replica-exchange-tis",
             "plan": plan.plan_id,
             "replicas": [replica.prepared_id for replica in replicas],
         }

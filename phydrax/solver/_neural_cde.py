@@ -41,7 +41,7 @@ class NeuralCDEVectorField(StrictModule):
     ):
         if not callable(model):
             raise TypeError("model must be callable.")
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         dimension = int(control_dimension)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("state_shape must be non-empty and positive.")
@@ -50,7 +50,7 @@ class NeuralCDEVectorField(StrictModule):
         probe = jnp.zeros(shape).reshape((-1,))
         value = jnp.asarray(model(probe))
         expected_size = int(np.prod(shape)) * dimension
-        if int(value.size) != expected_size:
+        if value.size != expected_size:
             raise ValueError(
                 "model output size must equal prod(state_shape) * control_dimension; "
                 f"expected {expected_size}, got {value.size}."
@@ -100,21 +100,21 @@ class NeuralCDETrainingData(StrictModule):
         ):
             raise TypeError("paths must be a non-empty sequence of differentiable paths.")
         initial = jnp.asarray(initial_states)
-        times = jnp.asarray(observation_times, dtype=float)
+        times = jnp.asarray(observation_times, dtype=jnp.float64)
         targets = jnp.asarray(observations)
         num_cases = len(path_values)
-        if initial.ndim < 2 or int(initial.shape[0]) != num_cases:
+        if initial.ndim < 2 or initial.shape[0] != num_cases:
             raise ValueError("initial_states must have a leading path/case axis.")
-        state_shape = tuple(int(size) for size in initial.shape[1:])
-        if times.ndim != 2 or int(times.shape[0]) != num_cases:
+        state_shape = tuple(initial.shape[1:])
+        if times.ndim != 2 or times.shape[0] != num_cases:
             raise ValueError("observation_times must have shape (case, observation).")
         expected_targets = times.shape + state_shape
         if targets.shape != expected_targets:
             raise ValueError(f"observations must have shape {expected_targets}.")
         mask = (
-            jnp.ones(times.shape, dtype=bool)
+            jnp.ones(times.shape, dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if mask.shape != times.shape:
             raise ValueError("valid must have the same shape as observation_times.")
@@ -136,7 +136,7 @@ class NeuralCDETrainingData(StrictModule):
             raise ValueError("initial_states must be finite.")
         selected_indices: list[tuple[int, ...]] = []
         for case_index, path in enumerate(path_values):
-            indices = tuple(int(index) for index in np.flatnonzero(host_mask[case_index]))
+            indices = tuple(np.flatnonzero(host_mask[case_index]))
             if not indices:
                 raise ValueError(
                     "Every case must contain at least one valid observation."
@@ -192,7 +192,7 @@ class NeuralCDETrainingData(StrictModule):
             array_fingerprint = array_tree_fingerprint((initial, times, targets, mask))
             identifier = canonical_fingerprint(
                 {
-                    "format": "phydrax-neural-cde-data-v1",
+                    "format": "phydrax-neural-cde-data",
                     "path_ids": [path.path_id for path in path_values],
                     "case_ids": list(resolved_case_ids),
                     "time_channel": channel,
@@ -311,11 +311,7 @@ def neural_cde_loss(
         raise TypeError("vector_field must be callable.")
     if not isinstance(data, NeuralCDETrainingData):
         raise TypeError("data must be NeuralCDETrainingData.")
-    selected = (
-        tuple(range(data.num_cases))
-        if indices is None
-        else tuple(int(index) for index in indices)
-    )
+    selected = tuple(range(data.num_cases)) if indices is None else tuple(indices)
     if not selected or any(index < 0 or index >= data.num_cases for index in selected):
         raise ValueError("indices must select at least one valid data case.")
     options = {} if solve_options is None else dict(solve_options)
@@ -343,12 +339,12 @@ def neural_cde_loss(
             **options,
         )
         solve_succeeded = (
-            jnp.all(jnp.asarray(solution.valid, dtype=bool))
-            & jnp.all(jnp.asarray(solution.successful, dtype=bool))
+            jnp.all(jnp.asarray(solution.valid, dtype=jnp.bool_))
+            & jnp.all(jnp.asarray(solution.successful, dtype=jnp.bool_))
             & jnp.all(
                 jnp.asarray(
                     solution.backend_result == dfx.RESULTS.successful,
-                    dtype=bool,
+                    dtype=jnp.bool_,
                 )
             )
         )
@@ -376,7 +372,7 @@ def _training_identifier(
 ) -> str:
     return canonical_fingerprint(
         {
-            "format": "phydrax-neural-cde-training-v1",
+            "format": "phydrax-neural-cde-training",
             "data_id": data.data_id,
             "optimizer_id": optimizer_id,
             "solver_configuration_id": solver_configuration_id,
@@ -399,8 +395,8 @@ def train_neural_cde(
     vector_field: Any | None = None,
     state: NeuralCDETrainingState | None = None,
     optimizer_id: str,
-    solver_configuration_id: str = "diffrax-cde-default-v1",
-    dynamics_id: str = "neural-cde-dynamics-v1",
+    solver_configuration_id: str = "diffrax-cde-default",
+    dynamics_id: str = "neural-cde-dynamics",
     seed: int = 0,
     shuffle: bool = True,
     drift: Any | None = None,

@@ -225,7 +225,7 @@ class CompactU1GaugeModel2D(StrictModule):
             np.count_nonzero(chain_residual) == 0
         )
         self.link_count = len(link_ids)
-        self.plaquette_count = int(plaquette_link.shape[0])
+        self.plaquette_count = plaquette_link.shape[0]
         self.link_wire_ids = link_ids
         self.model_id = model_id
 
@@ -550,11 +550,10 @@ def compact_u1_hamiltonian(
         links = np.flatnonzero(incidence[plaquette])
         if links.size == 0:
             continue
-        required = model.link_space.dimension ** (2 * int(links.size))
+        required = model.link_space.dimension ** (2 * links.size)
         if required > maximum:
             raise ValueError(
-                f"Compact U(1) plaquette term requires {required} elements; "
-                f"capacity is {maximum}."
+                f"Compact U(1) plaquette term requires {required} elements; capacity is {maximum}."
             )
         factors = tuple(
             model.link_space.link_operator
@@ -597,8 +596,7 @@ def gauge_hamiltonian_mpo(
     maximum = int(maximum_dense_elements)
     if maximum <= 0 or required > maximum:
         raise ValueError(
-            f"Gauge Hamiltonian dense reference requires {required} elements; "
-            f"capacity is {maximum}."
+            f"Gauge Hamiltonian dense reference requires {required} elements; capacity is {maximum}."
         )
     tolerance = float(singular_value_tolerance)
     if not isfinite(tolerance) or tolerance < 0.0:
@@ -620,7 +618,7 @@ def gauge_hamiltonian_mpo(
     for site, local_dimension in enumerate(dimensions[:-1]):
         matrix = remainder.reshape((left_rank * local_dimension**2, -1))
         left, singular, right = jnp.linalg.svd(matrix, full_matrices=False)
-        rank = int(singular.shape[0])
+        rank = singular.shape[0]
         if rank > int(maximum_bond_dimension):
             raise ValueError(
                 "Exact gauge Hamiltonian MPO exceeds maximum_bond_dimension."

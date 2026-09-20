@@ -121,8 +121,8 @@ def test_intervention_complete_process_design_identifies_physical_quotient():
     spec = phx.tensor_network.CombLegSpec(2, 1, 1)
     model = phx.tensor_network.SequentialStinespringProcess(
         spec,
-        jnp.eye(2, dtype=complex),
-        (jnp.eye(2, dtype=complex),),
+        jnp.eye(2, dtype="complex128"),
+        (jnp.eye(2, dtype="complex128"),),
         (1,),
         process_id="test-intervention-complete",
     )
@@ -155,8 +155,8 @@ def test_adaptive_heom_accepts_steps_and_reaches_final_time():
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.01, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
-        jnp.zeros((2, 2), dtype=complex),
-        jnp.asarray([[1, 0], [0, -1]], dtype=complex),
+        jnp.zeros((2, 2), dtype="complex128"),
+        jnp.asarray([[1, 0], [0, -1]], dtype="complex128"),
         expansion,
         phx.solver.HEOMHierarchy(expansion.rank, 1),
         density,
@@ -175,7 +175,7 @@ def test_adaptive_heom_accepts_steps_and_reaches_final_time():
 
 
 def test_tomography_setting_fingerprint_canonicalizes_kraus_gauge():
-    identity = jnp.eye(2, dtype=complex)
+    identity = jnp.eye(2, dtype="complex128")
     phase = jnp.exp(0.37j) * identity
     first = phx.tensor_network.QuantumInstrument(
         identity[None, None, ...],
@@ -212,7 +212,7 @@ def test_tomography_setting_fingerprint_canonicalizes_kraus_gauge():
 
 
 def test_inactive_instrument_outcome_is_rejected_everywhere():
-    identity = jnp.eye(2, dtype=complex)
+    identity = jnp.eye(2, dtype="complex128")
     instrument = phx.tensor_network.QuantumInstrument(
         jnp.stack((identity, identity))[:, None, ...],
         jnp.asarray([True, False]),
@@ -261,7 +261,7 @@ def test_direct_memory_map_certification_checks_cp_and_tp():
 
 def test_mps_dense_materialization_is_capacity_bounded():
     state = phx.tensor_network.product_mps(
-        jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=complex)
+        jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )
     with pytest.raises(ValueError, match="capacity"):
         state.to_dense(maximum_elements=2)

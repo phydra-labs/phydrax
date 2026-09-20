@@ -161,7 +161,7 @@ def initialize_particle_execution_epoch(
     capacity = dynamics.bodies.capacity
     if state.body_properties.active.shape != (capacity,):
         raise ValueError("DEM state does not match dynamics capacity.")
-    occupied = jnp.asarray(state.body_properties.active, dtype=bool)
+    occupied = jnp.asarray(state.body_properties.active, dtype=jnp.bool_)
     return ParticleExecutionEpoch(
         dynamics,
         state,
@@ -203,7 +203,7 @@ def _grown_neighborhood_plan(plan, capacity: int, /):
 
 
 def _pad(array: Array, capacity: int, fill: Any = 0, /) -> Array:
-    old = int(array.shape[0])
+    old = array.shape[0]
     if capacity < old:
         raise ValueError("Growth capacity cannot shrink an array.")
     shape = (capacity - old,) + array.shape[1:]
@@ -318,7 +318,7 @@ def grow_particle_execution_epoch(
         new_ids,
         new_mass,
         ambient_dimension=old_dynamics.bodies.ambient_dimension,
-        active_mask=jnp.ones((target,), dtype=bool),
+        active_mask=jnp.ones((target,), dtype=jnp.bool_),
         coordinate_dtype=old_dynamics.bodies.particles.plan.coordinate_dtype,
     ).prepare(numeric_version=str(int(np.asarray(epoch.epoch_index)) + 1))
     old_body_plan = old_dynamics.bodies.plan

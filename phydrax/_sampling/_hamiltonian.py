@@ -53,9 +53,7 @@ _MOMENTUM_ADDRESS = SampleAddress(
 )
 _NUTS_ADDRESS = SampleAddress(
     "markov",
-    "hamiltonian",
-    algorithm_version=2,
-    target="nuts-tree",
+    "hamiltonian-nuts-tree",
     role="transition",
 )
 _ACCEPT_ADDRESS = SampleAddress(
@@ -233,7 +231,7 @@ def initialize_hamiltonian_state(
     if not isinstance(kernel, PreparedHamiltonianKernel):
         raise TypeError("kernel must be PreparedHamiltonianKernel.")
     positions = jnp.asarray(initial_positions, dtype=kernel.mass_matrix.dtype)
-    dimension = int(kernel.mass_matrix.shape[0])
+    dimension = kernel.mass_matrix.shape[0]
     if positions.ndim != 2 or positions.shape[1] != dimension or positions.shape[0] < 1:
         raise ValueError("initial_positions must have shape (chains, mass_dimension).")
     if execution_group is not None:
@@ -335,7 +333,7 @@ def _one_hmc_transition(kernel, position, log_target, gradient, key, chain, step
         -log_target + _kinetic(kernel, momentum)
     )
     divergent = (
-        nonfinite_int.astype(bool)
+        nonfinite_int.astype("bool")
         | (~jnp.isfinite(energy_error))
         | (jnp.abs(energy_error) > kernel.divergence_threshold)
     )
@@ -349,7 +347,7 @@ def _one_hmc_transition(kernel, position, log_target, gradient, key, chain, step
         jnp.where(~divergent & jnp.isfinite(log_accept), jnp.exp(log_accept), 0.0),
         divergent,
         jnp.asarray(False),
-        nonfinite_int.astype(bool),
+        nonfinite_int.astype("bool"),
         used,
     )
 

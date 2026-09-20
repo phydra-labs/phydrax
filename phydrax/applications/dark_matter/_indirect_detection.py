@@ -38,8 +38,8 @@ class IndirectDetectionStatus(IntEnum):
 def _factor_arrays(
     value: ArrayLike, standard_deviation: ArrayLike, name: str, /
 ) -> tuple[Array, Array]:
-    host = np.asarray(value, dtype=float)
-    uncertainty_host = np.asarray(standard_deviation, dtype=float)
+    host = np.asarray(value, dtype=np.float64)
+    uncertainty_host = np.asarray(standard_deviation, dtype=np.float64)
     if host.shape != uncertainty_host.shape:
         raise ValueError(f"{name} values and standard deviations must have equal shape.")
     if (
@@ -133,9 +133,9 @@ class ExactLineFluxTable(StrictModule, NonTrainableState):
         standard_deviation_cm2_s: ArrayLike,
         /,
     ):
-        energies = np.asarray(energy_gev, dtype=float)
-        values = np.asarray(integrated_flux_cm2_s, dtype=float)
-        uncertainty = np.asarray(standard_deviation_cm2_s, dtype=float)
+        energies = np.asarray(energy_gev, dtype=np.float64)
+        values = np.asarray(integrated_flux_cm2_s, dtype=np.float64)
+        uncertainty = np.asarray(standard_deviation_cm2_s, dtype=np.float64)
         if (
             energies.ndim != 1
             or values.shape[-1:] != energies.shape
@@ -381,8 +381,8 @@ class BinnedIndirectDetectionPlan(StrictModule, NonTrainableState):
         *,
         exposure_cm2_s: ArrayLike,
     ):
-        edges = np.asarray(energy_bin_edges_gev, dtype=float)
-        exposure = np.asarray(exposure_cm2_s, dtype=float)
+        edges = np.asarray(energy_bin_edges_gev, dtype=np.float64)
+        exposure = np.asarray(exposure_cm2_s, dtype=np.float64)
         if (
             edges.ndim != 1
             or edges.size < 2

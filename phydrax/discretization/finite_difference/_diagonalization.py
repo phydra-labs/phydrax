@@ -445,10 +445,10 @@ def _uniform_spacing(axis, /) -> tuple[np.ndarray, float]:
         axis.interval_centers
         if axis.primary_entity == "interval"
         else axis.point_coordinates,
-        dtype=float,
+        dtype=np.float64,
     )
     if axis.primary_entity == "interval" or axis.periodic:
-        widths = np.asarray(axis.interval_widths, dtype=float)
+        widths = np.asarray(axis.interval_widths, dtype=np.float64)
         spacing = float(widths[0])
         uniform = np.allclose(widths, spacing, rtol=1e-10, atol=1e-12)
     else:
@@ -469,7 +469,7 @@ def _prepare_axis(
     /,
 ):
     coordinates, spacing = _uniform_spacing(axis)
-    full_count = int(coordinates.size)
+    full_count = coordinates.size
     lower, upper = boundaries
     lower_dirichlet = lower == "dirichlet"
     upper_dirichlet = upper == "dirichlet"

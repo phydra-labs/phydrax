@@ -51,7 +51,7 @@ def _line_intersection(subject_first, subject_second, clip_first, clip_second):
         subject_direction[0] * clip_direction[1]
         - subject_direction[1] * clip_direction[0]
     )
-    if abs(denominator) <= np.finfo(float).eps:
+    if abs(denominator) <= np.finfo(np.float64).eps:
         return 0.5 * (subject_first + subject_second)
     relative = clip_first - subject_first
     parameter = (
@@ -61,7 +61,7 @@ def _line_intersection(subject_first, subject_second, clip_first, clip_second):
 
 
 def _clip_polygon(subject, clip, tolerance):
-    output = [np.asarray(point, dtype=float) for point in subject]
+    output = [np.asarray(point, dtype=np.float64) for point in subject]
     orientation = 1.0 if _signed_area(clip) >= 0.0 else -1.0
     for index, clip_first in enumerate(clip):
         clip_second = clip[(index + 1) % len(clip)]
@@ -120,8 +120,8 @@ def build_triangle_mortar_interface(
     per fan triangle. This builder is deterministic and fail-closed on capacity
     overflow.
     """
-    plus = np.asarray(plus_positions, dtype=float)
-    minus = np.asarray(minus_positions, dtype=float)
+    plus = np.asarray(plus_positions, dtype=np.float64)
+    minus = np.asarray(minus_positions, dtype=np.float64)
     plus_topology = np.asarray(plus_faces)
     minus_topology = np.asarray(minus_faces)
     count = int(capacity)
@@ -191,11 +191,11 @@ def build_triangle_mortar_interface(
     plus_weights = np.full((count, 3), 1.0 / 3.0)
     minus_indices = np.zeros((count, 3), dtype=np.int32)
     minus_weights = np.full((count, 3), 1.0 / 3.0)
-    normals = np.zeros((count, 3), dtype=float)
+    normals = np.zeros((count, 3), dtype=np.float64)
     normals[:, 2] = 1.0
-    measures = np.zeros((count,), dtype=float)
+    measures = np.zeros((count,), dtype=np.float64)
     keys = np.arange(count, dtype=np.int64)
-    valid = np.zeros((count,), dtype=bool)
+    valid = np.zeros((count,), dtype=np.bool_)
     for slot, record in enumerate(records[:count]):
         (
             plus_indices[slot],

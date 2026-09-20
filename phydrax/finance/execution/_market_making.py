@@ -42,7 +42,7 @@ def _inventory_grid(value: ArrayLike, bound: float, /) -> Array:
         raise ValueError("inventory_grid must be a nonempty rank-one vector.")
     if jnp.issubdtype(grid.dtype, jnp.complexfloating):
         raise TypeError("inventory_grid must be real-valued.")
-    grid = grid.astype(jnp.result_type(grid, float))
+    grid = grid.astype(jnp.result_type(grid, jnp.float64))
     if not bool(jnp.all(jnp.isfinite(grid))):
         raise ValueError("inventory_grid must be finite.")
     if bool(jnp.any(jnp.diff(grid) <= 0.0)):

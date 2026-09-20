@@ -332,8 +332,8 @@ def prepare_laplace_stable_dual_calderon_3d(
 
     if not isinstance(galerkin, LaplaceSingleLayerDP0Galerkin3D):
         raise TypeError("galerkin must be LaplaceSingleLayerDP0Galerkin3D.")
-    mass = np.asarray(dual_cross_mass, dtype=float)
-    hypersingular = np.asarray(dual_hypersingular, dtype=float)
+    mass = np.asarray(dual_cross_mass, dtype=np.float64)
+    hypersingular = np.asarray(dual_hypersingular, dtype=np.float64)
     count = galerkin.face_count
     if mass.shape != (count, count) or hypersingular.shape != (count, count):
         raise ValueError("Stable-dual matrices must be square DP0 maps.")
@@ -343,10 +343,10 @@ def prepare_laplace_stable_dual_calderon_3d(
         raise ValueError("Shape margin and gauge weight must be finite and positive.")
     singular_values = np.linalg.svd(mass, compute_uv=False)
     condition = float(singular_values[0] / singular_values[-1])
-    if singular_values[-1] <= np.finfo(float).eps * singular_values[0] * count:
+    if singular_values[-1] <= np.finfo(np.float64).eps * singular_values[0] * count:
         raise ValueError("Stable-dual cross mass is rank deficient.")
     inverse_mass = np.linalg.inv(mass)
-    constant = np.ones((count,), dtype=float)
+    constant = np.ones((count,), dtype=np.float64)
     rank_one = gauge * np.outer(constant, constant) / float(count * count)
     matrix = inverse_mass.T @ (hypersingular + rank_one) @ inverse_mass
     symmetric = 0.5 * (matrix + matrix.T)
@@ -479,7 +479,7 @@ def _conductors(
     for selection in selections:
         if selection.entity_set_id != galerkin.surface_entities.entity_set_id:
             raise ValueError("Conductor selection does not match the prepared surface.")
-        mask = np.asarray(selection.mask, dtype=bool)
+        mask = np.asarray(selection.mask, dtype=np.bool_)
         if mask.shape != (galerkin.face_count,) or not np.any(mask):
             raise ValueError("Every conductor must select at least one surface face.")
         masks.append(mask)

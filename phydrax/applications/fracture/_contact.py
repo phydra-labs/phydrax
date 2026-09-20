@@ -130,7 +130,7 @@ def _filtered_crack_epoch(
         & (indices[:, 1] >= vertex_count)
         & (indices[:, 2] >= vertex_count)
     )
-    selected = np.zeros((batch.capacity,), dtype=bool)
+    selected = np.zeros((batch.capacity,), dtype=np.bool_)
     route_segment = np.zeros((batch.capacity, 2), dtype=np.int32)
     route_node_ids = np.full((batch.capacity,), -1, dtype=np.int64)
     route_segment_ids = np.full((batch.capacity,), -1, dtype=np.int64)
@@ -545,8 +545,8 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
         }
         capacity = self.candidate_epoch.edge_vertex.capacity
         parents = np.full((capacity, 1), -1, dtype=np.int32)
-        weights = np.zeros((capacity, 1), dtype=float)
-        valid = np.zeros((capacity,), dtype=bool)
+        weights = np.zeros((capacity, 1), dtype=np.float64)
+        valid = np.zeros((capacity,), dtype=np.bool_)
         for slot, identity in enumerate(
             zip(
                 np.asarray(self.route_node_ids),

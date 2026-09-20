@@ -111,7 +111,7 @@ class BPZVirasoroBlockPlan(StrictModule):
         branch_id: str,
         derivation_source_id: str,
     ):
-        points = np.asarray(cross_ratios, dtype=float)
+        points = np.asarray(cross_ratios, dtype=np.float64)
         charge = float(central_charge)
         weights = tuple(float(value) for value in external_weights)
         internal = float(internal_weight)
@@ -245,7 +245,7 @@ class IsingSigmaVirasoroPlan(StrictModule):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, cross_ratios: ArrayLike, channel: IsingSigmaChannel, /):
-        points = np.asarray(cross_ratios, dtype=float)
+        points = np.asarray(cross_ratios, dtype=np.float64)
         channel_value = str(channel)
         if points.ndim != 1 or points.size == 0 or not np.all(np.isfinite(points)):
             raise ValueError("cross_ratios must be one nonempty finite vector.")

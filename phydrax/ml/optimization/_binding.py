@@ -25,14 +25,14 @@ def bind_predictor_inputs(
         relaxation = base.relaxation
         if not isinstance(relaxation, LinearProgram):
             raise TypeError("Predictor input binding currently requires a linear base.")
-        discrete = jnp.zeros((relaxation.num_variables,), dtype=bool)
+        discrete = jnp.zeros((relaxation.num_variables,), dtype=jnp.bool_)
         discrete = discrete.at[jnp.asarray(base.discrete_indices, dtype=jnp.int32)].set(
             True
         )
         structure_id = base.structure_id
     elif isinstance(base, LinearProgram):
         relaxation = base
-        discrete = jnp.zeros((relaxation.num_variables,), dtype=bool)
+        discrete = jnp.zeros((relaxation.num_variables,), dtype=jnp.bool_)
         structure_id = base.structure_id
     else:
         raise TypeError("base must be LinearProgram or linear MixedIntegerProgram.")

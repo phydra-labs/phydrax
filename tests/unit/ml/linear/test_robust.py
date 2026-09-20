@@ -107,7 +107,7 @@ def test_huber_relaxed_robust_loss_masks_weights_sparse_jit_vmap_and_gradients()
         MLBatch(
             features,
             targets,
-            target_mask=jnp.ones_like(targets, dtype=bool).at[1, 1].set(False),
+            target_mask=jnp.ones_like(targets, dtype="bool").at[1, 1].set(False),
             sample_weight=weights,
         )
     )
@@ -185,7 +185,7 @@ def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
         MLBatch(
             features,
             scalar_targets,
-            target_mask=jnp.ones_like(scalar_targets, dtype=bool).at[0].set(False),
+            target_mask=jnp.ones_like(scalar_targets, dtype="bool").at[0].set(False),
             sample_weight=weights,
         )
     )

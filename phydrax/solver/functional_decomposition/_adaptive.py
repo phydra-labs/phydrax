@@ -251,7 +251,7 @@ class TrainableAxisPartition(StrictModule):
         self.periodic = partition.periodic
 
     def normalized_widths(self):
-        count = int(self.width_logits.shape[0])
+        count = self.width_logits.shape[0]
         free_mass = 1.0 - count * self.minimum_fraction
         return self.minimum_fraction + free_mass * jax.nn.softmax(self.width_logits)
 

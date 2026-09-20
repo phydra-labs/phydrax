@@ -18,6 +18,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._strict import StrictModule
 
 from ...._doc import DOC_KEY0
 from ..._keys import EvalKey, fold_in_eval_key, split_eval_key
@@ -45,12 +46,12 @@ def _sample_layout(
     /,
 ) -> tuple[Array, tuple[int, ...]]:
     array = jnp.asarray(values)
-    prefix = tuple(int(size) for size in case_shape) + query.sample_shape
-    if tuple(int(size) for size in array.shape[: len(prefix)]) != prefix:
+    prefix = tuple(case_shape) + query.sample_shape
+    if tuple(array.shape[: len(prefix)]) != prefix:
         raise ValueError(
             f"Operator values must start with case/query shape {prefix}; got {array.shape}."
         )
-    trailing = tuple(int(size) for size in array.shape[len(prefix) :])
+    trailing = tuple(array.shape[len(prefix) :])
     if len(trailing) > 1:
         raise ValueError("Operator Hilbert utilities support at most one channel axis.")
     return array, trailing
@@ -237,11 +238,7 @@ def project_operator_conservation(
         "The correction basis has zero integral for a nonzero conservation defect.",
     )
     scale = jnp.where(jnp.abs(basis_total) > 0.0, defect / basis_total, 0.0)
-    scale_shape = (
-        tuple(int(size) for size in case_shape)
-        + ((1,) * len(query.sample_shape))
-        + channels
-    )
+    scale_shape = tuple(case_shape) + ((1,) * len(query.sample_shape)) + channels
     return jnp.where(
         mask,
         array + basis * scale.reshape(scale_shape),
@@ -461,7 +458,7 @@ class ConservationProjection(AbstractOperatorOutputTransform):
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-class OperatorOutputPipeline(eqx.Module):
+class OperatorOutputPipeline(StrictModule):
     """Ordered physical-space output transforms with metadata preservation."""
 
     transforms: tuple[AbstractOperatorOutputTransform, ...] = eqx.field(static=True)
@@ -499,7 +496,7 @@ class OperatorOutputPipeline(eqx.Module):
         payload = json.dumps(
             {
                 "kind": "operator_output_pipeline",
-                "semantics": "physical-v1",
+                "semantics": "physical",
                 "transforms": [item.fingerprint for item in self.transforms],
             },
             sort_keys=True,
@@ -522,16 +519,15 @@ def operator_weak_form_loss(
     """Squared weak residual moments against one or more test functions."""
     residual_array, channels = _sample_layout(residual, query, case_shape)
     tests = jnp.asarray(test_functions)
-    case = tuple(int(size) for size in case_shape)
+    case = tuple(case_shape)
     sample = query.sample_shape
-    shared_shape = sample + (int(tests.shape[-1]),)
+    shared_shape = sample + (tests.shape[-1],)
     case_shape_with_tests = case + shared_shape
-    if tuple(int(size) for size in tests.shape) == shared_shape:
+    if tuple(tests.shape) == shared_shape:
         tests = jnp.broadcast_to(tests, case_shape_with_tests)
-    elif tuple(int(size) for size in tests.shape) != case_shape_with_tests:
+    elif tuple(tests.shape) != case_shape_with_tests:
         raise ValueError(
-            "test_functions must have shape sample_shape + (num_tests,) or "
-            "case_shape + sample_shape + (num_tests,)."
+            "test_functions must have shape sample_shape + (num_tests,) or case_shape + sample_shape + (num_tests,)."
         )
     case_count = prod(case) if case else 1
     sample_count = prod(sample)

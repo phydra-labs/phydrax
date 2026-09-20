@@ -174,7 +174,7 @@ class FiniteElementMortarMetricData(StrictModule):
     physical_coordinates: Array
     physical_weights: Array
     owner_scaled_normals: Array
-    neighbour_scaled_normals: Array
+    neighbor_scaled_normals: Array
     metric_id: str = eqx.field(static=True)
 
     def __init__(
@@ -182,7 +182,7 @@ class FiniteElementMortarMetricData(StrictModule):
         physical_coordinates: ArrayLike,
         physical_weights: ArrayLike,
         owner_scaled_normals: ArrayLike,
-        neighbour_scaled_normals: ArrayLike,
+        neighbor_scaled_normals: ArrayLike,
         /,
         *,
         metric_id: str | None = None,
@@ -190,12 +190,12 @@ class FiniteElementMortarMetricData(StrictModule):
         coordinates = jnp.asarray(physical_coordinates)
         weights = jnp.asarray(physical_weights)
         owner = jnp.asarray(owner_scaled_normals)
-        neighbour = jnp.asarray(neighbour_scaled_normals)
+        neighbor = jnp.asarray(neighbor_scaled_normals)
         if (
             coordinates.ndim != 2
             or weights.shape != (coordinates.shape[0],)
             or owner.shape != coordinates.shape
-            or neighbour.shape != coordinates.shape
+            or neighbor.shape != coordinates.shape
             or not jnp.issubdtype(coordinates.dtype, jnp.inexact)
             or not jnp.issubdtype(weights.dtype, jnp.inexact)
         ):
@@ -207,7 +207,7 @@ class FiniteElementMortarMetricData(StrictModule):
                     "coordinates": array_tree_fingerprint(np.asarray(coordinates)),
                     "weights": array_tree_fingerprint(np.asarray(weights)),
                     "owner_normals": array_tree_fingerprint(np.asarray(owner)),
-                    "neighbour_normals": array_tree_fingerprint(np.asarray(neighbour)),
+                    "neighbor_normals": array_tree_fingerprint(np.asarray(neighbor)),
                 }
             )
             if metric_id is None
@@ -218,12 +218,12 @@ class FiniteElementMortarMetricData(StrictModule):
         self.physical_coordinates = coordinates
         self.physical_weights = weights
         self.owner_scaled_normals = owner
-        self.neighbour_scaled_normals = neighbour
+        self.neighbor_scaled_normals = neighbor
         self.metric_id = identifier
 
     @property
     def opposite_normal_error(self) -> Array:
-        return jnp.max(jnp.abs(self.owner_scaled_normals + self.neighbour_scaled_normals))
+        return jnp.max(jnp.abs(self.owner_scaled_normals + self.neighbor_scaled_normals))
 
 
 class FiniteElementMortarEvidence(StrictModule, NonTrainableState):
@@ -259,7 +259,7 @@ class FiniteElementMortarEvidence(StrictModule, NonTrainableState):
         mortar = np.asarray(mortar_polynomial_error)
         monomials = np.asarray(monomial_degrees, dtype=np.int32)
         coordinate = np.asarray(coordinate_error)
-        degree = tuple(int(value) for value in declared_degree)
+        degree = tuple(declared_degree)
         tolerance_ = float(tolerance)
         coordinate_tolerance_ = float(coordinate_tolerance)
         if (
@@ -697,7 +697,7 @@ def serial_finite_element_mortar_plan(
     degree = (
         (int(declared_reproduction_degree),) * dimension
         if isinstance(declared_reproduction_degree, (int, np.integer))
-        else tuple(int(value) for value in declared_reproduction_degree)
+        else tuple(declared_reproduction_degree)
     )
     if len(degree) != dimension or any(value < 0 for value in degree):
         raise ValueError("Declared mortar reproduction degree is invalid.")

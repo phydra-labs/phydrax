@@ -86,7 +86,7 @@ class Linear(_AbstractBaseModel):
         weight_transform: AbstractParameterTransform | None = None,
         key: Key[Array, ""] = _key,
     ):
-        # Initialise the weight matrix and (optionally) RWF scales and bias
+        # Initialize the weight matrix and (optionally) RWF scales and bias
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)
         in_shape = _get_value_shape(in_size_c)
@@ -221,10 +221,9 @@ class Linear(_AbstractBaseModel):
         if out_shape:
             y = x_flat.reshape(leading_shape + out_shape)
         else:
-            if int(x_flat.shape[-1]) != 1:
+            if x_flat.shape[-1] != 1:
                 raise ValueError(
-                    "Scalar out_size requires a single output feature, got shape "
-                    f"{x_flat.shape}."
+                    f"Scalar out_size requires a single output feature, got shape {x_flat.shape}."
                 )
             y = jnp.squeeze(x_flat, axis=-1)
 

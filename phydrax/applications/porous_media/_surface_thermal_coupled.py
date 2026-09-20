@@ -105,7 +105,7 @@ class SurfaceWaterHeatPlan(StrictModule):
                 "Surface storage requires matching constant liquid density, heat capacity, and enthalpy reference."
             )
         interfaces = np.asarray(surface.trace.parent_faces, dtype=np.int32)
-        boundary = np.flatnonzero(np.asarray(coupled.discretization.neighbour_cells) < 0)
+        boundary = np.flatnonzero(np.asarray(coupled.discretization.neighbor_cells) < 0)
         external = np.setdiff1d(boundary, interfaces, assume_unique=False)
         ns = interfaces.size
         self.coupled = coupled
@@ -208,7 +208,7 @@ class SurfaceWaterHeatPlan(StrictModule):
             energy = rho * cp * volume * (surface_temperature - reference_temperature)
             lateral = self.surface.lateral_rates(volume)
             donor = jnp.where(
-                lateral >= 0, self.surface.edge_owner, self.surface.edge_neighbour
+                lateral >= 0, self.surface.edge_owner, self.surface.edge_neighbor
             )
             lateral_energy = (
                 rho * cp * lateral * (surface_temperature[donor] - reference_temperature)

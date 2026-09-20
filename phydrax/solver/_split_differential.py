@@ -54,8 +54,8 @@ class SplitDifferentialProblem(StrictModule):
     ):
         if not callable(explicit_drift) or not callable(implicit_drift):
             raise TypeError("Split differential drifts must be callable.")
-        start = jnp.asarray(t0, dtype=float)
-        end = jnp.asarray(t1, dtype=float)
+        start = jnp.asarray(t0, dtype=jnp.float64)
+        end = jnp.asarray(t1, dtype=jnp.float64)
         if start.shape != () or end.shape != ():
             raise ValueError("Split differential time bounds must be scalar.")
         start = eqx.error_if(
@@ -79,7 +79,7 @@ class SplitDifferentialProblem(StrictModule):
                 raise ValueError(
                     "SplitDifferentialProblem currently requires Euclidean geometry."
                 )
-            membership = jnp.asarray(state_geometry.contains(state), dtype=bool)
+            membership = jnp.asarray(state_geometry.contains(state), dtype=jnp.bool_)
             if membership.shape != ():
                 raise ValueError("State geometry contains() must return one scalar.")
             state = eqx.error_if(
@@ -147,14 +147,14 @@ class SplitDifferentialProblem(StrictModule):
         return False
 
 
-class _SemilinearExplicitDrift(eqx.Module):
+class _SemilinearExplicitDrift(StrictModule):
     drift: SemilinearDrift
 
     def __call__(self, time, state, args):
         return self.drift.nonlinear(time, state, args)
 
 
-class _SemilinearImplicitDrift(eqx.Module):
+class _SemilinearImplicitDrift(StrictModule):
     drift: SemilinearDrift
 
     def __call__(self, time, state, args):

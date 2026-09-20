@@ -53,7 +53,7 @@ population_state, journal = population.initialize(
     jnp.zeros((3,)),
     jnp.ones((3,)),
     jnp.ones((3,)),
-    active_mask=jnp.zeros((3,), dtype=bool),
+    active_mask=jnp.zeros((3,), dtype="bool"),
 )
 inserted = population.insert(population_state, journal, (0.0, 0.0), 1.0, 0.2, 0.5)
 split = population.split(inserted.accepted, inserted.journal, 0, (0.1, 0.0))

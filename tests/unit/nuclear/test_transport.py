@@ -20,20 +20,24 @@ def test_slab_sn_fixed_source_is_positive_symmetric_and_converged() -> None:
 
     assert bool(result.converged)
     assert jnp.all(result.scalar_flux > 0.0)
-    assert jnp.allclose(result.scalar_flux[:, 0], result.scalar_flux[::-1, 0], atol=1.0e-10)
+    assert jnp.allclose(
+        result.scalar_flux[:, 0], result.scalar_flux[::-1, 0], atol=1.0e-10
+    )
     assert result.residual_norm < 1.0e-10
 
 
 def test_bateman_depletion_conserves_two_member_chain() -> None:
     rate = 0.2
-    plan = phx.nuclear.BatemanDepletionPlan(
-        jnp.asarray([[-rate, 0.0], [rate, 0.0]])
-    )
+    plan = phx.nuclear.BatemanDepletionPlan(jnp.asarray([[-rate, 0.0], [rate, 0.0]]))
 
     result = plan.evolve(jnp.asarray([1.0, 0.0]), 3.0)
 
     expected_parent = jnp.exp(-rate * 3.0)
-    assert jnp.allclose(result.inventory, jnp.asarray([expected_parent, 1.0 - expected_parent]), atol=1.0e-12)
+    assert jnp.allclose(
+        result.inventory,
+        jnp.asarray([expected_parent, 1.0 - expected_parent]),
+        atol=1.0e-12,
+    )
     assert bool(result.nonnegative)
     assert result.conservation_defect < 1.0e-12
 

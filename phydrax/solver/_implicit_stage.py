@@ -44,7 +44,7 @@ class ImplicitStageArguments(StrictModule):
         reference = jnp.asarray(rate_reference)
         explicit = jnp.asarray(explicit_value)
         fallback = jnp.asarray(fallback_state)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if time_.shape != () or shift_.shape != () or active_.shape != ():
             raise ValueError(
                 "Implicit stage time, shift, and active flag must be scalar."

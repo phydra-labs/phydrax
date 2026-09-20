@@ -228,7 +228,7 @@ def dem_local_validity_certificate(
             {
                 "kind": "dem-local-validity-certificate",
                 "policy": policy.policy_id,
-                "schema": "dem-local-validity:v1",
+                "schema": "dem-local-validity",
             }
         ),
     )

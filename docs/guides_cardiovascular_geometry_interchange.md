@@ -6,7 +6,7 @@ junction (PMJ) routes are prepared on the host. Compiled execution consumes only
 fixed-shape arrays and checks evidence against the prepared configuration and
 geometry epochs.
 
-The cardiovascular kernel geometry scale is millimetres, represented by a
+The cardiovascular kernel geometry scale is millimeters, represented by a
 shared `SpatialCoordinateContract`. Do not infer coordinate frames or units from
 filenames, array orientation, scanner conventions, or magnitude.
 
@@ -132,8 +132,8 @@ attachment = cv.anatomy.PurkinjeAttachmentPlan(
     graph_points_mm,
     myocardial_support_points_mm,
     pmj_candidate_mask=pmj_mask,
-    graph_geometry_id="purkinje-graph-v1",
-    myocardial_geometry_id="myocardial-support-v3",
+    graph_geometry_id="purkinje-graph",
+    myocardial_geometry_id="myocardial-support",
     epoch=epoch,
 )
 candidate = attachment.evaluate(
@@ -151,7 +151,7 @@ masks. It never truncates candidates. Raise the declared capacity and prepare a
 new topology epoch instead.
 
 `PMJAttachmentEvidence` reports the distance of every active route in
-millimetres, the distance-coverage mask, attached and uncovered counts, coverage
+millimeters, the distance-coverage mask, attached and uncovered counts, coverage
 fraction, remaining capacity, epoch match, finite status, and final acceptance.
 A route beyond `maximum_distance_mm` is retained for diagnosis but makes the
 candidate unacceptable. Runtime evaluation does not search for a closer support
@@ -186,7 +186,7 @@ admitted envelope is deliberately narrow:
 - an H1, point-value, identity-mapped isotropic degree-two
   `TensorProductLagrange` coordinate element with 27 local DOFs for each
   hexahedral block (Q2);
-- three-dimensional coordinates in millimetres and fixed cell/DOF routes.
+- three-dimensional coordinates in millimeters and fixed cell/DOF routes.
 
 Linear geometry, anisotropic tensor elements, prisms, pyramids, and generic
 polyhedra are not qualified by this route. Their existence in generic
@@ -197,7 +197,7 @@ geometry_epoch = cv.anatomy.HighOrderGeometryEpoch(3, 2)
 high_order_plan = cv.anatomy.HighOrderCardiacGeometryPlan(
     cell_mesh,
     finite_element_coordinate_spec,
-    boundary_role_id=\"ventricular-boundary-roles-v1\",
+    boundary_role_id=\"ventricular-boundary-roles\",
     boundary_profile=cardiac_boundary_profile,
     prepared_epoch=geometry_epoch,
     minimum_jacobian_determinant=1.0e-10,
@@ -247,7 +247,7 @@ and reference epoch matches. Its lifecycle flags have distinct meanings:
 Before committing an imported geometry state:
 
 1. preserve the source affine exactly and declare its LPS or RAS frame;
-2. preserve its length unit, then explicitly convert to millimetres;
+2. preserve its length unit, then explicitly convert to millimeters;
 3. attach acquisition, de-identification, and data-rights identities;
 4. reject rather than forward PHI or unapproved free-form metadata;
 5. bind every field transfer to exact field spaces, references, and four epochs;

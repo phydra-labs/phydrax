@@ -192,9 +192,9 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
-    matrix_sizes = tuple(int(value) for value in arguments.matrix_sizes)
-    feature_counts = tuple(int(value) for value in arguments.feature_counts)
-    batch_sizes = tuple(int(value) for value in arguments.batch_sizes)
+    matrix_sizes = tuple(arguments.matrix_sizes)
+    feature_counts = tuple(arguments.feature_counts)
+    batch_sizes = tuple(arguments.batch_sizes)
     if any(value <= 0 for value in matrix_sizes + feature_counts + batch_sizes):
         raise ValueError(
             "matrix sizes, feature counts, and batch sizes must be positive."

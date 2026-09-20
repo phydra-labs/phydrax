@@ -29,7 +29,7 @@ from ._driving_path import (
 from ._rough import RoughDifferentialProblem
 
 
-class _ControlledVectorField(eqx.Module):
+class _ControlledVectorField(StrictModule):
     problem: RoughDifferentialProblem
     path: AbstractDifferentiableDrivingPath
 
@@ -69,8 +69,8 @@ class ControlledDifferentialSolution(StrictModule):
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
-        breakpoints = jnp.asarray(path.breakpoints, dtype=float)
-        breakpoint_mask = jnp.asarray(path.breakpoint_mask, dtype=bool)
+        breakpoints = jnp.asarray(path.breakpoints, dtype=jnp.float64)
+        breakpoint_mask = jnp.asarray(path.breakpoint_mask, dtype=jnp.bool_)
         if breakpoints.ndim != 1 or breakpoint_mask.shape != breakpoints.shape:
             raise ValueError(
                 "Path derivative-discontinuity arrays must be aligned rank-1 arrays."
@@ -173,10 +173,10 @@ def _continuity_checked_initial_state(
     path: AbstractDifferentiableDrivingPath,
     /,
 ) -> Array:
-    if not isinstance(path, CallableDrivingPath) or int(path.breakpoints.size) == 0:
+    if not isinstance(path, CallableDrivingPath) or path.breakpoints.size == 0:
         return initial_state
-    breakpoints = jax.lax.stop_gradient(jnp.asarray(path.breakpoints, dtype=float))
-    active = jax.lax.stop_gradient(jnp.asarray(path.breakpoint_mask, dtype=bool))
+    breakpoints = jax.lax.stop_gradient(jnp.asarray(path.breakpoints, dtype=jnp.float64))
+    active = jax.lax.stop_gradient(jnp.asarray(path.breakpoint_mask, dtype=jnp.bool_))
     start, end = path.support
     safe_points = jnp.where(active, breakpoints, 0.5 * (start + end))
     left_values = tuple(jnp.asarray(path.value(point, "left")) for point in safe_points)
@@ -197,14 +197,13 @@ def _continuity_checked_initial_state(
     return eqx.error_if(
         initial_state,
         jnp.any(invalid),
-        "Active callable driving-path breakpoint values must have finite matching "
-        "left/right limits.",
+        "Active callable driving-path breakpoint values must have finite matching left/right limits.",
     )
 
 
 def _jump_schedule(path: AbstractDifferentiableDrivingPath, /) -> Array:
-    breakpoints = jax.lax.stop_gradient(jnp.asarray(path.breakpoints, dtype=float))
-    mask = jax.lax.stop_gradient(jnp.asarray(path.breakpoint_mask, dtype=bool))
+    breakpoints = jax.lax.stop_gradient(jnp.asarray(path.breakpoints, dtype=jnp.float64))
+    mask = jax.lax.stop_gradient(jnp.asarray(path.breakpoint_mask, dtype=jnp.bool_))
     start, end = path.support
     active = mask & (breakpoints > start) & (breakpoints < end)
     inactive = jnp.asarray(jnp.inf, dtype=breakpoints.dtype)
@@ -219,7 +218,7 @@ def _discontinuity_controller(
     rtol: float,
     atol: float,
 ) -> dfx.AbstractStepSizeController | None:
-    if int(path.breakpoints.size) == 0:
+    if path.breakpoints.size == 0:
         return controller
     inner = (
         dfx.PIDController(rtol=float(rtol), atol=float(atol))
@@ -274,8 +273,7 @@ def solve_diffrax_cde(
         )
     if not isinstance(path, AbstractDifferentiableDrivingPath):
         raise TypeError(
-            "path must be an AbstractDifferentiableDrivingPath; rough controls belong "
-            "in solve_rough_differential."
+            "path must be an AbstractDifferentiableDrivingPath; rough controls belong in solve_rough_differential."
         )
     if tuple(path.value_shape) != (problem.driver_dimension,):
         raise ValueError(

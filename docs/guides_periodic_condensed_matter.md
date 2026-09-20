@@ -32,7 +32,7 @@ A Gaussian `PeriodicDensityOfStatesPlan` retains its integrated state count. `Pe
 C_n† [dH − (ε_n + ε_m)dS/2] C_m
 ```
 
-and transforms fractional derivatives through the reciprocal basis. The result is physical Cartesian velocity in metres per second after explicit energy- and length-unit conversion and division by the reduced Planck constant. Diagonal entries reduce to `C_n†(dH−ε_n dS)C_n`. A degeneracy mask identifies cluster blocks whose individual diagonal values are gauge dependent.
+and transforms fractional derivatives through the reciprocal basis. The result is physical Cartesian velocity in meters per second after explicit energy- and length-unit conversion and division by the reduced Planck constant. Diagonal entries reduce to `C_n†(dH−ε_n dS)C_n`. A degeneracy mask identifies cluster blocks whose individual diagonal values are gauge dependent.
 
 `fermi_surface_evidence` returns every regular-mesh cell and band that brackets the selected Fermi energy, including corner energies and unresolved/Lifshitz masks. It does not silently interpolate a cell whose crossing touches a corner or is otherwise unresolved.
 

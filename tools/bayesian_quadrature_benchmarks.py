@@ -144,7 +144,7 @@ def run_bayesian_quadrature_benchmarks(
     seed: int = 0,
 ) -> dict[str, Any]:
     """Compare fixed-design BQ, IID MC, and randomized QMC Gaussian expectations."""
-    budgets_ = tuple(int(value) for value in budgets)
+    budgets_ = tuple(budgets)
     if not budgets_ or any(value < 4 for value in budgets_):
         raise ValueError("budgets must contain integers of at least four.")
     if any(value & (value - 1) for value in budgets_):

@@ -261,7 +261,7 @@ def apply_branch_interactions(
             source_mask=source_mask,
             query_mask=target_mask,
         )
-        if int(update.shape[-1]) != target.channels:
+        if update.shape[-1] != target.channels:
             raise ValueError(
                 "Cross-branch attention output channels must match its target branch."
             )

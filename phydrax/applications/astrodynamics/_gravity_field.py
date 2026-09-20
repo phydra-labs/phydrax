@@ -12,6 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
+
 from ..._fingerprint import canonical_fingerprint
 from ...special._spherical_harmonic import _real_spherical_harmonic_table
 from ._context import AstrodynamicsContext
@@ -24,7 +26,7 @@ def _norm(value: Array, /) -> Array:
     return jnp.sqrt(jnp.sum(value * value))
 
 
-class SphericalHarmonicGravityField(eqx.Module):
+class SphericalHarmonicGravityField(StrictModule):
     cosine: Array
     sine: Array
     mu: Array
@@ -50,8 +52,8 @@ class SphericalHarmonicGravityField(eqx.Module):
         maximum_order: int | None = None,
         tide_system: str = "tide-free",
     ):
-        cosine_host = np.asarray(cosine, dtype=float)
-        sine_host = np.asarray(sine, dtype=float)
+        cosine_host = np.asarray(cosine, dtype=np.float64)
+        sine_host = np.asarray(sine, dtype=np.float64)
         if cosine_host.ndim != 2 or cosine_host.shape != sine_host.shape:
             raise ValueError("Gravity coefficients must be matching square arrays.")
         if (
@@ -149,7 +151,7 @@ class SphericalHarmonicGravity(AbstractAstrodynamicsForce):
         return -jax.hessian(self.field.potential)(value)
 
 
-class GravityCoefficientCorrection(eqx.Module):
+class GravityCoefficientCorrection(StrictModule):
     delta_cosine: Array
     delta_sine: Array
     correction_id: str = eqx.field(static=True)

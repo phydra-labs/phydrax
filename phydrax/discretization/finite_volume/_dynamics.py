@@ -174,8 +174,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         if isinstance(interface_solver, ShallowWaterHydrostaticHLLPlan):
             if positivity is not None:
                 raise ValueError(
-                    "Hydrostatic shallow water owns stage positivity; "
-                    "face-state positivity must be omitted."
+                    "Hydrostatic shallow water owns stage positivity; face-state positivity must be omitted."
                 )
             if wave_limiter is not None:
                 raise ValueError(
@@ -183,8 +182,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
                 )
             if viscous is not None or closure is not None:
                 raise ValueError(
-                    "Initial hydrostatic shallow water does not support viscous "
-                    "or learned face closures."
+                    "Initial hydrostatic shallow water does not support viscous or learned face closures."
                 )
             if differentiability != "branchwise":
                 raise ValueError(
@@ -409,8 +407,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                     or isinstance(pair.upper, PrescribedNormalFluxBoundary)
                 ):
                     raise ValueError(
-                        "Hydrostatic shallow water does not support prescribed "
-                        "normal-flux boundaries."
+                        "Hydrostatic shallow water does not support prescribed normal-flux boundaries."
                     )
         precision_ = (
             FiniteVolumePrecisionPolicy(jnp.dtype(discretization.cell_volumes.dtype).name)
@@ -770,8 +767,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                     solver, (RusanovFluxPlan, HLLFluxPlan, EinfeldtHLLFluxPlan)
                 ):
                     raise ValueError(
-                        "Mapped finite volumes currently require Rusanov, HLL, "
-                        "or Einfeldt HLL flux."
+                        "Mapped finite volumes currently require Rusanov, HLL, or Einfeldt HLL flux."
                     )
                 normal = (
                     self.discretization.face_area_vectors[axis]

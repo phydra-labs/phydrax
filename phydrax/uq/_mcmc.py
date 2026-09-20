@@ -155,7 +155,7 @@ class MCMCResult(AbstractChainSampleResult):
         self.unconstrained_samples = unconstrained_samples
         self.log_density = jnp.asarray(log_density)
         self.acceptance_rate = jnp.asarray(acceptance_rate)
-        self.divergent = jnp.asarray(divergent, dtype=bool)
+        self.divergent = jnp.asarray(divergent, dtype=jnp.bool_)
         self.energy = jnp.asarray(energy)
         self.num_integration_steps = jnp.asarray(num_integration_steps)
         self.num_trajectory_expansions = jnp.asarray(num_trajectory_expansions)
@@ -202,11 +202,11 @@ class MCMCResult(AbstractChainSampleResult):
 
     @property
     def num_chains(self) -> int:
-        return int(self.log_density.shape[0])
+        return self.log_density.shape[0]
 
     @property
     def num_draws(self) -> int:
-        return int(self.log_density.shape[1])
+        return self.log_density.shape[1]
 
     @property
     def chain_provenance(self) -> str:
@@ -484,8 +484,7 @@ def _sample_mcmc(
         initial_position is not None or initial_positions is not None
     ):
         raise ValueError(
-            "initial_position and initial_positions cannot be supplied when "
-            "resuming MCMC."
+            "initial_position and initial_positions cannot be supplied when resuming MCMC."
         )
 
     destination = (
@@ -579,16 +578,16 @@ def _sample_mcmc(
         )
         completed = 0
         unconstrained_samples = _empty_sample_tree(position, chains)
-        log_density = jnp.empty((chains, 0), dtype=float)
-        acceptance_rate = jnp.empty((chains, 0), dtype=float)
-        divergent = jnp.empty((chains, 0), dtype=bool)
-        energy = jnp.empty((chains, 0), dtype=float)
+        log_density = jnp.empty((chains, 0), dtype=jnp.float64)
+        acceptance_rate = jnp.empty((chains, 0), dtype=jnp.float64)
+        divergent = jnp.empty((chains, 0), dtype=jnp.bool_)
+        energy = jnp.empty((chains, 0), dtype=jnp.float64)
         num_integration_steps_array = jnp.empty((chains, 0), dtype=jnp.int32)
         num_trajectory_expansions_array = jnp.empty((chains, 0), dtype=jnp.int32)
-        causal_converged = jnp.empty((chains, 0), dtype=bool)
-        causal_fallback_used = jnp.empty((chains, 0), dtype=bool)
+        causal_converged = jnp.empty((chains, 0), dtype=jnp.bool_)
+        causal_fallback_used = jnp.empty((chains, 0), dtype=jnp.bool_)
         causal_outer_iterations = jnp.empty((chains, 0), dtype=jnp.int32)
-        causal_maximum_residual = jnp.empty((chains, 0), dtype=float)
+        causal_maximum_residual = jnp.empty((chains, 0), dtype=jnp.float64)
         causal_accepted_steps = jnp.empty((chains, 0), dtype=jnp.int32)
         causal_rejected_steps = jnp.empty((chains, 0), dtype=jnp.int32)
         causal_transition_evaluations = jnp.empty((chains, 0), dtype=jnp.int32)
@@ -886,7 +885,7 @@ def _adapt_mcmc(
             duration,
         )
 
-    chain_positions = _unstack_tree(positions, int(warmup_keys.shape[0]))
+    chain_positions = _unstack_tree(positions, warmup_keys.shape[0])
     states = []
     step_sizes = []
     mass_matrices = []
@@ -1472,12 +1471,12 @@ def _build_prepared_interleaved_nuts_advancer(
             ),
             logdensity=jnp.zeros(scalar_shape, dtype=scalar_dtype),
             acceptance_rate=jnp.zeros(scalar_shape, dtype=scalar_dtype),
-            is_divergent=jnp.zeros(scalar_shape, dtype=bool),
+            is_divergent=jnp.zeros(scalar_shape, dtype=jnp.bool_),
             energy=jnp.zeros(scalar_shape, dtype=scalar_dtype),
             num_integration_steps=jnp.zeros(scalar_shape, dtype=jnp.int32),
             num_trajectory_expansions=jnp.zeros(scalar_shape, dtype=jnp.int32),
-            causal_converged=jnp.zeros(scalar_shape, dtype=bool),
-            causal_fallback_used=jnp.zeros(scalar_shape, dtype=bool),
+            causal_converged=jnp.zeros(scalar_shape, dtype=jnp.bool_),
+            causal_fallback_used=jnp.zeros(scalar_shape, dtype=jnp.bool_),
             causal_outer_iterations=jnp.zeros(scalar_shape, dtype=jnp.int32),
             causal_maximum_residual=jnp.zeros(scalar_shape, dtype=scalar_dtype),
             causal_accepted_steps=jnp.zeros(scalar_shape, dtype=jnp.int32),

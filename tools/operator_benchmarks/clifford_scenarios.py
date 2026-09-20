@@ -60,7 +60,7 @@ def _scenario(
         raise ValueError("Clifford benchmark grid shape does not match field arrays.")
     scenario_id = canonical_fingerprint(
         {
-            "kind": "clifford-operator-benchmark-scenario-v1",
+            "kind": "clifford-operator-benchmark-scenario",
             "name": name,
             "representation": representation.representation_id,
             "grid_shape": list(grid_shape),
@@ -281,7 +281,7 @@ def run_clifford_decision_smoke(
         finite = finite and bool(jnp.all(jnp.isfinite(output)))
     report_id = canonical_fingerprint(
         {
-            "kind": "clifford-decision-smoke-v1",
+            "kind": "clifford-decision-smoke",
             "scenarios": [scenario.scenario_id for scenario in scenarios],
             "baseline_errors": baseline_errors,
             "candidate_errors": candidate_errors,

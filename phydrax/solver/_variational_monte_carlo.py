@@ -144,7 +144,7 @@ def _vector_from_coordinates(
     values = jnp.asarray(coordinates)
     if mode != "nonholomorphic":
         return values.astype(exemplar.dtype)
-    size = int(exemplar.shape[0])
+    size = exemplar.shape[0]
     if values.shape != (2 * size,):
         raise ValueError(
             f"Nonholomorphic coordinates must have shape ({2 * size},); got {values.shape}."
@@ -210,7 +210,7 @@ class VariationalMonteCarloProblem(StrictModule):
                 "initial_configurations must have shape (chain,) + "
                 f"{operator.configuration_shape}; got {configs.shape}."
             )
-        if int(configs.shape[0]) < 1:
+        if configs.shape[0] < 1:
             raise ValueError("At least one initial chain is required.")
         exemplar = _amplitude(model, configs[0])
         if not bool(jnp.asarray(exemplar.valid & exemplar.nonzero)):
@@ -228,8 +228,7 @@ class VariationalMonteCarloProblem(StrictModule):
                 raise TypeError("target_factory must be callable or None.")
             if not isinstance(target_factory_id, str) or not target_factory_id.strip():
                 raise ValueError(
-                    "target_factory_id must be a nonempty string when target_factory "
-                    "is provided."
+                    "target_factory_id must be a nonempty string when target_factory is provided."
                 )
             factory_identity = target_factory_id.strip()
             initial_target = _explicit_model_target(target_factory(model))
@@ -243,7 +242,7 @@ class VariationalMonteCarloProblem(StrictModule):
         if not isinstance(subspace, ParameterSubspace):
             raise TypeError("parameter_subspace must be a ParameterSubspace or None.")
         vector = subspace.pack()
-        if int(vector.size) < 1:
+        if vector.size < 1:
             raise ValueError(
                 "The VMC model must expose at least one trainable parameter."
             )
@@ -526,12 +525,12 @@ def _estimate_from_samples(
 
         chain_diagnostics = mcmc_diagnostics(
             {
-                "configuration": configurations.astype(float),
+                "configuration": configurations.astype("float64"),
                 "local_energy_real": jnp.real(local.value),
                 "local_energy_imag": jnp.imag(local.value),
             },
             acceptance_rate=samples.acceptance_rate,
-            divergent=jnp.zeros(samples.log_target.shape, dtype=bool),
+            divergent=jnp.zeros(samples.log_target.shape, dtype=jnp.bool_),
         )
     return VariationalMonteCarloEstimate(
         energy=energy,
@@ -622,7 +621,7 @@ def _score_geometry(
     )
     metric = EmpiricalGramLinearOperator(
         score,
-        jnp.ones((flat.shape[0],), dtype=float),
+        jnp.ones((flat.shape[0],), dtype=jnp.float64),
         centered=True,
         damping=damping,
         operator_id=f"vmc-metric:{problem.problem_id}",
@@ -638,7 +637,7 @@ def _energy_force(
     /,
 ) -> Array:
     residual = jnp.asarray(local_energy).reshape((-1,)) - mean_energy
-    count = int(residual.shape[0])
+    count = residual.shape[0]
     if mode == "holomorphic":
         cotangent = residual / count
     else:
@@ -707,7 +706,7 @@ def _validate_state_compatibility(
         or coordinates.dtype != expected_coordinates.dtype
     ):
         raise ValueError("VMC state parameter coordinates are incompatible.")
-    if state.markov_state.num_chains != int(problem.initial_configurations.shape[0]):
+    if state.markov_state.num_chains != problem.initial_configurations.shape[0]:
         raise ValueError("VMC state chain count is incompatible with the problem.")
     if state.markov_state.target_id != problem.target_id:
         raise ValueError("VMC state target identity is incompatible with the problem.")
@@ -832,8 +831,8 @@ def read_variational_monte_carlo_checkpoint(
         arrays,
         checkpoint_state.get("markov_valid_array"),
         jnp.ones(
-            (int(problem.initial_configurations.shape[0]),),
-            dtype=bool,
+            (problem.initial_configurations.shape[0],),
+            dtype=jnp.bool_,
         ),
     )
     key_data = _checkpoint_array(
@@ -1035,7 +1034,7 @@ def solve_variational_monte_carlo(
         final_estimate=final_estimate,
         energy_history=jnp.stack(energies)
         if energies
-        else jnp.empty((0,), dtype=complex),
+        else jnp.empty((0,), dtype=jnp.complex128),
         variance_history=jnp.stack(variances) if variances else jnp.empty((0,)),
         acceptance_history=jnp.stack(acceptances) if acceptances else jnp.empty((0,)),
         update_norm_history=jnp.stack(update_norms) if update_norms else jnp.empty((0,)),

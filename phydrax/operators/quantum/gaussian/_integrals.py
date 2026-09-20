@@ -12,6 +12,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
+
 from ._basis import PreparedGaussianBasis
 from ._boys import boys0, boys_values
 
@@ -331,7 +333,7 @@ def _contracted_one_body(
     /,
 ) -> Array:
     count = basis.cartesian_basis_function_count
-    primitive_count = int(basis.exponents.shape[1])
+    primitive_count = basis.exponents.shape[1]
     matrix = jnp.zeros((count, count), dtype=positions.dtype)
     for left in range(count):
         center_left = positions[basis.center_indices[left]]
@@ -420,7 +422,7 @@ def nuclear_attraction_matrix(
 
     def evaluator(a, b, left, right, la, lb):
         value = jnp.asarray(0.0, dtype=coordinate.dtype)
-        for index in range(int(charges.size)):
+        for index in range(charges.size):
             active = charges[index] != 0.0
             source = jnp.where(
                 active, coordinate[index], jnp.zeros((3,), dtype=coordinate.dtype)
@@ -452,7 +454,7 @@ def point_charge_potential_matrix(
 
     def evaluator(a, b, left, right, la, lb):
         value = jnp.asarray(0.0, dtype=nuclei.dtype)
-        for index in range(int(charges.size)):
+        for index in range(charges.size):
             value = value + _primitive_nuclear_attraction(
                 a, b, left, right, la, lb, points[index], charges[index]
             )
@@ -481,7 +483,7 @@ def contracted_electron_repulsion_element(
     center_a, center_b, center_c, center_d = (
         coordinate[basis.center_indices[index]] for index in indices
     )
-    primitive_count = int(basis.exponents.shape[1])
+    primitive_count = basis.exponents.shape[1]
     value = jnp.asarray(0.0, dtype=coordinate.dtype)
     for pa in range(primitive_count):
         for pb in range(primitive_count):
@@ -581,7 +583,7 @@ def nuclear_repulsion_energy(
     coordinate = jnp.asarray(positions)
     charges = jnp.asarray(nuclear_charges, dtype=coordinate.dtype)
     energy = jnp.asarray(0.0, dtype=coordinate.dtype)
-    for left in range(int(charges.size)):
+    for left in range(charges.size):
         for right in range(left):
             active = (charges[left] != 0.0) & (charges[right] != 0.0)
             safe_left = jnp.where(
@@ -619,7 +621,7 @@ def nuclear_point_charge_energy(
     return jnp.sum(nuclear_charge[:, None] * point_charge[None, :] / distance)
 
 
-class MolecularIntegralKernel(eqx.Module):
+class MolecularIntegralKernel(StrictModule):
     overlap: Array
     kinetic: Array
     nuclear_attraction: Array

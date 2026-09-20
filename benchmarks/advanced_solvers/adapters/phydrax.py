@@ -306,13 +306,13 @@ class PhydraxAdapter(BenchmarkAdapter):
                 phx=phx,
                 native_problem=native_problem,
                 policy=policy,
-                host_to_device_bytes=int(problem.matrix.nbytes),
+                host_to_device_bytes=problem.matrix.nbytes,
             )
         if isinstance(problem, NonlinearProblem):
             nonlinear = import_module("phydrax.nonlinear")
             target = jnp.asarray(problem.target)
             initial = jnp.asarray(problem.initial)
-            transferred_bytes = int(problem.initial.nbytes + problem.target.nbytes)
+            transferred_bytes = problem.initial.nbytes + problem.target.nbytes
             termination = nonlinear.NonlinearTermination(
                 absolute_residual=spec.tolerances.absolute,
                 relative_residual=spec.tolerances.relative,
@@ -470,7 +470,7 @@ class PhydraxAdapter(BenchmarkAdapter):
                     problem_id=f"benchmark-rosenbrock:{problem.identity()['fingerprint']}",
                 )
                 policy = (optim.NewtonTrustRegion(), termination)
-                transferred_bytes = int(problem.initial.nbytes)
+                transferred_bytes = problem.initial.nbytes
             elif problem.variant == "constrained":
                 equality = optim.NonlinearConstraint(
                     lambda value, args: jnp.sum(value * value) - 1.0,
@@ -489,7 +489,7 @@ class PhydraxAdapter(BenchmarkAdapter):
                     problem_id=f"benchmark-maratos:{problem.identity()['fingerprint']}",
                 )
                 policy = (optim.SQP(), termination)
-                transferred_bytes = int(problem.initial.nbytes)
+                transferred_bytes = problem.initial.nbytes
             elif problem.variant == "bounded-least-squares":
                 if problem.target is None:
                     raise ValueError("bounded least-squares benchmark lacks its target")
@@ -506,7 +506,7 @@ class PhydraxAdapter(BenchmarkAdapter):
                     optim.BoundedLevenbergMarquardt(),
                     termination,
                 )
-                transferred_bytes = int(problem.initial.nbytes + problem.target.nbytes)
+                transferred_bytes = problem.initial.nbytes + problem.target.nbytes
             else:
                 if problem.target is None:
                     raise ValueError("proximal benchmark lacks its target")
@@ -519,7 +519,7 @@ class PhydraxAdapter(BenchmarkAdapter):
                     optim.L1Functional(problem.l1_weight),
                 )
                 policy = (optim.ProximalGradient(), termination)
-                transferred_bytes = int(problem.initial.nbytes + problem.target.nbytes)
+                transferred_bytes = problem.initial.nbytes + problem.target.nbytes
             return _PhydraxState(
                 spec=spec,
                 phx=phx,
@@ -1308,7 +1308,7 @@ class PhydraxAdapter(BenchmarkAdapter):
                 selected.preparation_workspace_bytes
                 + selected.preconditioner_preparation_workspace_bytes
             )
-            right_hand_sides = 1 if problem.rhs.ndim == 1 else int(problem.rhs.shape[1])
+            right_hand_sides = 1 if problem.rhs.ndim == 1 else problem.rhs.shape[1]
             solve_workspace = right_hand_sides * int(
                 selected.solve_workspace_bytes_per_rhs
                 + selected.krylov_basis_bytes_per_rhs

@@ -139,10 +139,12 @@ def detect_particles(
     if values.size < plan.maximum_detections:
         raise ValueError("maximum_detections cannot exceed the image pixel count.")
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
     finite = jnp.isfinite(values)
     support = (
-        finite if valid_mask is None else finite & jnp.asarray(valid_mask, dtype=bool)
+        finite
+        if valid_mask is None
+        else finite & jnp.asarray(valid_mask, dtype=jnp.bool_)
     )
     if support.shape != values.shape:
         raise ValueError("valid_mask must have the image shape.")

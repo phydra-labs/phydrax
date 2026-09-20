@@ -355,13 +355,13 @@ def initialize_sarcomere_state(
 
     if not isinstance(plan, MeanFieldSarcomerePlan):
         raise TypeError("plan must be MeanFieldSarcomerePlan.")
-    shape = tuple(int(size) for size in batch_shape)
+    shape = tuple(batch_shape)
     if any(size < 0 for size in shape):
         raise ValueError("batch_shape entries must be nonnegative.")
     atp = _nonnegative("atp_pmol_per_mm3", atp_pmol_per_mm3)
     adp = _nonnegative("adp_pmol_per_mm3", adp_pmol_per_mm3)
     phosphate = _nonnegative("phosphate_pmol_per_mm3", phosphate_pmol_per_mm3)
-    fractions = np.zeros(shape + (4,), dtype=float)
+    fractions = np.zeros(shape + (4,), dtype=np.float64)
     fractions[..., SarcomereSpecies.DETACHED_PRIMED_ADP_PI] = 1.0
     return SarcomereState(
         fractions,

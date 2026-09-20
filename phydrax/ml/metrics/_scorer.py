@@ -10,7 +10,7 @@ from typing import Any
 
 import equinox as eqx
 
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 
 
 def _is_immutable_config(value: Any, /) -> bool:
@@ -30,9 +30,9 @@ class AbstractScorer(StrictModule):
     wrapped metric retains the familiar ``metric(targets, predictions)`` order.
     """
 
-    name: AbstractAttribute[str]
-    greater_is_better: AbstractAttribute[bool]
-    requires_probabilities: AbstractAttribute[bool]
+    name: eqx.AbstractVar[str]
+    greater_is_better: eqx.AbstractVar[bool]
+    requires_probabilities: eqx.AbstractVar[bool]
 
     @abstractmethod
     def score(
@@ -90,8 +90,7 @@ class FunctionScorer(AbstractScorer):
                 raise TypeError("metric_kwargs keys must be strings.")
             if not _is_immutable_config(value):
                 raise TypeError(
-                    "metric_kwargs values must be immutable scalar, tuple, or "
-                    "frozenset scorer configuration."
+                    "metric_kwargs values must be immutable scalar, tuple, or frozenset scorer configuration."
                 )
         self.metric = metric
         self.name = type(metric).__name__ if name is None else str(name)

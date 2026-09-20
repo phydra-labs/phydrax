@@ -24,7 +24,7 @@ def _identified_atoms(ase, *, cell=None, pbc=False):
         masses=[15.999, 2.014, 13.003],
         cell=cell,
         pbc=pbc,
-        info={phx.atomistic.interchange.ASE_SOURCE_ID_INFO: "source-catalogue-entry"},
+        info={phx.atomistic.interchange.ASE_SOURCE_ID_INFO: "source-catalog-entry"},
     )
     atoms.new_array(
         phx.atomistic.interchange.ASE_PARTICLE_ID_ARRAY,
@@ -40,7 +40,7 @@ def test_nonperiodic_structure_roundtrip_preserves_content_and_provenance(ase):
     structure, imported = phx.atomistic.interchange.from_ase_atoms(source, SCALE)
 
     assert imported.status == AdapterStatus.LOSSLESS
-    assert imported.source_id == "source-catalogue-entry"
+    assert imported.source_id == "source-catalog-entry"
     assert imported.target_id == structure.structure_id
     np.testing.assert_array_equal(structure.atomic_numbers, [8, 1, 6])
     np.testing.assert_array_equal(structure.positions, source.positions)
@@ -213,7 +213,7 @@ def test_required_unsupported_semantics_are_rejected(ase, location, name):
     if location == "info":
         source.info[name] = {"opaque": object()}
     else:
-        source.new_array(name, np.ones((len(source),), dtype=float))
+        source.new_array(name, np.ones((len(source),), dtype="float64"))
 
     with pytest.raises(AdapterError) as error:
         phx.atomistic.interchange.from_ase_atoms(source, SCALE)

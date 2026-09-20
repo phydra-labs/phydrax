@@ -65,7 +65,7 @@ class InteractionPartition(StrictModule, NonTrainableState):
         admissibility_mask: ArrayLike | None = None,
         partition_id: str | None = None,
     ):
-        low = np.asarray(low_mask, dtype=bool)
+        low = np.asarray(low_mask, dtype=np.bool_)
         if low.ndim < 1 or low.size < 1:
             raise ValueError("low_mask must be a non-empty modal array.")
         conjugates = np.asarray(conjugate_indices, dtype=np.int64).reshape((-1,))
@@ -77,9 +77,9 @@ class InteractionPartition(StrictModule, NonTrainableState):
         ):
             raise ValueError("conjugate_indices must be an involution over all modes.")
         admissible = (
-            np.ones(low.shape, dtype=bool)
+            np.ones(low.shape, dtype=np.bool_)
             if admissibility_mask is None
-            else np.asarray(admissibility_mask, dtype=bool)
+            else np.asarray(admissibility_mask, dtype=np.bool_)
         )
         if admissible.shape != low.shape:
             raise ValueError("admissibility_mask and low_mask must have the same shape.")
@@ -108,7 +108,7 @@ class InteractionPartition(StrictModule, NonTrainableState):
         self.high_mask = jnp.asarray(high)
         self.admissibility_mask = jnp.asarray(admissible)
         self.conjugate_indices = jnp.asarray(conjugates, dtype=jnp.int32)
-        self.state_shape = tuple(int(size) for size in low.shape)
+        self.state_shape = tuple(low.shape)
         self.low_count = int(np.count_nonzero(low))
         self.high_count = int(np.count_nonzero(high))
         self.partition_id = identifier
@@ -130,18 +130,14 @@ class InteractionPartition(StrictModule, NonTrainableState):
         cutoff_ = int(cutoff)
         if cutoff_ < 0:
             raise ValueError("cutoff must be non-negative.")
-        selected = (
-            tuple(range(len(discretization.axes)))
-            if axes is None
-            else tuple(int(axis) for axis in axes)
-        )
+        selected = tuple(range(len(discretization.axes))) if axes is None else tuple(axes)
         if (
             not selected
             or len(set(selected)) != len(selected)
             or any(axis < 0 or axis >= len(discretization.axes) for axis in selected)
         ):
             raise ValueError("axes must contain unique valid Fourier axes.")
-        low = np.ones(discretization.modal_shape, dtype=bool)
+        low = np.ones(discretization.modal_shape, dtype=np.bool_)
         for axis_index in selected:
             axis = discretization.axes[axis_index]
             one_dimensional = np.abs(np.asarray(axis.modes.mode_numbers)) <= cutoff_
@@ -149,9 +145,9 @@ class InteractionPartition(StrictModule, NonTrainableState):
             reshape[axis_index] = axis.mode_count
             low &= np.broadcast_to(one_dimensional.reshape(tuple(reshape)), low.shape)
         admissible = (
-            np.ones(discretization.modal_shape, dtype=bool)
+            np.ones(discretization.modal_shape, dtype=np.bool_)
             if admissibility_mask is None
-            else np.asarray(admissibility_mask, dtype=bool)
+            else np.asarray(admissibility_mask, dtype=np.bool_)
         )
         low &= admissible
         return cls(
@@ -227,7 +223,7 @@ class InteractionPartition(StrictModule, NonTrainableState):
         model: InteractionKind,
     ) -> bool:
         indices = (int(output_index), int(left_index), int(right_index))
-        if any(index < 0 or index >= int(self.low_mask.size) for index in indices):
+        if any(index < 0 or index >= self.low_mask.size for index in indices):
             raise IndexError("Triad indices must address flattened partition modes.")
         output, left, right = indices
         admissible = np.asarray(self.admissibility_mask).reshape((-1,))

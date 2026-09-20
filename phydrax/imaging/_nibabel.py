@@ -73,7 +73,7 @@ def _form(value: tuple[np.ndarray, int], name: str, /) -> np.ndarray | None:
     matrix, code = value
     if int(code) == 0:
         return None
-    result = np.asarray(matrix, dtype=float)
+    result = np.asarray(matrix, dtype=np.float64)
     if result.shape != (4, 4) or not np.all(np.isfinite(result)):
         raise ValueError(f"{name} is not a finite homogeneous affine.")
     return result
@@ -147,7 +147,7 @@ class NibabelImageProvider:
         qform = _form(image.header.get_qform(coded=True), "qform")
         sform = _form(image.header.get_sform(coded=True), "sform")
         if qform is None and sform is None:
-            fallback = np.asarray(image.affine, dtype=float)
+            fallback = np.asarray(image.affine, dtype=np.float64)
             if fallback.shape != (4, 4) or not np.all(np.isfinite(fallback)):
                 raise ValueError("Image has no valid qform, sform, or fallback affine.")
             qform = fallback

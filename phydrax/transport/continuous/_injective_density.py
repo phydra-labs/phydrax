@@ -59,7 +59,7 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
             raise TypeError("latent_law must be an AbstractProbabilityLaw.")
         if not callable(map) or not callable(left_inverse):
             raise TypeError("map and left_inverse must be callable.")
-        target_shape = tuple(int(size) for size in event_shape)
+        target_shape = tuple(event_shape)
         if not target_shape or any(size <= 0 for size in target_shape):
             raise ValueError("event_shape must contain positive dimensions.")
         latent_dimension = prod(latent_law.event_shape)
@@ -84,7 +84,7 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
             raise ValueError("left_inverse output shape must equal latent event_shape.")
         resolved_id = law_id or canonical_fingerprint(
             {
-                "kind": "injective-continuous-flow-law-v1",
+                "kind": "injective-continuous-flow-law",
                 "latent_shape": latent_law.event_shape,
                 "target_shape": target_shape,
                 "image_tolerance": image_threshold,

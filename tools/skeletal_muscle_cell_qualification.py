@@ -144,32 +144,43 @@ def qualify() -> dict[str, object]:
         "I_ionic_t": 1.4441909165599374,
     }
     current_error = max(
-        abs(float(initial.algebraic_value(name)) - value)
-        / max(abs(value), 1.0e-8)
+        abs(float(initial.algebraic_value(name)) - value) / max(abs(value), 1.0e-8)
         for name, value in expected_currents.items()
     )
 
     reference_grid = np.linspace(0.0, 1.0, 11)
-    reference_trajectory = ShortenIntegrationPlan(
-        model,
-        reference_grid,
-        relative_tolerance=2.0e-8,
-        absolute_tolerance=2.0e-10,
-    ).prepare().integrate()
+    reference_trajectory = (
+        ShortenIntegrationPlan(
+            model,
+            reference_grid,
+            relative_tolerance=2.0e-8,
+            absolute_tolerance=2.0e-10,
+        )
+        .prepare()
+        .integrate()
+    )
     source_errors = _trajectory_error(model, reference_trajectory.states)
 
-    coarse = ShortenIntegrationPlan(
-        model,
-        [0.0, 0.5, 1.0],
-        relative_tolerance=2.0e-5,
-        absolute_tolerance=2.0e-7,
-    ).prepare().integrate()
-    refined = ShortenIntegrationPlan(
-        model,
-        [0.0, 0.5, 1.0],
-        relative_tolerance=2.0e-7,
-        absolute_tolerance=2.0e-9,
-    ).prepare().integrate()
+    coarse = (
+        ShortenIntegrationPlan(
+            model,
+            [0.0, 0.5, 1.0],
+            relative_tolerance=2.0e-5,
+            absolute_tolerance=2.0e-7,
+        )
+        .prepare()
+        .integrate()
+    )
+    refined = (
+        ShortenIntegrationPlan(
+            model,
+            [0.0, 0.5, 1.0],
+            relative_tolerance=2.0e-7,
+            absolute_tolerance=2.0e-9,
+        )
+        .prepare()
+        .integrate()
+    )
     refinement_error = float(
         jnp.linalg.norm(coarse.states[-1] - refined.states[-1])
         / jnp.maximum(jnp.linalg.norm(refined.states[-1]), 1.0)
@@ -179,12 +190,16 @@ def qualify() -> dict[str, object]:
     fatigue_grid = np.unique(
         np.concatenate((np.arange(0.0, 451.0, 5.0), np.asarray(pulse_edges)))
     )
-    fatigue = ShortenIntegrationPlan(
-        model,
-        fatigue_grid,
-        relative_tolerance=3.0e-6,
-        absolute_tolerance=3.0e-8,
-    ).prepare().integrate()
+    fatigue = (
+        ShortenIntegrationPlan(
+            model,
+            fatigue_grid,
+            relative_tolerance=3.0e-6,
+            absolute_tolerance=3.0e-8,
+        )
+        .prepare()
+        .integrate()
+    )
     a2 = np.asarray(fatigue.states[:, model.state_layout.index("A_2")])
     ca2 = np.asarray(fatigue.states[:, model.state_layout.index("Ca_2")])
     fatigue_times = np.asarray(fatigue.times_ms)
@@ -198,9 +213,7 @@ def qualify() -> dict[str, object]:
     fatigue_ratio = twitch_peaks[-1] / twitch_peaks[0]
 
     kinetics = model.evaluate(0.75, state, stimulus_current_uA_per_cm2=0.0)
-    fastest_source_time_ms = 1.0 / model.parameters[
-        model.parameter_layout.index("k_Lm")
-    ]
+    fastest_source_time_ms = 1.0 / model.parameters[model.parameter_layout.index("k_Lm")]
     stiffness_ratio = float(
         jnp.max(kinetics.gate_time_constant_ms) / fastest_source_time_ms
     )
@@ -221,9 +234,9 @@ def qualify() -> dict[str, object]:
         & ~rejected.successful
     )
 
-    compiled_rhs = eqx.filter_jit(
-        lambda configured, value: configured.rhs(0.75, value)
-    )(model, state)
+    compiled_rhs = eqx.filter_jit(lambda configured, value: configured.rhs(0.75, value))(
+        model, state
+    )
     batch = jnp.stack((state, state.at[0].add(0.01)))
     vectorized_rhs = jax.vmap(lambda value: model.rhs(0.75, value))(batch)
     _, rhs_tangent = jax.jvp(
@@ -275,8 +288,7 @@ def qualify() -> dict[str, object]:
             "license": model.source_license,
             "doi": "10.1007/s10974-007-9125-6",
             "reference": (
-                "Shorten, O'Callaghan, Davidson & Soboleva, J Muscle Res "
-                "Cell Motil 28 (2007) 293-313"
+                "Shorten, O'Callaghan, Davidson & Soboleva, J Muscle Res Cell Motil 28 (2007) 293-313"
             ),
             "opencor_run": "626177e490c6a1959557976e",
             "opencor_simulator": "OpenCOR 2021-10-05",

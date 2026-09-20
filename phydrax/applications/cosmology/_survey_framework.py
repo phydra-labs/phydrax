@@ -72,7 +72,7 @@ class SurveyCoordinate(StrictModule, NonTrainableState):
             tuple(str(value).strip() for value in group)
             for group in (fields, tracer_ids, selection_ids)
         )
-        bins = tuple(int(value) for value in tomographic_bins)
+        bins = tuple(tomographic_bins)
         value = float(coordinate_value)
         if (
             any(not item for item in scalars)

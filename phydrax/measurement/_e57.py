@@ -197,7 +197,7 @@ class E57Provider:
             if count < 1 or count > maximum_points_per_scan:
                 raise MemoryError("E57 scan exceeds maximum_points_per_scan.")
             points = np.column_stack(tuple(np.asarray(raw[name]) for name in required))
-            invalid = np.zeros((count,), dtype=bool)
+            invalid = np.zeros((count,), dtype=np.bool_)
             if "cartesianInvalidState" in raw:
                 invalid |= np.asarray(raw["cartesianInvalidState"]) != 0
             identifiers = tuple(
@@ -211,7 +211,7 @@ class E57Provider:
                 attributes.append(
                     _attribute(
                         f"{campaign_id}.scan-{scan_index}.intensity",
-                        np.asarray(raw["intensity"], dtype=float),
+                        np.asarray(raw["intensity"], dtype=np.float64),
                         support,
                         ValueKind.REAL_SCALAR,
                     )
@@ -219,7 +219,7 @@ class E57Provider:
             if all(name in raw for name in ("colorRed", "colorGreen", "colorBlue")):
                 color = np.stack(
                     tuple(
-                        np.asarray(raw[name], dtype=float)
+                        np.asarray(raw[name], dtype=np.float64)
                         for name in ("colorRed", "colorGreen", "colorBlue")
                     ),
                     axis=-1,

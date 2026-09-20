@@ -231,8 +231,8 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
-    sizes = tuple(int(value) for value in arguments.sizes)
-    batches = tuple(int(value) for value in arguments.batch_sizes)
+    sizes = tuple(arguments.sizes)
+    batches = tuple(arguments.batch_sizes)
     if any(value < 1 for value in sizes + batches):
         raise ValueError("sizes and batch sizes must be positive.")
     key = jax.random.PRNGKey(20260901)

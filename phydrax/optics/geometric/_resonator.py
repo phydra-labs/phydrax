@@ -190,8 +190,7 @@ class ParaxialResonatorPlan(StrictModule, NonTrainableState):
                 not jnp.issubdtype(value.dtype, jnp.floating) for value in numeric_values
             ):
                 raise TypeError(
-                    "Paraxial resonator map coordinates and Jacobians must be real "
-                    "floating-point values."
+                    "Paraxial resonator map coordinates and Jacobians must be real floating-point values."
                 )
             if any(
                 jnp.asarray(value).shape != ()
@@ -451,7 +450,7 @@ def analyze_paraxial_resonator(
     )
     reciprocal_products = jnp.abs(eigenvalues[:, None] * eigenvalues[None, :] - 1.0)
     reciprocal_products = jnp.where(
-        jnp.eye(4, dtype=bool),
+        jnp.eye(4, dtype=jnp.bool_),
         jnp.inf,
         reciprocal_products,
     )
@@ -549,7 +548,7 @@ def analyze_paraxial_resonator(
     map_valid = jnp.all(
         jnp.stack(
             tuple(
-                jnp.asarray(ray_map.valid, dtype=bool)
+                jnp.asarray(ray_map.valid, dtype=jnp.bool_)
                 & (
                     jnp.asarray(ray_map.status, dtype=jnp.int32)
                     == int(ParaxialOpticsStatus.SUCCESS)
@@ -562,7 +561,7 @@ def analyze_paraxial_resonator(
     map_finite = jnp.all(
         jnp.stack(
             tuple(
-                jnp.asarray(ray_map.finite, dtype=bool)
+                jnp.asarray(ray_map.finite, dtype=jnp.bool_)
                 & jnp.all(jnp.isfinite(ray_map.input_reference))
                 & jnp.all(jnp.isfinite(ray_map.output_reference))
                 & jnp.all(jnp.isfinite(ray_map.jacobian))

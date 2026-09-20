@@ -92,7 +92,7 @@ not the numerical solver or a broad catalog.
 
 The `perturbations-scattering-hawking` qualification profile admits exactly the
 Schwarzschild $M=1$, spin-$-2$, $(\ell,m,n)=(2,2,0)$ Regge--Wheeler fundamental
-against `schwarzschild-leaver-Momega-reference-v1`. Its independent radial gate is
+against `schwarzschild-leaver-Momega-reference`. Its independent radial gate is
 fixed at 65 nodes, $r_{\rm out}=30M$, 32 RK4 substeps per spectral interval, order-12
 infinity asymptotics, `matching_tolerance=1e-7`, and relative
 `residual_tolerance=1e-5`. The qualified evaluation records approximately
@@ -129,7 +129,7 @@ $$
 `solve_black_hole_scattering` recomputes the flux residual
 $F_{\rm in}-F_{\rm ref}-F_H$ from amplitudes while independently checking the radial
 Wronskian residual. A channel is superradiant only when
-$\omega-m\Omega_H<0$, reflected flux is amplified, and the signed greybody factor is
+$\omega-m\Omega_H<0$, reflected flux is amplified, and the signed graybody factor is
 negative. `SuperradianceStatus` distinguishes nonsuperradiant, superradiant,
 threshold, and inconsistent lanes. `BlackHoleScatteringStatus` retains finite,
 frequency, incident-flux, Wronskian, conservation, and regime failures.
@@ -162,8 +162,8 @@ frequency quadrature, $(\ell,m)$ slots, active mask, scale, and absolute/relativ
 tail tolerances. Explicit $\hbar$ and $k_B$ are required.
 
 `HawkingScatteringData` is a neutral carrier of independently qualified signed
-greybody factors and corotation slopes. It does not solve scattering. A bosonic
-superradiant lane retains negative greybody factor; the slope resolves the removable
+graybody factors and corotation slopes. It does not solve scattering. A bosonic
+superradiant lane retains negative graybody factor; the slope resolves the removable
 Bose limit at corotation. `HawkingTailEvidence` separately bounds omitted frequency
 and angular-mode contributions to number, Killing-energy, and axial-angular-momentum
 flux. `evaluate_hawking_spectrum` requires the exact `KerrEvaporationState` alongside

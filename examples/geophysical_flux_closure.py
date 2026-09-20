@@ -247,8 +247,8 @@ def _metrics(operators, data, thermo):
         "inventory_residual_max": np.max(
             np.abs(np.asarray(admission.inventory_residual)), axis=0
         ).tolist(),
-        "cases": int(accepted.size),
-        "layers": int(mass.size),
+        "cases": accepted.size,
+        "layers": mass.size,
         "resolution_m": binding.resolution_m,
         "closure_interval_s": binding.interval_seconds,
         "forcing_id": binding.forcing_id,

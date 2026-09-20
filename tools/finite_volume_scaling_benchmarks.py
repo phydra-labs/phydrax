@@ -44,9 +44,7 @@ def main():
         phx.discretization.MUSCLReconstruction(),
         phx.discretization.RusanovFluxPlan(),
     )
-    compiled = phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    )
+    compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     decomposition = phx.discretization.FiniteVolumeDecompositionPlan(
         (arguments.cells,),
         (arguments.devices,),

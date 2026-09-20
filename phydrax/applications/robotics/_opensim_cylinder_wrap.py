@@ -216,7 +216,7 @@ def _endpoints(value: ArrayLike) -> Array:
     if points.shape != (2, 3):
         raise ValueError("endpoints_m must have shape (2, 3).")
     if not jnp.issubdtype(points.dtype, jnp.inexact):
-        points = points.astype(float)
+        points = points.astype("float64")
     return points
 
 

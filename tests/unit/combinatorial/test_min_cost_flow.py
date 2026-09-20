@@ -28,7 +28,7 @@ def _solve(space, costs, method=None):
     selected = phx.combinatorial.CycleCancelingMinCostFlow() if method is None else method
     return phx.combinatorial.solve_combinatorial(
         phx.combinatorial.LinearCombinatorialProblem(
-            space, jnp.asarray(costs, dtype=float)
+            space, jnp.asarray(costs, dtype="float64")
         ),
         selected,
     )

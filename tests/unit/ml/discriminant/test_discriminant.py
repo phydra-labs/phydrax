@@ -58,8 +58,8 @@ def _sparse(values):
 def _case_batch():
     features = jnp.stack((_FEATURES, 1.2 * _FEATURES + jnp.array([0.3, -0.2])))
     targets = jnp.stack((_TARGETS, _TARGETS))
-    feature_mask = jnp.ones_like(features, dtype=bool).at[:, 3, 0].set(False)
-    target_mask = jnp.ones_like(targets, dtype=bool).at[:, 7].set(False)
+    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 3, 0].set(False)
+    target_mask = jnp.ones_like(targets, dtype="bool").at[:, 7].set(False)
     return MLBatch(
         features,
         targets,
@@ -231,7 +231,7 @@ def test_discriminant_failures_report_empty_single_class_nonfinite_and_rank_stat
         MLBatch(
             _FEATURES,
             _TARGETS,
-            sample_mask=jnp.zeros(12, dtype=bool),
+            sample_mask=jnp.zeros(12, dtype="bool"),
         )
     )
     single_class = LinearDiscriminantRecipe(num_classes=3, regularization=0.1).fit_batch(

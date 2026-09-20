@@ -17,7 +17,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 
 
 JumpStatus: TypeAlias = Literal[
@@ -73,7 +73,7 @@ def _key(value: Key[Array, ""], /, *, owner: str) -> Array:
 
 
 def _positive_shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape
@@ -292,13 +292,13 @@ class JumpEventBatch(StrictModule):
         pre_states: ArrayLike | None = None,
         post_states: ArrayLike | None = None,
     ):
-        time_values = jnp.asarray(times, dtype=float)
+        time_values = jnp.asarray(times, dtype=jnp.float64)
         if time_values.ndim < 1 or time_values.shape[-1] <= 0:
             raise ValueError("times must have a non-empty trailing event axis.")
-        batch = tuple(int(size) for size in time_values.shape[:-1])
-        capacity = int(time_values.shape[-1])
+        batch = tuple(time_values.shape[:-1])
+        capacity = time_values.shape[-1]
         channel_values = jnp.asarray(channels, dtype=jnp.int32)
-        valid_values = jnp.asarray(valid, dtype=bool)
+        valid_values = jnp.asarray(valid, dtype=jnp.bool_)
         if (
             channel_values.shape != time_values.shape
             or valid_values.shape != time_values.shape
@@ -307,7 +307,7 @@ class JumpEventBatch(StrictModule):
         status_values = jnp.asarray(status, dtype=jnp.int32)
         if status_values.shape != batch:
             raise ValueError("status must have shape batch_shape.")
-        marks_shape = tuple(int(size) for size in mark_shape)
+        marks_shape = tuple(mark_shape)
         if any(size <= 0 for size in marks_shape):
             raise ValueError("mark_shape dimensions must be positive.")
         mark_values = jnp.asarray(marks)
@@ -315,7 +315,7 @@ class JumpEventBatch(StrictModule):
             raise ValueError(
                 "marks must have shape batch_shape + (max_events,) + mark_shape."
             )
-        states_shape = tuple(int(size) for size in state_shape)
+        states_shape = tuple(state_shape)
         if any(size <= 0 for size in states_shape):
             raise ValueError("state_shape dimensions must be positive.")
         expected_states = batch + (capacity,) + states_shape
@@ -414,10 +414,10 @@ class JumpEventBatch(StrictModule):
 class AbstractJumpProcess(StrictModule):
     """Finite-activity jump mechanism independent of its numerical solver."""
 
-    state_shape: AbstractAttribute[tuple[int, ...]]
-    num_channels: AbstractAttribute[int]
-    mark_shape: AbstractAttribute[tuple[int, ...]]
-    process_id: AbstractAttribute[str]
+    state_shape: eqx.AbstractVar[tuple[int, ...]]
+    num_channels: eqx.AbstractVar[int]
+    mark_shape: eqx.AbstractVar[tuple[int, ...]]
+    process_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def intensities(self, t: ArrayLike, state: ArrayLike, args: Any = None, /) -> Array:
@@ -479,13 +479,13 @@ class JumpProcess(AbstractJumpProcess):
             raise TypeError("intensity_fn and jump_fn must be callable.")
         if mark_fn is not None and not callable(mark_fn):
             raise TypeError("mark_fn must be callable or None.")
-        states = tuple(int(size) for size in state_shape)
+        states = tuple(state_shape)
         if any(size <= 0 for size in states):
             raise ValueError("state_shape dimensions must be positive.")
         channels = int(num_channels)
         if channels <= 0:
             raise ValueError("num_channels must be positive.")
-        marks = tuple(int(size) for size in mark_shape)
+        marks = tuple(mark_shape)
         if any(size <= 0 for size in marks):
             raise ValueError("mark_shape dimensions must be positive.")
         if marks and mark_fn is None:
@@ -501,7 +501,7 @@ class JumpProcess(AbstractJumpProcess):
         self.process_id = process_id
 
     def intensities(self, t: ArrayLike, state: ArrayLike, args: Any = None, /) -> Array:
-        values = jnp.asarray(self.intensity_fn(t, state, args), dtype=float)
+        values = jnp.asarray(self.intensity_fn(t, state, args), dtype=jnp.float64)
         if values.shape[-1:] != (self.num_channels,):
             raise ValueError("intensity_fn must return a trailing channel axis.")
         return values

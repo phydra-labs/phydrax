@@ -219,8 +219,7 @@ def boundary_fast_provider_capabilities(
             continue
         if dimension is not None and dimension != capabilities.ambient_dimension:
             raise BEMFastCapabilityError(
-                f"Provider {identifier!r} is {capabilities.ambient_dimension}D, not "
-                f"{dimension}D."
+                f"Provider {identifier!r} is {capabilities.ambient_dimension}D, not {dimension}D."
             )
         if require_acceleration and not capabilities.accelerated:
             raise BEMFastCapabilityError(
@@ -231,7 +230,7 @@ def boundary_fast_provider_capabilities(
         token in identifier.lower() for token in ("fmm", "h2", "h²")
     ):
         raise BEMFastCapabilityError(
-            f"No catalogued 3D fast provider matches {identifier!r}."
+            f"No catalogd 3D fast provider matches {identifier!r}."
         )
     raise BEMFastCapabilityError(f"Unknown BEM fast provider {identifier!r}.")
 
@@ -296,8 +295,7 @@ class FusedBlockedBEMAction3D(StrictModule, NonTrainableState):
             raise TypeError("Fused blocked action requires prepared 3D Laplace DP0 BEM.")
         if not bool(prepared.assembly_report.accuracy_supported):
             raise BEMFastCapabilityError(
-                "Fused blocked action requires every prepared pair class to satisfy "
-                "its declared quadrature tolerance."
+                "Fused blocked action requires every prepared pair class to satisfy its declared quadrature tolerance."
             )
         columns = int(rhs_count)
         if columns <= 0:
@@ -570,13 +568,12 @@ class LaplaceDP0ExactNearProvider3D(AbstractExactNearProvider3D):
     ) -> BEMLocalBlock3D:
         targets_host = self._validated_indices(target_indices, "target_indices")
         sources_host = self._validated_indices(source_indices, "source_indices")
-        entries = int(targets_host.size * sources_host.size)
+        entries = targets_host.size * sources_host.size
         if entries > self.max_block_entries:
             raise LinearCapabilityError(
-                f"Local BEM block requires {entries} entries, exceeding the "
-                f"declared limit {self.max_block_entries}."
+                f"Local BEM block requires {entries} entries, exceeding the declared limit {self.max_block_entries}."
             )
-        quadrature_count = int(self.weak.pair_data.regular_points.shape[1])
+        quadrature_count = self.weak.pair_data.regular_points.shape[1]
         itemsize = np.dtype(self.weak.pair_data.regular_points.dtype).itemsize
         workspace = (
             itemsize

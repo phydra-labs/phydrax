@@ -55,16 +55,18 @@ def q4_cell_smoothing_layout(
     rule_weights = np.asarray([0.5, 0.5])
     patch_count = cells.shape[0] * n_xi * n_eta
     dof_routes = np.zeros((patch_count, 4), dtype=np.int32)
-    dof_valid = np.ones((patch_count, 4), dtype=bool)
+    dof_valid = np.ones((patch_count, 4), dtype=np.bool_)
     vertex_sources = np.zeros((patch_count, 4, 4), dtype=np.int32)
-    vertex_coefficients = np.zeros((patch_count, 4, 4), dtype=float)
-    vertex_valid = np.ones((patch_count, 4), dtype=bool)
+    vertex_coefficients = np.zeros((patch_count, 4, 4), dtype=np.float64)
+    vertex_valid = np.ones((patch_count, 4), dtype=np.bool_)
     boundary_edges = np.tile(
         np.asarray([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int32),
         (patch_count, 1, 1),
     )
-    boundary_valid = np.ones((patch_count, 4), dtype=bool)
-    boundary_shape_values = np.zeros((patch_count, 4, rule_points.size, 4), dtype=float)
+    boundary_valid = np.ones((patch_count, 4), dtype=np.bool_)
+    boundary_shape_values = np.zeros(
+        (patch_count, 4, rule_points.size, 4), dtype=np.float64
+    )
     owners = np.zeros((patch_count,), dtype=np.int32)
     patch = 0
     for cell_index, cell in enumerate(cells):

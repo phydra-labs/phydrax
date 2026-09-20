@@ -266,7 +266,7 @@ def _reference_face_measure(
             else axis.measure(entity)
         )
         reshape = [1] * len(layout.shape)
-        reshape[index] = int(weights.size)
+        reshape[index] = weights.size
         result = result * weights.reshape(reshape)
     return result
 

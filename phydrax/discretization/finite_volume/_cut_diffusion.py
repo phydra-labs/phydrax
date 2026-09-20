@@ -40,7 +40,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
     complex: MultivaluedCutCellComplex
     diffusivity: Array
     internal_owner: Array
-    internal_neighbour: Array
+    internal_neighbor: Array
     internal_conductance: Array
     boundary_owner: Array
     boundary_conductance: Array
@@ -60,37 +60,37 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
         if not isinstance(complex_, MultivaluedCutCellComplex):
             raise TypeError("Cut-cell diffusion requires MultivaluedCutCellComplex.")
         cell_count = complex_.component_count
-        coefficient = np.asarray(diffusivity, dtype=float)
+        coefficient = np.asarray(diffusivity, dtype=np.float64)
         if coefficient.shape == ():
-            coefficient = np.full((cell_count,), float(coefficient), dtype=float)
+            coefficient = np.full((cell_count,), float(coefficient), dtype=np.float64)
         if coefficient.shape != (cell_count,) or np.any(
             ~np.isfinite(coefficient) | (coefficient <= 0.0)
         ):
             raise ValueError("Cut-cell diffusivity must be positive per component.")
-        face_active = np.asarray(complex_.face_active, dtype=bool)
+        face_active = np.asarray(complex_.face_active, dtype=np.bool_)
         owner = np.asarray(complex_.face_owner_components, dtype=np.int32)[face_active]
-        neighbour = np.asarray(complex_.face_neighbour_components, dtype=np.int32)[
+        neighbor = np.asarray(complex_.face_neighbor_components, dtype=np.int32)[
             face_active
         ]
-        centers = np.asarray(complex_.component_centers, dtype=float)[:cell_count]
-        face_centers = np.asarray(complex_.face_centers, dtype=float)[face_active]
-        area = np.asarray(complex_.face_area_vectors, dtype=float)[face_active]
-        measure = np.asarray(complex_.face_measures, dtype=float)[face_active]
+        centers = np.asarray(complex_.component_centers, dtype=np.float64)[:cell_count]
+        face_centers = np.asarray(complex_.face_centers, dtype=np.float64)[face_active]
+        area = np.asarray(complex_.face_area_vectors, dtype=np.float64)[face_active]
+        measure = np.asarray(complex_.face_measures, dtype=np.float64)[face_active]
         normal = area / measure[:, None]
-        internal = neighbour >= 0
+        internal = neighbor >= 0
         internal_owner = owner[internal]
-        internal_neighbour = neighbour[internal]
-        center_displacement = centers[internal_neighbour] - centers[internal_owner]
+        internal_neighbor = neighbor[internal]
+        center_displacement = centers[internal_neighbor] - centers[internal_owner]
         distance = np.abs(np.sum(center_displacement * normal[internal], axis=-1))
         tolerance = (
             256.0
-            * np.finfo(float).eps
+            * np.finfo(np.float64).eps
             * np.maximum(1.0, np.linalg.norm(center_displacement, axis=-1))
         )
         if np.any(~np.isfinite(distance) | (distance <= tolerance)):
             raise ValueError("Cut-cell diffusion requires positive normal distances.")
         left = coefficient[internal_owner]
-        right = coefficient[internal_neighbour]
+        right = coefficient[internal_neighbor]
         harmonic = 2.0 * left * right / (left + right)
         internal_conductance = measure[internal] * harmonic / distance
 
@@ -106,7 +106,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
             1.0,
             np.linalg.norm(face_centers[boundary] - centers[boundary_owner], axis=-1),
         )
-        boundary_tolerance = 256.0 * np.finfo(float).eps * boundary_scale
+        boundary_tolerance = 256.0 * np.finfo(np.float64).eps * boundary_scale
         if np.any(
             ~np.isfinite(boundary_distance) | (boundary_distance <= boundary_tolerance)
         ):
@@ -115,16 +115,14 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
             measure[boundary] * coefficient[boundary_owner] / boundary_distance
         )
         boundary_global = np.flatnonzero(face_active)[boundary].astype(np.int32)
-        dirichlet_ids = np.asarray(
-            tuple(int(value) for value in dirichlet_face_indices), dtype=np.int32
-        )
+        dirichlet_ids = np.asarray(tuple(dirichlet_face_indices), dtype=np.int32)
         if (
             dirichlet_ids.ndim != 1
             or np.any(dirichlet_ids < 0)
             or np.any(dirichlet_ids >= complex_.face_capacity)
             or np.unique(dirichlet_ids).size != dirichlet_ids.size
             or np.any(~np.asarray(complex_.face_active)[dirichlet_ids])
-            or np.any(np.asarray(complex_.face_neighbour_components)[dirichlet_ids] >= 0)
+            or np.any(np.asarray(complex_.face_neighbor_components)[dirichlet_ids] >= 0)
         ):
             raise ValueError("Dirichlet cut faces must be unique active boundary faces.")
         dirichlet_mask = np.isin(boundary_global, dirichlet_ids)
@@ -138,7 +136,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
                 value = parent[value]
             return value
 
-        for left_cell, right_cell in zip(internal_owner, internal_neighbour, strict=True):
+        for left_cell, right_cell in zip(internal_owner, internal_neighbor, strict=True):
             left_root = root(int(left_cell))
             right_root = root(int(right_cell))
             if left_root != right_root:
@@ -154,7 +152,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
         self.complex = complex_
         self.diffusivity = jnp.asarray(coefficient)
         self.internal_owner = jnp.asarray(internal_owner)
-        self.internal_neighbour = jnp.asarray(internal_neighbour)
+        self.internal_neighbor = jnp.asarray(internal_neighbor)
         self.internal_conductance = jnp.asarray(internal_conductance)
         self.boundary_owner = jnp.asarray(boundary_owner)
         self.boundary_conductance = jnp.asarray(boundary_conductance)
@@ -168,7 +166,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
                 "geometry": complex_.geometry_id,
                 "diffusivity": array_tree_fingerprint(coefficient),
                 "internal_owner": array_tree_fingerprint(internal_owner),
-                "internal_neighbour": array_tree_fingerprint(internal_neighbour),
+                "internal_neighbor": array_tree_fingerprint(internal_neighbor),
                 "internal_conductance": array_tree_fingerprint(internal_conductance),
                 "boundary_owner": array_tree_fingerprint(boundary_owner),
                 "boundary_conductance": array_tree_fingerprint(boundary_conductance),
@@ -190,11 +188,11 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
         shift_ = jnp.asarray(shift, dtype=value.dtype)
         if value.shape != (self.cell_count,) or shift_.shape != ():
             raise ValueError("Cut-cell diffusion values and shift have invalid shapes.")
-        difference = value[self.internal_owner] - value[self.internal_neighbour]
+        difference = value[self.internal_owner] - value[self.internal_neighbor]
         flux = self.internal_conductance.astype(value.dtype) * difference
         content = jnp.zeros_like(value)
         content = content.at[self.internal_owner].add(flux)
-        content = content.at[self.internal_neighbour].add(-flux)
+        content = content.at[self.internal_neighbor].add(-flux)
         boundary = (
             self.boundary_conductance.astype(value.dtype)
             * value[self.boundary_owner]
@@ -214,7 +212,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
         source_ = jnp.asarray(source)
         if source_.shape != (self.cell_count,):
             raise ValueError("Cut-cell diffusion source must contain one value per cell.")
-        boundary_count = int(self.boundary_owner.size)
+        boundary_count = self.boundary_owner.size
         dirichlet = (
             jnp.zeros((boundary_count,), dtype=source_.dtype)
             if dirichlet_values is None

@@ -41,7 +41,7 @@ def residual_jump_estimate(
     facet_jump: ArrayLike,
     facet_measure: ArrayLike,
     facet_owner: ArrayLike,
-    facet_neighbour: ArrayLike,
+    facet_neighbor: ArrayLike,
     /,
 ) -> FiniteElementErrorEstimate:
     residual = jnp.asarray(cell_residual)
@@ -49,16 +49,16 @@ def residual_jump_estimate(
     jumps = jnp.asarray(facet_jump)
     facets = jnp.asarray(facet_measure)
     owner = jnp.asarray(facet_owner, dtype=jnp.int32)
-    neighbour = jnp.asarray(facet_neighbour, dtype=jnp.int32)
+    neighbor = jnp.asarray(facet_neighbor, dtype=jnp.int32)
     if residual.shape != cells.shape or jumps.shape != facets.shape:
         raise ValueError("Residual/jump values must match their measures.")
     indicators = cells * residual**2
     contributions = facets * jumps**2
     indicators = indicators.at[owner].add(0.5 * contributions)
-    active_neighbour = neighbour >= 0
-    safe_neighbour = jnp.where(active_neighbour, neighbour, 0)
-    indicators = indicators.at[safe_neighbour].add(
-        jnp.where(active_neighbour, 0.5 * contributions, 0.0)
+    active_neighbor = neighbor >= 0
+    safe_neighbor = jnp.where(active_neighbor, neighbor, 0)
+    indicators = indicators.at[safe_neighbor].add(
+        jnp.where(active_neighbor, 0.5 * contributions, 0.0)
     )
     return FiniteElementErrorEstimate(
         jnp.sqrt(jnp.maximum(indicators, 0.0)),
@@ -150,7 +150,7 @@ def refine_triangles_uniform(
         refined,
         parent_ids,
         child_ids.reshape((-1, 4)),
-        np.ones((parent_ids.size, 4), dtype=bool),
+        np.ones((parent_ids.size, 4), dtype=np.bool_),
         vertex_ids[vertices.shape[0] :],
         np.asarray(mesh.vertex_global_ids)[edges],
     )
@@ -182,7 +182,7 @@ class FiniteElementAdaptationMap(StrictModule, NonTrainableState):
     ):
         parents = np.asarray(parent_cell_ids, dtype=np.int64)
         children = np.asarray(child_cell_ids, dtype=np.int64)
-        valid = np.asarray(child_valid, dtype=bool)
+        valid = np.asarray(child_valid, dtype=np.bool_)
         midpoint_ids = np.asarray(midpoint_vertex_ids, dtype=np.int64)
         midpoint_parents = np.asarray(midpoint_parent_vertex_ids, dtype=np.int64)
         if not isinstance(source_mesh, CellMesh) or not isinstance(target_mesh, CellMesh):
@@ -269,7 +269,7 @@ def dorfler_mark(
     *,
     cell_global_ids: ArrayLike | None = None,
 ) -> Array:
-    values = np.asarray(indicators, dtype=float)
+    values = np.asarray(indicators, dtype=np.float64)
     ids = (
         np.arange(values.size, dtype=np.int64)
         if cell_global_ids is None
@@ -307,7 +307,7 @@ def maximum_mark(
     *,
     cell_global_ids: ArrayLike | None = None,
 ) -> Array:
-    values = np.asarray(indicators, dtype=float)
+    values = np.asarray(indicators, dtype=np.float64)
     ids = (
         np.arange(values.size, dtype=np.int64)
         if cell_global_ids is None
@@ -442,7 +442,7 @@ def refine_triangles_local(
         }
         local_children = _triangle_children(cell, local_marked, midpoint_by_local)
         if not local_marked:
-            children.append(tuple(int(value) for value in cell))
+            children.append(tuple(cell))
             child_global_ids.append(int(cell_ids[cell_index]))
             continue
         ids = []
@@ -473,7 +473,7 @@ def refine_triangles_local(
         refined,
         np.asarray(parent_ids, dtype=np.int64),
         np.asarray(family_ids, dtype=np.int64).reshape((-1, 4)),
-        np.asarray(family_valid, dtype=bool).reshape((-1, 4)),
+        np.asarray(family_valid, dtype=np.bool_).reshape((-1, 4)),
         np.asarray(midpoint_ids, dtype=np.int64),
         np.asarray(midpoint_parent_ids, dtype=np.int64).reshape((-1, 2)),
     )
@@ -533,8 +533,7 @@ def coarsen_triangles_local(
             numeric_version=numeric_version,
         )
     raise ValueError(
-        "Partial coarsening is rejected until neighbour-balance closure selects all "
-        "incident sibling families."
+        "Partial coarsening is rejected until neighbor-balance closure selects all incident sibling families."
     )
 
 

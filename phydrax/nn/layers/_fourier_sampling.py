@@ -9,10 +9,7 @@ from collections.abc import Sequence
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._interpolation import (
-    fourier_interpolate,
-    FourierEvaluationMethod,
-)
+from ..._interpolation import fourier_interpolate
 
 
 def sample_fourier_grid(
@@ -23,8 +20,6 @@ def sample_fourier_grid(
     spatial_ndim: int,
     axis_nodes: Sequence[ArrayLike] | None = None,
     periods: Sequence[ArrayLike] | None = None,
-    method: FourierEvaluationMethod = "direct",
-    tolerance: float | None = None,
     query_chunk_size: int | None = None,
     return_support: bool = False,
 ) -> Array | tuple[Array, Array]:
@@ -33,8 +28,8 @@ def sample_fourier_grid(
     Values have shape ``batch_shape + spatial_shape + (channels,)`` and queries
     have shape ``batch_shape + query_shape + (spatial_ndim,)``. Without explicit
     axis nodes, every source axis is the endpoint-excluded uniform grid on
-    ``[-1, 1)`` with period two. The direct method is roundoff-accurate;
-    ``method="nufft"`` requires an explicit approximation ``tolerance``.
+    ``[-1, 1)`` with period two. Evaluation is exact; ``query_chunk_size``
+    bounds the nonuniform Fourier working set.
     """
     array = jnp.asarray(values)
     dimensions = int(spatial_ndim)
@@ -46,7 +41,7 @@ def sample_fourier_grid(
     resolved_nodes = axis_nodes
     resolved_periods = periods
     if axis_nodes is None:
-        spatial_shape = tuple(int(size) for size in array.shape[-dimensions - 1 : -1])
+        spatial_shape = tuple(array.shape[-dimensions - 1 : -1])
         real_dtype = (
             array.real.dtype if jnp.issubdtype(array.dtype, jnp.inexact) else float
         )
@@ -64,8 +59,6 @@ def sample_fourier_grid(
         payload_ndim=1,
         axis_nodes=resolved_nodes,
         periods=resolved_periods,
-        method=method,
-        tolerance=tolerance,
         query_chunk_size=query_chunk_size,
     )
     if return_support:
@@ -73,4 +66,4 @@ def sample_fourier_grid(
     return interpolation.values
 
 
-__all__ = ["FourierEvaluationMethod", "sample_fourier_grid"]
+__all__ = ["sample_fourier_grid"]

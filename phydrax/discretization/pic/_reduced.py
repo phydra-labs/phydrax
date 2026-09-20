@@ -95,9 +95,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
             raise ValueError("tolerance must be positive and finite.")
         self.grid = grid
         self.dimension = len(grid.shape)
-        self.shape = tuple(
-            int(axis.interval_centers.size) for axis in grid.structured_axes
-        )
+        self.shape = tuple(axis.interval_centers.size for axis in grid.structured_axes)
         self.lower = tuple(float(axis.bounds[0]) for axis in grid.structured_axes)
         self.upper = tuple(float(axis.bounds[1]) for axis in grid.structured_axes)
         self.periodic = tuple(bool(axis.periodic) for axis in grid.structured_axes)
@@ -155,7 +153,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
     ) -> Array:
         points = jnp.asarray(position)
         values = jnp.asarray(content, dtype=points.dtype)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if points.ndim != 2 or points.shape[1] != self.dimension:
             raise ValueError("Reduced PIC positions have incompatible spatial dimension.")
         if values.shape != active.shape or values.shape != (points.shape[0],):
@@ -176,7 +174,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         points = jnp.asarray(position)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         components = tuple(jnp.asarray(value) for value in field)
         if any(value.shape != self.shape for value in components):
             raise ValueError("Reduced PIC field components must match the grid shape.")
@@ -206,7 +204,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         end = jnp.asarray(end_position, dtype=start.dtype)
         charge = jnp.asarray(macrocharge, dtype=start.dtype)
         velocity_ = jnp.asarray(velocity, dtype=start.dtype)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         dt = jnp.asarray(step_size, dtype=start.dtype).reshape(())
         if start.shape != end.shape or start.shape[1] != self.dimension:
             raise ValueError("Reduced PIC current positions are incompatible.")

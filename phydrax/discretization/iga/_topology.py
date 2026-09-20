@@ -72,7 +72,7 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
                     "Positive span indices must be strictly increasing and nonnegative."
                 )
             normalized.append(value)
-        shape = tuple(int(value.size) for value in normalized)
+        shape = tuple(value.size for value in normalized)
         topology_id = canonical_fingerprint(
             {
                 "kind": "iga-spline-span-topology",
@@ -83,7 +83,7 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
         )
         self.axis_names = names
         self.axis_sizes = shape
-        self.active_mask = np.ones(shape, dtype=bool)
+        self.active_mask = np.ones(shape, dtype=np.bool_)
         self.topology_id = topology_id
         self.tensor_topology = TensorTopology(
             names,
@@ -92,9 +92,7 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
             topology_id=topology_id,
         )
         routes = tuple(np.ndindex(shape))
-        self.span_indices = tuple(
-            tuple(int(item) for item in value) for value in normalized
-        )
+        self.span_indices = tuple(tuple(value) for value in normalized)
         self.patch_id = patch
         self.span_ids = tuple(BaseSpanId(patch, route) for route in routes)
 
@@ -114,7 +112,7 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
 
     def span_route(self, row: int, /) -> tuple[int, ...]:
         self.span_id(row)
-        return tuple(int(value) for value in np.unravel_index(int(row), self.axis_sizes))
+        return tuple(np.unravel_index(int(row), self.axis_sizes))
 
 
 class PatchAtlas(StrictModule, NonTrainableState):

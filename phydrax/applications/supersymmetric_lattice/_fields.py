@@ -40,7 +40,7 @@ class PFormLatticePlan(StrictModule):
         *,
         maximum_field_elements: int = 10_000_000,
     ):
-        shape = tuple(int(size) for size in lattice_shape)
+        shape = tuple(lattice_shape)
         degree_ = int(degree)
         maximum = int(maximum_field_elements)
         if not shape or any(size < 1 for size in shape):
@@ -78,8 +78,7 @@ class PFormLatticePlan(StrictModule):
         count = self.site_count * self.component_count * rank * rank
         if count > self.maximum_field_elements:
             raise ValueError(
-                f"p-form field requires {count} scalar elements; capacity is "
-                f"{self.maximum_field_elements}."
+                f"p-form field requires {count} scalar elements; capacity is {self.maximum_field_elements}."
             )
         return self.lattice_shape + (self.component_count, rank, rank)
 
@@ -108,7 +107,7 @@ class ComplexifiedPFormField(StrictModule):
         array = jnp.asarray(values)
         if array.ndim != len(plan.lattice_shape) + 3:
             raise ValueError("p-form values have the wrong rank.")
-        matrix_rank = int(array.shape[-1])
+        matrix_rank = array.shape[-1]
         if array.shape[-2] != matrix_rank:
             raise ValueError("p-form matrix fibers must be square.")
         expected = plan.configuration_shape(matrix_rank)

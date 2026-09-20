@@ -63,7 +63,7 @@ def _cell_indices(discretization: VirtualElementDiscretization, block_index: int
 
 def _cell_mask(action, indices: Array, /) -> Array:
     if action.domain is None:
-        return jnp.ones(indices.shape, dtype=bool)
+        return jnp.ones(indices.shape, dtype=jnp.bool_)
     selected = jnp.asarray(action.domain.entity_indices, dtype=jnp.int32)
     return jnp.any(indices[:, None] == selected[None, :], axis=1)
 
@@ -137,8 +137,7 @@ def _diffusion_polynomial_matrices(
         else:
             if values.shape != cubature.weights.shape:
                 raise ValueError(
-                    f"{discretization.field.element.differential_kind} VEM "
-                    "diffusivity must be scalar at cell points."
+                    f"{discretization.field.element.differential_kind} VEM diffusivity must be scalar at cell points."
                 )
             differential_basis = ScaledMonomialBasis(2, projection.differential_degree)
             basis_values = differential_basis.evaluate(
@@ -827,8 +826,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
                         expected = cubature.weights.shape + (2,)
                         if values.shape != expected:
                             raise ValueError(
-                                "Vector VEM source must have two components "
-                                "at cell quadrature."
+                                "Vector VEM source must have two components at cell quadrature."
                             )
                         component_moments = ein.contract(
                             "cq,cqd,cqa->cda", cubature.weights, values, basis

@@ -115,7 +115,7 @@ def prepare_rough_evolution(
         )
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-rough-evolution-v1",
+            "kind": "prepared-rough-evolution",
             "problem": problem.problem_id,
             "control": control.control_id,
             "solver": selected.solver_id,

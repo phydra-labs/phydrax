@@ -325,8 +325,7 @@ def _result(prepared, linear_result, regular, value):
             "smooth"
             if prepared.generalized is None
             else (
-                f"orthant={prepared.generalized.orthant_zero_value};"
-                f"approach={prepared.generalized.approach_direction}"
+                f"orthant={prepared.generalized.orthant_zero_value};approach={prepared.generalized.approach_direction}"
             )
         ),
         numeric_binding_id=prepared.numeric_binding_id,

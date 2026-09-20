@@ -73,7 +73,7 @@ def _node_degree_mask(
         raise ValueError("Cochain operators require named graph-node metadata.")
     mask = jnp.asarray(graph.nodes["cell_dim"]) == int(degree)
     if boundary_policy == "relative":
-        mask = mask & ~jnp.asarray(graph.nodes["boundary"], dtype=bool)
+        mask = mask & ~jnp.asarray(graph.nodes["boundary"], dtype=jnp.bool_)
     if graph.node_mask is not None:
         mask = mask & graph.node_mask
     return mask
@@ -193,7 +193,7 @@ class TopologicalCochainBlock(StrictModule):
             (len(degrees), resolved_width),
         )
         self.residual_scales = jnp.full(
-            (len(degrees),), float(residual_scale), dtype=float
+            (len(degrees),), float(residual_scale), dtype=jnp.float64
         )
         self.route_config = route_config
         self.route_names = route_names
@@ -255,12 +255,13 @@ class TopologicalCochainBlock(StrictModule):
 
     def __call__(self, graph: GraphIR, hidden: Any, /) -> Array:
         values = jnp.asarray(hidden)
-        if values.ndim != 2 or int(values.shape[1]) != self.width:
+        if values.ndim != 2 or values.shape[1] != self.width:
             raise ValueError(
                 f"Topological hidden values must have shape (cells, {self.width})."
             )
-        if not isinstance(graph.nodes, Mapping) or int(values.shape[0]) != int(
-            jnp.asarray(graph.nodes["cell_dim"]).shape[0]
+        if (
+            not isinstance(graph.nodes, Mapping)
+            or values.shape[0] != jnp.asarray(graph.nodes["cell_dim"]).shape[0]
         ):
             raise ValueError("Topological hidden values must align with graph nodes.")
         output = jnp.zeros_like(values)
@@ -458,8 +459,8 @@ class CochainNeuralOperator(AbstractOperatorModel):
     def _encode(self, graph: GraphIR, /) -> Array:
         if not isinstance(graph.nodes, Mapping):
             raise ValueError("Cochain topology graph nodes must be a mapping.")
-        node_count = int(jnp.asarray(graph.nodes["cell_dim"]).shape[0])
-        hidden = jnp.zeros((node_count, self.width), dtype=float)
+        node_count = jnp.asarray(graph.nodes["cell_dim"]).shape[0]
+        hidden = jnp.zeros((node_count, self.width), dtype=jnp.float64)
         for name, encoder in zip(self.source_names, self.source_encoders, strict=True):
             field = self._field(name)
             assert field.cochain is not None

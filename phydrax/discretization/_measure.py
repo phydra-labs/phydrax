@@ -59,11 +59,11 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
         if values.ndim != 1:
             raise ValueError("Discrete measure weights must be rank-1.")
         if not np.issubdtype(values.dtype, np.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         mask = (
-            np.ones(values.shape, dtype=bool)
+            np.ones(values.shape, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if mask.shape != values.shape:
             raise ValueError(
@@ -118,7 +118,7 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
     def integrate(self, values: ArrayLike, /) -> Array:
         """Integrate values whose leading axis is the measure axis."""
         array = jnp.asarray(values)
-        if not array.shape or int(array.shape[0]) != int(self.weights.shape[0]):
+        if not array.shape or array.shape[0] != self.weights.shape[0]:
             raise ValueError(
                 "Integrand leading axis must match the discrete measure capacity."
             )

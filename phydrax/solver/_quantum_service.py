@@ -132,8 +132,8 @@ class QuantumResultInterchange(StrictModule, NonTrainableState):
         probabilities_ = jnp.asarray(probabilities)
         counts_ = jnp.asarray(counts)
         status = jnp.asarray(branch_status)
-        zero = jnp.asarray(zero_probability, dtype=bool)
-        valid_ = jnp.asarray(valid, dtype=bool).reshape(())
+        zero = jnp.asarray(zero_probability, dtype=jnp.bool_)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_).reshape(())
         tolerance_ = float(tolerance)
         if probabilities_.ndim != 1 or probabilities_.shape[0] < 1:
             raise ValueError("Result probabilities require shape (outcomes,).")
@@ -210,8 +210,7 @@ class QuantumServicePolicy(StrictModule, NonTrainableState):
         allowed_topology_ids: Sequence[str],
     ):
         capacities = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_wires,
                 maximum_operations,
                 maximum_branches,

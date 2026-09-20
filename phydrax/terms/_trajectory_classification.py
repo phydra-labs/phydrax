@@ -81,12 +81,12 @@ class TrajectoryCaseClassificationBatch(StrictModule):
         self.points = points
         self.target = jnp.asarray(target)
         self.target_mask = (
-            None if target_mask is None else jnp.asarray(target_mask, dtype=bool)
+            None if target_mask is None else jnp.asarray(target_mask, dtype=jnp.bool_)
         )
-        self.sample_weight = jnp.asarray(sample_weight, dtype=float)
-        self.geometry_weight = jnp.asarray(geometry_weight, dtype=float)
+        self.sample_weight = jnp.asarray(sample_weight, dtype=jnp.float64)
+        self.geometry_weight = jnp.asarray(geometry_weight, dtype=jnp.float64)
         self.case_indices = jnp.asarray(case_indices, dtype=jnp.int32)
-        self.times = jnp.asarray(times, dtype=float)
+        self.times = jnp.asarray(times, dtype=jnp.float64)
 
 
 class RaggedTimeSeriesClassificationBatch(StrictModule):
@@ -116,13 +116,13 @@ class RaggedTimeSeriesClassificationBatch(StrictModule):
         self.points = points
         self.target = jnp.asarray(target)
         self.target_mask = (
-            None if target_mask is None else jnp.asarray(target_mask, dtype=bool)
+            None if target_mask is None else jnp.asarray(target_mask, dtype=jnp.bool_)
         )
-        self.sample_weight = jnp.asarray(sample_weight, dtype=float)
-        self.geometry_weight = jnp.asarray(geometry_weight, dtype=float)
+        self.sample_weight = jnp.asarray(sample_weight, dtype=jnp.float64)
+        self.geometry_weight = jnp.asarray(geometry_weight, dtype=jnp.float64)
         self.case_indices = jnp.asarray(case_indices, dtype=jnp.int32)
         self.time_indices = jnp.asarray(time_indices, dtype=jnp.int32)
-        self.times = jnp.asarray(times, dtype=float)
+        self.times = jnp.asarray(times, dtype=jnp.float64)
 
 
 def _normalize_objective(
@@ -166,8 +166,7 @@ def _classification_size(target_schema: TargetSchema, /) -> int:
             raise ValueError("Ordinal classification requires at least three classes.")
         return count
     raise ValueError(
-        "Trajectory classification requires a binary, multiclass, multilabel, "
-        "or ordinal TargetSchema."
+        "Trajectory classification requires a binary, multiclass, multilabel, or ordinal TargetSchema."
     )
 
 
@@ -185,7 +184,7 @@ def _validate_objective_schema(
             )
         if thresholds is None:
             raise ValueError("Ordinal classification requires objective thresholds.")
-        threshold_array = jnp.asarray(thresholds, dtype=float)
+        threshold_array = jnp.asarray(thresholds, dtype=jnp.float64)
         if threshold_array.shape != (class_count - 1,):
             raise ValueError(
                 f"Ordinal objective thresholds must have shape ({class_count - 1},)."
@@ -248,8 +247,8 @@ def _validate_case_weight(
     size: int,
 ) -> Array:
     if sample_weight is None:
-        return jnp.ones((size,), dtype=float)
-    result = jnp.asarray(sample_weight, dtype=float)
+        return jnp.ones((size,), dtype=jnp.float64)
+    result = jnp.asarray(sample_weight, dtype=jnp.float64)
     if result.shape != (size,):
         raise ValueError(f"sample_weight must have shape ({size},), got {result.shape}.")
     if not bool(jnp.all(jnp.isfinite(result))):
@@ -261,7 +260,7 @@ def _validate_case_weight(
 
 def _validate_case_targets(values: ArrayLike, /, *, size: int) -> Array:
     result = jnp.asarray(values)
-    if result.ndim == 0 or int(result.shape[0]) != size:
+    if result.ndim == 0 or result.shape[0] != size:
         raise ValueError(f"Case targets must have leading shape ({size}, ...).")
     return result
 
@@ -270,11 +269,11 @@ def _validate_ragged_targets(values: ArrayLike, /, *, domain: TrajectoryDomain) 
     result = jnp.asarray(values)
     if result.ndim < 2:
         raise ValueError("Ragged targets must have shape (N, T, ...).")
-    if int(result.shape[0]) != domain.size:
+    if result.shape[0] != domain.size:
         raise ValueError(
             f"Ragged targets must have leading size {domain.size}, got {result.shape[0]}."
         )
-    if int(result.shape[1]) < domain.max_length:
+    if result.shape[1] < domain.max_length:
         raise ValueError(
             f"Ragged target time axis must contain at least {domain.max_length} entries."
         )
@@ -322,16 +321,14 @@ def _validate_target_mask(
             return jnp.broadcast_to(result, target_shape)
         except ValueError as error:
             raise ValueError(
-                f"Multilabel target_mask must broadcast to {target_shape}; "
-                f"got {result.shape}."
+                f"Multilabel target_mask must broadcast to {target_shape}; got {result.shape}."
             ) from error
     if len(target_shape) == len(prefix_shape) + 1:
         try:
             expanded = jnp.broadcast_to(result, target_shape)
         except ValueError as error:
             raise ValueError(
-                "Categorical target_mask must have observation-prefix shape "
-                f"{prefix_shape}; got {result.shape}."
+                f"Categorical target_mask must have observation-prefix shape {prefix_shape}; got {result.shape}."
             ) from error
         if not bool(jnp.all(expanded == expanded[..., :1])):
             raise ValueError(
@@ -339,8 +336,7 @@ def _validate_target_mask(
             )
         return expanded[..., 0]
     raise ValueError(
-        f"target_mask must have observation-prefix shape {prefix_shape}; "
-        f"got {result.shape}."
+        f"target_mask must have observation-prefix shape {prefix_shape}; got {result.shape}."
     )
 
 
@@ -359,7 +355,7 @@ def _validate_target_shape(
 ) -> None:
     if objective.target_encoding == "hard" and not _hard_targets(values):
         raise TypeError("Hard classification targets must be integer or Boolean labels.")
-    shape = tuple(int(n) for n in values.shape)
+    shape = tuple(values.shape)
     scalar_shapes = (prefix_shape, prefix_shape + (1,))
     kind = target_schema.kind
     if kind == "multilabel":
@@ -396,8 +392,8 @@ def _observation_mask(
     kind: str,
 ) -> Array:
     if target_mask is None:
-        return jnp.ones(prefix_shape, dtype=bool)
-    mask = jnp.asarray(target_mask, dtype=bool)
+        return jnp.ones(prefix_shape, dtype=jnp.bool_)
+    mask = jnp.asarray(target_mask, dtype=jnp.bool_)
     if mask.shape == prefix_shape:
         return mask
     expanded = jnp.broadcast_to(mask, target_shape)
@@ -432,19 +428,19 @@ def _validate_linear_targets(
     if jnp.iscomplexobj(values):
         raise TypeError("Soft classification targets must be real-valued.")
 
-    prefix_shape = (domain.size, int(values.shape[1]))
+    prefix_shape = (domain.size, values.shape[1])
     observation_active = _observation_mask(
         target_mask,
         prefix_shape=prefix_shape,
-        target_shape=tuple(int(n) for n in values.shape),
+        target_shape=tuple(values.shape),
         kind=target_schema.kind,
     )
-    valid_time = jnp.arange(int(values.shape[1]))[None, :] < domain.lengths[:, None]
+    valid_time = jnp.arange(values.shape[1])[None, :] < domain.lengths[:, None]
     observation_active = observation_active & valid_time
     if case_indices is not None:
-        configured = jnp.zeros((domain.size,), dtype=bool).at[case_indices].set(True)
+        configured = jnp.zeros((domain.size,), dtype=jnp.bool_).at[case_indices].set(True)
         observation_active = observation_active & configured[:, None]
-    numeric = jnp.asarray(values, dtype=float)
+    numeric = jnp.asarray(values, dtype=jnp.float64)
     kind = target_schema.kind
 
     if kind == "binary":
@@ -457,7 +453,7 @@ def _validate_linear_targets(
     if kind == "multilabel":
         active = jnp.broadcast_to(observation_active[..., None], numeric.shape)
         if target_mask is not None:
-            label_mask = jnp.asarray(target_mask, dtype=bool)
+            label_mask = jnp.asarray(target_mask, dtype=jnp.bool_)
             if label_mask.shape == prefix_shape:
                 label_mask = label_mask[..., None]
             active = active & jnp.broadcast_to(label_mask, numeric.shape)
@@ -482,7 +478,7 @@ def _validate_linear_targets(
 def _case_start_times(domain: TrajectoryDomain, case_indices: Array, /) -> Array:
     if isinstance(domain, IrregularTrajectoryDatasetDomain):
         return domain.start_times[case_indices]
-    return jnp.full(case_indices.shape, domain.start, dtype=float)
+    return jnp.full(case_indices.shape, domain.start, dtype=jnp.float64)
 
 
 def _case_at_time(
@@ -497,8 +493,8 @@ def _case_at_time(
         return domain.end_times[case_indices], domain.lengths[case_indices] - 1
     if isinstance(case_time, str):
         raise ValueError("case_time must be 'start', 'end', or a floating time value.")
-    value = jnp.asarray(float(case_time), dtype=float).reshape(())
-    times = jnp.full(case_indices.shape, value, dtype=float)
+    value = jnp.asarray(float(case_time), dtype=jnp.float64).reshape(())
+    times = jnp.full(case_indices.shape, value, dtype=jnp.float64)
     if isinstance(domain, IrregularTrajectoryDatasetDomain):
         time_indices = domain.nearest_time_indices(case_indices, times)
     else:
@@ -515,7 +511,7 @@ def _configured_cases_at_time(
 ) -> tuple[Array, Array]:
     if isinstance(case_time, str):
         raise ValueError("case_time must be 'start', 'end', or a floating time value.")
-    value = jnp.asarray(float(case_time), dtype=float).reshape(())
+    value = jnp.asarray(float(case_time), dtype=jnp.float64).reshape(())
     all_cases = jnp.arange(domain.size, dtype=jnp.int32)
     valid = (_case_start_times(domain, all_cases) <= value) & (value <= domain.end_times)
     allowed = all_cases if indices is None else indices
@@ -542,10 +538,10 @@ def _sample_cases_at_time(
             indices=indices,
         )
     allowed, active = _configured_cases_at_time(domain, case_time, indices)
-    probabilities = active.astype(float) / jnp.sum(active.astype(float))
+    probabilities = active.astype("float64") / jnp.sum(active.astype("float64"))
     positions = jr.choice(
         key,
-        int(allowed.shape[0]),
+        allowed.shape[0],
         shape=(num_samples,),
         p=probabilities,
     )
@@ -558,13 +554,13 @@ def _case_geometry_weight(
     measure: TrajectoryClassificationMeasure,
     /,
 ) -> Array:
-    count = int(case_indices.shape[0])
+    count = case_indices.shape[0]
     if measure == "statistical":
-        return jnp.ones((count,), dtype=float)
+        return jnp.ones((count,), dtype=jnp.float64)
     mass = 1.0
     if domain.measure_mode == "time_integral_sum":
         mass = float(domain.size)
-    return jnp.full((count,), mass / float(count), dtype=float)
+    return jnp.full((count,), mass / float(count), dtype=jnp.float64)
 
 
 def _ragged_sample_weight(
@@ -584,7 +580,7 @@ def _regular_node_widths(
 ) -> Array:
     lengths = domain.lengths[case_indices]
     terminal = lengths - 1
-    interior_width = jnp.asarray(domain.dt, dtype=float)
+    interior_width = jnp.asarray(domain.dt, dtype=jnp.float64)
     endpoint_width = 0.5 * interior_width
     widths = jnp.where(
         (time_indices == 0) | (time_indices == terminal),
@@ -615,11 +611,11 @@ def _ragged_geometry_weight(
     /,
 ) -> Array:
     if measure == "statistical":
-        return jnp.ones(batch_times.shape, dtype=float)
+        return jnp.ones(batch_times.shape, dtype=jnp.float64)
 
-    count = int(batch_times.size)
+    count = batch_times.size
     if domain.measure_mode == "case_time_probability":
-        return jnp.full(batch_times.shape, 1.0 / float(count), dtype=float)
+        return jnp.full(batch_times.shape, 1.0 / float(count), dtype=jnp.float64)
 
     case_grid = (
         case_indices
@@ -633,7 +629,7 @@ def _ragged_geometry_weight(
         if selection == "observation_uniform" and batch_times.ndim == 1:
             importance = float(domain.total_observations) * widths / float(domain.size)
         else:
-            importance = domain.lengths[case_grid].astype(float) * widths
+            importance = domain.lengths[case_grid].astype("float64") * widths
 
     if domain.measure_mode == "time_integral_sum":
         importance = importance * float(domain.size)
@@ -653,8 +649,10 @@ def _gather_target_mask(
         return None
     if interpolation == "nearest":
         if times.ndim == 1:
-            return _gather_nearest(target_mask, case_indices, time_indices).astype(bool)
-        return _gather_nearest_grid(target_mask, case_indices, time_indices).astype(bool)
+            return _gather_nearest(target_mask, case_indices, time_indices).astype("bool")
+        return _gather_nearest_grid(target_mask, case_indices, time_indices).astype(
+            "bool"
+        )
 
     case_grid = (
         case_indices
@@ -689,35 +687,35 @@ def _active_mass(
     kind: str,
     /,
 ) -> tuple[Array, Array]:
-    score_array = jnp.asarray(score, dtype=float)
+    score_array = jnp.asarray(score, dtype=jnp.float64)
     target_array = jnp.asarray(target)
 
     if kind == "multilabel" and score_array.shape == target_array.shape:
         if target_mask is None:
-            event_mask = jnp.ones(score_array.shape, dtype=bool)
+            event_mask = jnp.ones(score_array.shape, dtype=jnp.bool_)
         else:
-            event_mask = jnp.asarray(target_mask, dtype=bool)
+            event_mask = jnp.asarray(target_mask, dtype=jnp.bool_)
             if event_mask.shape == score_array.shape[:-1]:
                 event_mask = event_mask[..., None]
             event_mask = jnp.broadcast_to(event_mask, score_array.shape)
         gated = jnp.where(event_mask, score_array, 0.0)
-        return jnp.sum(gated, axis=-1), jnp.any(event_mask, axis=-1).astype(float)
+        return jnp.sum(gated, axis=-1), jnp.any(event_mask, axis=-1).astype("float64")
 
     prefix_shape = score_array.shape
     if target_mask is None:
         if kind == "multilabel" and target_array.ndim == score_array.ndim + 1:
-            mass = jnp.ones(prefix_shape, dtype=float)
+            mass = jnp.ones(prefix_shape, dtype=jnp.float64)
         else:
-            mass = jnp.ones(prefix_shape, dtype=float)
+            mass = jnp.ones(prefix_shape, dtype=jnp.float64)
     else:
-        mask = jnp.asarray(target_mask, dtype=bool)
+        mask = jnp.asarray(target_mask, dtype=jnp.bool_)
         if mask.shape == prefix_shape:
-            mass = mask.astype(float)
+            mass = mask.astype("float64")
         elif kind == "multilabel" and mask.shape == target_array.shape:
-            mass = jnp.any(mask, axis=-1).astype(float)
+            mass = jnp.any(mask, axis=-1).astype("float64")
         else:
             expanded = jnp.broadcast_to(mask, target_array.shape)
-            mass = jnp.any(expanded, axis=-1).astype(float)
+            mass = jnp.any(expanded, axis=-1).astype("float64")
     return jnp.where(mass > 0.0, score_array, 0.0), mass
 
 
@@ -858,7 +856,7 @@ class TrajectoryCaseClassificationTerm(AbstractSamplingTerm):
         mask = _validate_target_mask(
             target_mask,
             prefix_shape=(domain.size,),
-            target_shape=tuple(int(n) for n in values.shape),
+            target_shape=tuple(values.shape),
             kind=target_schema.kind,
         )
         reduction_, measure_ = _normalize_reduction_measure(reduction, measure)
@@ -944,7 +942,7 @@ class TrajectoryCaseClassificationTerm(AbstractSamplingTerm):
         """Return the configured classification objective over sampled cases."""
         del iter_
         if self.weight == 0.0:
-            return jnp.zeros((), dtype=float)
+            return jnp.zeros((), dtype=jnp.float64)
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = functions[self.fields[0]](batch_.points, key=key, **kwargs)
         if not isinstance(prediction, cx.AxisArray):
@@ -1019,8 +1017,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
             "case_time_uniform",
         ):
             raise ValueError(
-                "selection must be 'observation_uniform', 'case_uniform', "
-                "or 'case_time_uniform'."
+                "selection must be 'observation_uniform', 'case_uniform', or 'case_time_uniform'."
             )
         if interpolation not in ("nearest", "linear"):
             raise ValueError("interpolation must be either 'nearest' or 'linear'.")
@@ -1029,7 +1026,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         class_count = _classification_size(target_schema)
         _validate_objective_schema(objective_, target_schema, class_count)
         values = _validate_ragged_targets(targets, domain=domain)
-        prefix_shape = (domain.size, int(values.shape[1]))
+        prefix_shape = (domain.size, values.shape[1])
         values, target_mask = _canonicalize_scalar_target(
             values,
             target_mask,
@@ -1046,7 +1043,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         mask = _validate_target_mask(
             target_mask,
             prefix_shape=prefix_shape,
-            target_shape=tuple(int(n) for n in values.shape),
+            target_shape=tuple(values.shape),
             kind=target_schema.kind,
         )
         indices = validate_case_indices(
@@ -1080,7 +1077,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         self.case_indices = indices
         self.observation_case_indices = observation_cases
         self.observation_time_indices = observation_times
-        self.observation_count = int(observation_cases.shape[0])
+        self.observation_count = observation_cases.shape[0]
         self.selection = selection
         self.interpolation = interpolation
         self.weight = _validate_term_weight(weight)
@@ -1155,7 +1152,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
                         target = _gather_nearest(self.values, case_indices, time_indices)
                 else:
                     tau = jr.uniform(key_time, shape=(count,)) * (
-                        lengths.astype(float) - 1.0
+                        lengths.astype("float64") - 1.0
                     )
                     times = domain.start + domain.dt * tau
                     if self.interpolation == "linear":
@@ -1168,7 +1165,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
                         target = _gather_nearest(self.values, case_indices, time_indices)
             else:
                 time_indices = jnp.floor(
-                    jr.uniform(key_time, shape=(count,)) * lengths.astype(float)
+                    jr.uniform(key_time, shape=(count,)) * lengths.astype("float64")
                 ).astype(jnp.int32)
                 time_indices = jnp.clip(time_indices, 0, lengths - 1)
                 times = domain.observation_times(case_indices, time_indices)
@@ -1191,11 +1188,11 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
                 if self.case_indices is None
                 else self.case_indices
             )
-            probability = domain.lengths[allowed].astype(float)
+            probability = domain.lengths[allowed].astype("float64")
             probability = probability / jnp.sum(probability)
             positions = jr.choice(
                 key_case,
-                int(allowed.shape[0]),
+                allowed.shape[0],
                 shape=(num_cases,),
                 p=probability,
             )
@@ -1227,7 +1224,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
                     target = _gather_nearest_grid(self.values, case_indices, time_indices)
             else:
                 tau = jr.uniform(key_time, shape=(num_cases, num_times)) * (
-                    lengths[:, None].astype(float) - 1.0
+                    lengths[:, None].astype("float64") - 1.0
                 )
                 times = domain.start + domain.dt * tau
                 if self.interpolation == "linear":
@@ -1241,7 +1238,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         else:
             time_indices = jnp.floor(
                 jr.uniform(key_time, shape=(num_cases, num_times))
-                * lengths[:, None].astype(float)
+                * lengths[:, None].astype("float64")
             ).astype(jnp.int32)
             time_indices = jnp.clip(time_indices, 0, lengths[:, None] - 1)
             times = domain.observation_times(case_grid, time_indices)
@@ -1311,7 +1308,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         """Return the configured objective without flattening case/time geometry."""
         del iter_
         if self.weight == 0.0:
-            return jnp.zeros((), dtype=float)
+            return jnp.zeros((), dtype=jnp.float64)
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = functions[self.fields[0]](batch_.points, key=key, **kwargs)
         if not isinstance(prediction, cx.AxisArray):

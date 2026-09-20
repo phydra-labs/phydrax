@@ -35,7 +35,7 @@ class HelmholtzLayerKernel2D(AbstractLayerKernel):
         self.wavenumber = value
         self._kernel_id = canonical_fingerprint(
             {
-                "kind": "helmholtz-layer-kernel-2d-v1",
+                "kind": "helmholtz-layer-kernel-2d",
                 "fundamental_solution": "i*hankel1(0,k*r)/4",
                 "normal": "outward-source",
                 "radiation": "outgoing",
@@ -114,16 +114,16 @@ class HelmholtzLayerPotential2D(AbstractArrayModel):
         if kind not in ("single", "double"):
             raise ValueError("Helmholtz layer kind must be 'single' or 'double'.")
         density_ = (
-            jnp.zeros((panelization.node_count,), dtype=complex)
+            jnp.zeros((panelization.node_count,), dtype=jnp.complex128)
             if density is None
-            else jnp.asarray(density, dtype=complex)
+            else jnp.asarray(density, dtype=jnp.complex128)
         )
         if density_.shape != (panelization.node_count,):
             raise ValueError("Layer density must contain one scalar per source node.")
         kernel = HelmholtzLayerKernel2D(wavenumber)
         representation_id = canonical_fingerprint(
             {
-                "kind": "discrete-helmholtz-layer-potential-2d-v1",
+                "kind": "discrete-helmholtz-layer-potential-2d",
                 "kernel_id": kernel.kernel_id,
                 "panelization_id": panelization.panelization_id,
                 "layer_kind": kind,
@@ -191,7 +191,7 @@ class HelmholtzLayerPotential2D(AbstractArrayModel):
 
     def __call__(self, target: Array, /, *, key=None) -> Array:
         del key
-        value = jnp.asarray(target, dtype=float)
+        value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (2,):
             raise ValueError(
                 f"Helmholtz layer target must have shape (2,); got {value.shape}."
@@ -204,7 +204,7 @@ class HelmholtzLayerPotential2D(AbstractArrayModel):
         )
 
     def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("Direct layer targets must have shape (target_count, 2).")
         return jax.vmap(self)(values)
@@ -239,7 +239,7 @@ class HelmholtzCombinedField2D(AbstractArrayModel):
         eta: float,
     ):
         kernel = HelmholtzLayerKernel2D(wavenumber)
-        density_ = jnp.asarray(density, dtype=complex)
+        density_ = jnp.asarray(density, dtype=jnp.complex128)
         if density_.shape != (panelization.node_count,):
             raise ValueError("Combined-field density must match panel node count.")
         eta_ = float(eta)
@@ -247,7 +247,7 @@ class HelmholtzCombinedField2D(AbstractArrayModel):
             raise ValueError("Combined-field coupling eta must be finite and positive.")
         representation_id = canonical_fingerprint(
             {
-                "kind": "helmholtz-brakhage-werner-field-2d-v1",
+                "kind": "helmholtz-brakhage-werner-field-2d",
                 "kernel_id": kernel.kernel_id,
                 "panelization_id": panelization.panelization_id,
                 "eta": eta_,
@@ -288,7 +288,7 @@ class HelmholtzCombinedField2D(AbstractArrayModel):
 
     def __call__(self, target: Array, /, *, key=None) -> Array:
         del key
-        value = jnp.asarray(target, dtype=float)
+        value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (2,):
             raise ValueError(
                 f"Combined-field target must have shape (2,); got {value.shape}."
@@ -320,7 +320,7 @@ class HelmholtzCombinedField2D(AbstractArrayModel):
         )
 
     def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("Direct layer targets must have shape (target_count, 2).")
         return jax.vmap(self)(values)

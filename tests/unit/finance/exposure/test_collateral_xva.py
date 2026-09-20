@@ -58,12 +58,12 @@ def _agreement(currency, *, netting_set_id="netting", threshold=100.0, mta=0.0, 
 
 def _defaults(times, occurred, *, law_id, recovery=0.4, coupling_id=None):
     path_count = len(times)
-    occurred_mask = jnp.asarray(occurred, dtype=bool)
+    occurred_mask = jnp.asarray(occurred, dtype="bool")
     return DefaultEventState(
-        jnp.asarray(times, dtype=float),
+        jnp.asarray(times, dtype="float64"),
         occurred_mask,
         jnp.where(occurred_mask, recovery, 0.0),
-        jnp.ones((path_count,), dtype=bool),
+        jnp.ones((path_count,), dtype="bool"),
         jnp.zeros((path_count,), dtype=jnp.int32),
         reference_entity_id=f"entity-{law_id}",
         law_id=law_id,

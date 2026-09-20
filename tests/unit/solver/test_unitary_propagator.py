@@ -9,7 +9,7 @@ import phydrax as phx
 
 
 def test_constant_hamiltonian_unitary_propagation_and_density_action():
-    hamiltonian = jnp.asarray([[0.0, 0.5], [0.5, 0.0]], dtype=complex)
+    hamiltonian = jnp.asarray([[0.0, 0.5], [0.5, 0.0]], dtype="complex128")
     problem = phx.solver.UnitaryPropagatorProblem(
         lambda time, args: hamiltonian,
         2,

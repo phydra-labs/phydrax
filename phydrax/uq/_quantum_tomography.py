@@ -160,7 +160,7 @@ class QuantumTomographyData(StrictModule):
     data_id: str = eqx.field(static=True)
 
     def __init__(self, counts: ArrayLike, /, *, data_id: str):
-        values = jnp.asarray(counts, dtype=float)
+        values = jnp.asarray(counts, dtype=jnp.float64)
         if values.ndim != 1:
             raise ValueError("Tomography counts must be a vector.")
         identifier = str(data_id)
@@ -191,7 +191,7 @@ class TomographyLikelihoodResult(StrictModule):
         self.log_likelihood = jnp.asarray(log_likelihood)
         self.probabilities = jnp.asarray(probabilities)
         self.normalization_residual = jnp.asarray(normalization_residual)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.precision_evidence = precision_evidence
@@ -238,7 +238,7 @@ def tomography_log_likelihood(
 
 def tetrahedral_qubit_povm() -> QuantumPOVM:
     directions = jnp.asarray(
-        [[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]], dtype=float
+        [[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]], dtype=jnp.float64
     ) / jnp.sqrt(3.0)
     sigma = jnp.asarray(
         [
@@ -246,9 +246,9 @@ def tetrahedral_qubit_povm() -> QuantumPOVM:
             [[0, -1j], [1j, 0]],
             [[1, 0], [0, -1]],
         ],
-        dtype=complex,
+        dtype=jnp.complex128,
     )
-    identity = jnp.eye(2, dtype=complex)
+    identity = jnp.eye(2, dtype=jnp.complex128)
     effects = jnp.stack(
         [
             0.25 * (identity + ein.contract("a,aij->ij", direction, sigma))

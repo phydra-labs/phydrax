@@ -117,7 +117,7 @@ def test_exact_classifier_weights_labels_and_weight_policy_are_observable():
 
     with pytest.raises(ValueError, match="integer label"):
         KNeighborsClassifierRecipe(1, class_count=2).fit_batch(
-            MLBatch(features, labels.astype(float))
+            MLBatch(features, labels.astype("float64"))
         )
     with pytest.raises(Exception, match="class capacity"):
         NearestCentroidRecipe(class_count=2).fit_batch(MLBatch(features, labels))
@@ -159,7 +159,7 @@ def test_kernel_density_normalization_capacity_and_weight_gradients():
     assert not exhausted.valid
     assert exhausted.status == ML_CAPACITY_EXHAUSTED
     empty = KernelDensityRecipe(0.55).fit_batch(
-        MLBatch(features, sample_mask=jnp.zeros((features.shape[0],), dtype=bool))
+        MLBatch(features, sample_mask=jnp.zeros((features.shape[0],), dtype="bool"))
     )
     assert not empty.valid
     assert empty.status == ML_INSUFFICIENT_DATA

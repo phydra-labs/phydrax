@@ -22,7 +22,7 @@ def _hydrodynamics(
 ):
     added = jnp.asarray(added_mass, dtype=jnp.float64)
     damping = jnp.asarray(radiation_damping, dtype=jnp.float64)
-    size = int(added.shape[0])
+    size = added.shape[0]
     names = tuple(f"body-0:mode-{index}" for index in range(size))
     face_columns = jnp.zeros((1, size), dtype=jnp.complex128)
     empty_faces = jnp.zeros((1, 0), dtype=jnp.complex128)

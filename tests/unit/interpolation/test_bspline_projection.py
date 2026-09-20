@@ -71,9 +71,9 @@ def test_exact_nested_knot_insertion_preserves_functions(degree):
     new_grid = BSplineGrid(jnp.sort(jnp.concatenate((old_grid.knots, inserted))), degree)
     transfer = BSplineGridTransfer(old_grid, new_grid)
     coefficients = (
-        jnp.arange(2 * old_grid.coefficient_count * 3, dtype=float)
+        jnp.arange(2 * old_grid.coefficient_count * 3, dtype="float64")
         .reshape((2, old_grid.coefficient_count, 3))
-        .astype(complex)
+        .astype("complex128")
     )
     coefficients = coefficients + 0.3j * coefficients[::-1]
     projected = project_bspline_coefficients(
@@ -128,7 +128,7 @@ def test_l2_projection_error_bound_controls_observed_l2_error():
     old_grid = _open_grid(3, [-0.76, -0.28, 0.46])
     new_grid = _open_grid(3, [-0.9, -0.52, 0.14, 0.72])
     transfer = BSplineGridTransfer(old_grid, new_grid)
-    coefficients = jnp.sin(jnp.arange(old_grid.coefficient_count, dtype=float))
+    coefficients = jnp.sin(jnp.arange(old_grid.coefficient_count, dtype="float64"))
     projected = transfer(coefficients)
     points, weights = BSplineGrid.open_uniform(1, 200).quadrature(3)
     old_values = bspline_evaluate(

@@ -152,8 +152,8 @@ class PointCloudComplexResult(StrictModule, NonTrainableState):
         self.topology = topology
         self.simplices = tuple(jnp.asarray(value, dtype=jnp.int32) for value in simplices)
         self.predicate_margins = jnp.asarray(predicate_margins)
-        self.ambiguous = jnp.asarray(ambiguous, dtype=bool)
-        self.certified = jnp.asarray(certified, dtype=bool)
+        self.ambiguous = jnp.asarray(ambiguous, dtype=jnp.bool_)
+        self.certified = jnp.asarray(certified, dtype=jnp.bool_)
         self.family = str(family)
 
 
@@ -364,12 +364,12 @@ def alpha_complex(
     ]
     for degree in range(len(candidates) - 1, -1, -1):
         for raw_simplex in candidates[degree]:
-            simplex = tuple(int(value) for value in raw_simplex)
+            simplex = tuple(raw_simplex)
             center, intrinsic_radius = _circumsphere(
                 cloud[np.asarray(simplex)], policy_.predicate_tolerance
             )
             distances = np.linalg.norm(cloud - center, axis=1)
-            outside = np.ones((cloud.shape[0],), dtype=bool)
+            outside = np.ones((cloud.shape[0],), dtype=np.bool_)
             outside[np.asarray(simplex)] = False
             outside_distances = distances[outside]
             if degree == len(candidates) - 1 and np.any(
@@ -400,7 +400,7 @@ def alpha_complex(
     margins = []
     for degree in range(maximum_dimension + 1):
         for raw_simplex in candidates[degree]:
-            simplex = tuple(int(value) for value in raw_simplex)
+            simplex = tuple(raw_simplex)
             margin = radius_ - alpha_values[degree][simplex]
             if degree == 0:
                 accepted.append(simplex)
@@ -487,7 +487,10 @@ class FinitePersistenceModule(StrictModule, NonTrainableState):
             source, target = map(int, edge)
             if not (
                 0 <= source < len(dimensions_) and 0 <= target < len(dimensions_)
-            ) or matrix.shape != (dimensions_[target], dimensions_[source]):
+            ) or matrix.shape != (
+                dimensions_[target],
+                dimensions_[source],
+            ):
                 raise ValueError("Finite module map shape does not match its edge.")
             if source == target and not np.array_equal(
                 matrix,
@@ -674,7 +677,7 @@ def compute_zigzag_intervals(
     *,
     coefficients: PrimeField,
 ) -> ZigzagIntervalResult:
-    dimensions_ = np.asarray(tuple(int(value) for value in dimensions), dtype=np.int32)
+    dimensions_ = np.asarray(tuple(dimensions), dtype=np.int32)
     maps_ = tuple(np.asarray(value, dtype=np.int64) for value in maps)
     directions_ = tuple(str(value) for value in directions)
     if (
@@ -803,7 +806,7 @@ def _cellular_sheaf_route_maps(
     route_maps = []
     cursor = 0
     for incidence in topology.incidences:
-        valid = np.asarray(incidence.relation.valid, dtype=bool)
+        valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
         lower = np.asarray(incidence.relation.source_indices)
         upper = np.asarray(incidence.relation.target_indices)
         degree_maps = {}
@@ -868,7 +871,7 @@ def _cellular_sheaf_differentials(
             (totals[incidence.degree], totals[incidence.degree - 1]),
             dtype=np.int64,
         )
-        valid = np.asarray(incidence.relation.valid, dtype=bool)
+        valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
         for route in range(incidence.relation.capacity):
             if valid[route]:
                 lower = int(incidence.relation.source_indices[route])
@@ -941,7 +944,7 @@ class CellularSheaf(StrictModule, NonTrainableState):
             )
         cursor = 0
         for incidence in topology.incidences:
-            valid = np.asarray(incidence.relation.valid, dtype=bool)
+            valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
             lower = np.asarray(incidence.relation.source_indices)
             upper = np.asarray(incidence.relation.target_indices)
             for route in range(incidence.relation.capacity):
@@ -1093,7 +1096,7 @@ class SpectralSequenceResult(StrictModule, NonTrainableState):
         self.page_dimensions = jnp.asarray(page_dimensions, dtype=jnp.int32)
         self.differential_ranks = jnp.asarray(differential_ranks, dtype=jnp.int32)
         self.stabilized_page = jnp.asarray(stabilized_page, dtype=jnp.int32)
-        self.convergence_certified = jnp.asarray(convergence_certified, dtype=bool)
+        self.convergence_certified = jnp.asarray(convergence_certified, dtype=jnp.bool_)
         self.extension_resolved = False
 
 

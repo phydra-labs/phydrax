@@ -125,8 +125,7 @@ class IREEArtifactManifest:
         unknown = set(value) - expected
         if missing or unknown:
             raise ValueError(
-                "IREE manifest fields are not canonical; "
-                f"missing={sorted(missing)}, unknown={sorted(unknown)}."
+                f"IREE manifest fields are not canonical; missing={sorted(missing)}, unknown={sorted(unknown)}."
             )
         if value["format"] != _IREE_ARTIFACT_FORMAT:
             raise ValueError("Artifact is not a Phydrax IREE inference bundle.")
@@ -143,14 +142,10 @@ class IREEArtifactManifest:
             entry_point=str(value["entry_point"]),
             calling_convention_version=int(value["calling_convention_version"]),
             input_names=tuple(str(name) for name in value["input_names"]),
-            input_shapes=tuple(
-                tuple(int(size) for size in shape) for shape in value["input_shapes"]
-            ),
+            input_shapes=tuple(tuple(shape) for shape in value["input_shapes"]),
             input_dtypes=tuple(str(dtype) for dtype in value["input_dtypes"]),
             output_names=tuple(str(name) for name in value["output_names"]),
-            output_shapes=tuple(
-                tuple(int(size) for size in shape) for shape in value["output_shapes"]
-            ),
+            output_shapes=tuple(tuple(shape) for shape in value["output_shapes"]),
             output_dtypes=tuple(str(dtype) for dtype in value["output_dtypes"]),
             vectorized=bool(value["vectorized"]),
             has_preprocess=bool(value["has_preprocess"]),
@@ -216,8 +211,7 @@ class IREEExecutable:
     def __call__(self, *args: Any) -> np.ndarray | tuple[np.ndarray, ...]:
         if len(args) != len(self.manifest.input_shapes):
             raise ValueError(
-                f"IREE executable expected {len(self.manifest.input_shapes)} inputs; "
-                f"got {len(args)}."
+                f"IREE executable expected {len(self.manifest.input_shapes)} inputs; got {len(args)}."
             )
         prepared = []
         for index, (argument, shape, dtype) in enumerate(
@@ -263,13 +257,11 @@ class IREEExecutable:
             label = f"IREE output {index} ({name!r})"
             if tuple(output.shape) != shape:
                 raise RuntimeError(
-                    f"{label} shape differs from the artifact manifest: "
-                    f"expected {shape}; got {output.shape}."
+                    f"{label} shape differs from the artifact manifest: expected {shape}; got {output.shape}."
                 )
             if output.dtype.str != dtype:
                 raise RuntimeError(
-                    f"{label} dtype differs from the artifact manifest: "
-                    f"expected {dtype}; got {output.dtype.str}."
+                    f"{label} dtype differs from the artifact manifest: expected {dtype}; got {output.dtype.str}."
                 )
             if not np.all(np.isfinite(output)):
                 raise RuntimeError(f"{label} contains non-finite values.")
@@ -394,14 +386,10 @@ def save_iree(
         "function_name": exported.fun_name,
         "calling_convention_version": exported.calling_convention_version,
         "input_names": names,
-        "input_shapes": tuple(
-            tuple(int(size) for size in value.shape) for value in input_arrays
-        ),
+        "input_shapes": tuple(tuple(value.shape) for value in input_arrays),
         "input_dtypes": tuple(np.dtype(value.dtype).str for value in input_arrays),
         "output_names": output_names_,
-        "output_shapes": tuple(
-            tuple(int(size) for size in output.shape) for output in output_avals
-        ),
+        "output_shapes": tuple(tuple(output.shape) for output in output_avals),
         "output_dtypes": tuple(np.dtype(output.dtype).str for output in output_avals),
         "vectorized": bool(vectorize),
         "has_preprocess": preprocess is not None,
@@ -444,8 +432,7 @@ def save_iree(
         )
         if len(native_outputs) != len(output_names_):
             raise RuntimeError(
-                f"Native output arity changed after export: expected "
-                f"{len(output_names_)}; got {len(native_outputs)}."
+                f"Native output arity changed after export: expected {len(output_names_)}; got {len(native_outputs)}."
             )
         deployed_result = executable(*(np.asarray(value) for value in input_arrays))
         deployed_outputs = (
@@ -462,8 +449,7 @@ def save_iree(
             label = f"IREE output {index} ({name!r})"
             if tuple(native.shape) != expected_shape:
                 raise RuntimeError(
-                    f"Native {label.lower()} shape changed after export: expected "
-                    f"{expected_shape}; got {native.shape}."
+                    f"Native {label.lower()} shape changed after export: expected {expected_shape}; got {native.shape}."
                 )
             if native.dtype.str != expected_dtype:
                 raise RuntimeError(
@@ -491,9 +477,7 @@ def save_iree(
             relative_errors.append(max_relative_error)
             if not output_ok:
                 raise RuntimeError(
-                    f"{label} failed native parity: "
-                    f"max_abs={max_absolute_error:.3e}, "
-                    f"max_rel={max_relative_error:.3e}."
+                    f"{label} failed native parity: max_abs={max_absolute_error:.3e}, max_rel={max_relative_error:.3e}."
                 )
         validation_ok = True
         maximum_absolute_errors = tuple(absolute_errors)

@@ -41,8 +41,8 @@ def test_fixed_actions_preserve_orientation_and_native_sparse_values():
     sparse_operator = phx.sparse.SparseCoordinateOperator(
         relation,
         jnp.asarray([1.0, 2.0, 3.0, 4.0]),
-        source=phx.linalg.ArraySpace((3,), dtype=float),
-        target=phx.linalg.ArraySpace((6,), dtype=float),
+        source=phx.linalg.ArraySpace((3,), dtype="float64"),
+        target=phx.linalg.ArraySpace((6,), dtype="float64"),
     )
     sparse = phx.uq.FixedGaussianProcessActionPolicy(sparse_operator).resolve(
         points,

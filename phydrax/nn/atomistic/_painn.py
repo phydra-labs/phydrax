@@ -159,7 +159,7 @@ class _PaiNNInteraction(StrictModule):
         ir = graph.graph
         if ir.senders is None or ir.receivers is None or ir.edge_mask is None:
             raise ValueError("PaiNN requires an explicit masked edge relation.")
-        feature_count = int(scalar.shape[-1])
+        feature_count = scalar.shape[-1]
         edge_mask = ir.edge_mask[:, None]
         safe_radial = jnp.where(edge_mask, radial, 0.0)
         safe_cutoff = jnp.where(edge_mask, cutoff_weight, 0.0)
@@ -185,7 +185,7 @@ class _PaiNNInteraction(StrictModule):
         scalar, vector = self.atomwise_update(
             scalar + scalar_delta, vector + vector_delta
         )
-        if int(scalar.shape[-1]) != feature_count:
+        if scalar.shape[-1] != feature_count:
             raise RuntimeError("PaiNN interaction changed its scalar feature width.")
         return scalar, vector
 
@@ -371,7 +371,7 @@ class PaiNNPotential(AbstractAtomisticPotential):
             jnp.any(numbers > self.configuration.maximum_species_id),
             "Species ID exceeds PaiNNPotential.maximum_species_id.",
         )
-        mask = jnp.asarray(atom_mask, dtype=bool).reshape((-1,))
+        mask = jnp.asarray(atom_mask, dtype=jnp.bool_).reshape((-1,))
         scalar = self.embedding[numbers].astype(self.precision.compute_dtype)
         vector = jnp.zeros(
             (scalar.shape[0], 3, self.configuration.feature_count),

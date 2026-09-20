@@ -11,7 +11,7 @@ from phydrax.applications import cosmology
 def _direct(positions, masses, softening):
     displacement = positions[None, :, :] - positions[:, None, :]
     squared = jnp.sum(displacement**2, axis=-1) + softening**2
-    mask = ~jnp.eye(positions.shape[0], dtype=bool)
+    mask = ~jnp.eye(positions.shape[0], dtype="bool")
     return jnp.sum(
         jnp.where(
             mask[..., None],

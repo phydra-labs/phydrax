@@ -30,7 +30,7 @@ class PrescribedGridVelocityPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, mask: ArrayLike, values: ArrayLike = 0.0, /):
-        mask_ = np.asarray(mask, dtype=bool)
+        mask_ = np.asarray(mask, dtype=np.bool_)
         values_ = np.asarray(values)
         if mask_.ndim < 2 or mask_.shape[-1] not in (1, 2, 3):
             raise ValueError(
@@ -103,7 +103,7 @@ class PrescribedGridVelocityPlan(StrictModule, NonTrainableState):
         value = jnp.asarray(velocity)
         mass_ = jnp.asarray(mass)
         logical = jnp.asarray(logical_node_ids, dtype=jnp.int32)
-        valid = jnp.asarray(node_valid, dtype=bool)
+        valid = jnp.asarray(node_valid, dtype=jnp.bool_)
         if value.ndim != 2 or value.shape[-1] != self.mask.shape[-1]:
             raise ValueError(
                 "Compact grid velocity must have shape (storage, dimension)."
@@ -112,7 +112,7 @@ class PrescribedGridVelocityPlan(StrictModule, NonTrainableState):
             raise ValueError("Compact mass and logical node IDs must match velocity.")
         if valid.shape != mass_.shape:
             raise ValueError("node_valid must match compact storage capacity.")
-        logical_size = int(np.prod(self.mask.shape[:-1], dtype=int))
+        logical_size = int(np.prod(self.mask.shape[:-1], dtype=np.int64))
         if logical_size == 0:
             raise ValueError("Prescribed boundary logical grid cannot be empty.")
         safe = jnp.clip(logical, 0, logical_size - 1)

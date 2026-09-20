@@ -24,7 +24,7 @@ ModalTimeProvider: TypeAlias = Callable[[Key[Array, ""]], Array]
 
 
 def _weight(value: ArrayLike, /, *, name: str) -> Array:
-    weight = jnp.asarray(value, dtype=float).reshape(())
+    weight = jnp.asarray(value, dtype=jnp.float64).reshape(())
     if bool(~jnp.isfinite(weight)) or float(weight) < 0.0:
         raise ValueError(f"{name} must be finite and nonnegative.")
     return weight
@@ -32,7 +32,7 @@ def _weight(value: ArrayLike, /, *, name: str) -> Array:
 
 def _time_batch(value: ArrayLike, /) -> Array:
     times = jnp.asarray(value)
-    if times.ndim != 1 or int(times.size) == 0 or jnp.iscomplexobj(times):
+    if times.ndim != 1 or times.size == 0 or jnp.iscomplexobj(times):
         raise ValueError("times must be a non-empty rank-one real array.")
     return eqx.error_if(times, jnp.any(~jnp.isfinite(times)), "times must be finite.")
 
@@ -172,23 +172,29 @@ class ModalObservationTerm(AbstractScalarTerm):
             raise ValueError("function_name must be non-empty.")
         if targets_.ndim < 1 or targets_.shape[0] != times_.size:
             raise ValueError("targets must have one leading state per time.")
-        mask_ = np.ones(targets_.shape, dtype=bool) if mask is None else np.asarray(mask)
-        if mask_.shape != targets_.shape or mask_.dtype != np.dtype(bool):
+        mask_ = (
+            np.ones(targets_.shape, dtype=np.bool_) if mask is None else np.asarray(mask)
+        )
+        if mask_.shape != targets_.shape or mask_.dtype != np.dtype(np.bool_):
             raise ValueError("mask must be boolean with the same shape as targets.")
         if np.any(~np.isfinite(targets_[mask_])):
             raise ValueError("Observed target values must be finite.")
-        weights_ = np.broadcast_to(np.asarray(weights, dtype=float), targets_.shape).copy()
+        weights_ = np.broadcast_to(
+            np.asarray(weights, dtype=np.float64), targets_.shape
+        ).copy()
         if np.any(~np.isfinite(weights_)) or np.any(weights_ < 0.0):
             raise ValueError("weights must be finite and nonnegative.")
         normalization = float(np.sum(np.where(mask_, weights_, 0.0)))
         if normalization <= 0.0:
-            raise ValueError("At least one observed coefficient must have positive weight.")
+            raise ValueError(
+                "At least one observed coefficient must have positive weight."
+            )
         self.times = jnp.asarray(times_)
         self.targets = jnp.asarray(targets_)
         self.mask = jnp.asarray(mask_)
         self.weights = jnp.asarray(weights_)
         self.scalar_weight = _weight(scalar_weight, name="scalar_weight")
-        self.normalization = jnp.asarray(normalization, dtype=float)
+        self.normalization = jnp.asarray(normalization, dtype=jnp.float64)
         self.function_name = name
         self.label = label
 
@@ -209,9 +215,9 @@ class ModalObservationTerm(AbstractScalarTerm):
                 f"targets must have time/state shape {expected}; got {self.targets.shape}."
             )
         sites = jnp.arange(self.times.size, dtype=jnp.uint32)
-        predictions = jax.vmap(
-            lambda time, site: field(time, key=jr.fold_in(key, site))
-        )(self.times, sites)
+        predictions = jax.vmap(lambda time, site: field(time, key=jr.fold_in(key, site)))(
+            self.times, sites
+        )
         difference = jnp.where(self.mask, predictions - self.targets, 0.0)
         weighted = self.weights * _squared_magnitude(difference)
         return self.scalar_weight * jnp.sum(weighted) / self.normalization

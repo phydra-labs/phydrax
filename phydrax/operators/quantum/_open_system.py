@@ -28,15 +28,13 @@ def _collapse_operator_tuple(
         return (collapse_operators,)
     if not isinstance(collapse_operators, Sequence):
         raise TypeError(
-            "collapse_operators must be a DomainFunction or a sequence of "
-            "DomainFunctions."
+            "collapse_operators must be a DomainFunction or a sequence of DomainFunctions."
         )
     operators = tuple(collapse_operators)
     for index, operator in enumerate(operators):
         if not isinstance(operator, DomainFunction):
             raise TypeError(
-                "collapse_operators must contain only DomainFunctions; "
-                f"item {index} is {type(operator).__name__}."
+                f"collapse_operators must contain only DomainFunctions; item {index} is {type(operator).__name__}."
             )
     return operators
 

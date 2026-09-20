@@ -66,7 +66,7 @@ class CoulombCollisionPlan(StrictModule, NonTrainableState):
     ) -> PICCollisionResult:
         values = jnp.asarray(velocity)
         masses = jnp.asarray(mass, dtype=values.dtype)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         generation = jnp.asarray(incarnation, dtype=jnp.int32)
         if values.ndim != 2 or values.shape[-1] != 3:
             raise ValueError("velocity must have shape (capacity,3).")

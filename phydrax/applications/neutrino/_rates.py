@@ -40,9 +40,9 @@ class NeutrinoFlux(StrictModule, NonTrainableState):
         source_id: str,
         flavor_names: Sequence[str] = ("electron", "muon", "tau"),
     ):
-        edges = np.asarray(energy_edges_gev, dtype=float)
-        values_ = np.asarray(values, dtype=float)
-        covariance_ = np.asarray(covariance, dtype=float)
+        edges = np.asarray(energy_edges_gev, dtype=np.float64)
+        values_ = np.asarray(values, dtype=np.float64)
+        covariance_ = np.asarray(covariance, dtype=np.float64)
         flavors = tuple(str(value).strip() for value in flavor_names)
         if (
             edges.ndim != 1
@@ -114,9 +114,9 @@ class NeutrinoRatePlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(flux, NeutrinoFlux):
             raise TypeError("flux must be NeutrinoFlux.")
-        cross = np.asarray(cross_sections, dtype=float)
-        efficiency = np.asarray(efficiencies, dtype=float)
-        migration_ = np.asarray(migration, dtype=float)
+        cross = np.asarray(cross_sections, dtype=np.float64)
+        efficiency = np.asarray(efficiencies, dtype=np.float64)
+        migration_ = np.asarray(migration, dtype=np.float64)
         true_bins = flux.values.shape[0]
         if (
             cross.shape != (true_bins, 3)

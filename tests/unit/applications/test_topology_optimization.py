@@ -22,7 +22,7 @@ from phydrax.applications.solid_mechanics._topology_design import (
 from phydrax.applications.solid_mechanics._topology_reanalysis import (
     DensityTransferCandidate,
     FiniteElementReanalysisCandidate,
-    reanalyse_topology_design,
+    reanalyze_topology_design,
     TopologyReanalysisPlan,
 )
 from phydrax.applications.solid_mechanics._topology_state import (
@@ -44,13 +44,13 @@ def _density_transform(
     fixed_density=None,
 ) -> DensityTransform:
     mask = (
-        jnp.ones((count,), dtype=bool)
+        jnp.ones((count,), dtype="bool")
         if design_mask is None
-        else jnp.asarray(design_mask, dtype=bool)
+        else jnp.asarray(design_mask, dtype="bool")
     )
     prepared = optim.DensityTransformPlan(
         optim.ConicDensityFilterPlan(
-            jnp.arange(count, dtype=float).reshape((count, 1)),
+            jnp.arange(count, dtype="float64").reshape((count, 1)),
             radius,
             mask,
             fixed_density,
@@ -445,7 +445,7 @@ def test_reference_reanalysis_requires_transfer_primal_and_adjoint_evidence() ->
         uniform_source_objective=2.0,
         uniform_reference_objective=2.0,
     )
-    report = reanalyse_topology_design(
+    report = reanalyze_topology_design(
         source,
         plan,
         (jnp.zeros((1,)),),

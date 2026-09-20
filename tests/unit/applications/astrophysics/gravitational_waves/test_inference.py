@@ -89,7 +89,7 @@ def test_calibration_marginalization_matches_declared_response_ensemble(wave_pro
             jnp.ones_like(likelihood.network.strain),
             1.05 * jnp.ones_like(likelihood.network.strain),
         )
-    ).astype(complex)
+    ).astype("complex128")
     ensemble = gw.CalibrationResponseEnsemble(
         likelihood.network.frequency,
         responses,
@@ -174,7 +174,7 @@ def test_multiband_stride_one_is_an_exact_prepared_route(wave_problem):
 
 def test_full_rank_roq_preserves_exact_likelihood(wave_problem):
     gw, _, _, _, injected, likelihood = wave_problem(sample_count=32)
-    size = int(likelihood.network.frequency.size)
+    size = likelihood.network.frequency.size
     basis = jnp.eye(size, dtype=likelihood.network.frequency.dtype)
     space = phx.linalg.ArraySpace(
         (size,),

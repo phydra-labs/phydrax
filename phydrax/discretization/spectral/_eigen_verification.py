@@ -139,9 +139,9 @@ def compare_spectral_eigen_resolutions(
         general.matched_fine_cluster_ids,
         dtype=np.int32,
     )
-    fine_indices = np.asarray(general.fine_indices, dtype=np.int32)
-    matched = np.asarray(general.matched_mask, dtype=bool)
-    errors = np.full((coarse_coordinates.shape[1],), np.inf, dtype=float)
+    np.asarray(general.fine_indices, dtype=np.int32)
+    matched = np.asarray(general.matched_mask, dtype=np.bool_)
+    errors = np.full((coarse_coordinates.shape[1],), np.inf, dtype=np.float64)
     for cluster in sorted(set(coarse_clusters[coarse_clusters >= 0].tolist())):
         coarse_group = np.flatnonzero((coarse_clusters == cluster) & matched)
         if coarse_group.size == 0:
@@ -232,7 +232,7 @@ def _relative_projection_error(source: np.ndarray, target: np.ndarray, /) -> flo
         residual = vector - jnp.asarray(target) @ result.value
         numerator = float(np.sqrt(np.sum(np.abs(np.asarray(residual)) ** 2)))
         denominator = float(np.sqrt(np.sum(np.abs(source[:, column]) ** 2)))
-        errors.append(numerator / max(denominator, np.finfo(float).tiny))
+        errors.append(numerator / max(denominator, np.finfo(np.float64).tiny))
     return max(errors, default=0.0)
 
 

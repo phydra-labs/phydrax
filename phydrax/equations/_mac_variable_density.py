@@ -75,7 +75,7 @@ class MACVariableDensityFlowProblem(StrictModule):
         raw_viscosity = jnp.asarray(dynamic_viscosity)
         if jnp.iscomplexobj(raw_viscosity):
             raise TypeError("dynamic_viscosity must be real.")
-        viscosity = raw_viscosity.astype(float)
+        viscosity = raw_viscosity.astype("float64")
         if viscosity.shape != () or not bool(
             jnp.isfinite(viscosity) & (viscosity >= 0.0)
         ):
@@ -276,8 +276,7 @@ class CompiledMACVariableDensityDynamics(StrictModule):
         value = jnp.asarray(state)
         if value.shape != self.state_shape:
             raise ValueError(
-                f"MAC density-momentum coordinates must have shape {self.state_shape}; "
-                f"got {value.shape}."
+                f"MAC density-momentum coordinates must have shape {self.state_shape}; got {value.shape}."
             )
         dtype = self.variable_density.operators.pressure_space.dtype
         if value.dtype != dtype:
@@ -550,7 +549,7 @@ class CompiledMACVariableDensityDynamics(StrictModule):
             )
             cell_velocity = jnp.moveaxis(cell_velocity, 0, axis_index)
             shape = [1] * inverse_advective.ndim
-            shape[axis_index] = int(axis.interval_widths.size)
+            shape[axis_index] = axis.interval_widths.size
             widths = axis.interval_widths.reshape(tuple(shape))
             inverse_advective = inverse_advective + jnp.abs(cell_velocity) / widths
             inverse_diffusive = inverse_diffusive + 2.0 / widths**2

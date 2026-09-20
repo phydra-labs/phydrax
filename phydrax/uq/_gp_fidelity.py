@@ -48,7 +48,7 @@ class AutoregressiveFidelityKernel(AbstractMultiOutputKernel):
             isinstance(kernel, AbstractPositiveDefiniteKernel) for kernel in kernels
         ):
             raise ValueError("Provide one positive-definite spatial kernel per level.")
-        coefficients = jnp.asarray(transfer_coefficients, dtype=float)
+        coefficients = jnp.asarray(transfer_coefficients, dtype=jnp.float64)
         if coefficients.shape != (path.num_levels - 1,):
             raise ValueError(
                 "transfer_coefficients must contain one value per fidelity relation."
@@ -304,14 +304,16 @@ def fidelity_design(
             raise ValueError(
                 "Fidelity GP cases require exactly one finite array input leaf."
             )
-        point = jnp.ravel(jnp.asarray(input_leaves[0], dtype=float))
+        point = jnp.ravel(jnp.asarray(input_leaves[0], dtype=jnp.float64))
         observable_leaves = tuple(jax.tree_util.tree_leaves(evaluation.observable))
         if len(observable_leaves) != 1 or jnp.asarray(observable_leaves[0]).size != 1:
             raise ValueError("Fidelity GP observations must be scalar.")
         rows.append(point)
         outputs.append(path.level_ids.index(evaluation.level_id))
         sources.append(case_index)
-        observations.append(jnp.ravel(jnp.asarray(observable_leaves[0], dtype=float))[0])
+        observations.append(
+            jnp.ravel(jnp.asarray(observable_leaves[0], dtype=jnp.float64))[0]
+        )
     if not rows:
         raise ValueError("Fidelity GP requires at least one active path observation.")
     shapes = {row.shape for row in rows}
@@ -327,7 +329,7 @@ def fidelity_design(
 
 
 def _as_points(value: ArrayLike, /) -> Array:
-    points = jnp.asarray(value, dtype=float)
+    points = jnp.asarray(value, dtype=jnp.float64)
     if points.ndim == 1:
         points = points[:, None]
     if points.ndim != 2 or points.shape[0] == 0:

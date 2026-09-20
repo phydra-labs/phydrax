@@ -281,8 +281,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         alpha = eqx.error_if(
             geometry.alpha,
             ~jnp.all(geometry.active),
-            "GRMHD runtime requires every cell active until an explicit "
-            "excision-boundary flux is configured.",
+            "GRMHD runtime requires every cell active until an explicit excision-boundary flux is configured.",
         )
         return eqx.tree_at(lambda value: value.alpha, geometry, alpha)
 
@@ -1064,7 +1063,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
             finite=finite,
             physically_valid=physically_valid,
             qualified=qualified,
-            accepted=jnp.asarray(accepted, dtype=bool),
+            accepted=jnp.asarray(accepted, dtype=jnp.bool_),
             plan_id=self.plan_id,
         )
 

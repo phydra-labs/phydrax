@@ -53,9 +53,9 @@ class AssociationTable(StrictModule, NonTrainableState):
                 "Association arrays must share shape (event_capacity, association_capacity)."
             )
         active_ = (
-            jnp.ones(source.shape, dtype=bool)
+            jnp.ones(source.shape, dtype=jnp.bool_)
             if active is None
-            else jnp.asarray(active, dtype=bool)
+            else jnp.asarray(active, dtype=jnp.bool_)
         )
         if active_.shape != source.shape:
             raise ValueError("active must align with association arrays.")
@@ -84,7 +84,7 @@ class AssociationTable(StrictModule, NonTrainableState):
         self.target_collection = target_name
         self.source_capacity = source_capacity_
         self.target_capacity = target_capacity_
-        self.association_capacity = int(source.shape[1])
+        self.association_capacity = source.shape[1]
         self.association_id = canonical_fingerprint(
             {
                 "kind": "hep-association-table",

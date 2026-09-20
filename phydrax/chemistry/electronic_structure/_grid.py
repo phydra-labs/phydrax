@@ -58,7 +58,7 @@ class AtomicRadialGridPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def rule(self, dtype=float, /) -> tuple[np.ndarray, np.ndarray]:
+    def rule(self, dtype=np.float64, /) -> tuple[np.ndarray, np.ndarray]:
         x = (np.arange(self.point_count, dtype=dtype) + 0.5) / self.point_count
         if self.kind is AtomicRadialGridKind.MURA_KNOWLES:
             denominator = np.maximum(1.0 - x**3, np.finfo(dtype).tiny)
@@ -193,7 +193,7 @@ class PreparedMolecularDFTGrid(StrictModule, NonTrainableState):
 
     def evaluate(self, positions: ArrayLike, /) -> MolecularGridEvaluation:
         coordinate = jnp.asarray(positions, dtype=self.local_points.dtype)
-        expected = (int(self.plan.system.particle_ids.shape[0]), 3)
+        expected = (self.plan.system.particle_ids.shape[0], 3)
         if coordinate.shape != expected:
             raise ValueError(f"DFT geometry must have shape {expected}.")
         active_indices = jnp.asarray(
@@ -211,12 +211,12 @@ class PreparedMolecularDFTGrid(StrictModule, NonTrainableState):
         center_displacement = centers[:, None, :] - centers[None, :, :]
         center_distance = jnp.sqrt(jnp.sum(center_displacement**2, axis=2))
         safe_distance = jnp.where(
-            jnp.eye(centers.shape[0], dtype=bool), 1.0, center_distance
+            jnp.eye(centers.shape[0], dtype=jnp.bool_), 1.0, center_distance
         )
         products = []
-        for atom in range(int(centers.shape[0])):
+        for atom in range(centers.shape[0]):
             product = jnp.ones((points.shape[0],), dtype=points.dtype)
-            for other in range(int(centers.shape[0])):
+            for other in range(centers.shape[0]):
                 if atom == other:
                     continue
                 mu = (distances[:, atom] - distances[:, other]) / safe_distance[
@@ -235,7 +235,7 @@ class PreparedMolecularDFTGrid(StrictModule, NonTrainableState):
         ]
         weights = self.product_weights * owner_partition
         off_diagonal = jnp.where(
-            jnp.eye(centers.shape[0], dtype=bool), jnp.inf, center_distance
+            jnp.eye(centers.shape[0], dtype=jnp.bool_), jnp.inf, center_distance
         )
         minimum_distance = jnp.min(off_diagonal, initial=jnp.inf)
         residual = jnp.max(jnp.abs(jnp.sum(partition, axis=1) - 1.0), initial=0.0)

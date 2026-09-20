@@ -8,8 +8,8 @@ import phydrax as phx
 def _sparse_dataset(state_count, edge_specs, *, omit_reverse_cross=False):
     per_direction = 8
     sample_count = 2 * per_direction * len(edge_specs)
-    values = np.zeros((state_count, sample_count), dtype=float)
-    coverage = np.zeros((state_count, sample_count), dtype=bool)
+    values = np.zeros((state_count, sample_count), dtype="float64")
+    coverage = np.zeros((state_count, sample_count), dtype="bool")
     origins = np.zeros((sample_count,), dtype=np.int32)
     chains = np.zeros((sample_count,), dtype=np.int32)
     draws = np.zeros((sample_count,), dtype=np.int32)
@@ -38,7 +38,7 @@ def _sparse_dataset(state_count, edge_specs, *, omit_reverse_cross=False):
     return phx.uq.SparseReducedPotentialDataset(
         values,
         coverage,
-        jnp.ones((sample_count,), dtype=bool),
+        jnp.ones((sample_count,), dtype="bool"),
         origins,
         chains,
         draws,

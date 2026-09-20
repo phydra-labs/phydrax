@@ -206,7 +206,7 @@ def _decode_mha(resource: BoundedResource, profile: MoquiArrayProfile, /) -> np.
     dim_size = _mha_numbers(fields, "DimSize", 3)
     if np.any(dim_size != np.floor(dim_size)) or np.any(dim_size < 1.0):
         raise ValueError("MHA DimSize must contain positive integers.")
-    dimensions = tuple(int(value) for value in dim_size)
+    dimensions = tuple(dim_size)
     if tuple(reversed(dimensions)) != profile.storage_shape:
         raise ValueError("MHA DimSize differs from the profile storage shape.")
     expected_bytes = int(np.prod(profile.storage_shape)) * dtype.itemsize

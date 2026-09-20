@@ -134,7 +134,7 @@ class ConvexMixedIntegerNonlinearProgram(StrictModule):
         if np.any(constraint_lower_host > constraint_upper_host):
             raise ValueError("Constraint lower bounds cannot exceed upper bounds.")
         evidence = tuple(constraint_evidence)
-        constraints_count = int(constraint_lower_.size)
+        constraints_count = constraint_lower_.size
         if len(evidence) != constraints_count or any(
             not isinstance(value, ConvexConstraintEvidence) for value in evidence
         ):
@@ -158,7 +158,7 @@ class ConvexMixedIntegerNonlinearProgram(StrictModule):
                 raise ValueError(
                     "Constraint bounds and curvature orientation are inconsistent."
                 )
-        variables = int(lower.size)
+        variables = lower.size
         integer = _indices(integer_indices, variables, "integer")
         binary = _indices(binary_indices, variables, "binary")
         if set(integer) & set(binary):
@@ -166,13 +166,13 @@ class ConvexMixedIntegerNonlinearProgram(StrictModule):
         discrete = tuple(sorted((*integer, *binary)))
         if not discrete:
             raise ValueError("Convex MINLP requires at least one discrete coordinate.")
-        discrete_array = np.asarray(discrete, dtype=int)
+        discrete_array = np.asarray(discrete, dtype=np.int64)
         if np.any(
             lower_host[discrete_array] != np.ceil(lower_host[discrete_array])
         ) or np.any(upper_host[discrete_array] != np.floor(upper_host[discrete_array])):
             raise ValueError("Discrete variable bounds must be integral.")
         if binary:
-            binary_array = np.asarray(binary, dtype=int)
+            binary_array = np.asarray(binary, dtype=np.int64)
             if np.any(lower_host[binary_array] < 0.0) or np.any(
                 upper_host[binary_array] > 1.0
             ):

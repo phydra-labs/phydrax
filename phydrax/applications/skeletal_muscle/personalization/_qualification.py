@@ -37,9 +37,7 @@ class PhysicalRelativeForceCalibrationQualificationEvidence(
     qualification_id: str = eqx.field(static=True)
 
 
-class PhysicalRelativeForceCalibrationQualificationPlan(
-    StrictModule, NonTrainableState
-):
+class PhysicalRelativeForceCalibrationQualificationPlan(StrictModule, NonTrainableState):
     """Qualification policy requiring both identifiable and confounded controls."""
 
     relative_scale_tolerance: float = eqx.field(static=True)
@@ -73,7 +71,9 @@ class PhysicalRelativeForceCalibrationQualificationPlan(
             raise TypeError(
                 "identifiable_candidate must be PhysicalRelativeForceCalibrationCandidate."
             )
-        if not isinstance(confounded_candidate, PhysicalRelativeForceCalibrationCandidate):
+        if not isinstance(
+            confounded_candidate, PhysicalRelativeForceCalibrationCandidate
+        ):
             raise TypeError(
                 "confounded_candidate must be PhysicalRelativeForceCalibrationCandidate."
             )

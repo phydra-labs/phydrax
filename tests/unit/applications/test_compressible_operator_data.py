@@ -51,7 +51,7 @@ def test_compressible_operator_adapter_builds_group_safe_dataset():
             for case in cases
         )
     )
-    pressure = jnp.arange(30, dtype=float).reshape((6, 5))
+    pressure = jnp.arange(30, dtype="float64").reshape((6, 5))
     dataset = CompressibleOperatorDatasetPlan(
         ("mach_number", "reynolds_number", "angle_of_attack")
     ).build(cases, conditions, geometry, query, {"pressure_coefficient": pressure})

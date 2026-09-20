@@ -84,7 +84,7 @@ class PolynomialRecombination(StrictModule):
         self.differentiation = differentiation
         self.recombination_id = canonical_fingerprint(
             {
-                "kind": "polynomial-recombination-v1",
+                "kind": "polynomial-recombination",
                 "degree": degree_,
                 "maximum_features": features,
                 "maximum_feature_bytes": feature_bytes,
@@ -179,7 +179,7 @@ class MarkovCubaturePlan(StrictModule):
         self.weak_order = 1
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "markov-cubature-plan-v1",
+                "kind": "markov-cubature-plan",
                 "temporal_mesh": temporal_mesh.mesh_id,
                 "increment_rule": increment_rule.rule_id,
                 "recombination": selected_recombination.recombination_id,
@@ -233,7 +233,7 @@ class MarkovCubatureSolution(StrictModule):
         if isinstance(index, bool) or not isinstance(index, Integral):
             raise TypeError("measure index must be an integer.")
         selected = int(index)
-        if not -int(self.times.size) <= selected < int(self.times.size):
+        if not -self.times.size <= selected < self.times.size:
             raise IndexError("measure index is outside the saved Markov cubature times.")
         from ..integration import weighted
 
@@ -294,7 +294,7 @@ def solve_markov_cubature(
                 "Straight cubature paths require additive or commutative noise."
             )
     state_shape = tuple(problem.initial_state.shape)
-    state_size = int(problem.initial_state.size) if state_shape else 1
+    state_size = problem.initial_state.size if state_shape else 1
     features = plan.recombination.prepare(state_size)
     retained_capacity = features.feature_count + 1
     path_count = (
@@ -321,7 +321,7 @@ def solve_markov_cubature(
         .set(initial_point)
     )
     log_weights = jnp.full((retained_capacity,), -jnp.inf).at[0].set(0.0)
-    mask = jnp.zeros((retained_capacity,), dtype=bool).at[0].set(True)
+    mask = jnp.zeros((retained_capacity,), dtype=jnp.bool_).at[0].set(True)
     status = jnp.asarray(int(MarkovCubatureStatus.SUCCESS), dtype=jnp.int32)
     controls = jnp.asarray(plan.increment_rule.prepared.points, dtype=points.dtype)
     control_weights = (
@@ -633,7 +633,7 @@ def solve_markov_cubature(
     )
     solver_id = canonical_fingerprint(
         {
-            "kind": "markov-cubature-solver-v1",
+            "kind": "markov-cubature-solver",
             "plan": plan.plan_id,
             "problem_noise": problem.noise_id,
             "state_shape": state_shape,

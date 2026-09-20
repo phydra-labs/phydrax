@@ -76,10 +76,10 @@ def _simplex_metric(points):
 
 
 class TransportSupport(StrictModule):
-    """Node-centred conservative support in physical SI units.
+    """Node-centered conservative support in physical SI units.
 
-    ``volumes`` are physical cubic metres, including extrusion in 1D/2D.
-    ``transmissibility`` has SI metres after extrusion: multiplying it by
+    ``volumes`` are physical cubic meters, including extrusion in 1D/2D.
+    ``transmissibility`` has SI meters after extrusion: multiplying it by
     diffusivity (m2/s) and density (1/m3) gives integrated number flux (1/s).
     An oriented flux is scattered with minus at tail and plus at head.
 
@@ -121,11 +121,11 @@ class TransportSupport(StrictModule):
         entity_vertices=(),
         entity_set_ids=(),
     ):
-        points = np.asarray(positions, dtype=float)
+        points = np.asarray(positions, dtype=np.float64)
         tails, heads = np.asarray(tail), np.asarray(head)
         weights, measure = (
-            np.asarray(transmissibility, dtype=float),
-            np.asarray(volumes, dtype=float),
+            np.asarray(transmissibility, dtype=np.float64),
+            np.asarray(volumes, dtype=np.float64),
         )
         boundary = np.asarray(boundary_mask)
         if (
@@ -262,7 +262,7 @@ class TransportSupport(StrictModule):
         transverse_unit: UnitDefinition | None = None,
     ):
         axes_si = tuple(
-            np.asarray(_si(axis, length_unit, METER), dtype=float) for axis in axes
+            np.asarray(_si(axis, length_unit, METER), dtype=np.float64) for axis in axes
         )
         dimension = len(axes_si)
         if dimension not in (1, 2, 3):
@@ -290,7 +290,7 @@ class TransportSupport(StrictModule):
             reshape[axis] = len(width)
             measures *= width.reshape(reshape)
         tails, heads, weights = [], [], []
-        boundary = np.zeros(shape, dtype=bool)
+        boundary = np.zeros(shape, dtype=np.bool_)
         for axis in range(dimension):
             lower, upper = [slice(None)] * dimension, [slice(None)] * dimension
             lower[axis], upper[axis] = slice(None, -1), slice(1, None)
@@ -468,7 +468,7 @@ class TransportSupport(StrictModule):
         if any(int(identifier) not in lookup for identifier in selected):
             raise ValueError("Scope includes unknown or inactive mesh entities.")
         rows = np.asarray([lookup[int(identifier)] for identifier in selected])
-        mask = np.zeros(self.positions.shape[0], dtype=bool)
+        mask = np.zeros(self.positions.shape[0], dtype=np.bool_)
         mask[np.asarray(self.entity_vertices[dimension])[rows].ravel()] = True
         return mask
 

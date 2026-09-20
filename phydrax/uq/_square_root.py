@@ -165,7 +165,7 @@ def _square_root_kalman_filter(
         factor=initial_factor,
         time=problem.initial_time.reshape((case_count,)),
         log_likelihood=jnp.zeros((case_count,), dtype=jnp.real(prior_mean).dtype),
-        valid=jnp.ones((case_count,), dtype=bool),
+        valid=jnp.ones((case_count,), dtype=jnp.bool_),
         status=jnp.zeros((case_count,), dtype=jnp.int32),
         step_index=jnp.asarray(0, dtype=jnp.int32),
     )
@@ -489,7 +489,7 @@ def _smoothing_factor(
 def _square_root_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherResult:
     case_shape = result.case_shape
     case_count = prod(case_shape) if case_shape else 1
-    num_steps = int(result.filtered_means.shape[len(case_shape)])
+    num_steps = result.filtered_means.shape[len(case_shape)]
     state_size = prod(result.state_shape) if result.state_shape else 1
     filtered_mean = result.filtered_means.reshape((case_count, num_steps, state_size))
     filtered_covariance = result.filtered_covariances.reshape(

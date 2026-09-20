@@ -45,28 +45,40 @@ from ._backend import (
 )
 
 
-FEM_LINEAR_ELASTICITY_CAPABILITY_ID = "phydrax.soft-fem.constitutive.linear-elasticity.v1"
-FEM_HYPERELASTICITY_CAPABILITY_ID = "phydrax.soft-fem.constitutive.hyperelasticity.v1"
-FEM_VISCOELASTICITY_CAPABILITY_ID = "phydrax.soft-fem.constitutive.viscoelasticity.v1"
-FEM_PRESSURE_ACTUATION_CAPABILITY_ID = "phydrax.soft-fem.actuation.region-pressure.v1"
-FEM_FIBER_ACTUATION_CAPABILITY_ID = "phydrax.soft-fem.actuation.region-fiber.v1"
-FEM_BODY_FORCE_ACTUATION_CAPABILITY_ID = "phydrax.soft-fem.actuation.region-body-force.v1"
-FEM_REGION_DISPLACEMENT_SENSOR_CAPABILITY_ID = (
-    "phydrax.soft-fem.sensor.region-displacement.v1"
+FEM_LINEAR_ELASTICITY_CAPABILITY_ID = (
+    "phydrax.soft-fem.constitutive.linear-elasticity.canonical"
 )
-FEM_REGION_FORCE_SENSOR_CAPABILITY_ID = "phydrax.soft-fem.sensor.region-force.v1"
-FEM_EXACT_STATE_CODEC_CAPABILITY_ID = "phydrax.soft-fem.codec.complete-state-exact.v1"
-FEM_EXACT_CONTROL_CODEC_CAPABILITY_ID = "phydrax.soft-fem.codec.control-exact.v1"
-FEM_ATOMIC_REPLAY_CAPABILITY_ID = "phydrax.soft-fem.transaction.atomic-replay.v1"
+FEM_HYPERELASTICITY_CAPABILITY_ID = (
+    "phydrax.soft-fem.constitutive.hyperelasticity.canonical"
+)
+FEM_VISCOELASTICITY_CAPABILITY_ID = (
+    "phydrax.soft-fem.constitutive.viscoelasticity.canonical"
+)
+FEM_PRESSURE_ACTUATION_CAPABILITY_ID = (
+    "phydrax.soft-fem.actuation.region-pressure.canonical"
+)
+FEM_FIBER_ACTUATION_CAPABILITY_ID = "phydrax.soft-fem.actuation.region-fiber.canonical"
+FEM_BODY_FORCE_ACTUATION_CAPABILITY_ID = (
+    "phydrax.soft-fem.actuation.region-body-force.canonical"
+)
+FEM_REGION_DISPLACEMENT_SENSOR_CAPABILITY_ID = (
+    "phydrax.soft-fem.sensor.region-displacement.canonical"
+)
+FEM_REGION_FORCE_SENSOR_CAPABILITY_ID = "phydrax.soft-fem.sensor.region-force.canonical"
+FEM_EXACT_STATE_CODEC_CAPABILITY_ID = (
+    "phydrax.soft-fem.codec.complete-state-exact.canonical"
+)
+FEM_EXACT_CONTROL_CODEC_CAPABILITY_ID = "phydrax.soft-fem.codec.control-exact.canonical"
+FEM_ATOMIC_REPLAY_CAPABILITY_ID = "phydrax.soft-fem.transaction.atomic-replay.canonical"
 
-FEM_REMESH_CAPABILITY_ID = "phydrax.soft-fem.topology.remesh.v1"
-FEM_FRACTURE_CAPABILITY_ID = "phydrax.soft-fem.topology.fracture.v1"
-FEM_CONTACT_CAPABILITY_ID = "phydrax.soft-fem.contact.v1"
+FEM_REMESH_CAPABILITY_ID = "phydrax.soft-fem.topology.remesh.canonical"
+FEM_FRACTURE_CAPABILITY_ID = "phydrax.soft-fem.topology.fracture.canonical"
+FEM_CONTACT_CAPABILITY_ID = "phydrax.soft-fem.contact.canonical"
 
 FEMConstitutiveCapability: TypeAlias = Literal[
-    "phydrax.soft-fem.constitutive.linear-elasticity.v1",
-    "phydrax.soft-fem.constitutive.hyperelasticity.v1",
-    "phydrax.soft-fem.constitutive.viscoelasticity.v1",
+    "phydrax.soft-fem.constitutive.linear-elasticity.canonical",
+    "phydrax.soft-fem.constitutive.hyperelasticity.canonical",
+    "phydrax.soft-fem.constitutive.viscoelasticity.canonical",
 ]
 _CONSTITUTIVE_CAPABILITIES = frozenset(
     (
@@ -330,8 +342,7 @@ class FEMSoftState(StrictModule, NonTrainableState):
             or displacement_.shape != acceleration_.shape
         ):
             raise ValueError(
-                "FEM soft displacement, velocity, and acceleration must share "
-                "a (node, spatial-component) shape."
+                "FEM soft displacement, velocity, and acceleration must share a (node, spatial-component) shape."
             )
         _common_dtype(
             (displacement_, velocity_, acceleration_, *materials, force),
@@ -365,7 +376,7 @@ class FEMSoftSensorLayout(StrictModule, NonTrainableState):
             else tuple(displacement_regions)
         )
         names = _identifiers(tuple(name for name, _ in records), "displacement region ID")
-        nodes = tuple(tuple(int(index) for index in indices) for _, indices in records)
+        nodes = tuple(tuple(indices) for _, indices in records)
         if any(not region for region in nodes):
             raise ValueError(
                 "Every displacement sensor region requires at least one node."

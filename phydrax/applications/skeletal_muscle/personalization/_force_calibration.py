@@ -74,7 +74,7 @@ class PhysicalRelativeForceCalibrationPlan(StrictModule):
         if design.ndim != 2 or design.shape[0] < 1:
             raise ValueError("nuisance_design must have shape (samples>=1, nuisances).")
         if not jnp.issubdtype(design.dtype, jnp.inexact):
-            design = design.astype(float)
+            design = design.astype("float64")
         names = tuple(nuisance_names)
         if len(names) != design.shape[1]:
             raise ValueError("nuisance_names must name every nuisance-design column.")
@@ -98,8 +98,8 @@ class PhysicalRelativeForceCalibrationPlan(StrictModule):
         self.nuisance_names = names
         self.protocol_id = protocol_id
         self.asset_id = asset_id
-        self.sample_count = int(design.shape[0])
-        self.nuisance_count = int(design.shape[1])
+        self.sample_count = design.shape[0]
+        self.nuisance_count = design.shape[1]
         self.relative_rank_cutoff = cutoff
         self.maximum_condition_number = maximum_condition
         self.plan_id = canonical_fingerprint(
@@ -107,7 +107,7 @@ class PhysicalRelativeForceCalibrationPlan(StrictModule):
                 "kind": "physical-relative-force-observation-calibration",
                 "protocol_id": protocol_id,
                 "asset_id": asset_id,
-                "sample_count": int(design.shape[0]),
+                "sample_count": design.shape[0],
                 "nuisance_names": list(names),
                 "relative_rank_cutoff": cutoff.hex(),
                 "maximum_condition_number": maximum_condition.hex(),
@@ -251,15 +251,18 @@ class PreparedPhysicalRelativeForceCalibration(StrictModule):
         observed = jnp.asarray(observed_force_newton, dtype=dtype)
         uncertainty = jnp.asarray(standard_uncertainty_newton, dtype=dtype)
         shape = (self.plan.sample_count,)
-        if relative.shape != shape or observed.shape != shape or uncertainty.shape != shape:
+        if (
+            relative.shape != shape
+            or observed.shape != shape
+            or uncertainty.shape != shape
+        ):
             raise ValueError(
-                "relative_force, observed_force_newton, and standard_uncertainty_newton "
-                f"must have shape {shape}."
+                f"relative_force, observed_force_newton, and standard_uncertainty_newton must have shape {shape}."
             )
         if sample_mask is None:
-            requested = jnp.ones(shape, dtype=bool)
+            requested = jnp.ones(shape, dtype=jnp.bool_)
         else:
-            requested = jnp.asarray(sample_mask, dtype=bool)
+            requested = jnp.asarray(sample_mask, dtype=jnp.bool_)
             if requested.shape != shape:
                 raise ValueError(f"sample_mask must have shape {shape}.")
         observations_finite = jnp.isfinite(relative) & jnp.isfinite(observed)
@@ -267,9 +270,7 @@ class PreparedPhysicalRelativeForceCalibration(StrictModule):
         valid = requested & observations_finite & uncertainties_positive
         safe_uncertainty = jnp.where(valid, uncertainty, 1.0)
         weights = jnp.where(valid, 1.0 / safe_uncertainty**2, 0.0)
-        design = jnp.concatenate(
-            (relative[:, None], self.plan.nuisance_design), axis=1
-        )
+        design = jnp.concatenate((relative[:, None], self.plan.nuisance_design), axis=1)
         feature_count = 1 + self.plan.nuisance_count
         result = solve_weighted_least_squares(
             design,
@@ -302,37 +303,31 @@ class PreparedPhysicalRelativeForceCalibration(StrictModule):
             scale_residual = relative - nuisance_projection.prediction
         else:
             scale_residual = relative
-        scale_information = jnp.sum(
-            jnp.where(valid, weights * scale_residual**2, 0.0)
-        )
+        scale_information = jnp.sum(jnp.where(valid, weights * scale_residual**2, 0.0))
         total_scale_moment = jnp.sum(jnp.where(valid, weights * relative**2, 0.0))
         nuisance_confounding = jnp.where(
             total_scale_moment > 0.0,
             jnp.clip(1.0 - scale_information / total_scale_moment, 0.0, 1.0),
             1.0,
         )
-        information_tolerance = (
-            jnp.finfo(dtype).eps * jnp.maximum(total_scale_moment, 1.0)
+        information_tolerance = jnp.finfo(dtype).eps * jnp.maximum(
+            total_scale_moment, 1.0
         )
-        scale_identifiable = (
-            result.rank == feature_count
-        ) & (scale_information > information_tolerance)
+        scale_identifiable = (result.rank == feature_count) & (
+            scale_information > information_tolerance
+        )
         scale_positive = jnp.isfinite(scale) & (scale > 0.0)
-        condition_acceptable = (
-            jnp.isfinite(result.condition_number)
-            & (result.condition_number <= self.plan.maximum_condition_number)
+        condition_acceptable = jnp.isfinite(result.condition_number) & (
+            result.condition_number <= self.plan.maximum_condition_number
         )
         degrees_of_freedom = result.sample_count - feature_count
-        safe_degrees_of_freedom = jnp.maximum(
-            degrees_of_freedom.astype(dtype), 1.0
-        )
+        safe_degrees_of_freedom = jnp.maximum(degrees_of_freedom.astype(dtype), 1.0)
         normalized_residual_variance = (
             jnp.sum(jnp.where(valid, weights * result.residual**2, 0.0))
             / safe_degrees_of_freedom
         )
         residual_variance_newton_squared = (
-            jnp.sum(jnp.where(valid, result.residual**2, 0.0))
-            / safe_degrees_of_freedom
+            jnp.sum(jnp.where(valid, result.residual**2, 0.0)) / safe_degrees_of_freedom
         )
         residual_sd = jnp.sqrt(residual_variance_newton_squared)
         scale_standard_uncertainty = jnp.sqrt(
@@ -358,42 +353,59 @@ class PreparedPhysicalRelativeForceCalibration(StrictModule):
         status = jnp.where(
             observations_all_finite,
             status,
-            jnp.bitwise_or(status, int(PhysicalRelativeForceCalibrationStatus.NONFINITE_OBSERVATION)),
+            jnp.bitwise_or(
+                status, int(PhysicalRelativeForceCalibrationStatus.NONFINITE_OBSERVATION)
+            ),
         )
         status = jnp.where(
             uncertainties_all_positive,
             status,
-            jnp.bitwise_or(status, int(PhysicalRelativeForceCalibrationStatus.NONPOSITIVE_UNCERTAINTY)),
+            jnp.bitwise_or(
+                status,
+                int(PhysicalRelativeForceCalibrationStatus.NONPOSITIVE_UNCERTAINTY),
+            ),
         )
         status = jnp.where(
             enough,
             status,
-            jnp.bitwise_or(status, int(PhysicalRelativeForceCalibrationStatus.INSUFFICIENT_SAMPLES)),
+            jnp.bitwise_or(
+                status, int(PhysicalRelativeForceCalibrationStatus.INSUFFICIENT_SAMPLES)
+            ),
         )
         status = jnp.where(
             full_rank,
             status,
-            jnp.bitwise_or(status, int(PhysicalRelativeForceCalibrationStatus.RANK_DEFICIENT)),
+            jnp.bitwise_or(
+                status, int(PhysicalRelativeForceCalibrationStatus.RANK_DEFICIENT)
+            ),
         )
         status = jnp.where(
             scale_identifiable,
             status,
-            jnp.bitwise_or(status, int(PhysicalRelativeForceCalibrationStatus.SCALE_NOT_IDENTIFIABLE)),
+            jnp.bitwise_or(
+                status, int(PhysicalRelativeForceCalibrationStatus.SCALE_NOT_IDENTIFIABLE)
+            ),
         )
         status = jnp.where(
             scale_positive,
             status,
-            jnp.bitwise_or(status, int(PhysicalRelativeForceCalibrationStatus.NONPOSITIVE_SCALE)),
+            jnp.bitwise_or(
+                status, int(PhysicalRelativeForceCalibrationStatus.NONPOSITIVE_SCALE)
+            ),
         )
         status = jnp.where(
             condition_acceptable,
             status,
-            jnp.bitwise_or(status, int(PhysicalRelativeForceCalibrationStatus.ILL_CONDITIONED)),
+            jnp.bitwise_or(
+                status, int(PhysicalRelativeForceCalibrationStatus.ILL_CONDITIONED)
+            ),
         )
         status = jnp.where(
             result.valid,
             status,
-            jnp.bitwise_or(status, int(PhysicalRelativeForceCalibrationStatus.SOLVER_FAILURE)),
+            jnp.bitwise_or(
+                status, int(PhysicalRelativeForceCalibrationStatus.SOLVER_FAILURE)
+            ),
         )
         successful = status == int(PhysicalRelativeForceCalibrationStatus.SUCCESS)
         evidence = PhysicalRelativeForceCalibrationEvidence(
@@ -441,7 +453,9 @@ class PreparedPhysicalRelativeForceCalibration(StrictModule):
             raise TypeError("state must be PhysicalRelativeForceCalibrationState.")
         if state.plan_id != self.plan.plan_id:
             raise ValueError("state does not belong to this prepared calibration.")
-        relative = jnp.asarray(relative_force, dtype=state.scale_newton_per_relative_force.dtype)
+        relative = jnp.asarray(
+            relative_force, dtype=state.scale_newton_per_relative_force.dtype
+        )
         return PhysicalForceObservation(
             relative,
             state.scale_newton_per_relative_force * relative,
@@ -468,7 +482,10 @@ def commit_physical_relative_force_calibration(
         (source.plan_id == current.plan_id)
         & (source.protocol_id == current.protocol_id)
         & (source.asset_id == current.asset_id)
-        & (source.scale_newton_per_relative_force == current.scale_newton_per_relative_force)
+        & (
+            source.scale_newton_per_relative_force
+            == current.scale_newton_per_relative_force
+        )
         & jnp.array_equal(
             source.nuisance_coefficients_newton,
             current.nuisance_coefficients_newton,

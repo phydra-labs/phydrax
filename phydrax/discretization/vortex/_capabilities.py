@@ -108,8 +108,7 @@ class VortexVelocityCapabilities(StrictModule, NonTrainableState):
         )
         if not {"positions", "strength", "active_mask"}.issubset(requirements):
             raise ValueError(
-                "Vortex velocity capabilities must require positions, strength, "
-                "and active_mask."
+                "Vortex velocity capabilities must require positions, strength, and active_mask."
             )
         fields = _names("supported_fields", supported_fields, _OUTPUT_FIELDS)
         domain_ = str(domain).strip()
@@ -206,8 +205,7 @@ class VortexDiffusionCapabilities(StrictModule, NonTrainableState):
         )
         if not {"positions", "strength", "active_mask"}.issubset(requirements):
             raise ValueError(
-                "Vortex diffusion capabilities must require positions, strength, "
-                "and active_mask."
+                "Vortex diffusion capabilities must require positions, strength, and active_mask."
             )
         domain_ = str(domain).strip()
         if domain_ not in _DOMAINS:

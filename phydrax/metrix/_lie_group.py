@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._matrix_manifold import SpecialOrthogonalManifold
 from ._state_geometry import AbstractStateGeometry
 
@@ -100,9 +100,9 @@ def _rotation_log(rotation: Array, dimension: int, /) -> Array:
 class AbstractLieGroup(StrictModule):
     """Minimal group, Lie-algebra, and trivialization contract."""
 
-    group_id: AbstractAttribute[str]
-    point_shape: AbstractAttribute[tuple[int, int]]
-    algebra_shape: AbstractAttribute[tuple[int, ...]]
+    group_id: eqx.AbstractVar[str]
+    point_shape: eqx.AbstractVar[tuple[int, int]]
+    algebra_shape: eqx.AbstractVar[tuple[int, ...]]
 
     @abstractmethod
     def identity(self, *, dtype: Any = jnp.float64) -> Array:

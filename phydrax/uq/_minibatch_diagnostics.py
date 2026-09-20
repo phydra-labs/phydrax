@@ -190,7 +190,7 @@ def diagnose_minibatch_posterior(
                 jnp.sum(problem.log_likelihood_factors(physical, batch))
                 for batch in audit_batches
             ),
-            jnp.zeros((), dtype=float),
+            jnp.zeros((), dtype=jnp.float64),
         )
         return (
             likelihood
@@ -291,10 +291,10 @@ def _tree_l2_norm(tree: PyTree[Any], /) -> Array:
     return jnp.sqrt(
         sum(
             (
-                jnp.sum(jnp.asarray(leaf, dtype=float) ** 2)
+                jnp.sum(jnp.asarray(leaf, dtype=jnp.float64) ** 2)
                 for leaf in jax.tree_util.tree_leaves(tree)
             ),
-            jnp.zeros((), dtype=float),
+            jnp.zeros((), dtype=jnp.float64),
         )
     )
 

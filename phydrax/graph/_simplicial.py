@@ -7,6 +7,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax._strict import StrictModule
+
 from ._graph import ensure_graph
 from ._ir import GraphIR
 from ._kernels import segment_sum
@@ -60,10 +62,10 @@ def _triangle_edge_cells(faces: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.
 
 
 def _feature_array(name: str, value: Any, expected: int, /) -> jnp.ndarray:
-    arr = jnp.asarray(value, dtype=float)
+    arr = jnp.asarray(value, dtype=jnp.float64)
     if arr.ndim == 0:
         raise ValueError(f"{name} features must have a leading cell axis.")
-    if int(arr.shape[0]) != int(expected):
+    if arr.shape[0] != int(expected):
         raise ValueError(
             f"{name} features must have leading axis {expected}; got {arr.shape[0]}."
         )
@@ -119,7 +121,7 @@ def _as_feature_mapping(value: Any, /) -> dict[str, Any]:
     return {"features": value}
 
 
-class SimplicialComplexGraph(eqx.Module):
+class SimplicialComplexGraph(StrictModule):
     """A 2D simplicial complex encoded as a typed `GraphIR`.
 
     Vertices, edge cells, and triangular face cells are graph nodes. Signed
@@ -178,7 +180,7 @@ class SimplicialComplexGraph(eqx.Module):
         self.edge_vertices = jnp.asarray(edge_vertices, dtype=jnp.int32)
         self.face_vertices = jnp.asarray(face_vertices, dtype=jnp.int32)
         self.face_edges = jnp.asarray(face_edges, dtype=jnp.int32)
-        self.face_edge_signs = jnp.asarray(face_edge_signs, dtype=float)
+        self.face_edge_signs = jnp.asarray(face_edge_signs, dtype=jnp.float64)
         self.vertex_to_edge_edges = jnp.asarray(vertex_to_edge_edges, dtype=jnp.int32)
         self.edge_to_vertex_edges = jnp.asarray(edge_to_vertex_edges, dtype=jnp.int32)
         self.edge_to_face_edges = jnp.asarray(edge_to_face_edges, dtype=jnp.int32)
@@ -249,8 +251,8 @@ def triangle_mesh_to_simplicial_graph(
     """Convert triangular faces into a signed simplicial-complex `GraphIR`."""
     faces, n_vertex = _validate_faces(mesh_faces, num_vertices)
     edge_vertices, face_edges, face_edge_signs = _triangle_edge_cells(faces)
-    n_edge_cell = int(edge_vertices.shape[0])
-    n_face = int(faces.shape[0])
+    n_edge_cell = edge_vertices.shape[0]
+    n_face = faces.shape[0]
     n_total = n_vertex + n_edge_cell + n_face
 
     vertex_cells = np.arange(n_vertex, dtype=np.int32)
@@ -304,17 +306,17 @@ def triangle_mesh_to_simplicial_graph(
     ]
 
     v_to_e_edges = np.arange(v_to_e_senders.shape[0], dtype=np.int32)
-    e_to_f_start = int(v_to_e_senders.shape[0])
+    e_to_f_start = v_to_e_senders.shape[0]
     e_to_f_edges = e_to_f_start + np.arange(e_to_f_senders.shape[0], dtype=np.int32)
     e_to_v_edges = np.zeros((0,), dtype=np.int32)
     f_to_e_edges = np.zeros((0,), dtype=np.int32)
 
     if add_reverse_edges:
-        e_to_v_start = e_to_f_start + int(e_to_f_senders.shape[0])
+        e_to_v_start = e_to_f_start + e_to_f_senders.shape[0]
         e_to_v_senders = v_to_e_receivers
         e_to_v_receivers = v_to_e_senders
         e_to_v_edges = e_to_v_start + np.arange(e_to_v_senders.shape[0], dtype=np.int32)
-        f_to_e_start = e_to_v_start + int(e_to_v_senders.shape[0])
+        f_to_e_start = e_to_v_start + e_to_v_senders.shape[0]
         f_to_e_senders = e_to_f_receivers
         f_to_e_receivers = e_to_f_senders
         f_to_e_edges = f_to_e_start + np.arange(f_to_e_senders.shape[0], dtype=np.int32)
@@ -393,7 +395,9 @@ def triangle_mesh_to_simplicial_graph(
     edge_type_arr = np.concatenate(type_parts, axis=0)
     edges = {
         "type": jnp.asarray(edge_type_arr, dtype=jnp.int32),
-        "incidence_sign": jnp.asarray(np.concatenate(sign_parts, axis=0), dtype=float),
+        "incidence_sign": jnp.asarray(
+            np.concatenate(sign_parts, axis=0), dtype=jnp.float64
+        ),
         "lower_index": jnp.asarray(
             np.concatenate(lower_index_parts, axis=0), dtype=jnp.int32
         ),
@@ -414,7 +418,7 @@ def triangle_mesh_to_simplicial_graph(
         receivers=jnp.asarray(receivers, dtype=jnp.int32),
         globals=globals,
         n_node=jnp.asarray([n_total], dtype=jnp.int32),
-        n_edge=jnp.asarray([int(senders.shape[0])], dtype=jnp.int32),
+        n_edge=jnp.asarray([senders.shape[0]], dtype=jnp.int32),
         validate=validate,
     )
     return SimplicialComplexGraph(
@@ -441,7 +445,7 @@ def triangle_mesh_to_simplicial_graph(
 
 
 def _as_array(name: str, value: Any, /) -> jnp.ndarray:
-    arr = jnp.asarray(value, dtype=float)
+    arr = jnp.asarray(value, dtype=jnp.float64)
     if arr.ndim == 0:
         raise ValueError(f"{name} must have a leading cell axis.")
     return arr
@@ -472,7 +476,7 @@ def _edge_signs(
         raise TypeError("SimplicialHodgeLaplacian requires mapping-valued graph edges.")
     if sign_key not in graph.edges:
         raise KeyError(f"Graph edges do not contain sign_key {sign_key!r}.")
-    signs = jnp.asarray(graph.edges[sign_key], dtype=float).reshape((-1,))
+    signs = jnp.asarray(graph.edges[sign_key], dtype=jnp.float64).reshape((-1,))
     types = edge_type_ids(graph, type_key=edge_type_key)
     keep = types == int(wanted_type)
     if graph.edge_mask is not None:
@@ -499,7 +503,7 @@ def _incidence_apply(
         raise ValueError("SimplicialHodgeLaplacian requires explicit senders/receivers.")
     signs = _edge_signs(graph, sign_key, edge_type_key, edge_type)
     messages = values[graph.senders] * _broadcast_weight(signs, values[graph.senders])
-    return segment_sum(messages, graph.receivers, int(values.shape[0]))
+    return segment_sum(messages, graph.receivers, values.shape[0])
 
 
 def _mask_cell_type(
@@ -526,7 +530,7 @@ def _with_node_output(
     return nodes
 
 
-class SimplicialHodgeLaplacian(eqx.Module):
+class SimplicialHodgeLaplacian(StrictModule):
     """Unweighted Hodge Laplacian on 0-, 1-, or 2-forms.
 
     The operator reads a cell field from graph nodes and applies
@@ -610,8 +614,8 @@ class SimplicialHodgeLaplacian(eqx.Module):
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
         values = _node_field(graph, self.input_key)
-        num_cells = int(node_type_ids(graph, type_key=self.node_type_key).shape[0])
-        if int(values.shape[0]) != num_cells:
+        num_cells = node_type_ids(graph, type_key=self.node_type_key).shape[0]
+        if values.shape[0] != num_cells:
             raise ValueError(
                 "SimplicialHodgeLaplacian input leading axis must match graph cells."
             )

@@ -25,7 +25,7 @@ from ._fourier_embeddings import (
     RandomFourierFeatureEmbeddings,
     TrainableFourierFeatureEmbeddings,
 )
-from ._fourier_sampling import FourierEvaluationMethod, sample_fourier_grid
+from ._fourier_sampling import sample_fourier_grid
 from ._interface import InterfaceDistanceSemantics, InterfaceFeatureLift
 from ._linear import Linear
 from ._linear_recurrent_unit import LinearRecurrentUnit
@@ -115,7 +115,6 @@ __all__ = [
     "MultiscaleFourierFeatureEmbeddings",
     "RandomFourierFeatureEmbeddings",
     "TrainableFourierFeatureEmbeddings",
-    "FourierEvaluationMethod",
     "GRUCell",
     "sample_fourier_grid",
     "SinusoidalTimeEmbedding",

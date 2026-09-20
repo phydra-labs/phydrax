@@ -47,7 +47,7 @@ def green_lagrange_strain(deformation_gradient: ArrayLike, /) -> Array:
     if jnp.issubdtype(gradient.dtype, jnp.complexfloating):
         raise TypeError("deformation_gradient must be real.")
     if not jnp.issubdtype(gradient.dtype, jnp.floating):
-        gradient = gradient.astype(float)
+        gradient = gradient.astype("float64")
     right_cauchy_green = contract("...ki,...kj->...ij", gradient, gradient)
     return 0.5 * (right_cauchy_green - jnp.eye(3, dtype=gradient.dtype))
 
@@ -60,7 +60,7 @@ def eulerian_strain(deformation_gradient: ArrayLike, /) -> Array:
     if jnp.issubdtype(gradient.dtype, jnp.complexfloating):
         raise TypeError("deformation_gradient must be real.")
     if not jnp.issubdtype(gradient.dtype, jnp.floating):
-        gradient = gradient.astype(float)
+        gradient = gradient.astype("float64")
     inverse_result = la.inverse_small_linear(
         la.SmallLinearSolvePlan(3),
         gradient,
@@ -122,7 +122,7 @@ class StrainEvaluationPlan:
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        sample_shape = tuple(int(size) for size in self.sample_shape)
+        sample_shape = tuple(self.sample_shape)
         if any(size <= 0 for size in sample_shape):
             raise ValueError("sample_shape dimensions must be positive.")
         reference = _identifier(self.reference_frame_id, "reference_frame_id")
@@ -183,7 +183,7 @@ class PreparedStrainEvaluation(StrictModule, NonTrainableState):
         plan_id: str,
         /,
     ):
-        self.sample_shape = tuple(int(size) for size in sample_shape)
+        self.sample_shape = tuple(sample_shape)
         self.reference_frame_id = _identifier(reference_frame_id, "reference_frame_id")
         self.measure = measure
         self.minimum_jacobian = float(minimum_jacobian)
@@ -210,7 +210,7 @@ class PreparedStrainEvaluation(StrictModule, NonTrainableState):
         if jnp.issubdtype(gradient.dtype, jnp.complexfloating):
             raise TypeError("deformation_gradient must be real.")
         if not jnp.issubdtype(gradient.dtype, jnp.floating):
-            gradient = gradient.astype(float)
+            gradient = gradient.astype("float64")
         uncertainty_available = deformation_gradient_standard_deviation is not None
         gradient_std = (
             jnp.zeros_like(gradient)

@@ -444,8 +444,7 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
                     stdout_bytes=len(completed.stdout.encode("utf-8")),
                 )
                 raise RuntimeError(
-                    f"Linear-theory backend failed with code {completed.returncode}: "
-                    f"{completed.stderr.strip()}"
+                    f"Linear-theory backend failed with code {completed.returncode}: {completed.stderr.strip()}"
                 )
             if not output_path.is_file():
                 raise RuntimeError(

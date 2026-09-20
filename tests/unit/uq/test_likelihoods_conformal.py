@@ -146,7 +146,7 @@ def test_interval_calibration_diagnostics_broadcast_and_validate_masks():
             jnp.ones((2,)),
             jnp.zeros((2,)),
             nominal_coverage=0.5,
-            mask=jnp.ones((2, 1), dtype=bool),
+            mask=jnp.ones((2, 1), dtype="bool"),
         )
 
 
@@ -155,7 +155,7 @@ def test_interval_calibration_diagnostics_broadcast_and_validate_masks():
     [
         (jnp.zeros((2, 1)), jnp.ones((2, 1)), jnp.zeros((2, 1))),
         (jnp.zeros((2,)), jnp.ones((3,)), jnp.zeros((2,))),
-        (jnp.zeros((2,), dtype=complex), jnp.ones((2,)), jnp.zeros((2,))),
+        (jnp.zeros((2,), dtype="complex128"), jnp.ones((2,)), jnp.zeros((2,))),
     ],
 )
 def test_interval_calibration_diagnostics_require_aligned_real_vectors(
@@ -223,7 +223,7 @@ def test_split_conformal_uses_exact_finite_sample_rank_and_rejects_impossible_ra
 def test_functional_conformal_aggregates_one_masked_score_per_case():
     center = jnp.zeros((9, 4))
     target = jnp.arange(9.0)[:, None] * jnp.ones((1, 4))
-    mask = jnp.ones_like(target, dtype=bool).at[:, -1].set(False)
+    mask = jnp.ones_like(target, dtype="bool").at[:, -1].set(False)
     calibrator = phx.uq.FunctionalConformal.calibrate(
         center,
         target,

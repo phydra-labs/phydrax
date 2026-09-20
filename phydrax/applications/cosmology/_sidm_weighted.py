@@ -83,7 +83,7 @@ class WeightedSIDMPacketState(StrictModule):
             gravitational_masses, dtype=position.dtype
         )
         self.canonical_momenta = jnp.asarray(canonical_momenta, dtype=position.dtype)
-        self.active_mask = jnp.asarray(active_mask, dtype=bool)
+        self.active_mask = jnp.asarray(active_mask, dtype=jnp.bool_)
         self.packet_ids = jnp.asarray(packet_ids, dtype=jnp.int64)
         self.parent_packet_ids = jnp.asarray(parent_packet_ids, dtype=jnp.int64)
         self.lineage_depth = jnp.asarray(lineage_depth, dtype=jnp.int32)
@@ -449,7 +449,7 @@ class WeightedSIDMPlan(StrictModule, NonTrainableState):
         active = (
             self.particles.active_mask
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         if active.shape != (capacity,):
             raise ValueError("active_mask must have particle-capacity shape.")
@@ -664,7 +664,7 @@ class WeightedSIDMPlan(StrictModule, NonTrainableState):
         _shape_check(state, self.particles.capacity, self.particles.ambient_dimension)
         dtype = state.positions.dtype
         active = state.active_mask
-        active_column = active[:, None]
+        active[:, None]
         safe_positions = jnp.where(jnp.isfinite(state.positions), state.positions, 0.0)
         safe_scale = jnp.where(
             jnp.isfinite(state.scale_factor) & (state.scale_factor > 0.0),
@@ -701,7 +701,7 @@ class WeightedSIDMPlan(StrictModule, NonTrainableState):
         speed = jnp.sqrt(ein.contract("ni,ni->n", relative, relative))
         if self.angular_split is None:
             moments = self.differential_kernel.moments(speed)
-            split_successful = jnp.ones(speed.shape, dtype=bool)
+            split_successful = jnp.ones(speed.shape, dtype=jnp.bool_)
         else:
             split_evaluation = self.angular_split.moments(speed)
             moments = split_evaluation.rare
@@ -1263,7 +1263,7 @@ class WeightedPacketResamplingPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Covariance closure requires at least twice the ambient dimension."
             )
-        accepted_boundary_ = jnp.asarray(accepted_boundary, dtype=bool).reshape(())
+        accepted_boundary_ = jnp.asarray(accepted_boundary, dtype=jnp.bool_).reshape(())
         ordered_packet_ids = jnp.sort(state.packet_ids)
         identity_valid = jnp.all(ordered_packet_ids >= 0) & jnp.all(
             ordered_packet_ids[1:] > ordered_packet_ids[:-1]
@@ -1335,7 +1335,7 @@ class WeightedPacketResamplingPlan(StrictModule, NonTrainableState):
             .at[target_slots]
             .set(jnp.arange(target_count, dtype=jnp.int32))
         )
-        target_active = jnp.zeros((capacity,), dtype=bool).at[target_slots].set(True)
+        target_active = jnp.zeros((capacity,), dtype=jnp.bool_).at[target_slots].set(True)
         local_rank = rank
         trace = jnp.trace(velocity_covariance)
         if self.velocity_moment == "kinetic_energy":

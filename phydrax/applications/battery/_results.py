@@ -34,7 +34,7 @@ class BatteryModelOutput(StrictModule):
 
     def __init__(self, values: ArrayLike, domain_valid: ArrayLike, /):
         values_ = jnp.asarray(values)
-        valid_ = jnp.asarray(domain_valid, dtype=bool)
+        valid_ = jnp.asarray(domain_valid, dtype=jnp.bool_)
         if values_.ndim < 1:
             raise ValueError(
                 "Battery model output values require a final observable axis."
@@ -68,7 +68,7 @@ class BatterySelectedOutputs(StrictModule):
     ):
         times = jnp.asarray(times_s)
         values_ = jnp.asarray(values)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if times.ndim != 1 or valid_.shape != times.shape:
             raise ValueError(
                 "Selected battery times and valid mask must share one rank-one shape."
@@ -109,11 +109,11 @@ class BatteryTermination(StrictModule):
         reason_names: tuple[str, ...],
         derivative_valid: ArrayLike = True,
     ):
-        terminated_ = jnp.asarray(terminated, dtype=bool)
+        terminated_ = jnp.asarray(terminated, dtype=jnp.bool_)
         time = jnp.asarray(time_s)
         reason = jnp.asarray(reason_index, dtype=jnp.int32)
         step = jnp.asarray(protocol_step_index, dtype=jnp.int32)
-        derivative = jnp.asarray(derivative_valid, dtype=bool)
+        derivative = jnp.asarray(derivative_valid, dtype=jnp.bool_)
         if any(
             value.shape != () for value in (terminated_, time, reason, step, derivative)
         ):
@@ -369,8 +369,7 @@ class BatteryExperimentResult(StrictModule):
         """Return the concrete run identity or refuse traced/unsealed execution."""
         if self.run_id is None:
             raise ValueError(
-                "Battery evidence requires concrete parameter, protocol-value, and "
-                "initial-state digests."
+                "Battery evidence requires concrete parameter, protocol-value, and initial-state digests."
             )
         return self.run_id
 

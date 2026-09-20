@@ -352,9 +352,7 @@ def merge_ensemble_segments(
     scheduled = frozenset(manifest.schedule.trajectory_indices)
     by_trajectory: dict[int, str] = {}
     for segment in ordered:
-        segment_indices = tuple(
-            int(value) for value in np.asarray(segment.trajectory_indices)
-        )
+        segment_indices = tuple(np.asarray(segment.trajectory_indices))
         for trajectory, configuration_id in zip(
             segment_indices, segment.configuration_ids, strict=True
         ):

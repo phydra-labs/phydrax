@@ -112,7 +112,7 @@ def read_pivlab(
                 AdapterStatus.INCONSISTENT_SOURCE,
                 "PIVlab typevector arrays must contain integer categories.",
             )
-        valid = np.isin(type_.astype(int), (1, 3)) & np.isfinite(u_) & np.isfinite(v_)
+        valid = np.isin(type_.astype("int64"), (1, 3)) & np.isfinite(u_) & np.isfinite(v_)
         frame_source_id = f"{source_id}:frame:{index}"
         if unit_mode == "pixel-displacement":
             if y_axis == "down":
@@ -524,7 +524,7 @@ def _physical_columns(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     positions = np.asarray(field.positions_xy)
     velocity = np.asarray(field.velocity_xy)
-    valid = np.asarray(field.valid, dtype=bool)
+    valid = np.asarray(field.valid, dtype=np.bool_)
     if (
         positions.ndim != 3
         or positions.shape[-1] != 2
@@ -577,11 +577,11 @@ def _physical_grid(
     valid,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    x_ = np.asarray(x, dtype=float).reshape((-1,))
-    y_ = np.asarray(y, dtype=float).reshape((-1,))
-    vx = np.asarray(vector_x, dtype=float).reshape((-1,))
-    vy = np.asarray(vector_y, dtype=float).reshape((-1,))
-    valid_ = np.asarray(valid, dtype=bool).reshape((-1,))
+    x_ = np.asarray(x, dtype=np.float64).reshape((-1,))
+    y_ = np.asarray(y, dtype=np.float64).reshape((-1,))
+    vx = np.asarray(vector_x, dtype=np.float64).reshape((-1,))
+    vy = np.asarray(vector_y, dtype=np.float64).reshape((-1,))
+    valid_ = np.asarray(valid, dtype=np.bool_).reshape((-1,))
     if np.any(valid_ & (~np.isfinite(vx) | ~np.isfinite(vy))):
         raise AdapterError(
             AdapterStatus.INCONSISTENT_SOURCE,
@@ -612,11 +612,11 @@ def _physical_grid(
             "Physical PIVlab positions contain duplicates.",
         )
     shape = (y_axis.size, x_axis.size)
-    positions = np.empty(shape + (2,), dtype=float)
+    positions = np.empty(shape + (2,), dtype=np.float64)
     positions[..., 0] = x_axis[None, :]
     positions[..., 1] = y_axis[:, None]
-    vectors = np.zeros(shape + (2,), dtype=np.result_type(vx, vy, float))
-    validity = np.zeros(shape, dtype=bool)
+    vectors = np.zeros(shape + (2,), dtype=np.result_type(vx, vy, np.float64))
+    validity = np.zeros(shape, dtype=np.bool_)
     vectors[iy, ix, 0] = np.where(valid_, vx, 0.0)
     vectors[iy, ix, 1] = np.where(valid_, vy, 0.0)
     validity[iy, ix] = valid_

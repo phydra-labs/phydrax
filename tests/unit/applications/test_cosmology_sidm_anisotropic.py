@@ -175,7 +175,7 @@ def _anisotropic_kernel(*, maximum_speed=3.0):
         cosines,
         differential,
         **_source_kwargs(speeds, cosines, differential),
-        identical_particle_convention="labelled-full-sphere",
+        identical_particle_convention="labeled-full-sphere",
     )
 
 

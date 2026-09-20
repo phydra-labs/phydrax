@@ -32,9 +32,9 @@ class UnstructuredRemapReport(StrictModule):
 
 def _active_mask(value: ArrayLike | None, count: int, name: str, /) -> Array:
     if value is None:
-        return jnp.ones((count,), dtype=bool)
+        return jnp.ones((count,), dtype=jnp.bool_)
     array = jnp.asarray(value)
-    if array.shape != (count,) or array.dtype != jnp.dtype(bool):
+    if array.shape != (count,) or array.dtype != jnp.dtype(jnp.bool_):
         raise ValueError(f"{name} must be a boolean array with one entry per cell.")
     return array
 
@@ -117,7 +117,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             raise ValueError("Remap tolerance must be positive and finite.")
         offsets = np.asarray(target_offsets, dtype=np.int32)
         indices = np.asarray(source_indices, dtype=np.int32)
-        measures = np.asarray(intersection_measures, dtype=float)
+        measures = np.asarray(intersection_measures, dtype=np.float64)
         if offsets.shape != (target.cell_count + 1,):
             raise ValueError(
                 "target_offsets must contain one CSR offset per target cell."

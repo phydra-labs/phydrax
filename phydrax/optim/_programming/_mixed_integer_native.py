@@ -503,16 +503,16 @@ def _linear_bound_certificate(
         equality_multiplier = multipliers[:m] - multipliers[m : 2 * m]
         inequality_multiplier = multipliers[2 * m :]
         lower_multiplier, upper_multiplier = np.zeros(n), np.zeros(n)
-        fixed = np.asarray(problem.fixed_bound_indices, dtype=int)
+        fixed = np.asarray(problem.fixed_bound_indices, dtype=np.int64)
         signed = equality_multiplier[problem.num_user_equalities :]
         lower_multiplier[fixed] = np.maximum(-signed, 0)
         upper_multiplier[fixed] = np.maximum(signed, 0)
         start = problem.num_user_inequalities
         middle = start + len(problem.lower_bound_indices)
-        lower_multiplier[np.asarray(problem.lower_bound_indices, dtype=int)] = (
+        lower_multiplier[np.asarray(problem.lower_bound_indices, dtype=np.int64)] = (
             inequality_multiplier[start:middle]
         )
-        upper_multiplier[np.asarray(problem.upper_bound_indices, dtype=int)] = (
+        upper_multiplier[np.asarray(problem.upper_bound_indices, dtype=np.int64)] = (
             inequality_multiplier[middle:]
         )
         result = audit_dual_infeasibility_ray(

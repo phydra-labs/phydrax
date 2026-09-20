@@ -44,9 +44,9 @@ class PolarVolumeSupport:
     support_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        azimuth = np.array(self.azimuth, dtype=float, copy=True)
-        elevation = np.array(self.elevation, dtype=float, copy=True)
-        ranges = np.array(self.range_gates, dtype=float, copy=True)
+        azimuth = np.array(self.azimuth, dtype=np.float64, copy=True)
+        elevation = np.array(self.elevation, dtype=np.float64, copy=True)
+        ranges = np.array(self.range_gates, dtype=np.float64, copy=True)
         if (
             azimuth.ndim != 1
             or elevation.shape != azimuth.shape
@@ -90,7 +90,7 @@ class FMCWAcquisition:
     acquisition_id: str
 
     def __post_init__(self) -> None:
-        positions = np.array(self.receiver_positions, dtype=float, copy=True)
+        positions = np.array(self.receiver_positions, dtype=np.float64, copy=True)
         if (
             positions.ndim != 2
             or positions.shape[1] != 3
@@ -186,7 +186,7 @@ class AutomotiveRadarProfile:
         *,
         asset_id: str,
     ) -> MeasurementCollection:
-        values = np.asarray(detections, dtype=float)
+        values = np.asarray(detections, dtype=np.float64)
         if values.ndim != 2 or values.shape[1] != 4:
             raise ValueError(
                 "detections must contain range, azimuth, radial velocity, and radar cross section."

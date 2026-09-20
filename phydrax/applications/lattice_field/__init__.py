@@ -4,36 +4,23 @@
 
 """Finite lattice-field model compositions over canonical Phydrax substrates."""
 
-from ._continuum_study import *  # noqa: F403
+from importlib import import_module
+
 from ._continuum_study import __all__ as _continuum_study_all
-from ._distributed_qcd import *  # noqa: F403
 from ._distributed_qcd import __all__ as _distributed_qcd_all
-from ._finite_density import *  # noqa: F403
 from ._finite_density import __all__ as _finite_density_all
-from ._finite_density_methods import *  # noqa: F403
 from ._finite_density_methods import __all__ as _finite_density_methods_all
-from ._finite_density_models import *  # noqa: F403
 from ._finite_density_models import __all__ as _finite_density_models_all
-from ._finite_density_table import *  # noqa: F403
 from ._finite_density_table import __all__ as _finite_density_table_all
-from ._finite_density_taylor import *  # noqa: F403
 from ._finite_density_taylor import __all__ as _finite_density_taylor_all
-from ._gauge_fixing import *  # noqa: F403
 from ._gauge_fixing import __all__ as _gauge_fixing_all
-from ._hamiltonian_gauge import *  # noqa: F403
 from ._hamiltonian_gauge import __all__ as _hamiltonian_gauge_all
-from ._production_contracts import *  # noqa: F403
 from ._production_contracts import __all__ as _production_contracts_all
-from ._qcd_ensembles import *  # noqa: F403
 from ._qcd_ensembles import __all__ as _qcd_ensembles_all
-from ._qcd_io import *  # noqa: F403
 from ._qcd_io import __all__ as _qcd_io_all
-from ._qcd_observables import *  # noqa: F403
 from ._qcd_observables import __all__ as _qcd_observables_all
-from ._qcd_recipes import *  # noqa: F403
-from ._qcd_transport import *  # noqa: F403
-from ._qcd_transport import __all__ as _qcd_transport_all
 from ._qcd_recipes import __all__ as _qcd_recipes_all
+from ._qcd_transport import __all__ as _qcd_transport_all
 from ._schwinger import (
     reconstruct_schwinger_flux,
     schwinger_background_schedule,
@@ -58,6 +45,39 @@ from ._z2_gauge import (
     Z2GaugeModel,
     Z2GaussSector,
 )
+
+
+_FACADE_EXPORT_MODULES = (
+    "._continuum_study",
+    "._distributed_qcd",
+    "._finite_density",
+    "._finite_density_methods",
+    "._finite_density_models",
+    "._finite_density_table",
+    "._finite_density_taylor",
+    "._gauge_fixing",
+    "._hamiltonian_gauge",
+    "._production_contracts",
+    "._qcd_ensembles",
+    "._qcd_io",
+    "._qcd_observables",
+    "._qcd_recipes",
+    "._qcd_transport",
+)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

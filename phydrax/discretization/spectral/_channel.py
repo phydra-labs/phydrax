@@ -53,14 +53,14 @@ class ChannelMeanConstraint(StrictModule, NonTrainableState):
         raw_values = jnp.asarray(values)
         if jnp.iscomplexobj(raw_values):
             raise TypeError("Channel mean constraint values must be real.")
-        values_ = raw_values.astype(float)
+        values_ = raw_values.astype("float64")
         if values_.shape != (2,) or not bool(jnp.all(jnp.isfinite(values_))):
             raise ValueError("Channel mean constraint values must have shape (2,).")
         self.values = values_
         self.kind = kind
         self.constraint_id = canonical_fingerprint(
             {
-                "kind": "channel-mean-constraint-v1",
+                "kind": "channel-mean-constraint",
                 "mode": kind,
                 "values": [float(values_[0]), float(values_[1])],
             }
@@ -109,13 +109,13 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
             jnp.iscomplexobj(value) for value in (raw_viscosity, raw_lower, raw_upper)
         ):
             raise TypeError("Channel viscosity and wall velocities must be real.")
-        viscosity_ = raw_viscosity.astype(float)
+        viscosity_ = raw_viscosity.astype("float64")
         if viscosity_.shape != () or not bool(
             jnp.isfinite(viscosity_) & (viscosity_ > 0.0)
         ):
             raise ValueError("viscosity must be one finite positive scalar.")
-        lower = raw_lower.astype(float)
-        upper = raw_upper.astype(float)
+        lower = raw_lower.astype("float64")
+        upper = raw_upper.astype("float64")
         if (
             lower.shape != (3,)
             or upper.shape != (3,)
@@ -137,8 +137,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Traction-owned tangential walls cannot also prescribe tangential "
-                "wall velocity."
+                "Traction-owned tangential walls cannot also prescribe tangential wall velocity."
             )
         constraint = (
             ChannelMeanConstraint() if mean_constraint is None else mean_constraint
@@ -159,7 +158,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
             raise ValueError("constraint_tolerance must be finite and positive.")
         identifier = canonical_fingerprint(
             {
-                "kind": "channel-stokes-plan-v4",
+                "kind": "channel-stokes-plan",
                 "discretization": discretization.prepared_id,
                 "viscosity": float(viscosity_),
                 "lower_wall": [float(value) for value in lower],
@@ -257,7 +256,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         raw_shift = jnp.asarray(shift)
         if jnp.iscomplexobj(raw_shift):
             raise TypeError("shift must be real.")
-        shift_ = raw_shift.astype(float)
+        shift_ = raw_shift.astype("float64")
         if shift_.shape != () or not bool(jnp.isfinite(shift_) & (shift_ > 0.0)):
             raise ValueError("shift must be one finite positive scalar.")
         discretization = plan.discretization
@@ -334,7 +333,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 route=plan.route,
                 lower_bandwidth=ultraspherical.lower_bandwidth,
                 upper_bandwidth=ultraspherical.upper_bandwidth,
-                horizontal_batch_size=int(kx_grid.size),
+                horizontal_batch_size=kx_grid.size,
                 correction_rank=ultraspherical.correction_rank,
                 constraint_rank=7
                 + (2 if plan.mean_constraint.kind == "bulk_flux" else 0),
@@ -364,7 +363,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             )
             self.prepared_id = identifier
             return
-        dense_batch_size = int(kx.size * kz.size)
+        dense_batch_size = kx.size * kz.size
         dense_block_size = 4 * mode_count
         dense_dtype = np.dtype(jnp.result_type(synthesis.dtype, 1j))
         dense_real_dtype = np.dtype(real_dtype)
@@ -434,13 +433,13 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 bulk_factorization.metric_sqrt,
                 bulk_factorization.failed_blocks,
             )
-        factor_bytes = sum(int(array.nbytes) for array in factor_arrays)
+        factor_bytes = sum(array.nbytes for array in factor_arrays)
         admissible = (~x_axis.modes.nyquist_mask)[:, None] & (~z_axis.modes.nyquist_mask)[
             None, :
         ]
         identifier = canonical_fingerprint(
             {
-                "kind": "prepared-channel-stokes-dense-reference-v2",
+                "kind": "prepared-channel-stokes-dense-reference",
                 "plan": plan.plan_id,
                 "shift": float(shift_),
                 "block_shape": list(blocks.shape),
@@ -468,7 +467,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         pivot_margin = float(jnp.min(factor_diagonal) / factor_scale)
         bandwidth = self.block_size - 1
         shared_basis_bytes = sum(
-            int(array.nbytes)
+            array.nbytes
             for array in (
                 synthesis,
                 derivative,
@@ -478,17 +477,15 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 admissible,
             )
         )
-        operator_bytes = int(blocks.nbytes) + (
-            0 if bulk_block is None else int(bulk_block.nbytes)
-        )
-        workspace_bytes = int(blocks.shape[0] * self.block_size * blocks.dtype.itemsize)
+        operator_bytes = blocks.nbytes + (0 if bulk_block is None else bulk_block.nbytes)
+        workspace_bytes = blocks.shape[0] * self.block_size * blocks.dtype.itemsize
         persistent_bytes = shared_basis_bytes + operator_bytes + factor_bytes
         preparation_bytes = persistent_bytes + workspace_bytes
         self.report = ChannelStokesPreparationReport(
             route=plan.route,
             lower_bandwidth=bandwidth,
             upper_bandwidth=bandwidth,
-            horizontal_batch_size=int(blocks.shape[0]),
+            horizontal_batch_size=blocks.shape[0],
             correction_rank=0,
             constraint_rank=7 + (2 if plan.mean_constraint.kind == "bulk_flux" else 0),
             shared_basis_bytes=shared_basis_bytes,
@@ -521,8 +518,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         expected = (x_axis.physical_count, z_axis.physical_count)
         if array.ndim < 2 or array.shape[:2] != expected:
             raise ValueError(
-                f"Physical channel boundary values must begin with {expected}; "
-                f"got {array.shape}."
+                f"Physical channel boundary values must begin with {expected}; got {array.shape}."
             )
         result = _apply_axis_transform(array, 0, x_axis.analyze)
         result = _apply_axis_transform(result, 1, z_axis.analyze)
@@ -540,8 +536,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         expected = (x_axis.mode_count, z_axis.mode_count)
         if array.ndim < 2 or array.shape[:2] != expected:
             raise ValueError(
-                f"Modal channel boundary values must begin with {expected}; "
-                f"got {array.shape}."
+                f"Modal channel boundary values must begin with {expected}; got {array.shape}."
             )
         result = _apply_axis_transform(array, 1, z_axis.synthesize)
         result = _apply_axis_transform(result, 0, x_axis.synthesize)
@@ -916,7 +911,7 @@ def _channel_mode_matrix(
     zero_mode: bool,
     tangential_boundary: ChannelTangentialBoundaryKind,
 ) -> Array:
-    count = int(synthesis.shape[0])
+    count = synthesis.shape[0]
     interior = synthesis[1:-1]
     identity = jnp.eye(count, dtype=synthesis.dtype)
     helmholtz = (
@@ -989,7 +984,7 @@ def _bulk_flux_block(
     horizontal_scale: Array,
     /,
 ) -> Array:
-    count = int(synthesis.shape[0])
+    count = synthesis.shape[0]
     block_size = 4 * count
     interior_count = count - 2
     augmented = jnp.zeros((block_size + 2, block_size + 2), dtype=zero_block.dtype)

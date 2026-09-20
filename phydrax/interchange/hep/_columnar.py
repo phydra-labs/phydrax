@@ -124,7 +124,7 @@ def host_events_from_records(
                 if value["production_vertex_id"] is None
                 else int(value["production_vertex_id"]),
                 None if value["end_vertex_id"] is None else int(value["end_vertex_id"]),
-                tuple(int(item) for item in value["color_flow"]),
+                tuple(value["color_flow"]),
                 tuple(_attribute_from_record(item) for item in value["attributes"]),
             )
             for value in particle_records
@@ -133,8 +133,8 @@ def host_events_from_records(
             HostVertexRecord(
                 int(value["vertex_id"]),
                 tuple(float(item) for item in value["position"]),
-                tuple(int(item) for item in value["incoming_particle_ids"]),
-                tuple(int(item) for item in value["outgoing_particle_ids"]),
+                tuple(value["incoming_particle_ids"]),
+                tuple(value["outgoing_particle_ids"]),
                 tuple(_attribute_from_record(item) for item in value["attributes"]),
             )
             for value in vertex_records

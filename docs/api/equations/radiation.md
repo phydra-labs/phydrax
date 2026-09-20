@@ -59,15 +59,15 @@ support and validated $K_2$ approximation. Active polarization/Faraday approxima
 and the resulting composite polarized prediction remain reference-unqualified.
 `PolarizedRayPath` binds polarized transfer to an exact null ray result and metric.
 
-::: phydrax.equations.GRGreyM1RadiationSystem
+::: phydrax.equations.GRGrayM1RadiationSystem
 
-::: phydrax.equations.GRGreyM1ClosureEvaluation
+::: phydrax.equations.GRGrayM1ClosureEvaluation
 
 ::: phydrax.equations.GRRadiationMatterExchange
 
-::: phydrax.equations.GRGreyOpacityEvaluation
+::: phydrax.equations.GRGrayOpacityEvaluation
 
-::: phydrax.equations.GRGreyRadiationInteractionPlan
+::: phydrax.equations.GRGrayRadiationInteractionPlan
 
 ::: phydrax.equations.GRMultigroupM1RadiationSystem
 

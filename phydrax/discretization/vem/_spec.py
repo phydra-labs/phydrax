@@ -36,7 +36,7 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
         family_ = str(family)
         degree_ = int(degree)
         conformity_ = str(conformity)
-        shape = tuple(int(value) for value in value_shape)
+        shape = tuple(value_shape)
         if family_ in ("ConformingHdiv", "ConformingHcurl"):
             if shape and shape != (2,):
                 raise ValueError(f"{family_} requires value_shape=(2,).")
@@ -51,8 +51,7 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
         }
         if family_ not in families:
             raise ValueError(
-                "Virtual-element family must be ConformingH1, ConformingHdiv, "
-                "ConformingHcurl, or DiscontinuousL2."
+                "Virtual-element family must be ConformingH1, ConformingHdiv, ConformingHcurl, or DiscontinuousL2."
             )
         if degree_ < 1:
             raise ValueError("Virtual-element degree must be positive.")
@@ -155,7 +154,7 @@ class VirtualElementFieldSpec(StrictModule, NonTrainableState):
         component_shape: Sequence[int] = (),
     ):
         name_ = str(name)
-        shape = tuple(int(value) for value in component_shape)
+        shape = tuple(component_shape)
         if not name_:
             raise ValueError("Virtual-element field name must be non-empty.")
         if not isinstance(element, VirtualElementSpec):

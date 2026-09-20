@@ -45,8 +45,8 @@ class TheoryPrediction(StrictModule, NonTrainableState):
         unit_id: str,
         process_plan_id: str,
     ):
-        values_ = np.asarray(values, dtype=float)
-        covariance_ = np.asarray(covariance, dtype=float)
+        values_ = np.asarray(values, dtype=np.float64)
+        covariance_ = np.asarray(covariance, dtype=np.float64)
         names = tuple(str(value).strip() for value in observable_names)
         if (
             values_.ndim != 1
@@ -66,9 +66,9 @@ class TheoryPrediction(StrictModule, NonTrainableState):
         ):
             raise ValueError("Theory prediction values/covariance/names are invalid.")
         valid_ = (
-            np.ones(values_.shape, dtype=bool)
+            np.ones(values_.shape, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if valid_.shape != values_.shape:
             raise ValueError("valid must align with prediction values.")
@@ -148,11 +148,11 @@ class EFTMorphingPlan(StrictModule, NonTrainableState):
         observable_names: Sequence[str],
         source_prediction_id: str,
     ):
-        base_ = np.asarray(base, dtype=float)
-        linear_ = np.asarray(linear, dtype=float)
-        quadratic_ = np.asarray(quadratic, dtype=float)
-        lower = np.asarray(support_lower, dtype=float)
-        upper = np.asarray(support_upper, dtype=float)
+        base_ = np.asarray(base, dtype=np.float64)
+        linear_ = np.asarray(linear, dtype=np.float64)
+        quadratic_ = np.asarray(quadratic, dtype=np.float64)
+        lower = np.asarray(support_lower, dtype=np.float64)
+        upper = np.asarray(support_upper, dtype=np.float64)
         coefficients = tuple(str(value).strip() for value in coefficient_names)
         observables = tuple(str(value).strip() for value in observable_names)
         coefficient_count = len(coefficients)

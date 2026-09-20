@@ -51,7 +51,7 @@ def _two_segment_scene(*, envelope=0.0):
 
 def _candidate_rows(batch):
     indices = np.asarray(batch.vertex_indices)
-    return {tuple(row) for row in indices[np.asarray(batch.valid, dtype=bool)].tolist()}
+    return {tuple(row) for row in indices[np.asarray(batch.valid, dtype="bool")].tolist()}
 
 
 def test_per_vertex_separation_and_certified_ccd_guarantee():
@@ -433,7 +433,7 @@ def test_closed_surface_certificate_and_halo_exchange_are_explicit():
     payload = phx.discretization.pack_contact_halo(halo_plan, values)
     received_values = payload.values[payload.valid]
     received_indices = payload.route_indices[payload.valid]
-    received_valid = jnp.ones(received_indices.shape, dtype=bool)
+    received_valid = jnp.ones(received_indices.shape, dtype="bool")
     reduction = phx.discretization.reduce_contact_halo(
         halo_plan,
         jnp.zeros_like(values),

@@ -41,8 +41,8 @@ def _jax_monomials(values: Array, exponents: Array, /) -> Array:
 def _adjacency(discretization: UnstructuredFiniteVolumeDiscretization, /):
     adjacency = [set() for _ in range(discretization.cell_count)]
     owner = np.asarray(discretization.owner_cells, dtype=np.int32)
-    neighbour = np.asarray(discretization.neighbour_cells, dtype=np.int32)
-    for left, right in zip(owner, neighbour, strict=True):
+    neighbor = np.asarray(discretization.neighbor_cells, dtype=np.int32)
+    for left, right in zip(owner, neighbor, strict=True):
         if right >= 0:
             adjacency[int(left)].add(int(right))
             adjacency[int(right)].add(int(left))
@@ -163,7 +163,7 @@ def _selected_stencils(
         depths.append(selected_depth)
     capacity = max(len(stencil) for stencil in stencils)
     indices = np.zeros((discretization.cell_count, capacity), dtype=np.int32)
-    valid = np.zeros((discretization.cell_count, capacity), dtype=bool)
+    valid = np.zeros((discretization.cell_count, capacity), dtype=np.bool_)
     for cell, stencil in enumerate(stencils):
         indices[cell, : len(stencil)] = stencil
         valid[cell, : len(stencil)] = True
@@ -334,7 +334,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         moments, lengths = _cell_moments(discretization, basis)
         direction = None
         if stencil_direction is not None:
-            direction = np.asarray(stencil_direction, dtype=float)
+            direction = np.asarray(stencil_direction, dtype=np.float64)
             if direction.shape != (discretization.cell_dimension,):
                 raise ValueError(
                     "stencil_direction must have one entry per spatial dimension."
@@ -460,8 +460,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
             raise TypeError("metrics must be FiniteVolumeStageMetrics.")
         if self.basis.degree not in (1, 2):
             raise ValueError(
-                "Moving reconstruction certifies degree one generally and "
-                "degree two for rigid translations."
+                "Moving reconstruction certifies degree one generally and degree two for rigid translations."
             )
         value = jnp.asarray(state)
         centers = jnp.asarray(metrics.cell_centers, dtype=value.dtype)
@@ -490,9 +489,9 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
                 "Moving degree-two reconstruction requires rigid translation.",
             )
             return self.coefficients(value), self.characteristic_lengths
-        neighbour_centers = centers[self.stencil_cells]
+        neighbor_centers = centers[self.stencil_cells]
         design = _jax_monomials(
-            (neighbour_centers - centers[:, None, :]) / lengths[:, None, None],
+            (neighbor_centers - centers[:, None, :]) / lengths[:, None, None],
             self.basis.exponents,
         )
         mask = self.stencil_valid
@@ -590,12 +589,12 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
 
     def reconstruct_at(self, state: Array, points: Array, /) -> tuple[Array, Array]:
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         coefficients = self.coefficients(state)
         return (
             self.evaluate_coefficients(state, coefficients, owner, points),
-            self.evaluate_coefficients(state, coefficients, safe_neighbour, points),
+            self.evaluate_coefficients(state, coefficients, safe_neighbor, points),
         )
 
     def reconstruct(self, state: Array, /) -> tuple[Array, Array]:

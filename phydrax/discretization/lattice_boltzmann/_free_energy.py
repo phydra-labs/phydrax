@@ -83,8 +83,7 @@ class FreeEnergyLBMRuntimeParameters(StrictModule):
             or not bool(jnp.isfinite(wetting))
         ):
             raise ValueError(
-                "kinematic_viscosity, phase_mobility, and wetting_strength "
-                "must be finite inexact scalars."
+                "kinematic_viscosity, phase_mobility, and wetting_strength must be finite inexact scalars."
             )
         if not isinstance(thermodynamics, BinaryThermodynamicParameters):
             raise TypeError("thermodynamics must be BinaryThermodynamicParameters.")
@@ -105,9 +104,9 @@ class FreeEnergyLBMRuntimeParameters(StrictModule):
             else jnp.asarray(wall_normal, dtype=viscosity.dtype)
         )
         self.wetting_mask = (
-            jnp.empty((0,), dtype=bool)
+            jnp.empty((0,), dtype=jnp.bool_)
             if wetting_mask is None
-            else jnp.asarray(wetting_mask, dtype=bool)
+            else jnp.asarray(wetting_mask, dtype=jnp.bool_)
         )
 
 

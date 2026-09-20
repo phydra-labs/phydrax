@@ -147,10 +147,9 @@ class TensorIndexLayout(StrictModule, NonTrainableState):
             raise TypeError("integer_coordinates must have an integer dtype.")
         if coordinates.ndim < 1 or coordinates.shape[-1] != len(self.shape):
             raise ValueError(
-                "integer_coordinates must end with the tensor dimension "
-                f"{len(self.shape)}."
+                f"integer_coordinates must end with the tensor dimension {len(self.shape)}."
             )
-        supported = jnp.ones(coordinates.shape[:-1], dtype=bool)
+        supported = jnp.ones(coordinates.shape[:-1], dtype=jnp.bool_)
         safe_axes = []
         for axis, size in enumerate(self.shape):
             value = coordinates[..., axis]
@@ -381,7 +380,7 @@ class PreparedTensorIndexSpace(StrictModule, NonTrainableState):
     ) -> PreparedTensorIndexSpace:
         if not isinstance(plan, TensorGridPlan):
             raise TypeError("plan must be a TensorGridPlan.")
-        limits = jnp.asarray(bounds, dtype=float)
+        limits = jnp.asarray(bounds, dtype=jnp.float64)
         if limits.shape != (2, len(plan.axes)):
             raise ValueError(
                 f"bounds must have shape {(2, len(plan.axes))}; got {limits.shape}."
@@ -402,7 +401,7 @@ class PreparedTensorIndexSpace(StrictModule, NonTrainableState):
     @property
     def stored_axis_values(self) -> int:
         return sum(
-            int(coordinates.size + measures.size)
+            coordinates.size + measures.size
             for coordinates, measures in zip(
                 self.primary_entity_layout.coordinates_by_axis,
                 self.primary_entity_layout.measures_by_axis,

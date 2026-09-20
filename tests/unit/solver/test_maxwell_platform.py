@@ -73,7 +73,7 @@ def test_genuine_tez_tmz_layouts_and_chain_invariants():
     assert tmz.layout.electric_degree == 0 and tmz.layout.magnetic_degree == 1
     assert tmz.initialize().primary.charge.shape == (0,)
     assert tez.magnetic_constraint(tez.initialize()).shape == ()
-    scalar = jnp.sin(jnp.arange(tmz.layout.electric_count, dtype=float))
+    scalar = jnp.sin(jnp.arange(tmz.layout.electric_count, dtype="float64"))
     exact_b = -bridge.exterior_derivative(0, scalar)
     np.testing.assert_allclose(bridge.exterior_derivative(1, exact_b), 0.0, atol=1e-14)
 
@@ -86,7 +86,7 @@ def test_packed_cpml_terms_and_fixed_coefficients_share_exact_support():
     ).prepare()
     assert runtime.pml is not None
     assert runtime.pml.state_elements < bridge.dimension * sum(runtime.primary_counts[:2])
-    state = runtime.pml.initialize(dtype=complex)
+    state = runtime.pml.initialize(dtype="complex128")
     assert all(
         memory.ndim == 1 for memory in (*state.electric_memory, *state.magnetic_memory)
     )

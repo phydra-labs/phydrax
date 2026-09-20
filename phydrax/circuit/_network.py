@@ -390,8 +390,7 @@ def plan_scattering_network(
         )
         if not bool(compatible):
             raise ValueError(
-                f"Incompatible wave references on connection {channel_paths[first]} "
-                f"<-> {channel_paths[second]}."
+                f"Incompatible wave references on connection {channel_paths[first]} <-> {channel_paths[second]}."
             )
     channels = len(channel_paths)
     frequencies = prod(omega.shape) if omega.shape else 1
@@ -482,8 +481,7 @@ def _validate_plan_inputs(
         or compiled[8] != plan.external_port_ids
     ):
         raise ValueError(
-            "Scattering topology, connection map, or port schema changed; "
-            "replan is required."
+            "Scattering topology, connection map, or port schema changed; replan is required."
         )
 
 
@@ -545,8 +543,7 @@ def _assemble(
         matrix = eqx.error_if(
             matrix,
             ~compatible,
-            "Connected wave references became incompatible; explicit "
-            "renormalization is required.",
+            "Connected wave references became incompatible; explicit renormalization is required.",
         )
     for (first_block, second_block), (_, _, mapping) in zip(
         plan.connection_blocks, flat.connections, strict=True
@@ -686,7 +683,7 @@ def solve_scattering_network(
         if isinstance(excitation, WaveExcitation)
         else WaveExcitation(excitation)
     )
-    rhs_count = int(excitation_.incident.shape[-1])
+    rhs_count = excitation_.incident.shape[-1]
     working_rhs_bytes = (
         prepared.plan.cost.frequencies
         * prepared.plan.cost.channels

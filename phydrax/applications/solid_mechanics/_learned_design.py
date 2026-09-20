@@ -41,7 +41,7 @@ from ._topology import (
     TopologyOptimizationResult,
 )
 from ._topology_reanalysis import (
-    reanalyse_topology_design,
+    reanalyze_topology_design,
     TopologyReanalysisPlan,
     TopologyReanalysisReport,
 )
@@ -102,10 +102,7 @@ def prepare_learned_topology_design(
     fixed = prepared.plan.filter.fixed_density
     decoder = _FixedDensityDecoder(decode, prepared.plan.filter.design_mask, fixed)
     physical_problem = problem.as_state_design_problem()
-    free_indices = tuple(
-        int(index)
-        for index in np.flatnonzero(np.asarray(prepared.plan.filter.design_mask))
-    )
+    free_indices = tuple(np.flatnonzero(np.asarray(prepared.plan.filter.design_mask)))
     # The prepared fixed-region map proves the remaining cell bounds exactly.
     # Keep every free bound scalar so ReducedMMA retains its scalar-inequality
     # contract; large elementwise bound sets should use the structured route.
@@ -215,8 +212,7 @@ def prepare_learned_shape_design(
                     lower=-jnp.inf if lower is None else lower,
                     upper=jnp.inf if upper is None else upper,
                     constraint_id=(
-                        f"{problem.problem_id}/shape-schema-bound:"
-                        f"{spec.parameter_id}:{coordinate_index}"
+                        f"{problem.problem_id}/shape-schema-bound:{spec.parameter_id}:{coordinate_index}"
                     ),
                     depends_on_state=False,
                 )
@@ -328,7 +324,7 @@ def solve_learned_topology_design(
         accepted,
         problem.problem_id,
     )
-    report = reanalyse_topology_design(
+    report = reanalyze_topology_design(
         topology,
         reanalysis_plan,
         initial_reference_state,

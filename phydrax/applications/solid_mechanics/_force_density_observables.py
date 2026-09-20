@@ -103,7 +103,9 @@ def scaled_uniformity_residual(
 ) -> Array:
     """Return deviations from the selected mean divided by an explicit scale."""
     value = jnp.asarray(values)
-    selected = jnp.ones(value.shape, dtype=bool) if mask is None else jnp.asarray(mask)
+    selected = (
+        jnp.ones(value.shape, dtype=jnp.bool_) if mask is None else jnp.asarray(mask)
+    )
     if selected.shape != value.shape:
         raise ValueError("mask must match values.")
     count = jnp.maximum(jnp.sum(selected), 1)

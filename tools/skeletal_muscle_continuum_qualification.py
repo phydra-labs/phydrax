@@ -32,12 +32,8 @@ def _material(activation):
 
 def qualify():
     material = _material(0.7)
-    deformation = jnp.asarray(
-        ((1.03, 0.02, 0.0), (0.0, 0.99, 0.01), (0.0, 0.0, 0.981))
-    )
-    rate = jnp.asarray(
-        ((0.01, 0.002, 0.0), (0.0, -0.004, 0.0), (0.0, 0.0, -0.006))
-    )
+    deformation = jnp.asarray(((1.03, 0.02, 0.0), (0.0, 0.99, 0.01), (0.0, 0.0, 0.981)))
+    rate = jnp.asarray(((0.01, 0.002, 0.0), (0.0, -0.004, 0.0), (0.0, 0.0, -0.006)))
     point = continuum.GasamQualificationPlan().evaluate(material, deformation, rate)
 
     volumes = jnp.asarray(
@@ -85,12 +81,10 @@ def qualify():
         "maturity": "qualified-source-fidelity",
         "passed": passed,
         "source": (
-            "Engelhardt et al. 2025, DOI 10.1002/cnm.70036, "
-            "Eqs. 15-16, 20, 25-27, Table 5"
+            "Engelhardt et al. 2025, DOI 10.1002/cnm.70036, Eqs. 15-16, 20, 25-27, Table 5"
         ),
         "scope": (
-            "exact-mixed prescribed-activation GASAM; "
-            "local smooth-branch AD/stability only"
+            "exact-mixed prescribed-activation GASAM; local smooth-branch AD/stability only"
         ),
         "point": {
             "passed": bool(point.valid),
@@ -102,18 +96,12 @@ def qualify():
             "active_fiber_stress_increment_pa": float(
                 point.active_fiber_stress_increment_pa
             ),
-            "minimum_sampled_acoustic_value_pa": float(
-                point.minimum_acoustic_value_pa
-            ),
-            "global_active_stability_claimed": (
-                point.active_global_stability_claimed
-            ),
+            "minimum_sampled_acoustic_value_pa": float(point.minimum_acoustic_value_pa),
+            "global_active_stability_claimed": (point.active_global_stability_claimed),
         },
         "mesh_power": {
             "passed": bool(mesh_power.valid),
-            "active_cell_counts": [
-                int(value) for value in mesh_power.active_cell_counts
-            ],
+            "active_cell_counts": [int(value) for value in mesh_power.active_cell_counts],
             "maximum_energy_error_j": float(jnp.max(mesh_power.energy_errors_j)),
             "maximum_power_error_w": float(jnp.max(mesh_power.power_errors_w)),
         },

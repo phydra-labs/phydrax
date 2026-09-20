@@ -16,8 +16,8 @@ def _density_from_state(time, state):
 
 def test_purity_and_entropy_distinguish_pure_and_mixed_states():
     time = phx.domain.TimeInterval(0.0, 1.0)
-    pure = _density_from_state(time, jnp.asarray([1.0, 0.0], dtype=complex))
-    mixed = time.Function()(0.5 * jnp.eye(2, dtype=complex))
+    pure = _density_from_state(time, jnp.asarray([1.0, 0.0], dtype="complex128"))
+    mixed = time.Function()(0.5 * jnp.eye(2, dtype="complex128"))
 
     assert jnp.allclose(phx.operators.purity(pure).func(), 1.0)
     assert jnp.allclose(phx.operators.purity(mixed).func(), 0.5)
@@ -31,8 +31,8 @@ def test_purity_and_entropy_distinguish_pure_and_mixed_states():
 
 def test_bell_state_has_one_bit_of_entanglement_entropy():
     time = phx.domain.TimeInterval(0.0, 1.0)
-    zero = time.Function()(jnp.asarray([1.0, 0.0], dtype=complex))
-    one = time.Function()(jnp.asarray([0.0, 1.0], dtype=complex))
+    zero = time.Function()(jnp.asarray([1.0, 0.0], dtype="complex128"))
+    one = time.Function()(jnp.asarray([0.0, 1.0], dtype="complex128"))
     bell = (
         phx.operators.tensor_product(zero, zero) + phx.operators.tensor_product(one, one)
     ) / jnp.sqrt(2.0)
@@ -51,10 +51,10 @@ def test_state_fidelity_preserves_domain_dependencies_and_known_values():
 
     @time.Function("t")
     def state(t):
-        return jnp.asarray([jnp.cos(t), jnp.sin(t)], dtype=complex)
+        return jnp.asarray([jnp.cos(t), jnp.sin(t)], dtype="complex128")
 
-    zero = time.Function()(jnp.asarray([1.0, 0.0], dtype=complex))
-    one = time.Function()(jnp.asarray([0.0, 1.0], dtype=complex))
+    zero = time.Function()(jnp.asarray([1.0, 0.0], dtype="complex128"))
+    one = time.Function()(jnp.asarray([0.0, 1.0], dtype="complex128"))
     fidelity = phx.operators.state_fidelity(state, zero)
 
     assert fidelity.deps == ("t",)
@@ -65,8 +65,8 @@ def test_state_fidelity_preserves_domain_dependencies_and_known_values():
 
 def test_density_fidelity_matches_pure_and_commuting_state_formulas():
     time = phx.domain.TimeInterval(0.0, 1.0)
-    zero = jnp.asarray([1.0, 0.0], dtype=complex)
-    plus = jnp.asarray([1.0, 1.0], dtype=complex) / jnp.sqrt(2.0)
+    zero = jnp.asarray([1.0, 0.0], dtype="complex128")
+    plus = jnp.asarray([1.0, 1.0], dtype="complex128") / jnp.sqrt(2.0)
     zero_state = time.Function()(zero)
     plus_state = time.Function()(plus)
     zero_density = _density_from_state(time, zero)
@@ -86,8 +86,8 @@ def test_density_fidelity_matches_pure_and_commuting_state_formulas():
 
 def test_trace_distance_matches_orthogonal_and_commuting_state_formulas():
     time = phx.domain.TimeInterval(0.0, 1.0)
-    zero = _density_from_state(time, jnp.asarray([1.0, 0.0], dtype=complex))
-    one = _density_from_state(time, jnp.asarray([0.0, 1.0], dtype=complex))
+    zero = _density_from_state(time, jnp.asarray([1.0, 0.0], dtype="complex128"))
+    one = _density_from_state(time, jnp.asarray([0.0, 1.0], dtype="complex128"))
 
     assert jnp.allclose(phx.operators.trace_distance(zero, zero).func(), 0.0)
     assert jnp.allclose(phx.operators.trace_distance(zero, one).func(), 1.0)

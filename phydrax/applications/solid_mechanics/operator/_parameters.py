@@ -104,7 +104,7 @@ class MechanicsParameterField(StrictModule, NonTrainableState):
             raise ValueError("Unknown mechanics parameter field role.")
         if kind not in ("continuous", "integer", "discrete", "categorical"):
             raise ValueError("Unknown mechanics parameter field kind.")
-        resolved_shape = tuple(int(size) for size in shape)
+        resolved_shape = tuple(shape)
         if any(size <= 0 for size in resolved_shape):
             raise ValueError("Mechanics parameter field shape entries must be positive.")
         choices = tuple(support)
@@ -472,9 +472,9 @@ class MechanicsParameterDistribution(StrictModule, NonTrainableState):
             )
         weight_kind = next(iter(kinds))
         if weight_kind == "equal":
-            raw = jnp.ones((len(resolved),), dtype=float)
+            raw = jnp.ones((len(resolved),), dtype=jnp.float64)
         else:
-            raw = jnp.asarray([item.weight for item in resolved], dtype=float)
+            raw = jnp.asarray([item.weight for item in resolved], dtype=jnp.float64)
         total = jnp.sum(raw)
         weights = raw / total
         if weight_kind == "probability" and not bool(
@@ -564,8 +564,7 @@ class MechanicsParameterDistribution(StrictModule, NonTrainableState):
         overlap = own & foreign
         if overlap:
             raise ValueError(
-                "Mechanics parameter designs are not held-out; overlapping "
-                f"{by} identities: {sorted(overlap)}."
+                f"Mechanics parameter designs are not held-out; overlapping {by} identities: {sorted(overlap)}."
             )
 
 

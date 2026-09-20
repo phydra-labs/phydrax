@@ -26,7 +26,7 @@ JumpTransitionAlgorithm: TypeAlias = Literal["next_reaction", "direct_ssa"]
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape
@@ -41,8 +41,8 @@ def _name(value: str, /, *, owner: str) -> str:
 def _interval(
     t0: ArrayLike, t1: ArrayLike, /
 ) -> tuple[Array, Array, tuple[float, float]]:
-    start = jnp.asarray(t0, dtype=float)
-    end = jnp.asarray(t1, dtype=float)
+    start = jnp.asarray(t0, dtype=jnp.float64)
+    end = jnp.asarray(t1, dtype=jnp.float64)
     if start.shape != () or end.shape != ():
         raise ValueError("Transition solver times must be scalar.")
     support = (float(start), float(end))
@@ -52,8 +52,8 @@ def _interval(
 
 
 def _array_interval(t0: ArrayLike, t1: ArrayLike, /) -> tuple[Array, Array]:
-    start = jnp.asarray(t0, dtype=float)
-    end = jnp.asarray(t1, dtype=float)
+    start = jnp.asarray(t0, dtype=jnp.float64)
+    end = jnp.asarray(t1, dtype=jnp.float64)
     if start.shape != () or end.shape != ():
         raise ValueError("Transition solver times must be scalar.")
     end = eqx.error_if(
@@ -75,7 +75,7 @@ def _transition_sample(
 ) -> TransitionSample:
     return TransitionSample(
         values=jnp.asarray(values),
-        valid=jnp.asarray(valid, dtype=bool),
+        valid=jnp.asarray(valid, dtype=jnp.bool_),
         status=jnp.asarray(status, dtype=jnp.int32),
         process_id=process_id,
         approximation_id=approximation_id,
@@ -97,10 +97,10 @@ def _input_controller(
     """Force solver steps across every declared exogenous-input breakpoint."""
     import diffrax as dfx
 
-    breakpoint_mask = np.asarray(context.input_breakpoint_valid, dtype=bool)
+    breakpoint_mask = np.asarray(context.input_breakpoint_valid, dtype=np.bool_)
     if not np.any(breakpoint_mask):
         return controller, dt0
-    breakpoints = np.asarray(context.input_breakpoints, dtype=float)[breakpoint_mask]
+    breakpoints = np.asarray(context.input_breakpoints, dtype=np.float64)[breakpoint_mask]
     signal = context.input_signal
     discontinuous = (
         isinstance(signal, SampledStateSpaceInput)
@@ -123,7 +123,7 @@ def _input_controller(
     if resolved is None:
         resolved = dfx.ConstantStepSize()
     if isinstance(resolved, dfx.StepTo):
-        base_times = np.asarray(resolved.ts, dtype=float)
+        base_times = np.asarray(resolved.ts, dtype=np.float64)
     elif isinstance(resolved, dfx.ConstantStepSize):
         if dt0 is None:
             raise ValueError(
@@ -136,8 +136,7 @@ def _input_controller(
         base_times = np.linspace(start_value, end_value, step_count + 1)
     else:
         raise TypeError(
-            "Input breakpoints require an adaptive, ConstantStepSize, or StepTo "
-            "transition controller."
+            "Input breakpoints require an adaptive, ConstantStepSize, or StepTo transition controller."
         )
 
     if discontinuous:
@@ -214,7 +213,7 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
             raise ValueError("wiener_tolerance must be finite and positive.")
         if terms and dt0 is None:
             raise ValueError("Stochastic differential transitions require explicit dt0.")
-        resolved_dt0 = None if dt0 is None else jnp.asarray(dt0, dtype=float)
+        resolved_dt0 = None if dt0 is None else jnp.asarray(dt0, dtype=jnp.float64)
         if resolved_dt0 is not None and (
             resolved_dt0.shape != () or not bool(jnp.isfinite(resolved_dt0))
         ):
@@ -470,7 +469,7 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
         tolerance = float(wiener_tolerance)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("wiener_tolerance must be finite and positive.")
-        resolved_dt0 = None if dt0 is None else jnp.asarray(dt0, dtype=float)
+        resolved_dt0 = None if dt0 is None else jnp.asarray(dt0, dtype=jnp.float64)
         if resolved_dt0 is not None and (
             resolved_dt0.shape != () or not bool(jnp.isfinite(resolved_dt0))
         ):

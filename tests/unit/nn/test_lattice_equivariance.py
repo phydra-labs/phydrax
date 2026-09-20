@@ -106,7 +106,7 @@ def test_lattice_convolution_is_periodic_translation_equivariant_and_zero_withou
         atol=2e-10,
         rtol=2e-10,
     )
-    unsupported = layer(values, source_mask=jnp.zeros((7, 7), dtype=bool))
+    unsupported = layer(values, source_mask=jnp.zeros((7, 7), dtype="bool"))
     assert jnp.array_equal(unsupported, jnp.zeros_like(unsupported))
 
 
@@ -182,7 +182,7 @@ def test_scalar_invariant_basis_transfer_reports_exact_central_embedding_and_rej
     assert report.source_fingerprint == source.fingerprint
     assert report.target_fingerprint == target.fingerprint
 
-    generic = jnp.arange(source.rank, dtype=float) + 1.0
+    generic = jnp.arange(source.rank, dtype="float64") + 1.0
     rejecting_plan = InvariantBasisTransferPlan(
         source,
         target,
@@ -219,7 +219,7 @@ def test_lattice_equivariant_cno_is_d4_equivariant_jittable_and_differentiable()
         kernel_size=3,
         key=jr.key(20),
     )
-    nodes = jnp.arange(5, dtype=float) / 5.0
+    nodes = jnp.arange(5, dtype="float64") / 5.0
     values = jr.normal(jr.key(21), (5, 5, 1))
     evaluate = jax.jit(lambda field: model((field, nodes, nodes)))
     reference = evaluate(values)
@@ -234,7 +234,7 @@ def test_lattice_equivariant_cno_is_d4_equivariant_jittable_and_differentiable()
     assert model.operator_contract.capabilities.symmetry_groups == ("D4",)
 
     with pytest.raises(ValueError, match="equal lattice sizes"):
-        model((jnp.ones((5, 7, 1)), nodes, jnp.arange(7, dtype=float) / 7.0))
+        model((jnp.ones((5, 7, 1)), nodes, jnp.arange(7, dtype="float64") / 7.0))
 
     source_axes = (
         OperatorAxis("x", nodes, periodic=True),

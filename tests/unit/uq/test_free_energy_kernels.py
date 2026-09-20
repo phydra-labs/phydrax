@@ -58,7 +58,7 @@ def test_ti_kernel_lowers_and_matches_eager():
             [2.1, 2.0, 1.9, 2.0],
         ]
     )
-    retained = jnp.ones_like(values, dtype=bool)
+    retained = jnp.ones_like(values, dtype="bool")
     path = jnp.asarray([0.0, 0.5, 1.0])
     lowered = (
         jax.jit(thermodynamic_integration_kernel).lower(values, retained, path).compile()

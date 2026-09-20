@@ -98,7 +98,7 @@ def execute_local_action(
         )
     result = jnp.asarray(kernels[action.kernel_id](evaluated, context))
     if not jnp.issubdtype(result.dtype, jnp.inexact):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 

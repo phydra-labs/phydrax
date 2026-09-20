@@ -121,8 +121,7 @@ def axes_for_over(
     missing = requested_set - covered
     if missing:
         raise ValueError(
-            f"over={requested!r} includes inactive or unknown labels "
-            f"{tuple(sorted(missing))!r}."
+            f"over={requested!r} includes inactive or unknown labels {tuple(sorted(missing))!r}."
         )
     return tuple(selected)
 
@@ -130,7 +129,7 @@ def axes_for_over(
 def _block_measure(component: DomainComponent, block: tuple[str, ...], /) -> Array:
     """Return one exact factor mass per complete factor represented by ``block``."""
     block_labels = frozenset(block)
-    mass = jnp.asarray(1.0, dtype=float)
+    mass = jnp.asarray(1.0, dtype=jnp.float64)
     for factor_component in component.factor_components:
         factor_labels = frozenset(factor_component.factor.labels)
         overlap = block_labels & factor_labels
@@ -138,8 +137,7 @@ def _block_measure(component: DomainComponent, block: tuple[str, ...], /) -> Arr
             continue
         if overlap != factor_labels:
             raise ValueError(
-                f"SampleLayout block {block!r} splits coupled factor "
-                f"{factor_component.factor.labels!r}."
+                f"SampleLayout block {block!r} splits coupled factor {factor_component.factor.labels!r}."
             )
         mass = mass * require_exact_mass(
             factor_component.measure.mass,
@@ -152,7 +150,7 @@ def _component_base_mass(component: DomainComponent | ComponentSum, /) -> Array:
     """Realize an exact component base mass without allocating mass descriptors."""
     if isinstance(component, DomainComponent):
         return _block_measure(component, component.domain.labels)
-    mass = jnp.asarray(0.0, dtype=float)
+    mass = jnp.asarray(0.0, dtype=jnp.float64)
     for term in component.terms:
         mass = mass + _block_measure(term, term.domain.labels)
     return mass
@@ -171,7 +169,9 @@ def component_factor_fields(
     if isinstance(points, GridBatch):
         for coordinate_mask in points.coord_mask_by_label.values():
             values = jnp.asarray(coordinate_mask.data)
-            mask = mask * cx.AxisArray(values.astype(float), dims=coordinate_mask.dims)
+            mask = mask * cx.AxisArray(
+                values.astype("float64"), dims=coordinate_mask.dims
+            )
     for label, where_function in component.where.items():
         if isinstance(points, GridBatch) and label in points.coord_axes_by_label:
             continue
@@ -183,14 +183,14 @@ def component_factor_fields(
             )
         data = jnp.asarray(value.data)
         mask = mask * cx.AxisArray(
-            data.astype(float) if data.dtype == jnp.bool_ else data,
+            data.astype("float64") if data.dtype == jnp.bool_ else data,
             dims=value.dims,
         )
     if component.where_all is not None:
         value = component.where_all(points, key=key, **kwargs)
         data = jnp.asarray(value.data)
         mask = mask * cx.AxisArray(
-            data.astype(float) if data.dtype == jnp.bool_ else data,
+            data.astype("float64") if data.dtype == jnp.bool_ else data,
             dims=value.dims,
         )
     modifier = cx.AxisArray(jnp.asarray(1.0), dims=())
@@ -248,7 +248,7 @@ def _point_weight(
         reference = first_field_leaf(points[block[0]])
         count = int(reference.named_shape[axis])
         total = total * cx.AxisArray(
-            jnp.full((count,), mass / float(count), dtype=float), dims=(axis,)
+            jnp.full((count,), mass / float(count), dtype=jnp.float64), dims=(axis,)
         )
     return total
 
@@ -292,7 +292,7 @@ def _coord_weights(
             if discretization is not None and discretization.quad_weights is not None:
                 values = discretization.quad_weights
             elif isinstance(factor, AbstractGeometry):
-                bounds = jnp.asarray(factor.mesh_bounds, dtype=float)
+                bounds = jnp.asarray(factor.mesh_bounds, dtype=jnp.float64)
                 values = jnp.full(
                     (count,),
                     (bounds[1, coordinate_index] - bounds[0, coordinate_index])
@@ -364,7 +364,7 @@ class IntegrationAxisSpec(AbstractAxisSpec):
 
     def __init__(self, rule: IntervalRule):
         data = interval_rule_data(rule)
-        super().__init__(int(data.nodes.shape[0]))
+        super().__init__(data.nodes.shape[0])
         self.rule = rule
 
     def materialize(self, lower: Array, upper: Array, /) -> AxisDiscretization:
@@ -391,8 +391,8 @@ def _fixed_rule_node_count(rule: IntervalRule | ProbabilityRule, /) -> int:
         data = probability_rule_data(rule)
         if not isinstance(data, OrthogonalRuleData):
             raise RuntimeError("GaussHermiteRule resolved non-orthogonal rule data.")
-        return int(data.nodes.shape[0])
-    return int(interval_rule_data(rule).nodes.shape[0])
+        return data.nodes.shape[0]
+    return interval_rule_data(rule).nodes.shape[0]
 
 
 def _scalar_interior_rule_data(
@@ -412,8 +412,7 @@ def _scalar_interior_rule_data(
                 )
             if rule.dimension != 1:
                 raise ValueError(
-                    "Direct scalar probability integration requires a "
-                    "one-dimensional GaussianCubatureRule."
+                    "Direct scalar probability integration requires a one-dimensional GaussianCubatureRule."
                 )
             nodes = data.points[:, 0]
         else:
@@ -423,8 +422,7 @@ def _scalar_interior_rule_data(
         transport = factor.reference_transport
         if transport.reference_measure != data.integration_measure:
             raise ValueError(
-                f"{owner} requires a probability factor with a "
-                "standard-normal reference transport."
+                f"{owner} requires a probability factor with a standard-normal reference transport."
             )
         return transport.from_reference(nodes), data.weights
 
@@ -516,7 +514,7 @@ def _materialize_scalar_boundaries(
     rule: IntervalRule,
     /,
 ) -> PointIntegrationBatch:
-    data = interval_rule_data(rule)
+    interval_rule_data(rule)
     points: dict[str, cx.AxisArray] = {}
     blocks: list[tuple[str, ...]] = []
     weights_by_axis: dict[str, cx.AxisArray] = {}
@@ -549,7 +547,7 @@ def _materialize_scalar_boundaries(
                     jnp.asarray(factor.fixed("end")),
                 )
             )
-            weights = jnp.ones((2,), dtype=float)
+            weights = jnp.ones((2,), dtype=jnp.float64)
         elif isinstance(selector, Interior):
             values, weights = _scalar_interior_rule_data(factor, rule)
         else:
@@ -607,20 +605,20 @@ def _materialize_boundary_atlas(
     atlas = factor.boundary_atlas
     if selector.tags is not None or selector.entity_ids is not None:
         atlas = atlas.select(tags=selector.tags, entity_ids=selector.entity_ids)
-    if atlas.reference_dim == 1:
+    if atlas.reference_dimension == 1:
         reference_rule = ReferenceIntervalRule(rule)
-    elif atlas.reference_dim == 2:
+    elif atlas.reference_dimension == 2:
         reference_rule = ReferenceQuadrilateralRule(rule)
     else:
         raise ValueError(
             "Boundary-atlas quadrature supports reference dimensions one and two."
         )
     reference_data = reference_rule.materialize()
-    count = int(reference_data.points.shape[0])
+    count = reference_data.points.shape[0]
     charts = atlas.num_charts
     reference = jnp.broadcast_to(
         reference_data.points[None, ...],
-        (charts, count, atlas.reference_dim),
+        (charts, count, atlas.reference_dimension),
     )
     chart_indices = jnp.broadcast_to(
         jnp.arange(charts, dtype=jnp.int32)[:, None],
@@ -701,7 +699,7 @@ def _cubature_factor_data(
             f"geometry reference {atlas.reference_domain!r}."
         )
     reference_data = rule.materialize()
-    count = int(reference_data.points.shape[0])
+    count = reference_data.points.shape[0]
     charts = atlas.num_charts
     reference = jnp.broadcast_to(
         reference_data.points[None, ...],
@@ -738,8 +736,7 @@ def _materialize_cubature_atlas(
     )
     if len(varying) != 1:
         raise ValueError(
-            "Native cubature supports one varying geometry factor; "
-            "use ProductIntegrationPlan for mixed factors."
+            "Native cubature supports one varying geometry factor; use ProductIntegrationPlan for mixed factors."
         )
     label = varying[0]
     selector = component.spec.selection_for(label)

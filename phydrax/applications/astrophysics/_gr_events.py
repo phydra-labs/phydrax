@@ -166,14 +166,13 @@ class GRRayEventLedger(StrictModule, NonTrainableState):
         affine = jnp.asarray(affine_parameter)
         index = jnp.asarray(history_index, dtype=jnp.int32)
         state_ = jnp.asarray(state)
-        state_valid_ = jnp.asarray(state_valid, dtype=bool)
+        state_valid_ = jnp.asarray(state_valid, dtype=jnp.bool_)
         if state_.shape[:-1] != code.shape or state_.shape[-1] < 8:
             raise ValueError(
-                "GR event ledger state must have shape "
-                "ray_batch_shape + (state_size >= 8,)."
+                "GR event ledger state must have shape ray_batch_shape + (state_size >= 8,)."
             )
-        recorded_ = jnp.asarray(recorded, dtype=bool)
-        simultaneous_ = jnp.asarray(simultaneous, dtype=bool)
+        recorded_ = jnp.asarray(recorded, dtype=jnp.bool_)
+        simultaneous_ = jnp.asarray(simultaneous, dtype=jnp.bool_)
         if any(
             value.shape != code.shape
             for value in (
@@ -212,8 +211,8 @@ def ordered_gr_ray_event_code(
 ) -> Array:
     """Resolve terminal event masks with capture > escape > domain > work priority."""
 
-    masks = jnp.asarray(triggered, dtype=bool)
-    work = jnp.asarray(work_exhausted, dtype=bool)
+    masks = jnp.asarray(triggered, dtype=jnp.bool_)
+    work = jnp.asarray(work_exhausted, dtype=jnp.bool_)
     if masks.shape[-1:] != (3,) or work.shape != masks.shape[:-1]:
         raise ValueError("triggered must end in three ordered event masks.")
     none = jnp.full(work.shape, int(GRRayEventCode.NONE), dtype=jnp.int32)

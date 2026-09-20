@@ -44,8 +44,7 @@ class BAOABLangevinPlan(StrictModule, NonTrainableState):
             or realization < 0
         ):
             raise ValueError(
-                "BAOAB step and friction must be positive finite; "
-                "realization_id must be non-negative."
+                "BAOAB step and friction must be positive finite; realization_id must be non-negative."
             )
         self.step_size = step
         self.friction = damping
@@ -118,7 +117,7 @@ def apply_baoab_ornstein_uhlenbeck(
         raise TypeError("plan must be a BAOABLangevinPlan.")
     momentum = jnp.asarray(momenta)
     mass = jnp.asarray(masses, dtype=momentum.dtype)
-    mobile = jnp.asarray(mobile_mask, dtype=bool)
+    mobile = jnp.asarray(mobile_mask, dtype=jnp.bool_)
     thermal = jnp.asarray(temperature, dtype=momentum.dtype)
     if momentum.shape != mass.shape + (3,) or mobile.shape != mass.shape:
         raise ValueError("Momentum, mass, and mobile masks have incompatible shapes.")

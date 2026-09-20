@@ -49,7 +49,7 @@ class SGMCMCDiagnostics(StrictModule):
         max_active_factors: int,
         nonfinite_update_count: int,
     ):
-        gradient_values = jnp.asarray(gradient_norm, dtype=float)
+        gradient_values = jnp.asarray(gradient_norm, dtype=jnp.float64)
         self.rhat = rhat
         self.bulk_ess = bulk_ess
         self.tail_ess = tail_ess
@@ -234,7 +234,7 @@ def sgmcmc_diagnostics(
         raise ValueError("SG-MCMC samples must contain array leaves.")
     for leaf in leaves:
         array = jnp.asarray(leaf)
-        if array.ndim < 2 or int(array.shape[0]) < 2 or int(array.shape[1]) < 4:
+        if array.ndim < 2 or array.shape[0] < 2 or array.shape[1] < 4:
             raise ValueError(
                 "SG-MCMC diagnostics require at least two chains and four draws."
             )
@@ -274,7 +274,7 @@ def sgmcmc_diagnostics(
 def _failing_locations(tree: PyTree[Any], predicate: Any, /) -> tuple[str, ...]:
     locations: list[str] = []
     for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
-        array = jnp.asarray(leaf, dtype=float)
+        array = jnp.asarray(leaf, dtype=jnp.float64)
         base = jax.tree_util.keystr(path) or "<root>"
         for index in jnp.argwhere(predicate(array)):
             suffix = ""
@@ -287,7 +287,7 @@ def _failing_locations(tree: PyTree[Any], predicate: Any, /) -> tuple[str, ...]:
 def _tree_extreme(tree: PyTree[Any], /, *, maximum: bool) -> Array:
     values = jnp.concatenate(
         [
-            jnp.ravel(jnp.asarray(leaf, dtype=float))
+            jnp.ravel(jnp.asarray(leaf, dtype=jnp.float64))
             for leaf in jax.tree_util.tree_leaves(tree)
         ]
     )

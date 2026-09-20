@@ -37,7 +37,7 @@ class _KeyConsumingResidual(BatchEvaluator):
 
 def _sum_fields(tree) -> jnp.ndarray:
     leaves = jtu.tree_leaves(tree, is_leaf=lambda x: isinstance(x, cx.AxisArray))
-    total = jnp.array(0.0, dtype=float)
+    total = jnp.array(0.0, dtype="float64")
     for leaf in leaves:
         if isinstance(leaf, cx.AxisArray):
             total = total + jnp.sum(leaf.data)
@@ -48,7 +48,7 @@ def _jit_sample_sum(component, sampling):
     def _sample_sum(key):
         batch = component.sample(sampling, key=key)
         if isinstance(batch, tuple):
-            total = jnp.array(0.0, dtype=float)
+            total = jnp.array(0.0, dtype="float64")
             for item in batch:
                 total = total + _sum_fields(item.points)
             return total
@@ -123,7 +123,7 @@ def test_sampling_jit_interior_constraint():
 
 def test_sampling_jit_interior_constraint_coord_separable_fourier_axis_spec():
     geom = Interval1d(0.0, 1.0)
-    structure = SampleLayout((("x",),))
+    SampleLayout((("x",),))
 
     component = geom.component()
     sampling = phx.domain.GridSampling({"x": FourierAxisSpec(8)})
@@ -196,7 +196,7 @@ def test_residual_penalty_splits_sampling_and_evaluation_keys():
 def test_integral_constraint_splits_sampling_and_evaluation_keys():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
-    structure = SampleLayout((("x",),))
+    SampleLayout((("x",),))
     function = geom.Function("x")(_KeyConsumingResidual())
     condition = Moment("u", component, lambda u: u)
     term = RandomizedMomentPenalty(

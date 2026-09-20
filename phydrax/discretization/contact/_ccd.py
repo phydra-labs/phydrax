@@ -60,8 +60,7 @@ class InclusionCCDPlan(StrictModule, NonTrainableState):
         required = ContactGuaranteeLevel(required_guarantee)
         if required > ContactGuaranteeLevel.ENCLOSURE_CONSERVATIVE:
             raise ValueError(
-                "InclusionCCDPlan cannot satisfy a guarantee stronger than "
-                "ENCLOSURE_CONSERVATIVE."
+                "InclusionCCDPlan cannot satisfy a guarantee stronger than ENCLOSURE_CONSERVATIVE."
             )
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("time_tolerance must be finite and positive.")
@@ -409,7 +408,7 @@ def _batch_step_limit(
     interval_count = 0
     initial_violations = 0
     exhausted = False
-    for slot in np.flatnonzero(np.asarray(batch.valid, dtype=bool)).tolist():
+    for slot in np.flatnonzero(np.asarray(batch.valid, dtype=np.bool_)).tolist():
         indices = np.asarray(batch.vertex_indices[slot], dtype=np.int32)
         arity = (
             2

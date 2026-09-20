@@ -50,12 +50,14 @@ class SteinThinning(StrictModule):
             raise ValueError("beta must lie strictly between -1 and 0.")
         if not float(offset) > 0.0:
             raise ValueError("offset must be strictly positive.")
-        scale = None if length_scale is None else jnp.asarray(length_scale, dtype=float)
+        scale = (
+            None if length_scale is None else jnp.asarray(length_scale, dtype=jnp.float64)
+        )
         if scale is not None and bool(jnp.any((~jnp.isfinite(scale)) | (scale <= 0.0))):
             raise ValueError("length_scale must be finite and strictly positive.")
         self.num_points = count
-        self.beta = jnp.asarray(beta, dtype=float)
-        self.offset = jnp.asarray(offset, dtype=float)
+        self.beta = jnp.asarray(beta, dtype=jnp.float64)
+        self.offset = jnp.asarray(offset, dtype=jnp.float64)
         self.length_scale = scale
 
 
@@ -136,7 +138,7 @@ def thin_posterior(
         raise TypeError("result must be an MCMCResult.")
     if not isinstance(method, SteinThinning):
         raise TypeError("method must be a SteinThinning.")
-    log_density = jnp.asarray(result.log_density, dtype=float)
+    log_density = jnp.asarray(result.log_density, dtype=jnp.float64)
     if log_density.ndim != 2:
         raise ValueError("MCMC log density must have shape (chains, draws).")
     if bool(jnp.any(~jnp.isfinite(log_density))):
@@ -204,7 +206,7 @@ def _flatten_position_samples(
     _, unravel = ravel_pytree(example)
     matrices = []
     for leaf in jax.tree_util.tree_leaves(samples):
-        values = jnp.asarray(leaf, dtype=float)
+        values = jnp.asarray(leaf, dtype=jnp.float64)
         if values.shape[:2] != (num_chains, num_draws):
             raise ValueError("MCMC sample leaves must share leading chain and draw axes.")
         matrices.append(values.reshape((num_chains, num_draws, -1)))
@@ -214,9 +216,9 @@ def _flatten_position_samples(
 
 
 def _resolve_length_scale(samples: Array, supplied: Array | None, /) -> Array:
-    dimension = int(samples.shape[-1])
+    dimension = samples.shape[-1]
     if supplied is not None:
-        scale = jnp.broadcast_to(jnp.asarray(supplied, dtype=float), (dimension,))
+        scale = jnp.broadcast_to(jnp.asarray(supplied, dtype=jnp.float64), (dimension,))
         if bool(jnp.any((~jnp.isfinite(scale)) | (scale <= 0.0))):
             raise ValueError(
                 "length_scale must broadcast to finite positive coordinates."
@@ -261,7 +263,7 @@ def _thin_chain(
     key: Key[Array, ""],
     /,
 ) -> tuple[Array, Array]:
-    num_draws = int(points.shape[0])
+    num_draws = points.shape[0]
     diagonal = _stein_kernel(
         points,
         scores,
@@ -271,7 +273,7 @@ def _thin_chain(
         method.beta,
         method.offset,
     )
-    selected = jnp.zeros((num_draws,), dtype=bool)
+    selected = jnp.zeros((num_draws,), dtype=jnp.bool_)
     indices = jnp.zeros((method.num_points,), dtype=jnp.int32)
     penalty = jnp.zeros((num_draws,), dtype=points.dtype)
 

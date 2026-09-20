@@ -103,10 +103,12 @@ def test_geometry_informed_flower_runs_jit_and_has_finite_gradients():
 
 @pytest.mark.parametrize("support_kind", ("occupancy", "sdf"))
 def test_geometry_informed_flower_projects_explicit_hard_latent_support(support_kind):
-    nodes = (jnp.arange(8, dtype=float) + 0.5) / 8.0
+    nodes = (jnp.arange(8, dtype="float64") + 0.5) / 8.0
     sdf = jnp.abs(nodes - 0.5) - 0.3
     expected_mask = sdf < 0.0
-    support_values = expected_mask.astype(float) if support_kind == "occupancy" else sdf
+    support_values = (
+        expected_mask.astype("float64") if support_kind == "occupancy" else sdf
+    )
     batch = phx.nn.operator.OperatorBatch(
         inputs={
             "u": phx.nn.operator.FunctionSamples(
@@ -148,8 +150,8 @@ def test_geometry_informed_flower_projects_explicit_hard_latent_support(support_
 
 
 def test_latent_inverse_distance_support_reproduces_constant_fields_far_away():
-    nodes = (jnp.arange(8, dtype=float) + 0.5) / 8.0
-    support_coordinates = (100.0 + jnp.arange(8, dtype=float))[:, None]
+    nodes = (jnp.arange(8, dtype="float64") + 0.5) / 8.0
+    support_coordinates = (100.0 + jnp.arange(8, dtype="float64"))[:, None]
     batch = phx.nn.operator.OperatorBatch(
         inputs={
             "u": phx.nn.operator.FunctionSamples(

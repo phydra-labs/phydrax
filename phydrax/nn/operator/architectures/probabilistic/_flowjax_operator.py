@@ -98,8 +98,7 @@ class OperatorBatchConditioner(StrictModule):
             expected = batch.case_shape + (encoder.latent_size,)
             if value.shape != expected:
                 raise ValueError(
-                    f"Conditioner encoder {name!r} must return shape {expected}; "
-                    f"got {value.shape}."
+                    f"Conditioner encoder {name!r} must return shape {expected}; got {value.shape}."
                 )
             encoded.append(value)
         return jnp.concatenate(tuple(encoded), axis=-1)
@@ -174,19 +173,18 @@ class FlowJAXOperatorDistribution(AbstractOperatorDistribution):
     ):
         if not isinstance(flow, FlowJAXDistribution):
             raise TypeError("flow must be a FlowJAX AbstractDistribution.")
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         axes = tuple(str(axis) for axis in case_axes)
         expected = cases + query.sample_shape + output_spec.channel_shape
         center_array = jnp.asarray(center)
         if center_array.shape != expected:
             raise ValueError(
-                f"FlowJAX operator center must have shape {expected}; "
-                f"got {center_array.shape}."
+                f"FlowJAX operator center must have shape {expected}; got {center_array.shape}."
             )
         indices = jnp.asarray(active_indices, dtype=jnp.int32)
-        if indices.ndim != 1 or int(indices.shape[0]) <= 0:
+        if indices.ndim != 1 or indices.shape[0] <= 0:
             raise ValueError("FlowJAX active_indices must be a non-empty vector.")
-        if tuple(flow.shape) != (int(indices.shape[0]),):
+        if tuple(flow.shape) != (indices.shape[0],):
             raise ValueError(
                 "FlowJAX event shape must equal the active fixed-query event size."
             )
@@ -198,8 +196,7 @@ class FlowJAXOperatorDistribution(AbstractOperatorDistribution):
             )
         if condition_array.shape != cases + cond_shape:
             raise ValueError(
-                f"FlowJAX condition must have shape {cases + cond_shape}; "
-                f"got {condition_array.shape}."
+                f"FlowJAX condition must have shape {cases + cond_shape}; got {condition_array.shape}."
             )
         if len(axes) != len(cases):
             raise ValueError("FlowJAX case axes and case shape ranks differ.")
@@ -228,7 +225,7 @@ class FlowJAXOperatorDistribution(AbstractOperatorDistribution):
         key: Key[Array, ""],
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
-        shape = tuple(int(size) for size in sample_shape)
+        shape = tuple(sample_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("FlowJAX operator sample dimensions must be positive.")
         cases = prod(self.case_shape) if self.case_shape else 1
@@ -257,8 +254,7 @@ class FlowJAXOperatorDistribution(AbstractOperatorDistribution):
         target_array = jnp.asarray(target)
         if target_array.shape != self.center.shape:
             raise ValueError(
-                f"FlowJAX operator target must have shape {self.center.shape}; "
-                f"got {target_array.shape}."
+                f"FlowJAX operator target must have shape {self.center.shape}; got {target_array.shape}."
             )
         cases = prod(self.case_shape) if self.case_shape else 1
         center = self.center.reshape((cases, self.event_size))[:, self.active_indices]
@@ -289,7 +285,7 @@ def _conditional_flow_operator_contract(model):
         + (
             ("wrapped_architecture", wrapped.architecture),
             ("flow_type", type(model.flow).__name__),
-            ("event_size", int(model.active_indices.shape[0])),
+            ("event_size", model.active_indices.shape[0]),
             ("condition_inputs", tuple(model.conditioner.encoders)),
             ("condition_size", model.conditioner.condition_size),
             ("query_fingerprint", model.reference_query_fingerprint),
@@ -349,7 +345,7 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
                 "FlowJAX fixed-query operators do not support native topology."
             )
         output_spec = location_model.operator_output_specs["output"]
-        mask = np.asarray(reference_query.mask_array(case_shape=()), dtype=bool)
+        mask = np.asarray(reference_query.mask_array(case_shape=()), dtype=np.bool_)
         if output_spec.channels != "scalar":
             mask = np.broadcast_to(
                 mask[..., None], mask.shape + output_spec.channel_shape
@@ -359,9 +355,9 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
             raise ValueError(
                 "FlowJAX reference queries require at least one active output."
             )
-        if tuple(flow.shape) != (int(active.size),):
+        if tuple(flow.shape) != (active.size,):
             raise ValueError(
-                f"FlowJAX flow.shape must be {(int(active.size),)}; got {flow.shape}."
+                f"FlowJAX flow.shape must be {(active.size,)}; got {flow.shape}."
             )
         if tuple(flow.cond_shape or ()) != (conditioner.condition_size,):
             raise ValueError(
@@ -442,7 +438,7 @@ def conditional_coupling_flow_operator(
 ) -> ConditionalFlowFunctionOperator:
     """Build a conditional FlowJAX coupling-flow operator on one fixed query."""
     output_spec = location_model.operator_output_specs["output"]
-    mask = np.asarray(reference_query.mask_array(case_shape=()), dtype=bool)
+    mask = np.asarray(reference_query.mask_array(case_shape=()), dtype=np.bool_)
     if output_spec.channels != "scalar":
         mask = np.broadcast_to(mask[..., None], mask.shape + output_spec.channel_shape)
     event_size = int(np.sum(mask))
@@ -453,8 +449,8 @@ def conditional_coupling_flow_operator(
     if int(flow_layers) <= 0 or int(nn_width) <= 0 or int(nn_depth) <= 0:
         raise ValueError("Flow layers, width, and depth must be positive.")
     base = FlowJAXNormal(
-        loc=jnp.zeros((event_size,), dtype=float),
-        scale=jnp.ones((event_size,), dtype=float),
+        loc=jnp.zeros((event_size,), dtype=jnp.float64),
+        scale=jnp.ones((event_size,), dtype=jnp.float64),
     )
     flow = coupling_flow(
         key,

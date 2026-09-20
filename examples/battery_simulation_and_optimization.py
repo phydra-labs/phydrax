@@ -223,8 +223,7 @@ def run_example(
         for margin in optimization_margins.values()
     ):
         raise RuntimeError(
-            "Optimized replay failed a target, bound, or optimality margin: "
-            f"{optimization_margins!r}."
+            f"Optimized replay failed a target, bound, or optimality margin: {optimization_margins!r}."
         )
 
     print(f"profile_id={profile.profile_id}")

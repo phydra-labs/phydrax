@@ -16,12 +16,14 @@ from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
+from .._tree_math import (
+    tree_add_scaled as _tree_add_scaled,
+    tree_allfinite as _tree_allfinite,
+    tree_inner as _tree_inner,
+    tree_norm as _tree_norm,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ._iterative._types import (
-    _tree_add_scaled,
-    _tree_allfinite,
-    _tree_inner,
-    _tree_norm,
-    _validate_real_inexact_tree,
     IterativeStepMetrics,
     MinimizationProblem,
     OptimizationDiagnostics,
@@ -152,9 +154,11 @@ class IndicatorFunctional(AbstractProximalFunctional):
         leaves = jax.tree.leaves(parameters)
         if not leaves:
             raise ValueError("parameters must contain at least one array leaf.")
-        dtype = jnp.result_type(*(jnp.asarray(leaf).dtype for leaf in leaves), float)
+        dtype = jnp.result_type(
+            *(jnp.asarray(leaf).dtype for leaf in leaves), jnp.float64
+        )
         return jnp.where(
-            jnp.asarray(self.contains(parameters), dtype=bool),
+            jnp.asarray(self.contains(parameters), dtype=jnp.bool_),
             jnp.asarray(0.0, dtype=dtype),
             jnp.asarray(jnp.inf, dtype=dtype),
         )
@@ -199,7 +203,7 @@ class BoxIndicator(AbstractProximalFunctional):
         )
         dtype = jnp.result_type(
             *(jnp.asarray(leaf).dtype for leaf in jax.tree.leaves(parameters)),
-            float,
+            jnp.float64,
         )
         return jnp.where(contained, jnp.asarray(0.0, dtype=dtype), jnp.inf)
 
@@ -348,8 +352,7 @@ class ProximalProblem(StrictModule):
         )
         if smooth_.bounds is not None or smooth_.constraints:
             raise ValueError(
-                "ProximalProblem smooth terms must be unconstrained; encode a closed "
-                "set with an indicator functional."
+                "ProximalProblem smooth terms must be unconstrained; encode a closed set with an indicator functional."
             )
         if not isinstance(nonsmooth, AbstractProximalFunctional):
             raise TypeError("nonsmooth must be an AbstractProximalFunctional.")
@@ -862,7 +865,7 @@ def _proximal_newton_proposal(
     /,
 ):
     flat_parameters, unravel = ravel_pytree(parameters)
-    if int(flat_parameters.size) > method.max_dense_dimension:
+    if flat_parameters.size > method.max_dense_dimension:
         raise ValueError(
             f"ProximalNewton has {flat_parameters.size} variables, exceeding "
             f"max_dense_dimension={method.max_dense_dimension}."

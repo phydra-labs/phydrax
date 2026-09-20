@@ -77,7 +77,7 @@ def _deidentification():
     )
 
 
-def test_legacy_ct_applies_scaling_once_and_constructs_lps_voxel_centres() -> None:
+def test_legacy_ct_applies_scaling_once_and_constructs_lps_voxel_centers() -> None:
     payloads = (
         legacy_ct(
             sop_instance_uid="1.2.826.0.1.3680043.10.999.12",

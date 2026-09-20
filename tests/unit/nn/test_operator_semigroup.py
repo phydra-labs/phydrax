@@ -49,7 +49,7 @@ def _batch(*, channels=None):
         jnp.linspace(0.0, 1.0, points),
         quadrature_weights=jnp.asarray([0.1, 0.2, 0.3, 0.4]),
     )
-    base = 1.0 + jnp.arange(cases * points, dtype=float).reshape(cases, points) / 5.0
+    base = 1.0 + jnp.arange(cases * points, dtype="float64").reshape(cases, points) / 5.0
     state = base if channels is None else jnp.stack((base, 2.0 * base), axis=-1)
     duration = jnp.zeros((cases, points))
     mask = jnp.asarray(

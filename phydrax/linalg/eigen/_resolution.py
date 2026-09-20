@@ -129,16 +129,16 @@ def compare_general_eigen_resolutions(
     if not isinstance(policy_, GeneralEigenResolutionPolicy):
         raise TypeError("policy must be a GeneralEigenResolutionPolicy or None.")
 
-    coarse_alpha = np.asarray(coarse.alpha, dtype=complex).reshape((-1,))
-    coarse_beta = np.asarray(coarse.beta, dtype=complex).reshape((-1,))
-    fine_alpha = np.asarray(fine.alpha, dtype=complex).reshape((-1,))
-    fine_beta = np.asarray(fine.beta, dtype=complex).reshape((-1,))
+    coarse_alpha = np.asarray(coarse.alpha, dtype=np.complex128).reshape((-1,))
+    coarse_beta = np.asarray(coarse.beta, dtype=np.complex128).reshape((-1,))
+    fine_alpha = np.asarray(fine.alpha, dtype=np.complex128).reshape((-1,))
+    fine_beta = np.asarray(fine.beta, dtype=np.complex128).reshape((-1,))
     coarse_class = _homogeneous_classes(coarse)
     fine_class = _homogeneous_classes(fine)
     coarse_count = coarse_alpha.size
     fine_indices = np.full((coarse_count,), -1, dtype=np.int32)
-    distances = np.full((coarse_count,), np.inf, dtype=float)
-    matched = np.zeros((coarse_count,), dtype=bool)
+    distances = np.full((coarse_count,), np.inf, dtype=np.float64)
+    matched = np.zeros((coarse_count,), dtype=np.bool_)
 
     for class_value in (0, 1):
         coarse_candidates = np.flatnonzero(coarse_class == class_value)
@@ -151,7 +151,9 @@ def compare_general_eigen_resolutions(
             fine_alpha[fine_candidates],
             fine_beta[fine_candidates],
         )
-        deterministic = np.finfo(float).eps * np.arange(costs.size).reshape(costs.shape)
+        deterministic = np.finfo(np.float64).eps * np.arange(costs.size).reshape(
+            costs.shape
+        )
         rows, columns = linear_sum_assignment(costs + deterministic)
         selected_coarse = coarse_candidates[rows]
         selected_fine = fine_candidates[columns]
@@ -161,8 +163,8 @@ def compare_general_eigen_resolutions(
 
     coarse_separation = _local_separations(coarse_alpha, coarse_beta, coarse_class)
     fine_separation = _local_separations(fine_alpha, fine_beta, fine_class)
-    local = np.full((coarse_count,), np.inf, dtype=float)
-    normalized = np.full((coarse_count,), np.inf, dtype=float)
+    local = np.full((coarse_count,), np.inf, dtype=np.float64)
+    normalized = np.full((coarse_count,), np.inf, dtype=np.float64)
     valid_match = np.flatnonzero(matched)
     if valid_match.size:
         target = fine_indices[valid_match]
@@ -172,7 +174,7 @@ def compare_general_eigen_resolutions(
         )
         normalized[valid_match] = distances[valid_match] / np.maximum(
             local[valid_match],
-            np.finfo(float).eps,
+            np.finfo(np.float64).eps,
         )
 
     coarse_clusters = _cluster_ids(
@@ -192,32 +194,32 @@ def compare_general_eigen_resolutions(
 
     coarse_residual = np.asarray(
         coarse.diagnostics.right_relative_residuals,
-        dtype=float,
+        dtype=np.float64,
     )
     fine_residual = np.asarray(
         fine.diagnostics.right_relative_residuals,
-        dtype=float,
+        dtype=np.float64,
     )
-    residual = np.full((coarse_count,), np.inf, dtype=float)
+    residual = np.full((coarse_count,), np.inf, dtype=np.float64)
     residual[valid_match] = np.maximum(
         coarse_residual[valid_match],
         fine_residual[fine_indices[valid_match]],
     )
     coarse_condition = np.asarray(
         coarse.diagnostics.eigenvalue_condition_estimates,
-        dtype=float,
+        dtype=np.float64,
     )
     fine_condition = np.asarray(
         fine.diagnostics.eigenvalue_condition_estimates,
-        dtype=float,
+        dtype=np.float64,
     )
-    condition = np.full((coarse_count,), np.inf, dtype=float)
+    condition = np.full((coarse_count,), np.inf, dtype=np.float64)
     condition[valid_match] = np.maximum(
         coarse_condition[valid_match],
         fine_condition[fine_indices[valid_match]],
     )
-    coarse_converged = np.asarray(coarse.diagnostics.converged_mask, dtype=bool)
-    fine_converged = np.asarray(fine.diagnostics.converged_mask, dtype=bool)
+    coarse_converged = np.asarray(coarse.diagnostics.converged_mask, dtype=np.bool_)
+    fine_converged = np.asarray(fine.diagnostics.converged_mask, dtype=np.bool_)
 
     statuses = np.full(
         (coarse_count,),
@@ -287,9 +289,9 @@ def compare_general_eigen_resolutions(
 
 
 def _homogeneous_classes(result: GeneralEigenSolveResult, /) -> np.ndarray:
-    finite = np.asarray(result.finite_mask, dtype=bool)
-    infinite = np.asarray(result.infinite_mask, dtype=bool)
-    indeterminate = np.asarray(result.indeterminate_mask, dtype=bool)
+    finite = np.asarray(result.finite_mask, dtype=np.bool_)
+    infinite = np.asarray(result.infinite_mask, dtype=np.bool_)
+    indeterminate = np.asarray(result.indeterminate_mask, dtype=np.bool_)
     classes = np.full(finite.shape, 2, dtype=np.int32)
     classes[finite] = 0
     classes[infinite] = 1
@@ -311,7 +313,7 @@ def _chordal_matrix(
     left_norm = np.sqrt(np.abs(left_alpha) ** 2 + np.abs(left_beta) ** 2)
     right_norm = np.sqrt(np.abs(right_alpha) ** 2 + np.abs(right_beta) ** 2)
     denominator = left_norm[:, None] * right_norm[None, :]
-    return numerator / np.maximum(denominator, np.finfo(float).tiny)
+    return numerator / np.maximum(denominator, np.finfo(np.float64).tiny)
 
 
 def _local_separations(
@@ -320,7 +322,7 @@ def _local_separations(
     classes: np.ndarray,
     /,
 ) -> np.ndarray:
-    output = np.ones(alpha.shape, dtype=float)
+    output = np.ones(alpha.shape, dtype=np.float64)
     for class_value in (0, 1):
         indices = np.flatnonzero(classes == class_value)
         if indices.size <= 1:

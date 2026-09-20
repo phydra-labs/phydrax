@@ -69,7 +69,7 @@ def _prepare_grid_values(
     elif (
         array.ndim <= dimension
         or tuple(array.shape[-dimension - 1 : -1]) != sample_shape
-        or int(array.shape[-1]) != channels
+        or array.shape[-1] != channels
     ):
         raise ValueError(
             "Grid values must have case axes followed by the declared spatial and "

@@ -114,13 +114,15 @@ class MPSQuantumTrajectoryResult(StrictModule):
         self.final_state = final_state
         self.jump_times = jnp.asarray(jump_times)
         self.jump_channels = jnp.asarray(jump_channels, dtype=jnp.int32)
-        self.active_events = jnp.asarray(active_events, dtype=bool)
+        self.active_events = jnp.asarray(active_events, dtype=jnp.bool_)
         self.discarded_weight_history = jnp.asarray(discarded_weight_history)
         self.root_residuals = jnp.asarray(root_residuals)
-        self.root_ambiguous = jnp.asarray(root_ambiguous, dtype=bool)
-        self.event_capacity_saturated = jnp.asarray(event_capacity_saturated, dtype=bool)
+        self.root_ambiguous = jnp.asarray(root_ambiguous, dtype=jnp.bool_)
+        self.event_capacity_saturated = jnp.asarray(
+            event_capacity_saturated, dtype=jnp.bool_
+        )
         self.event_count = int(jnp.sum(self.active_events))
-        self.maximum_events = int(self.active_events.shape[0])
+        self.maximum_events = self.active_events.shape[0]
         self.valid = (
             jnp.isfinite(final_state.norm())
             & (jnp.abs(final_state.norm() - 1.0) <= 1e-6)
@@ -184,7 +186,7 @@ def solve_mps_quantum_jump(
     root_truncation_tolerance: float = 1e-6,
     root_residual_tolerance: float = 1e-8,
 ) -> MPSQuantumTrajectoryResult:
-    step = jnp.asarray(step_size, dtype=float).reshape(())
+    step = jnp.asarray(step_size, dtype=jnp.float64).reshape(())
     step_count = int(steps)
     event_limit = int(maximum_events)
     bond_limit = int(maximum_bond_dimension)
@@ -201,9 +203,9 @@ def solve_mps_quantum_jump(
     state = problem.initial_state
     times = jnp.zeros((event_limit,), dtype=step.dtype)
     channels = -jnp.ones((event_limit,), dtype=jnp.int32)
-    active = jnp.zeros((event_limit,), dtype=bool)
+    active = jnp.zeros((event_limit,), dtype=jnp.bool_)
     root_residuals = jnp.full((event_limit,), jnp.nan, dtype=step.dtype)
-    root_ambiguous = jnp.zeros((event_limit,), dtype=bool)
+    root_ambiguous = jnp.zeros((event_limit,), dtype=jnp.bool_)
     discarded = []
     event_count = 0
     capacity_saturated = False

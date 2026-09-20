@@ -35,7 +35,7 @@ def fourier_resample(
     transformed. Unselected axes are independent payload or batch axes.
     """
     array = jnp.asarray(values)
-    shape = tuple(int(size) for size in output_shape)
+    shape = tuple(output_shape)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError("output_shape must contain positive signal sizes.")
     if axes is None:
@@ -95,7 +95,7 @@ class FourierSpectrumResult(StrictModule, NonTrainableState):
         self.spectrum = transformed
         self.windowed_samples = samples
         self.parseval_residual = residual
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
             {

@@ -46,9 +46,10 @@ import subprocess
 from dataclasses import replace
 from pathlib import Path, PurePath
 
-from phydrax.interchange._device_design import DeviceQualificationError, DeviceSource
 from phydrax.interchange._resource import read_bounded_resource, ResourceLimits
 from phydrax.interchange.energy_runtime import EnergyRuntimeError, PinnedExecutable
+
+from phydrax.interchange._device_design import DeviceQualificationError, DeviceSource
 from phydrax.interchange.geant4_detector_design import (
     GYMDetectorProfile,
     read_gym_detector_config,

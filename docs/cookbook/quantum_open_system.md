@@ -24,11 +24,11 @@ import jax.numpy as jnp
 import jax.random as jr
 import phydrax as phx
 
-lowering = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=complex)
-excited_projector = jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype=complex)
+lowering = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype="complex128")
+excited_projector = jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype="complex128")
 time = phx.domain.TimeInterval(0.0, 2.0)
 gamma = 0.8
-H = time.Function()(jnp.zeros((2, 2), dtype=complex))
+H = time.Function()(jnp.zeros((2, 2), dtype="complex128"))
 L = time.Function()(jnp.sqrt(gamma) * lowering)
 Pe = time.Function()(excited_projector)
 
@@ -38,7 +38,7 @@ def rho(t):
     excited = jnp.exp(-gamma * t)
     return jnp.asarray(
         [[1.0 - excited, 0.0], [0.0, excited]],
-        dtype=complex,
+        dtype="complex128",
     )
 
 
@@ -47,7 +47,7 @@ def perturbed_rho(t):
     excited = jnp.exp(-0.6 * gamma * t)
     return jnp.asarray(
         [[1.0 - excited, 0.0], [0.0, excited]],
-        dtype=complex,
+        dtype="complex128",
     )
 
 

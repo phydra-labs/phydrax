@@ -18,7 +18,7 @@ from phydrax.ein import contract
 
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...imaging import image_coordinates
 from ..imaging._types import DenseDisplacementField2D, ImagePair2D
@@ -109,20 +109,20 @@ class LearnedDensePIVPlan(StrictModule, NonTrainableState):
         if not jnp.issubdtype(first.dtype, jnp.inexact) or not jnp.issubdtype(
             second.dtype, jnp.inexact
         ):
-            first = first.astype(float)
-            second = second.astype(float)
+            first = first.astype("float64")
+            second = second.astype("float64")
         dtype = jnp.result_type(first.dtype, second.dtype)
         first = first.astype(dtype)
         second = second.astype(dtype)
         first_mask = (
-            jnp.ones(self.image_shape, dtype=bool)
+            jnp.ones(self.image_shape, dtype=jnp.bool_)
             if first_valid is None
-            else jnp.asarray(first_valid, dtype=bool)
+            else jnp.asarray(first_valid, dtype=jnp.bool_)
         )
         second_mask = (
-            jnp.ones(self.image_shape, dtype=bool)
+            jnp.ones(self.image_shape, dtype=jnp.bool_)
             if second_valid is None
-            else jnp.asarray(second_valid, dtype=bool)
+            else jnp.asarray(second_valid, dtype=jnp.bool_)
         )
         if first_mask.shape != self.image_shape or second_mask.shape != self.image_shape:
             raise ValueError("Prepared image masks must match plan.image_shape.")
@@ -219,8 +219,8 @@ class LearnedDensePIVResult(StrictModule):
 class AbstractDensePIVModel(StrictModule):
     """Dense PIV model contract over an explicitly prepared fixed pyramid."""
 
-    plan: AbstractAttribute[LearnedDensePIVPlan]
-    architecture_id: AbstractAttribute[str]
+    plan: eqx.AbstractVar[LearnedDensePIVPlan]
+    architecture_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def __call__(self, prepared: PreparedLearnedDensePIV, /) -> DensePIVPrediction:

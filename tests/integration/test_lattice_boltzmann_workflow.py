@@ -53,7 +53,7 @@ def test_lattice_boltzmann_compiler_matches_independent_periodic_trt_step():
     )
 
     f = np.asarray(populations)
-    c = np.asarray(velocity_set.velocities, dtype=float)
+    c = np.asarray(velocity_set.velocities, dtype="float64")
     w = np.asarray(velocity_set.weights)
     opposite = np.asarray(velocity_set.opposite)
     rho = np.sum(f, axis=-1)
@@ -86,7 +86,9 @@ def test_lattice_boltzmann_compiler_matches_independent_periodic_trt_step():
     )
     expected = np.stack(
         tuple(
-            np.roll(post[..., direction], tuple(c[direction].astype(int)), axis=(0, 1))
+            np.roll(
+                post[..., direction], tuple(c[direction].astype("int64")), axis=(0, 1)
+            )
             for direction in range(velocity_set.population_count)
         ),
         axis=-1,

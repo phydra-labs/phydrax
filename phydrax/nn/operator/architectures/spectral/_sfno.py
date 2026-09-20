@@ -70,8 +70,8 @@ class SphericalSpectralConv(StrictModule):
             raise ValueError("Spherical layer and transform plan do not match.")
         if (
             array.ndim < 3
-            or tuple(int(size) for size in array.shape[-3:-1]) != plan.sample_shape
-            or int(array.shape[-1]) != self.in_channels
+            or tuple(array.shape[-3:-1]) != plan.sample_shape
+            or array.shape[-1] != self.in_channels
         ):
             raise ValueError(
                 "SphericalSpectralConv expects "
@@ -135,7 +135,7 @@ def _validate_axis(
     periodic: bool,
     token: Array,
 ) -> Array:
-    if axis.size != int(expected_nodes.size):
+    if axis.size != expected_nodes.size:
         raise ValueError(f"SFNO {name} axis has the wrong sample count.")
     if axis.periodic != periodic:
         raise ValueError(f"SFNO {name} axis periodicity does not match its sampling.")
@@ -287,13 +287,13 @@ class SFNO(AbstractOperatorModel):
             "SFNO does not support masked spherical queries.",
         )
         scalar_shape = batch.case_shape + self.plan.sample_shape
-        if tuple(int(size) for size in values.shape) == scalar_shape:
+        if tuple(values.shape) == scalar_shape:
             if _get_size(self.in_size) != 1:
                 raise ValueError("Multichannel SFNO input requires a channel axis.")
             values = values[..., None]
         else:
             expected = scalar_shape + (_get_size(self.in_size),)
-            if tuple(int(size) for size in values.shape) != expected:
+            if tuple(values.shape) != expected:
                 raise ValueError(f"SFNO source values must have shape {expected}.")
         hidden = self.lift(values, key=fold_in_eval_key(key, 0))
         for index, block in enumerate(self.blocks):

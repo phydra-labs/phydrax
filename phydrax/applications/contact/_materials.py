@@ -67,7 +67,7 @@ class ContactMaterialPairTable(StrictModule, NonTrainableState):
         symmetric: bool = True,
     ):
         arrays = tuple(
-            np.asarray(value, dtype=float)
+            np.asarray(value, dtype=np.float64)
             for value in (
                 normal_stiffness,
                 static_friction,
@@ -115,14 +115,14 @@ class ContactMaterialPairTable(StrictModule, NonTrainableState):
         ):
             raise ValueError("Contact material parameters violate physical bounds.")
         mechanical = (
-            np.ones(shape, dtype=bool)
+            np.ones(shape, dtype=np.bool_)
             if mechanical_available is None
-            else np.asarray(mechanical_available, dtype=bool)
+            else np.asarray(mechanical_available, dtype=np.bool_)
         )
         transport = (
-            np.ones(shape, dtype=bool)
+            np.ones(shape, dtype=np.bool_)
             if transport_available is None
-            else np.asarray(transport_available, dtype=bool)
+            else np.asarray(transport_available, dtype=np.bool_)
         )
         if mechanical.shape != shape or transport.shape != shape:
             raise ValueError("Contact availability masks must match the material table.")

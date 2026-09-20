@@ -302,7 +302,7 @@ class ParametricQueryPlan:
     ) -> tuple[MultiIndex, ...]:
         if not isinstance(route, FixedParametricRoute):
             raise TypeError("route must be a FixedParametricRoute.")
-        indices = tuple(tuple(int(value) for value in item) for item in multi_indices)
+        indices = tuple(tuple(item) for item in multi_indices)
         if not indices:
             raise ValueError("A parametric jet requires at least one multi-index.")
         if any(

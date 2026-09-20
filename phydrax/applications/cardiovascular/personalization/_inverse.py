@@ -143,9 +143,7 @@ class CardiovascularMultiStartResult(StrictModule):
     problem_id: str = eqx.field(static=True)
 
 
-class _DeterministicInverseProblem(StrictModule, NonTrainableState):
-    __strict_abstract__ = True
-
+class CardiovascularInverseProblem(StrictModule, NonTrainableState):
     schema: CardiacParameterSchema
     likelihood: PreparedMultimodalLikelihood
     route: InverseRoute
@@ -269,7 +267,7 @@ class _DeterministicInverseProblem(StrictModule, NonTrainableState):
         likelihood = self.likelihood.evaluate(predictions, nuisance_values=nuisance)
         parameter_prior = self.schema.log_prior(physical)
         fixed = jnp.all(
-            jnp.asarray(self.fixed_topology(state, physical, args), dtype=bool)
+            jnp.asarray(self.fixed_topology(state, physical, args), dtype=jnp.bool_)
         )
         supported = self.schema.contains(physical)
         finite = (
@@ -456,97 +454,14 @@ class _DeterministicInverseProblem(StrictModule, NonTrainableState):
         )
 
 
-class ElectrophysiologyInverseProblem(_DeterministicInverseProblem):
-    def __init__(
-        self,
-        schema: CardiacParameterSchema,
-        likelihood: PreparedMultimodalLikelihood,
-        state_residual: Callable,
-        forward_observables: Callable,
-        /,
-        **kwargs: Any,
-    ):
-        super().__init__(
-            schema,
-            likelihood,
-            ElectrophysiologyInverseRoute(),
-            state_residual,
-            forward_observables,
-            **kwargs,
-        )
-
-
-class MechanicsInverseProblem(_DeterministicInverseProblem):
-    def __init__(
-        self,
-        schema: CardiacParameterSchema,
-        likelihood: PreparedMultimodalLikelihood,
-        state_residual: Callable,
-        forward_observables: Callable,
-        /,
-        **kwargs: Any,
-    ):
-        super().__init__(
-            schema,
-            likelihood,
-            MechanicsInverseRoute(),
-            state_residual,
-            forward_observables,
-            **kwargs,
-        )
-
-
-class LoadingInverseProblem(_DeterministicInverseProblem):
-    def __init__(
-        self,
-        schema: CardiacParameterSchema,
-        likelihood: PreparedMultimodalLikelihood,
-        state_residual: Callable,
-        forward_observables: Callable,
-        /,
-        **kwargs: Any,
-    ):
-        super().__init__(
-            schema,
-            likelihood,
-            LoadingInverseRoute(),
-            state_residual,
-            forward_observables,
-            **kwargs,
-        )
-
-
-class UnloadedGeometryInverseProblem(_DeterministicInverseProblem):
-    def __init__(
-        self,
-        schema: CardiacParameterSchema,
-        likelihood: PreparedMultimodalLikelihood,
-        state_residual: Callable,
-        forward_observables: Callable,
-        /,
-        **kwargs: Any,
-    ):
-        super().__init__(
-            schema,
-            likelihood,
-            UnloadedGeometryInverseRoute(),
-            state_residual,
-            forward_observables,
-            **kwargs,
-        )
-
-
 __all__ = [
+    "CardiovascularInverseProblem",
     "CardiovascularInverseResult",
     "CardiovascularMultiStartResult",
-    "ElectrophysiologyInverseProblem",
     "ElectrophysiologyInverseRoute",
     "InverseAcceptanceEvidence",
     "InverseObjectiveEvaluation",
-    "LoadingInverseProblem",
     "LoadingInverseRoute",
-    "MechanicsInverseProblem",
     "MechanicsInverseRoute",
-    "UnloadedGeometryInverseProblem",
     "UnloadedGeometryInverseRoute",
 ]

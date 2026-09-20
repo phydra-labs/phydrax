@@ -25,7 +25,7 @@ def _time_path(path_id):
         value_shape=(1,),
         path_id=path_id,
         breakpoints=jnp.empty((0,)),
-        breakpoint_mask=jnp.empty((0,), dtype=bool),
+        breakpoint_mask=jnp.empty((0,), dtype="bool"),
     )
 
 

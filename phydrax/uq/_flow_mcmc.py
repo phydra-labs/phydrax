@@ -57,6 +57,9 @@ from ._mcmc_kinetic import MCMCMassAdaptationPlan
 from ._posterior import PosteriorProblem
 
 
+_update_replay_compiled = jax.jit(_update_replay)
+
+
 _INITIALIZATION_TAG = 0
 _WARMUP_TAG = 1
 _ADAPTATION_LOCAL_TAG = 2
@@ -480,7 +483,7 @@ def sample_flow_nuts(
         raise ValueError("Flow NUTS requires at least one scalar parameter.")
     if not jnp.issubdtype(flat_reference.dtype, jnp.floating):
         raise TypeError("Flow NUTS requires real floating unconstrained coordinates.")
-    dimension = int(flat_reference.size)
+    dimension = flat_reference.size
     minimum_training_samples = (
         min(
             flow_config.history_capacity_per_chain,
@@ -551,9 +554,9 @@ def sample_flow_nuts(
             raise FloatingPointError(
                 "Every initial flow-NUTS position needs finite target density and gradient."
             )
-        num_unique_initial_positions = int(
-            np.unique(np.asarray(flat_positions), axis=0).shape[0]
-        )
+        num_unique_initial_positions = np.unique(
+            np.asarray(flat_positions), axis=0
+        ).shape[0]
         warmup_keys = jax.vmap(lambda chain_key: _fold_path(chain_key, _WARMUP_TAG))(
             chain_keys
         )
@@ -595,7 +598,7 @@ def sample_flow_nuts(
         flat_samples = jnp.empty((chains, 0, dimension), dtype=flat_reference.dtype)
         log_density = jnp.empty((chains, 0), dtype=flat_reference.dtype)
         acceptance_rate = jnp.empty((chains, 0), dtype=flat_reference.dtype)
-        divergent = jnp.empty((chains, 0), dtype=bool)
+        divergent = jnp.empty((chains, 0), dtype=jnp.bool_)
         energy = jnp.empty((chains, 0), dtype=flat_reference.dtype)
         num_integration_steps_array = jnp.empty((chains, 0), dtype=jnp.int32)
         num_trajectory_expansions_array = jnp.empty((chains, 0), dtype=jnp.int32)
@@ -687,9 +690,9 @@ def sample_flow_nuts(
             phase=_REPLAY_TAG,
             group=completed_rounds,
             start=0,
-            count=int(replay_samples.shape[1]),
+            count=replay_samples.shape[1],
         )
-        replay = jax.jit(_update_replay)(replay, replay_samples, replay_keys)
+        replay = _update_replay_compiled(replay, replay_samples, replay_keys)
         replay_data = _replay_data(replay)
         if flow is None:
             flow = _build_default_flow(
@@ -1084,8 +1087,7 @@ def _flatten_chain_positions(
         expected_shape = (chains, *jnp.asarray(expected).shape)
         if array.shape != expected_shape:
             raise ValueError(
-                "Every initial_positions leaf needs shape "
-                f"{expected_shape}; received {array.shape}."
+                f"Every initial_positions leaf needs shape {expected_shape}; received {array.shape}."
             )
         if not jnp.issubdtype(array.dtype, jnp.floating):
             raise TypeError("Every initial_positions leaf must be a real floating array.")
@@ -1101,6 +1103,7 @@ def _flatten_chain_positions(
     return jnp.stack(flattened)
 
 
+@eqx.filter_jit
 def _advance_nuts_collect(
     current_states,
     step_sizes,
@@ -1128,7 +1131,7 @@ def _advance_nuts_collect(
         return jax.lax.scan(transition, state, chain_keys)
 
     if chain_method == "vectorized":
-        return_values = jax.jit(jax.vmap(run_chain))(
+        return_values = jax.vmap(run_chain)(
             current_states,
             keys,
             step_sizes,
@@ -1137,13 +1140,12 @@ def _advance_nuts_collect(
         final_states, (positions, infos) = return_values
         return final_states, positions, infos
 
-    states = _unstack_tree(current_states, int(keys.shape[0]))
+    states = _unstack_tree(current_states, keys.shape[0])
     final_values = []
     position_values = []
     info_values = []
-    compiled = jax.jit(run_chain)
     for index, state in enumerate(states):
-        final_state, (positions, infos) = compiled(
+        final_state, (positions, infos) = run_chain(
             state,
             keys[index],
             step_sizes[index],
@@ -1159,6 +1161,7 @@ def _advance_nuts_collect(
     )
 
 
+@eqx.filter_jit
 def _advance_flow_chains(
     flow,
     current_states,
@@ -1185,19 +1188,19 @@ def _advance_flow_chains(
                 lambda state, transition_key: run_chain(flow_value, state, transition_key)
             )(states, transition_keys)
 
-        return eqx.filter_jit(run_vectorized)(flow, current_states, keys)
+        return run_vectorized(flow, current_states, keys)
 
-    states = _unstack_tree(current_states, int(keys.shape[0]))
+    states = _unstack_tree(current_states, keys.shape[0])
     final_values = []
     info_values = []
-    compiled = eqx.filter_jit(run_chain)
     for index, state in enumerate(states):
-        final_state, info = compiled(flow, state, keys[index])
+        final_state, info = run_chain(flow, state, keys[index])
         final_values.append(final_state)
         info_values.append(info)
     return _stack_trees(final_values), _stack_trees(info_values)
 
 
+@eqx.filter_jit
 def _initialize_nuts_states(
     positions,
     logdensity_fn,
@@ -1205,13 +1208,13 @@ def _initialize_nuts_states(
     chain_method: ChainMethod,
 ):
     if chain_method == "vectorized":
-        return jax.jit(jax.vmap(lambda value: blackjax.nuts.init(value, logdensity_fn)))(
-            positions
-        )
-    compiled = jax.jit(lambda value: blackjax.nuts.init(value, logdensity_fn))
-    return _stack_trees([compiled(position) for position in positions])
+        return jax.vmap(lambda value: blackjax.nuts.init(value, logdensity_fn))(positions)
+    return _stack_trees(
+        [blackjax.nuts.init(position, logdensity_fn) for position in positions]
+    )
 
 
+@eqx.filter_jit
 def _advance_composite_chains(
     flow,
     current_states,
@@ -1319,7 +1322,7 @@ def _advance_composite_chains(
                 )
             )(states, keys, chain_step_sizes, chain_mass_matrices)
 
-        final_states, (positions, metrics) = eqx.filter_jit(run_vectorized)(
+        final_states, (positions, metrics) = run_vectorized(
             flow,
             current_states,
             draw_keys,
@@ -1328,13 +1331,12 @@ def _advance_composite_chains(
         )
         return final_states, positions, metrics
 
-    states = _unstack_tree(current_states, int(draw_keys.shape[0]))
+    states = _unstack_tree(current_states, draw_keys.shape[0])
     final_values = []
     position_values = []
     metric_values = []
-    compiled = eqx.filter_jit(run_chain)
     for index, state in enumerate(states):
-        final_state, (positions, metrics) = compiled(
+        final_state, (positions, metrics) = run_chain(
             flow,
             state,
             draw_keys[index],
@@ -1366,7 +1368,7 @@ def _unravel_hmc_state(state, unravel) -> HMCState:
 
 def _stack_rows(values: list[Array], width: int) -> Array:
     if not values:
-        return jnp.empty((0, width), dtype=float)
+        return jnp.empty((0, width), dtype=jnp.float64)
     return jnp.stack(values)
 
 

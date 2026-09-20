@@ -28,7 +28,7 @@ def _case(schedule, *, clamp_x=False):
     ).prepare(particles)
     boundary = None
     if clamp_x:
-        mask = jnp.zeros(grid.vertices().shape + (2,), dtype=bool)
+        mask = jnp.zeros(grid.vertices().shape + (2,), dtype="bool")
         boundary = phx.discretization.PrescribedGridVelocityPlan(
             mask.at[..., 0].set(True)
         )

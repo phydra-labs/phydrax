@@ -33,8 +33,7 @@ class _VolumeDensityCallable(StrictModule):
             axes = tuple(jnp.asarray(axis).reshape((-1,)) for axis in coordinates)
             if len(axes) != self.density.chart.dimension:
                 raise ValueError(
-                    "Coordinate-separable volume density received the wrong number "
-                    "of coordinate axes."
+                    "Coordinate-separable volume density received the wrong number of coordinate axes."
                 )
             grid = jnp.stack(jnp.meshgrid(*axes, indexing="ij"), axis=-1)
             return self.density(grid)
@@ -59,8 +58,7 @@ def with_volume_density(
                 geometry_labels.append(label)
         if len(geometry_labels) != 1:
             raise ValueError(
-                "var=None requires exactly one geometry factor; found "
-                f"{tuple(geometry_labels)}."
+                f"var=None requires exactly one geometry factor; found {tuple(geometry_labels)}."
             )
         var_ = geometry_labels[0]
     else:

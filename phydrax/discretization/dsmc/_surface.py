@@ -32,8 +32,8 @@ class DSMCSurfaceReactionPlan(StrictModule, NonTrainableState):
         /,
     ) -> None:
         products = np.asarray(product_species, dtype=np.int32)
-        probabilities_ = np.asarray(probabilities, dtype=float)
-        energies = np.asarray(reaction_energies, dtype=float)
+        probabilities_ = np.asarray(probabilities, dtype=np.float64)
+        energies = np.asarray(reaction_energies, dtype=np.float64)
         if (
             products.ndim != 1
             or probabilities_.shape != products.shape
@@ -96,7 +96,7 @@ class DSMCSurfaceInteractionPlan(StrictModule, NonTrainableState):
         reaction: DSMCSurfaceReactionPlan | None = None,
         boltzmann_constant: float = 1.380649e-23,
     ) -> None:
-        velocity = np.asarray(wall_velocity, dtype=float)
+        velocity = np.asarray(wall_velocity, dtype=np.float64)
         temperature = float(wall_temperature)
         boltzmann = float(boltzmann_constant)
         if (

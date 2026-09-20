@@ -160,7 +160,7 @@ does not remove COM velocity or certify configurational equilibrium by itself.
 - `MACRigidImmersedEulerMethod` is the baseline synchronized contact-free step.
 - `MACRigidImmersedBackwardEulerMethod` iterates the body pose and fluid constraint at
   accepted time.
-- `MACRigidImmersedMidpointMethod` uses a pose-centred second-order update.
+- `MACRigidImmersedMidpointMethod` uses a pose-centered second-order update.
 - `MACRigidImmersedJointMethod` couples native rigid-joint dynamics.
 - `MACRigidImmersedContactMethod` couples native hard-contact complementarity.
 

@@ -164,16 +164,16 @@ def select_train_terms(
     """Select one unbiased subset while retaining original term indices."""
     count = len(terms)
     if sample_size is None:
-        return terms, tuple(range(count)), jnp.asarray(1.0, dtype=float)
+        return terms, tuple(range(count)), jnp.asarray(1.0, dtype=jnp.float64)
     sampled = jr.choice(
         key,
         count,
         shape=(int(sample_size),),
         replace=False,
     )
-    active_indices = tuple(int(index) for index in np.asarray(sampled, dtype=np.int32))
+    active_indices = tuple(np.asarray(sampled, dtype=np.int32))
     active = tuple(terms[index] for index in active_indices)
-    scale = jnp.asarray(count / int(sample_size), dtype=float)
+    scale = jnp.asarray(count / int(sample_size), dtype=jnp.float64)
     return active, active_indices, scale
 
 
@@ -185,10 +185,10 @@ def expand_train_terms(
     num_terms: int,
 ) -> Any:
     """Restore selected term values to the stable full-objective layout."""
-    active_array = jnp.asarray(active_terms, dtype=float).reshape((-1,))
-    if int(active_array.shape[0]) == 0:
-        return jnp.zeros((int(num_terms),), dtype=float)
-    expanded = jnp.full((int(num_terms),), jnp.nan, dtype=float)
+    active_array = jnp.asarray(active_terms, dtype=jnp.float64).reshape((-1,))
+    if active_array.shape[0] == 0:
+        return jnp.zeros((int(num_terms),), dtype=jnp.float64)
+    expanded = jnp.full((int(num_terms),), jnp.nan, dtype=jnp.float64)
     for local_index, term_index in enumerate(active_term_indices):
         expanded = expanded.at[int(term_index)].set(active_array[int(local_index)])
     return expanded

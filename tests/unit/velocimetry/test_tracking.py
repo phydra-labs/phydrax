@@ -36,13 +36,13 @@ from phydrax.velocimetry.tracking import (
 
 
 def _detections(positions, *, valid=None, intensities=None, name="detections"):
-    positions = jnp.asarray(positions, dtype=float)
+    positions = jnp.asarray(positions, dtype="float64")
     capacity = positions.shape[0]
-    valid = jnp.ones((capacity,), dtype=bool) if valid is None else jnp.asarray(valid)
+    valid = jnp.ones((capacity,), dtype="bool") if valid is None else jnp.asarray(valid)
     intensities = (
-        jnp.ones((capacity,), dtype=float)
+        jnp.ones((capacity,), dtype="float64")
         if intensities is None
-        else jnp.asarray(intensities, dtype=float)
+        else jnp.asarray(intensities, dtype="float64")
     )
     return ParticleDetections(
         positions,
@@ -58,8 +58,8 @@ def _detections(positions, *, valid=None, intensities=None, name="detections"):
 
 
 def _reconstruction(positions, valid, name):
-    positions = jnp.asarray(positions, dtype=float)
-    valid = jnp.asarray(valid, dtype=bool)
+    positions = jnp.asarray(positions, dtype="float64")
+    valid = jnp.asarray(valid, dtype="bool")
     capacity = positions.shape[0]
     return ParticleReconstructionResult(
         jnp.where(valid[:, None], positions, 0.0),
@@ -68,7 +68,7 @@ def _reconstruction(positions, valid, name):
             jnp.broadcast_to(0.01 * jnp.eye(3), (capacity, 3, 3)),
             0.0,
         ),
-        valid.astype(float),
+        valid.astype("float64"),
         valid,
         jnp.zeros((capacity,), dtype=jnp.int32),
         jnp.full((capacity, 2), -1, dtype=jnp.int32),
@@ -78,8 +78,8 @@ def _reconstruction(positions, valid, name):
 
 
 def _camera_rays(origins, points):
-    origins = jnp.asarray(origins, dtype=float)
-    points = jnp.asarray(points, dtype=float)
+    origins = jnp.asarray(origins, dtype="float64")
+    points = jnp.asarray(points, dtype="float64")
     directions = points - origins
     return directions / jnp.sqrt(jnp.sum(directions * directions, axis=-1, keepdims=True))
 
@@ -215,7 +215,7 @@ def test_streaming_tracks_keep_ids_through_crossing_and_one_miss():
         TrackLinkPlan(2, maximum_missed=1, mahalanobis_gate=25.0),
     )
 
-    assert set(np.asarray(result.track_ids[result.observed], dtype=int)) == {0, 1}
+    assert set(np.asarray(result.track_ids[result.observed], dtype="int64")) == {0, 1}
     assert jnp.any(~result.observed[:, 2] & result.active[:, 2])
     missed_slot = int(jnp.argmax((~result.observed[:, 2]) & result.active[:, 2]))
     assert result.track_ids[missed_slot, 2] == result.track_ids[missed_slot, 3]

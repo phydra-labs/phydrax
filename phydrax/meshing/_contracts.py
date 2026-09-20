@@ -428,8 +428,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
             raise TypeError("planar_embedding must be a PlanarEmbedding or None.")
         if (target.ambient_dimension == 2) != (planar_embedding is not None):
             raise ValueError(
-                "A PlanarEmbedding is required exactly for ambient-dimension-two "
-                "surface targets."
+                "A PlanarEmbedding is required exactly for ambient-dimension-two surface targets."
             )
         (
             sizes,
@@ -701,7 +700,7 @@ class MeshingProviderInfo(StrictModule, NonTrainableState):
         self.source_kinds = tuple(source_kinds)
         self.capabilities = tuple(capabilities)
         self.cell_kinds = tuple(str(value) for value in cell_kinds)
-        self.dimensions = tuple(int(value) for value in dimensions)
+        self.dimensions = tuple(dimensions)
         self.execution_modes = tuple(execution_modes)
         self.provider_id = canonical_fingerprint(
             {
@@ -843,7 +842,7 @@ class MeshingFailure(RuntimeError):
         self.category = category
         self.provider_code = str(provider_code)
         self.stage = str(stage)
-        self.entity_ids = tuple(int(value) for value in entity_ids)
+        self.entity_ids = tuple(entity_ids)
         self.locations = tuple(
             tuple(float(component) for component in point) for point in locations
         )

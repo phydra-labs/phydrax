@@ -243,9 +243,9 @@ def thermal_tau_kernel(
     tau_ = jnp.asarray(tau)
     omega = jnp.asarray(frequencies)
     if not jnp.issubdtype(tau_.dtype, jnp.inexact):
-        tau_ = tau_.astype(float)
+        tau_ = tau_.astype("float64")
     if not jnp.issubdtype(omega.dtype, jnp.inexact):
-        omega = omega.astype(float)
+        omega = omega.astype("float64")
     dtype = jnp.result_type(tau_, omega)
     tau_ndim = tau_.ndim
     omega_ndim = omega.ndim
@@ -385,7 +385,7 @@ def _greedy_columns(matrix: np.ndarray, capacity: int, tolerance: float) -> list
         magnitude = float(norms[index])
         if not selected:
             initial = magnitude
-        if selected and magnitude <= tolerance * max(initial, np.finfo(float).tiny):
+        if selected and magnitude <= tolerance * max(initial, np.finfo(np.float64).tiny):
             break
         if not np.isfinite(magnitude) or magnitude == 0.0:
             break
@@ -453,7 +453,7 @@ def prepare_dlr_basis(plan: DLRBasisPlan, /) -> PreparedDLRBasis:
     selected_tau = _greedy_columns(
         selected_kernel.T,
         len(selected_columns),
-        max(plan.policy.tolerance * 1e-2, np.finfo(float).eps),
+        max(plan.policy.tolerance * 1e-2, np.finfo(np.float64).eps),
     )
     rank = min(len(selected_columns), len(selected_tau))
     selected_columns = selected_columns[:rank]
@@ -470,7 +470,7 @@ def prepare_dlr_basis(plan: DLRBasisPlan, /) -> PreparedDLRBasis:
     selected_matsubara = _greedy_columns(
         np.asarray(matsubara_full).T,
         rank,
-        max(plan.policy.tolerance * 1e-2, np.finfo(float).eps),
+        max(plan.policy.tolerance * 1e-2, np.finfo(np.float64).eps),
     )
     if len(selected_matsubara) < rank:
         unused = [
@@ -648,9 +648,9 @@ def _fit(
     if data.ndim < 1 or data.shape[0] != design.shape[0]:
         raise ValueError("values must have one leading entry per sample.")
     if sample_active is None:
-        active = jnp.ones((design.shape[0],), dtype=bool)
+        active = jnp.ones((design.shape[0],), dtype=jnp.bool_)
     else:
-        active = jnp.asarray(sample_active, dtype=bool)
+        active = jnp.asarray(sample_active, dtype=jnp.bool_)
         if active.shape != (design.shape[0],):
             raise ValueError("sample_active must have one entry per sample.")
     dtype = jnp.result_type(design, data)

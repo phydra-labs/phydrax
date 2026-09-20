@@ -49,13 +49,13 @@ class MarineFrequencySystem:
         *,
         tolerance: float = 1e-10,
     ) -> MarineFrequencySystem:
-        frequency = np.asarray(angular_frequency_rad_s, dtype=float)
-        mass = np.asarray(rigid_mass, dtype=float)
-        damping = np.asarray(structural_damping, dtype=float)
-        stiffness = np.asarray(hydrostatic_mooring_stiffness, dtype=float)
-        added = np.asarray(added_mass, dtype=float)
-        radiation = np.asarray(radiation_damping, dtype=float)
-        pto = np.asarray(pto_damping, dtype=float)
+        frequency = np.asarray(angular_frequency_rad_s, dtype=np.float64)
+        mass = np.asarray(rigid_mass, dtype=np.float64)
+        damping = np.asarray(structural_damping, dtype=np.float64)
+        stiffness = np.asarray(hydrostatic_mooring_stiffness, dtype=np.float64)
+        added = np.asarray(added_mass, dtype=np.float64)
+        radiation = np.asarray(radiation_damping, dtype=np.float64)
+        pto = np.asarray(pto_damping, dtype=np.float64)
         if (
             frequency.ndim != 1
             or frequency.size == 0
@@ -109,7 +109,7 @@ class MarineFrequencySystem:
                 self.structural_damping + self.radiation_damping[index] + self.pto_damping
             )
             dynamic = (
-                self.hydrostatic_mooring_stiffness.astype(complex)
+                self.hydrostatic_mooring_stiffness.astype("complex128")
                 - omega**2 * total_mass
                 + 1j * omega * total_damping
             )

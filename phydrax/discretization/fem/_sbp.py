@@ -198,9 +198,9 @@ class MetricFacePair(StrictModule, NonTrainableState):
     owner_cell: int = eqx.field(static=True)
     owner_axis: int = eqx.field(static=True)
     owner_side: int = eqx.field(static=True)
-    neighbour_cell: int = eqx.field(static=True)
-    neighbour_axis: int = eqx.field(static=True)
-    neighbour_side: int = eqx.field(static=True)
+    neighbor_cell: int = eqx.field(static=True)
+    neighbor_axis: int = eqx.field(static=True)
+    neighbor_side: int = eqx.field(static=True)
     periodic_translation: bool = eqx.field(static=True)
 
     def __init__(
@@ -208,22 +208,21 @@ class MetricFacePair(StrictModule, NonTrainableState):
         owner_cell: int,
         owner_axis: int,
         owner_side: int,
-        neighbour_cell: int,
-        neighbour_axis: int,
-        neighbour_side: int,
+        neighbor_cell: int,
+        neighbor_axis: int,
+        neighbor_side: int,
         /,
         *,
         periodic_translation: bool = False,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 owner_cell,
                 owner_axis,
                 owner_side,
-                neighbour_cell,
-                neighbour_axis,
-                neighbour_side,
+                neighbor_cell,
+                neighbor_axis,
+                neighbor_side,
             )
         )
         if values[0] < 0 or values[3] < 0:
@@ -235,9 +234,9 @@ class MetricFacePair(StrictModule, NonTrainableState):
         self.owner_cell = values[0]
         self.owner_axis = values[1]
         self.owner_side = values[2]
-        self.neighbour_cell = values[3]
-        self.neighbour_axis = values[4]
-        self.neighbour_side = values[5]
+        self.neighbor_cell = values[3]
+        self.neighbor_axis = values[4]
+        self.neighbor_side = values[5]
         self.periodic_translation = bool(periodic_translation)
 
 
@@ -313,25 +312,25 @@ class MappedTensorMetrics(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.coordinates.shape[0])
+        return self.coordinates.shape[0]
 
     def face_pair_evidence(self, pair: MetricFacePair, /) -> tuple[Array, Array, Array]:
-        """Return neighbour permutation, point defect, and opposite-normal defect."""
+        """Return neighbor permutation, point defect, and opposite-normal defect."""
 
         if not isinstance(pair, MetricFacePair):
             raise TypeError("pair must be MetricFacePair.")
         if (
             pair.owner_axis >= self.dimension
-            or pair.neighbour_axis >= self.dimension
+            or pair.neighbor_axis >= self.dimension
             or pair.owner_cell >= self.cell_count
-            or pair.neighbour_cell >= self.cell_count
+            or pair.neighbor_cell >= self.cell_count
         ):
             raise ValueError("Metric face-pair route is out of bounds.")
         owner_points = np.asarray(self.face_coordinates[pair.owner_axis])[
             pair.owner_cell, pair.owner_side
         ].reshape((-1, self.dimension))
-        neighbour_points = np.asarray(self.face_coordinates[pair.neighbour_axis])[
-            pair.neighbour_cell, pair.neighbour_side
+        neighbor_points = np.asarray(self.face_coordinates[pair.neighbor_axis])[
+            pair.neighbor_cell, pair.neighbor_side
         ].reshape((-1, self.dimension))
         face_node_count = owner_points.shape[0]
         node_count = (
@@ -341,7 +340,7 @@ class MappedTensorMetrics(StrictModule, NonTrainableState):
         )
         permutation, _translation, position_defect = _match_face_permutation(
             owner_points,
-            neighbour_points,
+            neighbor_points,
             allow_translation=pair.periodic_translation,
             node_count=node_count,
             dimension=self.dimension,
@@ -349,10 +348,10 @@ class MappedTensorMetrics(StrictModule, NonTrainableState):
         owner_normals = np.asarray(self.face_scaled_normals[pair.owner_axis])[
             pair.owner_cell, pair.owner_side
         ].reshape((-1, self.dimension))
-        neighbour_normals = np.asarray(self.face_scaled_normals[pair.neighbour_axis])[
-            pair.neighbour_cell, pair.neighbour_side
+        neighbor_normals = np.asarray(self.face_scaled_normals[pair.neighbor_axis])[
+            pair.neighbor_cell, pair.neighbor_side
         ].reshape((-1, self.dimension))[permutation]
-        normal_defect = np.max(np.abs(owner_normals + neighbour_normals), initial=0.0)
+        normal_defect = np.max(np.abs(owner_normals + neighbor_normals), initial=0.0)
         return (
             jnp.asarray(permutation, dtype=jnp.int32),
             jnp.asarray(position_defect),
@@ -416,7 +415,7 @@ def _face_symmetry_permutations(
 
 def _match_face_permutation(
     owner: np.ndarray,
-    neighbour: np.ndarray,
+    neighbor: np.ndarray,
     /,
     *,
     allow_translation: bool,
@@ -426,7 +425,7 @@ def _match_face_permutation(
     permutations = _face_symmetry_permutations(node_count, dimension)
     best = None
     for permutation in permutations:
-        candidate = neighbour[permutation]
+        candidate = neighbor[permutation]
         translation = (
             np.mean(candidate - owner, axis=0)
             if allow_translation
@@ -553,20 +552,20 @@ class MappedTensorMetricPlan(StrictModule, NonTrainableState):
                 raise TypeError("face_pairs must contain MetricFacePair values.")
             if (
                 pair.owner_axis >= self.dimension
-                or pair.neighbour_axis >= self.dimension
+                or pair.neighbor_axis >= self.dimension
                 or pair.owner_cell >= coordinates.shape[0]
-                or pair.neighbour_cell >= coordinates.shape[0]
+                or pair.neighbor_cell >= coordinates.shape[0]
             ):
                 raise ValueError("Metric face-pair route is out of bounds.")
             owner_points = coordinate_arrays[pair.owner_axis][
                 pair.owner_cell, pair.owner_side
             ].reshape((-1, self.dimension))
-            neighbour_points = coordinate_arrays[pair.neighbour_axis][
-                pair.neighbour_cell, pair.neighbour_side
+            neighbor_points = coordinate_arrays[pair.neighbor_axis][
+                pair.neighbor_cell, pair.neighbor_side
             ].reshape((-1, self.dimension))
             permutation, _translation, defect = _match_face_permutation(
                 owner_points,
-                neighbour_points,
+                neighbor_points,
                 allow_translation=pair.periodic_translation,
                 node_count=node_count,
                 dimension=self.dimension,
@@ -574,15 +573,15 @@ class MappedTensorMetricPlan(StrictModule, NonTrainableState):
             owner_normals = normal_arrays[pair.owner_axis][
                 pair.owner_cell, pair.owner_side
             ].reshape((-1, self.dimension))
-            neighbour_normals = normal_arrays[pair.neighbour_axis][
-                pair.neighbour_cell, pair.neighbour_side
+            neighbor_normals = normal_arrays[pair.neighbor_axis][
+                pair.neighbor_cell, pair.neighbor_side
             ].reshape((-1, self.dimension))[permutation]
             if pair.periodic_translation:
                 periodic_translation_defects.append(defect)
             else:
                 watertight_position_defects.append(defect)
             normal_defects.append(
-                np.max(np.abs(owner_normals + neighbour_normals), initial=0.0)
+                np.max(np.abs(owner_normals + neighbor_normals), initial=0.0)
             )
         watertight_evidence = np.asarray(
             watertight_position_defects, dtype=np.asarray(coordinates).dtype
@@ -601,9 +600,9 @@ class MappedTensorMetricPlan(StrictModule, NonTrainableState):
                         pair.owner_cell,
                         pair.owner_axis,
                         pair.owner_side,
-                        pair.neighbour_cell,
-                        pair.neighbour_axis,
-                        pair.neighbour_side,
+                        pair.neighbor_cell,
+                        pair.neighbor_axis,
+                        pair.neighbor_side,
                         pair.periodic_translation,
                     ]
                     for pair in face_pairs

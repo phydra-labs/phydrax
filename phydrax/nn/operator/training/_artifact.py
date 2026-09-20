@@ -19,10 +19,10 @@ from ...._model import (
     operator_architecture_codec_for,
 )
 from ...._model._structure import (
-    deserialise_model_leaf as _deserialise_leaf,
+    deserialize_model_leaf as _deserialize_leaf,
     model_from_structure_recipe as _from_structure_recipe,
     model_structure_recipe as _structure_recipe,
-    serialise_model_leaf as _serialise_leaf,
+    serialize_model_leaf as _serialize_leaf,
 )
 from ....privacy import PrivacyCertificate
 from ..capabilities import OperatorTrainingEvidence
@@ -39,7 +39,6 @@ from ._trained_operator import TrainedOperator
 
 
 _OPERATOR_ARTIFACT_FORMAT = "phydrax-operator-artifact"
-_OPERATOR_ARTIFACT_VERSION = 5
 
 
 def _sha256(path: Path, /) -> str:
@@ -63,7 +62,6 @@ class OperatorArtifactManifest:
     """Verified manifest for one native or externally backed trained operator."""
 
     format: str
-    version: int
     artifact_id: str
     task: Mapping[str, Any]
     task_fingerprint: str
@@ -96,7 +94,6 @@ class OperatorArtifactManifest:
     def from_dict(cls, value: Mapping[str, Any], /) -> "OperatorArtifactManifest":
         expected = {
             "format",
-            "version",
             "artifact_id",
             "task",
             "task_fingerprint",
@@ -134,10 +131,6 @@ class OperatorArtifactManifest:
             )
         if value["format"] != _OPERATOR_ARTIFACT_FORMAT:
             raise ValueError("File is not a PhydraX operator artifact.")
-        if value["version"] != _OPERATOR_ARTIFACT_VERSION:
-            raise ValueError(
-                "Operator artifact version does not match the current runtime."
-            )
         portable = bool(value["execution_model_portable"])
         architecture_id = str(value["execution_model_architecture_id"])
         factory_id = str(value["execution_model_factory_id"])
@@ -159,7 +152,6 @@ class OperatorArtifactManifest:
             )
         return cls(
             format=str(value["format"]),
-            version=int(value["version"]),
             artifact_id=str(value["artifact_id"]),
             task=value["task"],
             task_fingerprint=str(value["task_fingerprint"]),
@@ -247,8 +239,7 @@ def save_operator_artifact(
             )
         if trained.provenance or trained.calibration or training_metadata:
             raise ValueError(
-                "Private inference artifacts require empty provenance, calibration, "
-                "and training metadata."
+                "Private inference artifacts require empty provenance, calibration, and training metadata."
             )
         if public_release:
             trained.privacy_certificate.require_public_release()
@@ -291,7 +282,7 @@ def save_operator_artifact(
     eqx.tree_serialise_leaves(
         temporary_model,
         trained.execution_model,
-        filter_spec=_serialise_leaf,
+        filter_spec=_serialize_leaf,
     )
     model_checksum = _sha256(temporary_model)
     model_name = f"execution-model-{model_checksum[:16]}.eqx"
@@ -302,7 +293,7 @@ def save_operator_artifact(
     if training_state is not None:
         temporary_training = destination / "training.tmp.eqx"
         eqx.tree_serialise_leaves(
-            temporary_training, training_state, filter_spec=_serialise_leaf
+            temporary_training, training_state, filter_spec=_serialize_leaf
         )
         training_checksum = _sha256(temporary_training)
         training_name = f"training-{training_checksum[:16]}.eqx"
@@ -322,7 +313,6 @@ def save_operator_artifact(
     evidence = trained.training_evidence
     manifest = OperatorArtifactManifest(
         format=_OPERATOR_ARTIFACT_FORMAT,
-        version=_OPERATOR_ARTIFACT_VERSION,
         artifact_id=artifact_id,
         task=trained.task.to_dict(),
         task_fingerprint=trained.task_fingerprint,
@@ -430,8 +420,7 @@ def load_trained_operator(
         if manifest.output_pipeline_fingerprint:
             if output_pipeline_like is None:
                 raise ValueError(
-                    "Nonportable artifacts with a physical output pipeline require "
-                    "output_pipeline_like."
+                    "Nonportable artifacts with a physical output pipeline require output_pipeline_like."
                 )
             output_pipeline = output_pipeline_like
         else:
@@ -452,7 +441,7 @@ def load_trained_operator(
     execution_model = eqx.tree_deserialise_leaves(
         source / manifest.execution_model_file,
         model_template,
-        filter_spec=_deserialise_leaf,
+        filter_spec=_deserialize_leaf,
     )
     task = OperatorTask.from_dict(manifest.task)
     normalization = (
@@ -531,7 +520,7 @@ def load_operator_training_state(
     state = eqx.tree_deserialise_leaves(
         source / manifest.training_file,
         template,
-        filter_spec=_deserialise_leaf,
+        filter_spec=_deserialize_leaf,
     )
     return OperatorArtifactTrainingState(
         state=state,

@@ -15,6 +15,8 @@ import numpy as np
 import scipy.linalg as scipy_linalg
 from jaxtyping import Array
 
+import phydrax.ein as ein
+
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg import (
@@ -351,7 +353,7 @@ class QuotientRootResult(StrictModule):
 
     @property
     def root_count(self) -> int:
-        return int(self.roots.shape[0])
+        return self.roots.shape[0]
 
     def replay(self, system: SparsePolynomialSystem, /) -> Array:
         """Replay candidates through a coefficient-compatible original system."""
@@ -886,7 +888,7 @@ def _prepare_numeric(
     monomial_lookup = {tuple(value): index for index, value in enumerate(monomials)}
     multiplication = np.zeros(
         (plan.variable_count, quotient_dimension, quotient_dimension),
-        dtype=np.result_type(host_matrix, complex),
+        dtype=np.result_type(host_matrix, np.complex128),
     )
     closure_valid = True
     for variable in range(plan.variable_count):
@@ -1009,7 +1011,7 @@ def refresh_quotient_root_solver(
 
 
 def _joint_weight_candidates(variable_count: int, /) -> tuple[np.ndarray, ...]:
-    indices = np.arange(1, variable_count + 1, dtype=float)
+    indices = np.arange(1, variable_count + 1, dtype=np.float64)
     return tuple(
         np.exp(1j * phase * indices) / math.sqrt(variable_count)
         for phase in (math.sqrt(2.0), math.sqrt(3.0), math.sqrt(5.0))
@@ -1028,7 +1030,7 @@ def _joint_schur_recovery(matrices: np.ndarray, /):
     best = None
     best_scaled_separation = -math.inf
     for weights in _joint_weight_candidates(matrices.shape[0]):
-        joint = np.einsum("v,vij->ij", weights, matrices)
+        joint = ein.contract("v,vij->ij", weights, matrices)
         triangular, schur_vectors = scipy_linalg.schur(
             joint,
             output="complex",
@@ -1136,9 +1138,9 @@ def _simple_regular_mask(
     /,
 ) -> np.ndarray:
     if system.support.equation_count != system.support.variable_count:
-        return np.zeros((roots.shape[0],), dtype=bool)
+        return np.zeros((roots.shape[0],), dtype=np.bool_)
     jacobians = np.asarray(system.jacobian(jnp.asarray(roots)))
-    result = np.zeros((roots.shape[0],), dtype=bool)
+    result = np.zeros((roots.shape[0],), dtype=np.bool_)
     for index, jacobian in enumerate(jacobians):
         singular_values = np.linalg.svd(jacobian, compute_uv=False)
         scale = float(singular_values[0])
@@ -1158,7 +1160,7 @@ def _polish_simple_roots(
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     indices = np.flatnonzero(eligible)
-    polished = np.zeros((roots.shape[0],), dtype=bool)
+    polished = np.zeros((roots.shape[0],), dtype=np.bool_)
     statuses = np.full((roots.shape[0],), -1, dtype=np.int32)
     if indices.size == 0:
         return roots, polished, statuses
@@ -1181,7 +1183,7 @@ def _polish_simple_roots(
     candidates = (
         solved_states[:, :variable_count] + 1j * solved_states[:, variable_count:]
     )
-    successful = np.asarray(solved.successful, dtype=bool)
+    successful = np.asarray(solved.successful, dtype=np.bool_)
     output = roots.copy()
     output[indices[successful]] = candidates[successful]
     polished[indices[successful]] = True
@@ -1233,7 +1235,7 @@ def _empty_result(
         multiplication_matrices=prepared.multiplication_matrices,
         cluster_labels=jnp.zeros((0,), dtype=jnp.int32),
         cluster_multiplicities=jnp.zeros((0,), dtype=jnp.int32),
-        polished=jnp.zeros((0,), dtype=bool),
+        polished=jnp.zeros((0,), dtype=jnp.bool_),
         polish_status=jnp.zeros((0,), dtype=jnp.int32),
         status=status_array,
         path_accepted=jnp.asarray(False),
@@ -1324,7 +1326,7 @@ def solve_quotient_roots(
     else:
         status = QuotientRootStatus.SUCCESS
 
-    polished = np.zeros((roots.shape[0],), dtype=bool)
+    polished = np.zeros((roots.shape[0],), dtype=np.bool_)
     polish_status = np.full((roots.shape[0],), -1, dtype=np.int32)
     if polish and status is QuotientRootStatus.SUCCESS:
         eligible = _simple_regular_mask(

@@ -20,7 +20,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 
 
-_COMMON_INFORMATION_METHOD_ID = "finite-pure-common-information-backward-induction-v1"
+_COMMON_INFORMATION_METHOD_ID = "finite-pure-common-information-backward-induction"
 _COMMON_INFORMATION_RESULT_LABEL = "COMMON_INFORMATION_MARKOV_PERFECT_CANDIDATE"
 _DEFAULT_MAXIMUM_PRESCRIPTION_PROFILES = 65_536
 
@@ -52,7 +52,7 @@ def _real_array(value: ArrayLike, *, owner: str) -> Array:
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 
@@ -140,11 +140,10 @@ class GaussianBelief(StrictModule):
         if mean_array.ndim != 1 or mean_array.shape[0] < 1:
             raise ValueError("mean must be a nonempty vector.")
         covariance_array = _real_array(covariance, owner="covariance")
-        dimension = int(mean_array.shape[0])
+        dimension = mean_array.shape[0]
         if covariance_array.shape != (dimension, dimension):
             raise ValueError(
-                "covariance must have shape "
-                f"({dimension}, {dimension}); got {covariance_array.shape}."
+                f"covariance must have shape ({dimension}, {dimension}); got {covariance_array.shape}."
             )
         mean_host = _host(mean_array)
         covariance_host = _host(covariance_array)
@@ -244,11 +243,10 @@ class FiniteStateCommonInformationGame(StrictModule):
         beliefs = _real_array(common_beliefs, owner="common_beliefs")
         if beliefs.ndim != 3 or beliefs.shape[0] < 2 or beliefs.shape[1] < 1:
             raise ValueError(
-                "common_beliefs must have shape "
-                "(horizon + 1, common states, joint types)."
+                "common_beliefs must have shape (horizon + 1, common states, joint types)."
             )
-        horizon = int(beliefs.shape[0] - 1)
-        common_states = int(beliefs.shape[1])
+        horizon = beliefs.shape[0] - 1
+        common_states = beliefs.shape[1]
         joint_types = int(np.prod(type_counts, dtype=object))
         joint_action_count = int(np.prod(actions, dtype=object))
         beliefs = _probability_table(
@@ -292,8 +290,7 @@ class FiniteStateCommonInformationGame(StrictModule):
         expected_terminal = (common_states, joint_types, len(players))
         if terminal.shape != expected_terminal:
             raise ValueError(
-                "terminal_costs must have shape "
-                f"{expected_terminal}; got {terminal.shape}."
+                f"terminal_costs must have shape {expected_terminal}; got {terminal.shape}."
             )
         if not np.all(np.isfinite(_host(stage))) or not np.all(
             np.isfinite(_host(terminal))
@@ -404,8 +401,7 @@ class CommonInformationPolicy(StrictModule):
             expected = (horizon, num_common_states, private_types)
             if table.shape != expected:
                 raise ValueError(
-                    f"Player {player_ids[player]!r} prescription must have shape "
-                    f"{expected}; got {table.shape}."
+                    f"Player {player_ids[player]!r} prescription must have shape {expected}; got {table.shape}."
                 )
             host = _host(table)
             if np.any(host < 0) or np.any(host >= actions):
@@ -584,7 +580,9 @@ def _bayes_update(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     joint_types = belief.shape[0]
     common_states = observation_probabilities.shape[-1]
-    mass = np.zeros((joint_types, common_states), dtype=np.result_type(belief, float))
+    mass = np.zeros(
+        (joint_types, common_states), dtype=np.result_type(belief, np.float64)
+    )
     for current_type in range(joint_types):
         action = int(profile_actions[current_type])
         weighted = (
@@ -641,9 +639,11 @@ def _stage_equilibria(
         private_probabilities.append(probabilities)
         private_support.append(probabilities > 0.0)
 
-    nash = np.ones(candidate_count, dtype=bool)
-    bayes_consistency = np.zeros((candidate_count, game.num_common_states), dtype=float)
-    bayes_consistent = np.ones(candidate_count, dtype=bool)
+    nash = np.ones(candidate_count, dtype=np.bool_)
+    bayes_consistency = np.zeros(
+        (candidate_count, game.num_common_states), dtype=np.float64
+    )
+    bayes_consistent = np.ones(candidate_count, dtype=np.bool_)
     type_probabilities = _host(game.type_transition_probabilities[stage, common_state])
     observation_probabilities = _host(
         game.observation_transition_probabilities[stage, common_state]
@@ -758,7 +758,9 @@ def solve_common_information_game(
     bayes_tolerance_ = _tolerance(bayes_tolerance, owner="bayes_tolerance")
     prescriptions, profile_actions = _prescription_catalog(game, maximum_profiles)
 
-    costs = np.result_type(_host(game.stage_costs), _host(game.terminal_costs), float)
+    costs = np.result_type(
+        _host(game.stage_costs), _host(game.terminal_costs), np.float64
+    )
     values = np.empty(
         (
             game.horizon + 1,
@@ -779,19 +781,19 @@ def solve_common_information_game(
     normalizers = np.empty(
         (game.horizon, game.num_common_states, game.num_common_states), dtype=costs
     )
-    support = np.empty(normalizers.shape, dtype=bool)
+    support = np.empty(normalizers.shape, dtype=np.bool_)
     posteriors = np.empty(
         normalizers.shape + (game.num_joint_private_types,), dtype=costs
     )
     normalization_residuals = np.empty(normalizers.shape, dtype=costs)
     common_belief_residuals = np.empty(normalizers.shape, dtype=costs)
-    common_belief_consistent = np.empty(normalizers.shape, dtype=bool)
+    common_belief_consistent = np.empty(normalizers.shape, dtype=np.bool_)
     private_probabilities = tuple(
         np.empty((game.horizon, game.num_common_states, type_count), dtype=costs)
         for type_count in game.private_type_counts
     )
     private_support = tuple(
-        np.empty((game.horizon, game.num_common_states, type_count), dtype=bool)
+        np.empty((game.horizon, game.num_common_states, type_count), dtype=np.bool_)
         for type_count in game.private_type_counts
     )
 
@@ -842,8 +844,7 @@ def solve_common_information_game(
                     )
             if not np.all(np.isfinite(q_values)):
                 raise FloatingPointError(
-                    "Nonfinite backward values at "
-                    f"stage {stage}, common state {common_state}."
+                    f"Nonfinite backward values at stage {stage}, common state {common_state}."
                 )
 
             equilibria = _stage_equilibria(
@@ -856,8 +857,8 @@ def solve_common_information_game(
                 incentive_tolerance_,
                 bayes_tolerance_,
             )
-            nash_count = int(equilibria.nash_indices.shape[0])
-            equilibrium_count = int(equilibria.equilibrium_indices.shape[0])
+            nash_count = equilibria.nash_indices.shape[0]
+            equilibrium_count = equilibria.equilibrium_indices.shape[0]
             if equilibrium_count == 0:
                 if nash_count == 0:
                     reason = "no pure simultaneous Bayesian Nash equilibrium exists"

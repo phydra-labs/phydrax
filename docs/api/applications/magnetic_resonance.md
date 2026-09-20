@@ -17,7 +17,7 @@ to energy. Signed gyromagnetic ratios are used without taking an absolute value:
   Zeeman line.
 - Scalar J: `H_J / ħ = 2π J (I_a · I_b)` for `J` in Hz.
 - Dipolar: `(μ0 / 4π) ħ γ_a γ_b / r³` multiplies
-  `I_a · I_b - 3(I_a · r̂)(I_b · r̂)` with positions in metres.
+  `I_a · I_b - 3(I_a · r̂)(I_b · r̂)` with positions in meters.
 - Hyperfine and quadrupolar tensors are full Cartesian coefficient tensors in
   Hz and receive one `2π` factor. Quadrupolar tensors must be symmetric,
   traceless, and target spin `I >= 1`.

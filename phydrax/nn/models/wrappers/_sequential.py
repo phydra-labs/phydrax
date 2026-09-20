@@ -72,8 +72,7 @@ class Sequential(_AbstractStructuredInputModel):
         if isinstance(x, tuple):
             if not isinstance(first_model, _AbstractStructuredInputModel):
                 raise TypeError(
-                    "Sequential received tuple input, but the first stage does not "
-                    "support structured inputs."
+                    "Sequential received tuple input, but the first stage does not support structured inputs."
                 )
             y = first_model(x, key=keys[0])
         else:

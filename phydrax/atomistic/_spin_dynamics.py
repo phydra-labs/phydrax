@@ -69,8 +69,7 @@ class ProductSphereStateGeometry(AbstractStateGeometry):
         if array.shape == (3 * self.site_count,):
             return array.reshape((self.site_count, 3)), True
         raise ValueError(
-            f"{name} must have shape ({self.site_count}, 3) or "
-            f"({3 * self.site_count},); got {array.shape}."
+            f"{name} must have shape ({self.site_count}, 3) or ({3 * self.site_count},); got {array.shape}."
         )
 
     @staticmethod
@@ -241,7 +240,7 @@ class LandauLifshitzGilbertPlan(StrictModule):
             raise ValueError("gamma and damping must have one value per spin site.")
         if np.any(~np.isfinite(gamma)) or np.any(~np.isfinite(alpha)):
             raise ValueError("gamma and damping must be finite.")
-        active = np.asarray(hamiltonian.plan.site_mask, dtype=bool)
+        active = np.asarray(hamiltonian.plan.site_mask, dtype=np.bool_)
         if np.any(gamma[active] <= 0.0) or np.any(alpha[active] < 0.0):
             raise ValueError("Active gamma must be positive and damping non-negative.")
         step = float(step_size)
@@ -549,8 +548,7 @@ def solve_llg_dynamics(
     if realization is not None:
         if realization.noise_shape != problem.noise_shape:
             raise ValueError(
-                f"LLG Wiener noise shape must be {problem.noise_shape}; "
-                f"got {realization.noise_shape}."
+                f"LLG Wiener noise shape must be {problem.noise_shape}; got {realization.noise_shape}."
             )
         if realization.noise_id != problem.noise_id:
             raise ValueError("LLG Wiener realization has the wrong noise identity.")

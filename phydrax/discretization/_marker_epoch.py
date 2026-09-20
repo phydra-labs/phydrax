@@ -39,9 +39,9 @@ class MarkerEpochPlan(StrictModule, NonTrainableState):
         ids = np.asarray(marker_ids)
         weights = np.asarray(quadrature_weight)
         active = (
-            np.ones(ids.shape, dtype=bool)
+            np.ones(ids.shape, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if ids.ndim != 1 or not np.issubdtype(ids.dtype, np.integer):
             raise ValueError("marker_ids must be a rank-one integer array.")
@@ -67,7 +67,7 @@ class MarkerEpochPlan(StrictModule, NonTrainableState):
 
     @property
     def capacity(self) -> int:
-        return int(self.marker_ids.size)
+        return self.marker_ids.size
 
 
 class MarkerEpochState(StrictModule):

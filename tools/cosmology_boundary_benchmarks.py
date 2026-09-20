@@ -29,7 +29,7 @@ def main() -> None:
     cosmo = phx.applications.cosmology
     source = cosmo.CoordinateLayout(tuple(f"t{i}" for i in range(256)))
     target = cosmo.CoordinateLayout(tuple(f"d{i}" for i in range(128)))
-    matrix = jnp.reshape(jnp.arange(128 * 256, dtype=float), (128, 256)) / (128 * 256)
+    matrix = jnp.reshape(jnp.arange(128 * 256, dtype="float64"), (128, 256)) / (128 * 256)
     observation = cosmo.LinearObservationPlan(matrix, source, target)
     theory = cosmo.TheoryVector(jnp.ones((256,)), source, "benchmark")
     observation_function = eqx.filter_jit(observation.apply)
@@ -44,7 +44,7 @@ def main() -> None:
         real_shells=1,
         reciprocal_modes=3,
     )
-    coordinate = (jnp.arange(16, dtype=float) + 0.5) / 16.0
+    coordinate = (jnp.arange(16, dtype="float64") + 0.5) / 16.0
     positions = jnp.stack(
         (
             coordinate,
@@ -65,7 +65,7 @@ def main() -> None:
     pointing = cosmo.CmbPointingProduct(
         pixels,
         angles,
-        jnp.zeros_like(pixels, dtype=bool),
+        jnp.zeros_like(pixels, dtype="bool"),
         jnp.tile(jnp.arange(4), pixel_count),
         pixel_count=pixel_count,
     )
@@ -86,12 +86,12 @@ def main() -> None:
         "observation_compile_seconds": observation_compile,
         "observation_steady_seconds": observation_steady,
         "observation_finite": bool(jnp.all(jnp.isfinite(observed.values))),
-        "ewald_particles": int(positions.shape[0]),
+        "ewald_particles": positions.shape[0],
         "ewald_compile_seconds": ewald_compile,
         "ewald_steady_seconds": ewald_steady,
         "ewald_finite": bool(ewald_result.successful),
         "map_pixels": pixel_count,
-        "map_samples": int(pixels.size),
+        "map_samples": pixels.size,
         "map_compile_seconds": map_compile,
         "map_steady_seconds": map_steady,
         "map_successful": bool(map_result.successful),

@@ -536,8 +536,7 @@ def slepc_eigensolve(prepared: PreparedSLEPcEigenSolve, /) -> SLEPcEigenResult:
         and status != GeneralEigenSolveStatus.SUCCESS
     ):
         raise RuntimeError(
-            "SLEPc EPS did not satisfy the general-eigen contract: "
-            f"{status.name}; reason={reason_name}."
+            f"SLEPc EPS did not satisfy the general-eigen contract: {status.name}; reason={reason_name}."
         )
     after = tuple(context.snapshot() for context in prepared.shell_contexts)
     shell_actions = sum(final[0] - initial[0] for initial, final in zip(before, after))
@@ -943,10 +942,10 @@ def _verify_and_normalize_pairs(
         )
         left_scale = np.linalg.norm(matrix_left) + abs(value) * np.linalg.norm(mass_left)
         right_relative[index] = right_residuals[index] / max(
-            right_scale, np.finfo(float).tiny
+            right_scale, np.finfo(np.float64).tiny
         )
         left_relative[index] = left_residuals[index] / max(
-            left_scale, np.finfo(float).tiny
+            left_scale, np.finfo(np.float64).tiny
         )
     mass_right_columns = (
         np.column_stack(
@@ -978,7 +977,7 @@ def _residual_scales(residual: np.ndarray, relative: np.ndarray, /) -> np.ndarra
         residual,
         relative,
         out=scales,
-        where=relative > np.finfo(float).tiny,
+        where=relative > np.finfo(np.float64).tiny,
     )
     return scales
 
@@ -1070,8 +1069,7 @@ def _validate_two_sided_operator(operator: AbstractLinearOperator, name: str, /)
 def _require_sparse(operator: AbstractLinearOperator, name: str, /) -> None:
     if not isinstance(operator, AbstractSparseLinearOperator):
         raise TypeError(
-            f"SLEPc operator_mode='csr' requires {name} to be an "
-            "AbstractSparseLinearOperator."
+            f"SLEPc operator_mode='csr' requires {name} to be an AbstractSparseLinearOperator."
         )
 
 

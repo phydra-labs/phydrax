@@ -116,7 +116,7 @@ def test_global_inner_and_dual_pullback_are_partition_independent():
     dof_map = FiniteElementDofMap(mesh, (lagrange_element("triangle", 1),))
     identifiers = jnp.asarray([10, 20, 30, 40], dtype=jnp.int32)
     serial = PartitionedFiniteElementDofMap(
-        dof_map, identifiers, jnp.ones((4,), dtype=bool)
+        dof_map, identifiers, jnp.ones((4,), dtype="bool")
     )
     first = PartitionedFiniteElementDofMap(
         dof_map, identifiers, jnp.asarray([True, True, False, False])

@@ -257,7 +257,7 @@ class EventValveState(StrictModule):
         transition_count: ArrayLike = 0,
         /,
     ) -> None:
-        opened = jnp.asarray(is_open, dtype=bool)
+        opened = jnp.asarray(is_open, dtype=jnp.bool_)
         last = jnp.asarray(last_transition_time)
         count = jnp.asarray(transition_count, dtype=jnp.int32)
         if opened.shape != () or last.shape != () or count.shape != ():
@@ -481,7 +481,7 @@ class EventValve(PressureFlowComponent):
             raise ValueError(
                 "Valve event candidate source state does not match current state."
             )
-        accepted = jnp.asarray(accept, dtype=bool)
+        accepted = jnp.asarray(accept, dtype=jnp.bool_)
         if accepted.shape != ():
             raise ValueError("accept must be a scalar decision.")
         commit = accepted & candidate.event_required

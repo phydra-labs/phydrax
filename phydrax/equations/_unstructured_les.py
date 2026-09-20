@@ -603,8 +603,8 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
 
         interior = self.operators.interior_faces
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         area = discretization.face_measures.astype(density.dtype)
         normal = self.operators.unit_normals.astype(density.dtype)
         unstabilized_normal_velocity = jnp.where(
@@ -631,13 +631,12 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
                 projected_face_velocity,
                 jnp.any(~jnp.isfinite(projected_face_velocity))
                 | jnp.any(jnp.where(interior, False, projected_face_velocity != 0.0)),
-                "Authoritative face-normal velocity must be finite and exactly zero "
-                "on the closed boundary.",
+                "Authoritative face-normal velocity must be finite and exactly zero on the closed boundary.",
             )
             face_normal_velocity = projected_face_velocity
-        upwind = jnp.where(interior & (face_normal_velocity < 0.0), safe_neighbour, owner)
+        upwind = jnp.where(interior & (face_normal_velocity < 0.0), safe_neighbor, owner)
         unstabilized_upwind = jnp.where(
-            interior & (unstabilized_normal_velocity < 0.0), safe_neighbour, owner
+            interior & (unstabilized_normal_velocity < 0.0), safe_neighbor, owner
         )
         volume_flux = jnp.where(interior, face_normal_velocity * area, 0.0)
         mass_flux = jnp.where(
@@ -654,7 +653,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
 
         advective_momentum_flux = mass_flux[:, None] * velocity[upwind]
         advective_scalar_flux = mass_flux[:, None] * mass_fractions[upwind]
-        pressure_face = _face_average(pressure_, owner, safe_neighbour, interior)
+        pressure_face = _face_average(pressure_, owner, safe_neighbor, interior)
         pressure_momentum_flux = pressure_face[:, None] * normal * area[:, None]
 
         face_velocity_gradient = self.operators.nonorthogonal_face_gradient(
@@ -669,10 +668,10 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
             symmetric_gradient - divergence[:, None, None] * identity / 3.0
         )
         molecular_viscosity_face = _face_average(
-            dynamic_viscosity, owner, safe_neighbour, interior
+            dynamic_viscosity, owner, safe_neighbor, interior
         )
         sgs_viscosity_face = _face_average(
-            selected_dynamic_eddy_viscosity, owner, safe_neighbour, interior
+            selected_dynamic_eddy_viscosity, owner, safe_neighbor, interior
         )
         molecular_stress = (
             2.0 * molecular_viscosity_face[:, None, None] * deviatoric_strain
@@ -693,7 +692,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
             isotropic_coefficient = _face_average(
                 (2.0 / 3.0) * density * kinetic_energy,
                 owner,
-                safe_neighbour,
+                safe_neighbor,
                 interior,
             )
             sgs_isotropic_momentum_flux = (
@@ -710,7 +709,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
         sgs_momentum_flux = sgs_deviatoric_momentum_flux + sgs_isotropic_momentum_flux
         ksgs_raw_production_density = None
         if state.ksgs is not None:
-            velocity_jump = velocity[safe_neighbour] - velocity[owner]
+            velocity_jump = velocity[safe_neighbor] - velocity[owner]
             face_transfer = -jnp.sum(
                 velocity_jump * sgs_deviatoric_momentum_flux,
                 axis=-1,
@@ -718,7 +717,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
             face_transfer = jnp.where(interior, face_transfer, 0.0)
             cell_transfer = jnp.zeros_like(density)
             cell_transfer = cell_transfer.at[owner].add(0.5 * face_transfer)
-            cell_transfer = cell_transfer.at[safe_neighbour].add(
+            cell_transfer = cell_transfer.at[safe_neighbor].add(
                 jnp.where(interior, 0.5 * face_transfer, 0.0)
             )
             ksgs_raw_production_density = (
@@ -734,7 +733,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
         molecular_density_diffusivity = _face_average(
             density[:, None] * scalar_diffusivities,
             owner,
-            safe_neighbour,
+            safe_neighbor,
             interior,
         )
         schmidt = self.species_schmidt_numbers.astype(density.dtype)
@@ -743,7 +742,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
             * selected_kinematic_eddy_viscosity[:, None]
             / schmidt[None, :],
             owner,
-            safe_neighbour,
+            safe_neighbor,
             interior,
         )
         raw_molecular_scalar_flux = (
@@ -753,7 +752,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
             -sgs_density_diffusivity * normal_fraction_gradient * area[:, None]
         )
         face_mass_fractions = _face_average(
-            mass_fractions, owner, safe_neighbour, interior
+            mass_fractions, owner, safe_neighbor, interior
         )
         molecular_scalar_flux = raw_molecular_scalar_flux - face_mass_fractions * jnp.sum(
             raw_molecular_scalar_flux, axis=-1, keepdims=True
@@ -774,17 +773,17 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
         )
         normal_temperature_gradient = jnp.sum(face_temperature_gradient * normal, axis=-1)
         molecular_conductivity_face = _face_average(
-            thermal_conductivity, owner, safe_neighbour, interior
+            thermal_conductivity, owner, safe_neighbor, interior
         )
         sgs_conductivity_face = _face_average(
             selected_dynamic_eddy_viscosity
             * heat_capacity
             / self.plan.favre_model.turbulent_prandtl_number,
             owner,
-            safe_neighbour,
+            safe_neighbor,
             interior,
         )
-        partial_enthalpy_face = _face_average(enthalpies, owner, safe_neighbour, interior)
+        partial_enthalpy_face = _face_average(enthalpies, owner, safe_neighbor, interior)
         molecular_enthalpy_flux = (
             -molecular_conductivity_face * normal_temperature_gradient * area
             + jnp.sum(partial_enthalpy_face * molecular_scalar_flux, axis=-1)
@@ -834,7 +833,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
             ksgs_density_diffusivity = _face_average(
                 density * ksgs_transport.diffusivity,
                 owner,
-                safe_neighbour,
+                safe_neighbor,
                 interior,
             )
             advective_ksgs_flux = mass_flux * kinetic_energy[upwind]
@@ -1133,7 +1132,7 @@ def _inexact(value: ArrayLike, /) -> Array:
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError("Low-Mach density must be real.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(jnp.result_type(array, float))
+        array = array.astype(jnp.result_type(array, jnp.float64))
     return array
 
 
@@ -1157,25 +1156,25 @@ def _cell_field(
 def _face_average(
     value: Array,
     owner: Array,
-    safe_neighbour: Array,
+    safe_neighbor: Array,
     interior: Array,
     /,
 ) -> Array:
-    average = 0.5 * (value[owner] + value[safe_neighbour])
+    average = 0.5 * (value[owner] + value[safe_neighbor])
     mask = interior.reshape((interior.shape[0],) + (1,) * (value.ndim - 1))
     return jnp.where(mask, average, value[owner])
 
 
 def _negative_divergence(flux: Array, discretization, /) -> Array:
     owner = discretization.owner_cells
-    neighbour = discretization.neighbour_cells
-    interior = neighbour >= 0
-    safe_neighbour = jnp.maximum(neighbour, 0)
+    neighbor = discretization.neighbor_cells
+    interior = neighbor >= 0
+    safe_neighbor = jnp.maximum(neighbor, 0)
     trailing = flux.shape[1:]
     net = jnp.zeros((discretization.cell_count,) + trailing, dtype=flux.dtype)
     net = net.at[owner].add(flux)
     mask = interior.reshape((interior.shape[0],) + (1,) * len(trailing))
-    net = net.at[safe_neighbour].add(jnp.where(mask, -flux, 0.0))
+    net = net.at[safe_neighbor].add(jnp.where(mask, -flux, 0.0))
     volume_shape = (discretization.cell_count,) + (1,) * len(trailing)
     volumes = discretization.cell_volumes.astype(flux.dtype).reshape(volume_shape)
     return -net / volumes
@@ -1185,7 +1184,7 @@ def _global_balance(rate: Array, flux: Array, discretization, /) -> Array:
     trailing = rate.shape[1:]
     volume_shape = (discretization.cell_count,) + (1,) * len(trailing)
     volumes = discretization.cell_volumes.astype(rate.dtype).reshape(volume_shape)
-    boundary = discretization.neighbour_cells < 0
+    boundary = discretization.neighbor_cells < 0
     boundary_shape = (boundary.shape[0],) + (1,) * len(trailing)
     boundary_flux = jnp.where(boundary.reshape(boundary_shape), flux, 0.0)
     return jnp.sum(volumes * rate, axis=0) + jnp.sum(boundary_flux, axis=0)
@@ -1195,7 +1194,7 @@ def _global_balance_scale(rate: Array, flux: Array, discretization, /) -> Array:
     trailing = rate.shape[1:]
     volume_shape = (discretization.cell_count,) + (1,) * len(trailing)
     volumes = discretization.cell_volumes.astype(rate.dtype).reshape(volume_shape)
-    boundary = discretization.neighbour_cells < 0
+    boundary = discretization.neighbor_cells < 0
     boundary_shape = (boundary.shape[0],) + (1,) * len(trailing)
     boundary_flux = jnp.where(boundary.reshape(boundary_shape), flux, 0.0)
     return jnp.maximum(

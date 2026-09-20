@@ -156,13 +156,13 @@ def finite_generator_hitting(
     # Make targets absorbing before classifying paths that can avoid the target.
     adjacency = offdiag > 0
     adjacency[mask] = False
-    reach = adjacency | np.eye(count, dtype=bool)
+    reach = adjacency | np.eye(count, dtype=np.bool_)
     for k in range(count):
         reach |= reach[:, k, None] & reach[None, k, :]
     reachable = np.any(reach[:, mask], axis=1)
     communicating = reach & reach.T
     classes = np.min(np.where(communicating, np.arange(count)[None, :], count), axis=1)
-    bad_closed = np.zeros(count, dtype=bool)
+    bad_closed = np.zeros(count, dtype=np.bool_)
     for label in np.unique(classes):
         members = classes == label
         closed = not np.any(adjacency[np.ix_(members, ~members)])

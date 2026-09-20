@@ -58,9 +58,7 @@ class ExteriorHelmholtzDirichletResult2D(StrictModule):
         if not isinstance(linear_result, LinearSolveResult):
             raise TypeError("linear_result must be LinearSolveResult.")
         if not isinstance(assembly_report, BoundaryOperatorAssemblyReport):
-            raise TypeError(
-                "assembly_report must be BoundaryOperatorAssemblyReport."
-            )
+            raise TypeError("assembly_report must be BoundaryOperatorAssemblyReport.")
         residual = jnp.asarray(boundary_residual_norm)
         self.density = jnp.asarray(density)
         self.potential = potential
@@ -156,6 +154,8 @@ def _helmholtz_trace_matrices_2d(
             "Helmholtz singular trace assembly failed its quadrature contract."
         )
     return single, double, assembly
+
+
 def solve_exterior_helmholtz_dirichlet_2d(
     panelization: BoundaryPanelization2D,
     boundary_values: ArrayLike,
@@ -171,7 +171,7 @@ def solve_exterior_helmholtz_dirichlet_2d(
         raise TypeError("panelization must be BoundaryPanelization2D.")
     if not isinstance(quadrature, AdaptiveQuadraturePlan):
         raise TypeError("quadrature must be an AdaptiveQuadraturePlan.")
-    values = jnp.asarray(boundary_values, dtype=complex)
+    values = jnp.asarray(boundary_values, dtype=jnp.complex128)
     if values.shape != (panelization.node_count,):
         raise ValueError("boundary_values must contain one value per source node.")
     if not bool(jnp.all(jnp.isfinite(values))):
@@ -185,10 +185,15 @@ def solve_exterior_helmholtz_dirichlet_2d(
         kernel,
         quadrature,
     )
-    trace_matrix = double + 0.5 * jnp.eye(
-        panelization.node_count,
-        dtype=double.dtype,
-    ) - 1j * coupling * single
+    trace_matrix = (
+        double
+        + 0.5
+        * jnp.eye(
+            panelization.node_count,
+            dtype=double.dtype,
+        )
+        - 1j * coupling * single
+    )
     problem = LinearSystem(
         DenseLinearOperator(trace_matrix),
         problem_id="exterior-helmholtz-dirichlet-brakhage-werner-2d",

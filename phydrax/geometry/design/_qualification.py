@@ -72,8 +72,7 @@ class DesignQualificationEvidence:
         )
         if any(not isinstance(value, str) or not value for value in identifiers):
             raise ValueError(
-                "Analysis-plan, numeric-revision, and execution-plan IDs "
-                "must be non-empty strings."
+                "Analysis-plan, numeric-revision, and execution-plan IDs must be non-empty strings."
             )
 
         primal_residual = _nonnegative(self.primal_residual, "primal_residual")

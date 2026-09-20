@@ -128,7 +128,7 @@ class PrescribedMHDInflowBoundary(AbstractConstrainedMHDBoundary):
     primitive_state: Array
 
     def __init__(self, primitive_state: ArrayLike, /):
-        primitive = np.asarray(primitive_state, dtype=float)
+        primitive = np.asarray(primitive_state, dtype=np.float64)
         if primitive.shape[-1:] != (8,) or np.any(~np.isfinite(primitive)):
             raise ValueError("Prescribed MHD inflow primitive state is invalid.")
         self.primitive_state = jnp.asarray(primitive)

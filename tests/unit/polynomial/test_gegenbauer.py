@@ -138,7 +138,7 @@ def test_alpha_to_beta_connection_preserves_polynomial_values(normalization):
         rtol=8e-12,
         atol=8e-13,
     )
-    coefficients = jnp.arange(2 * (degree + 1), dtype=float).reshape((degree + 1, 2))
+    coefficients = jnp.arange(2 * (degree + 1), dtype="float64").reshape((degree + 1, 2))
     converted = data.apply(coefficients)
     np.testing.assert_allclose(
         target_values @ np.asarray(converted),
@@ -196,4 +196,4 @@ def test_polynomial_construction_boundaries_are_rejected():
     with pytest.raises(ValueError, match="order must be nonnegative"):
         gegenbauer_differentiation_matrix(0.5, 4, -1)
     with pytest.raises(TypeError, match="real floating dtype"):
-        gegenbauer_connection_data(0.5, 1.0, 4, dtype=complex)
+        gegenbauer_connection_data(0.5, 1.0, 4, dtype="complex128")

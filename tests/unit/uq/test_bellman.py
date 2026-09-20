@@ -171,7 +171,7 @@ def _state_dependent_transition_problem():
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([1.0]),
         jnp.zeros((1, 1)),
-        observation_mask=jnp.zeros((1, 1), dtype=bool),
+        observation_mask=jnp.zeros((1, 1), dtype="bool"),
         case_ids=("only",),
         sequence_id="heteroscedastic-sequence",
     )

@@ -872,8 +872,7 @@ class PreparedTendonDrivenRodPlant(AbstractDiscretePlant, NonTrainableState):
             has_aux=True,
             validity=lambda _state, _value, inverse, _args: inverse.valid,
             problem_id=(
-                f"tendon-reduced-rod-implicit-midpoint:"
-                f"{self.dynamics.dynamics_id}:{policy.policy_id}:{self.plant_id}"
+                f"tendon-reduced-rod-implicit-midpoint:{self.dynamics.dynamics_id}:{policy.policy_id}:{self.plant_id}"
             ),
         )
         nonlinear = policy.nonlinear_method.solve(

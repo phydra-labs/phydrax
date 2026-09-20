@@ -79,7 +79,7 @@ class _ConstantDifferentialKernel(eqx.Module):
 
 def test_fourier_spectral_conv_exactly_preserves_retained_mode():
     count = 32
-    x = jnp.arange(count, dtype=float)
+    x = jnp.arange(count, dtype="float64")
     signal = jnp.cos(2.0 * jnp.pi * 2.0 * x / count)[:, None]
     layer = phx.nn.operator.architectures.SpectralConvND(
         in_channels=1,
@@ -95,8 +95,8 @@ def test_fourier_spectral_conv_exactly_preserves_retained_mode():
 
 def test_fourier_spectral_conv_exactly_learns_negative_signed_block():
     nx, ny = 18, 20
-    x = jnp.arange(nx, dtype=float)[:, None]
-    y = jnp.arange(ny, dtype=float)[None, :]
+    x = jnp.arange(nx, dtype="float64")[:, None]
+    y = jnp.arange(ny, dtype="float64")[None, :]
     signal = jnp.cos(2.0 * jnp.pi * (-x / nx + y / ny))[..., None]
     layer = phx.nn.operator.architectures.SpectralConvND(
         in_channels=1,
@@ -236,7 +236,7 @@ def test_integral_branch_has_midpoint_quadrature_convergence():
     encoder = _integral_encoder()
 
     def error(count):
-        coordinates = (jnp.arange(count, dtype=float) + 0.5) / count
+        coordinates = (jnp.arange(count, dtype="float64") + 0.5) / count
         samples = phx.nn.operator.FunctionSamples(
             values=coordinates**2,
             coordinates=coordinates[:, None],
@@ -258,7 +258,7 @@ def test_ragged_batched_deeponet_matches_individual_evaluations():
     )
 
     def make_batch(source_count, query_count):
-        source_x = (jnp.arange(source_count, dtype=float) + 0.5) / source_count
+        source_x = (jnp.arange(source_count, dtype="float64") + 0.5) / source_count
         query_x = jnp.linspace(0.0, 1.0, query_count)
         return phx.nn.operator.OperatorBatch(
             inputs={
@@ -292,7 +292,7 @@ def test_ragged_batched_deeponet_matches_individual_evaluations():
 
 
 def _local_integral_estimate(count):
-    coordinates = (jnp.arange(count, dtype=float) + 0.5) / count
+    coordinates = (jnp.arange(count, dtype="float64") + 0.5) / count
     batch = phx.nn.operator.OperatorBatch(
         inputs={
             "u": phx.nn.operator.FunctionSamples(
@@ -316,7 +316,7 @@ def _local_integral_estimate(count):
 
 
 def _graph_integral_estimate(count):
-    coordinates = (jnp.arange(count, dtype=float) + 0.5) / count
+    coordinates = (jnp.arange(count, dtype="float64") + 0.5) / count
     target = count
     graph = phx.graph.GraphIR(
         nodes={
@@ -361,7 +361,7 @@ def test_local_and_graph_integrals_have_midpoint_continuum_convergence(estimate)
 
 def test_graph_integral_is_invariant_to_source_permutation():
     count = 11
-    coordinates = (jnp.arange(count, dtype=float) + 0.5) / count
+    coordinates = (jnp.arange(count, dtype="float64") + 0.5) / count
     permutation = jnp.array([7, 1, 9, 0, 5, 10, 2, 6, 3, 8, 4])
 
     def evaluate(order):
@@ -490,7 +490,7 @@ def _degree_filter(gains, *, sampling="mw", execution="recursive"):
         out_channels=1,
         key=jr.key(0),
     )
-    weight = jnp.asarray(gains, dtype=float)[:, None, None]
+    weight = jnp.asarray(gains, dtype="float64")[:, None, None]
     return eqx.tree_at(lambda item: item.weight, layer, weight), plan
 
 
@@ -577,7 +577,7 @@ def _attention_samples(weights, mask=None):
     count = len(weights)
     return phx.nn.operator.FunctionSamples(
         values=None,
-        coordinates=jnp.arange(count, dtype=float)[:, None],
+        coordinates=jnp.arange(count, dtype="float64")[:, None],
         quadrature_weights=jnp.asarray(weights),
         mask=mask,
     )
@@ -611,7 +611,7 @@ def test_operator_attention_is_invariant_to_masked_padding(kind):
     padded_values = jnp.concatenate((values, jnp.full((3, 3), 1e10)), axis=0)
     padded_samples = phx.nn.operator.FunctionSamples(
         values=None,
-        coordinates=jnp.arange(8, dtype=float)[:, None],
+        coordinates=jnp.arange(8, dtype="float64")[:, None],
         quadrature_weights=jnp.concatenate((jnp.full((5,), 0.2), jnp.ones((3,)))),
         mask=jnp.array([True, True, True, True, True, False, False, False]),
     )
@@ -719,7 +719,7 @@ def test_laplace_terminal_gradient_matches_trapezoidal_convolution_weights():
 
 def test_retained_fourier_mode_has_identity_energy_gradient():
     count = 32
-    x = jnp.arange(count, dtype=float)
+    x = jnp.arange(count, dtype="float64")
     signal = (
         0.7 * jnp.cos(2.0 * jnp.pi * x / count)
         + 0.2 * jnp.sin(2.0 * jnp.pi * 3.0 * x / count)
@@ -795,9 +795,7 @@ def test_basis_transform_plan_reuses_exact_projection_matrices():
 
 def test_spherical_execution_plans_are_interchangeable_and_jittable():
     layer, recursive = _degree_filter((0.8, -0.3, 1.2, 0.4))
-    precomputed = phx.discretization.SphericalHarmonicPlan(
-        4, execution="precomputed"
-    )
+    precomputed = phx.discretization.SphericalHarmonicPlan(4, execution="precomputed")
     values = jr.normal(jr.key(40), (*recursive.sample_shape, 1))
     expected = layer(values, recursive)
     actual = eqx.filter_jit(lambda x: layer(x, precomputed))(values)

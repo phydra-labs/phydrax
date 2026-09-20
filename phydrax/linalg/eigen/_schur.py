@@ -258,8 +258,7 @@ def plan_schur_eigensolve(
         )
     if cost.workspace_bytes > selected.resources.workspace_bytes:
         raise ValueError(
-            f"Schur workspace estimate {cost.workspace_bytes} exceeds budget "
-            f"{selected.resources.workspace_bytes}."
+            f"Schur workspace estimate {cost.workspace_bytes} exceeds budget {selected.resources.workspace_bytes}."
         )
     payload = {
         "kind": "schur-solve-plan",

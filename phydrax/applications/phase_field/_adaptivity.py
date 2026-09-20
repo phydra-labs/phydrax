@@ -186,7 +186,7 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
         if marked.size == 0:
             evidence = PhaseFieldAdaptivityEvidence(
                 indicator,
-                jnp.zeros(indicator.shape, dtype=bool),
+                jnp.zeros(indicator.shape, dtype=jnp.bool_),
                 state.mass,
                 state.mass,
                 jnp.asarray(0.0),

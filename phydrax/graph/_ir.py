@@ -5,12 +5,12 @@ import importlib.util
 from collections.abc import Sequence
 from typing import Any, Literal
 
-import equinox as eqx
 import jax.core as jcore
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
 
@@ -43,12 +43,12 @@ def _leaf_leading_size(tree: Any, /) -> int | None:
     first = jnp.asarray(leaves[0])
     if first.ndim == 0:
         raise ValueError("Feature leaves must have rank >= 1.")
-    size = int(first.shape[0])
+    size = first.shape[0]
     for leaf in leaves[1:]:
         arr = jnp.asarray(leaf)
         if arr.ndim == 0:
             raise ValueError("Feature leaves must have rank >= 1.")
-        if int(arr.shape[0]) != size:
+        if arr.shape[0] != size:
             raise ValueError(
                 "All leaves in a feature pytree must share the same leading axis size."
             )
@@ -82,7 +82,7 @@ def _require_uniform_presence(name: str, values: Sequence[Any], /) -> None:
         raise ValueError(f"All graphs must either have `{name}` or all omit it.")
 
 
-class GraphIR(eqx.Module, NonTrainableState):
+class GraphIR(StrictModule, NonTrainableState):
     """Canonical execution representation for sparse batched graphs.
 
     Semantics follow a counts-first sparse layout:
@@ -128,17 +128,21 @@ class GraphIR(eqx.Module, NonTrainableState):
         self.globals = globals
         self.n_node = _ensure_int_vector("n_node", n_node)
         self.n_edge = _ensure_int_vector("n_edge", n_edge)
-        self.node_mask = None if node_mask is None else jnp.asarray(node_mask, dtype=bool)
-        self.edge_mask = None if edge_mask is None else jnp.asarray(edge_mask, dtype=bool)
+        self.node_mask = (
+            None if node_mask is None else jnp.asarray(node_mask, dtype=jnp.bool_)
+        )
+        self.edge_mask = (
+            None if edge_mask is None else jnp.asarray(edge_mask, dtype=jnp.bool_)
+        )
         self.graph_mask = (
-            None if graph_mask is None else jnp.asarray(graph_mask, dtype=bool)
+            None if graph_mask is None else jnp.asarray(graph_mask, dtype=jnp.bool_)
         )
         if validate:
             self.validate()
 
     @property
     def num_graphs(self) -> int:
-        return int(self.n_node.shape[0])
+        return self.n_node.shape[0]
 
     @property
     def num_nodes(self) -> int:
@@ -184,7 +188,7 @@ class GraphIR(eqx.Module, NonTrainableState):
         if node_count is not None:
             count = int(node_count)
         elif self.node_mask is not None:
-            count = int(self.node_mask.shape[0])
+            count = self.node_mask.shape[0]
         else:
             payload_count = _leaf_leading_size(self.nodes)
             if payload_count is not None:
@@ -223,7 +227,7 @@ class GraphIR(eqx.Module, NonTrainableState):
         )
 
         if self.graph_mask is not None:
-            if int(self.graph_mask.shape[0]) != self.num_graphs:
+            if self.graph_mask.shape[0] != self.num_graphs:
                 raise ValueError("`graph_mask` length must match number of graphs.")
         if self.nodes is not None:
             if node_size is None:
@@ -244,15 +248,16 @@ class GraphIR(eqx.Module, NonTrainableState):
         if self.node_mask is not None:
             if self.node_mask.ndim != 1:
                 raise ValueError("`node_mask` must be rank-1.")
-            if node_size is not None and int(self.node_mask.shape[0]) != node_size:
+            if node_size is not None and self.node_mask.shape[0] != node_size:
                 raise ValueError(
                     "`node_mask` length must match node feature leading size."
                 )
         if self.edge_mask is not None:
             if self.edge_mask.ndim != 1:
                 raise ValueError("`edge_mask` must be rank-1.")
-            if self.senders is not None and int(self.edge_mask.shape[0]) != int(
-                self.senders.shape[0]
+            if (
+                self.senders is not None
+                and self.edge_mask.shape[0] != self.senders.shape[0]
             ):
                 raise ValueError(
                     "`edge_mask` length must match senders/receivers length."
@@ -262,7 +267,7 @@ class GraphIR(eqx.Module, NonTrainableState):
 
         if _contains_tracer((self.n_node, self.n_edge, self.senders, self.receivers)):
             if strict and self.senders is not None and edge_size is not None:
-                if edge_size != int(self.senders.shape[0]):
+                if edge_size != self.senders.shape[0]:
                     raise ValueError(
                         "Edge feature leading size must equal sender/receiver length."
                     )
@@ -286,9 +291,9 @@ class GraphIR(eqx.Module, NonTrainableState):
                     "Edge count is non-zero but senders/receivers are missing."
                 )
         else:
-            if strict and int(self.senders.shape[0]) != n_edges:
+            if strict and self.senders.shape[0] != n_edges:
                 raise ValueError("Edge index length must match `sum(n_edge)`.")
-            if int(self.senders.size) > 0:
+            if self.senders.size > 0:
                 senders_np = np.asarray(self.senders)
                 receivers_np = np.asarray(self.receivers)
                 if np.any(senders_np < 0) or np.any(receivers_np < 0):
@@ -363,8 +368,7 @@ class GraphIR(eqx.Module, NonTrainableState):
     def as_jraph_tuple(self) -> Any:
         if importlib.util.find_spec("jraph") is None:
             raise ImportError(
-                "jraph is required for `phydrax.graph.GraphIR.as_jraph_tuple`; "
-                "install it with `pip install jraph`."
+                "jraph is required for `phydrax.graph.GraphIR.as_jraph_tuple`; install it with `pip install jraph`."
             )
         jraph = importlib.import_module("jraph")
         return jraph.GraphsTuple(

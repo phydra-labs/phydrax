@@ -57,7 +57,7 @@ class FDConsistencyReport(StrictModule, NonTrainableState):
         self.minimum_valid_width = int(minimum_valid_width)
         self.maximum_moment_residual = float(maximum_moment_residual)
         self.maximum_condition_estimate = float(maximum_condition_estimate)
-        self.failed_rows = tuple(int(row) for row in failed_rows)
+        self.failed_rows = tuple(failed_rows)
         self.tolerance = float(tolerance)
         self.evidence = "algebraic"
         self.passed = not self.failed_rows

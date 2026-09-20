@@ -120,7 +120,7 @@ class BoundedContinuedFractionPlan(StrictModule, NonTrainableState):
         self.absolute_tolerance, self.relative_tolerance = tolerances
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "bounded-three-term-continued-fraction-v1",
+                "kind": "bounded-three-term-continued-fraction",
                 "comparison_depth": comparison,
                 "maximum_depth": maximum,
                 "inversion_index": inversion,
@@ -195,7 +195,7 @@ class QnmReferenceMode(StrictModule, NonTrainableState):
         self.source_id = source
         self.reference_id = canonical_fingerprint(
             {
-                "kind": "qnm-reference-mode-v1",
+                "kind": "qnm-reference-mode",
                 "mode": mode.mode_id,
                 "dimensionless_spin": float(spin),
                 "angular_frequency": (
@@ -316,8 +316,8 @@ class QnmSolvePlan(StrictModule, NonTrainableState):
             if not math.isclose(
                 radial_spin,
                 float(spin),
-                rel_tol=64.0 * np.finfo(float).eps,
-                abs_tol=64.0 * np.finfo(float).eps,
+                rel_tol=64.0 * np.finfo(np.float64).eps,
+                abs_tol=64.0 * np.finfo(np.float64).eps,
             ):
                 raise ValueError(
                     "Kerr radial spin/mass does not match dimensionless_spin."
@@ -364,7 +364,7 @@ class QnmSolvePlan(StrictModule, NonTrainableState):
         self.branch_id = branch
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "coupled-leaver-qnm-solve-plan-v1",
+                "kind": "coupled-leaver-qnm-solve-plan",
                 "mode": mode.mode_id,
                 "angular_plan": angular_plan.plan_id,
                 "dimensionless_spin": float(spin),
@@ -485,7 +485,7 @@ def schwarzschild_qnm_reference(
         jnp.asarray(complex(separation, 0.0)),
         frequency_tolerance,
         separation_tolerance,
-        source_id="schwarzschild-leaver-Momega-reference-v1",
+        source_id="schwarzschild-leaver-Momega-reference",
     )
 
 
@@ -822,7 +822,7 @@ def solve_qnm(
     separation_seed = _complex_scalar(
         initial_separation_constant, "initial_separation_constant"
     )
-    active = jnp.asarray(continuation_active, dtype=bool)
+    active = jnp.asarray(continuation_active, dtype=jnp.bool_)
     if active.shape != ():
         raise ValueError("continuation_active must be one Boolean scalar.")
     initial_state = _state_from_complex(frequency_seed, separation_seed)

@@ -16,7 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticSystemPlan
 from ...units import derived_unit, UnitDefinition
@@ -27,8 +27,8 @@ from ._profile import SpectralLineShape, SpectralProfilePlan
 
 
 class AbstractPolarizabilityProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    system_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
+    system_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(self, positions: ArrayLike, /) -> StaticPolarizabilityResult:
@@ -118,7 +118,7 @@ class RamanSpectrumResult(StrictModule, NonTrainableState):
     ):
         waves = jnp.asarray(wavenumbers)
         derivatives = jnp.asarray(polarizability_derivatives, dtype=waves.dtype)
-        mode_count = int(waves.size)
+        mode_count = waves.size
         vectors = tuple(
             jnp.asarray(value, dtype=waves.dtype)
             for value in (
@@ -154,7 +154,7 @@ class RamanSpectrumResult(StrictModule, NonTrainableState):
         self.grid = grid_
         self.broadened_intensity = broadened
         self.area_residual = area_residual_
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.activity_unit = activity_unit
         self.source_result_ids = source_result_ids
         self.result_id = canonical_fingerprint(

@@ -180,7 +180,7 @@ def test_compiled_periodic_statistics_keep_equation_terms_separate():
     np.testing.assert_allclose(
         statistics.advective_transfer_shells.integral.sum(),
         native_advective_transfer,
-        atol=np.finfo(float).eps,
+        atol=np.finfo(np.float64).eps,
     )
     np.testing.assert_array_equal(
         statistics.sgs_transfer_shells.integral,

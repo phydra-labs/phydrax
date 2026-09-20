@@ -176,7 +176,7 @@ class _SemiconductorJacobian(StrictModule):
 
 def _state_pattern(plan: DevicePlan) -> SparsePattern:
     """Exact local/edge/interface dependency envelope for the selected layout."""
-    node_count = int(plan.support.volumes.shape[0])
+    node_count = plan.support.volumes.shape[0]
     nodes = np.arange(node_count, dtype=np.int32)
     bulk = np.asarray(plan.layout.node_indices(nodes), dtype=np.int32)
     row_parts: list[np.ndarray] = []
@@ -260,7 +260,7 @@ class PreparedSemiconductorDevice(ClassicalPhysics):
     def __init__(self, plan: DevicePlan):
         if not isinstance(plan, DevicePlan):
             raise TypeError("plan must be a DevicePlan.")
-        count = int(plan.support.volumes.shape[0])
+        count = plan.support.volumes.shape[0]
         nodes = np.arange(count, dtype=np.int32)
         tail = np.asarray(plan.support.tail)
         head = np.asarray(plan.support.head)
@@ -277,7 +277,7 @@ class PreparedSemiconductorDevice(ClassicalPhysics):
 
     @property
     def num_nodes(self) -> int:
-        return int(self.plan.support.volumes.shape[0])
+        return self.plan.support.volumes.shape[0]
 
     @property
     def num_terminals(self) -> int:
@@ -334,7 +334,7 @@ class PreparedSemiconductorDevice(ClassicalPhysics):
             potential=jnp.zeros_like(carriers),
             electron=carriers,
             hole=carriers,
-        ).astype(bool)
+        ).astype("bool")
         if self.plan.electrothermal:
             result = self.layout.set(result, "lattice_energy", ~self.plan.ohmic_mask)
         if self.plan.carrier_energy:
@@ -578,7 +578,7 @@ class PreparedSemiconductorDevice(ClassicalPhysics):
             & jnp.isfinite(energy_error)
         )
         positive = self._valid_coordinates(u)
-        solver_ok = jnp.asarray(nonlinear_successful, dtype=bool)
+        solver_ok = jnp.asarray(nonlinear_successful, dtype=jnp.bool_)
         # Conservation is audited in physical SI independently of root status.
         floor = 100 * jnp.finfo(u.dtype).eps
         limit = jnp.maximum(jnp.asarray(tolerance, dtype=u.dtype), floor)

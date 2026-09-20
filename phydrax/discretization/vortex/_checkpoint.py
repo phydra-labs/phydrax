@@ -90,7 +90,7 @@ class VortexCheckpointPlan(StrictModule, NonTrainableState):
                 "source_lineage": str(source_lineage_id),
                 "backend_ids": tuple(str(value) for value in backend_ids),
                 "epoch_index": int(epoch_index),
-                "accepted_count": int(times.size),
+                "accepted_count": times.size,
             }
         )
         manifest = {

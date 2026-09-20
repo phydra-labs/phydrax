@@ -292,7 +292,7 @@ def test_polarized_transfer_binds_ray_basis_and_preserves_faraday_cone():
         matrices,
         jnp.asarray([2.0, 1.0, 0.0, 0.0]),
         jnp.zeros((plan.capacity,)),
-        support=jnp.zeros((plan.capacity,), dtype=bool),
+        support=jnp.zeros((plan.capacity,), dtype="bool"),
     )
     assert not bool(unsupported.evidence.in_support)
     assert not bool(unsupported.evidence.qualified)

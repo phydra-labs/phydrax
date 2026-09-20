@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._derivatives import FourthOrderDerivatives
 from ._grid import FixedGridGeometry
@@ -52,12 +52,12 @@ def _evidence(
         finite,
         jnp.asarray(analytic),
         jnp.asarray(characteristic),
-        jnp.asarray(successful, dtype=bool).reshape(()) & finite,
+        jnp.asarray(successful, dtype=jnp.bool_).reshape(()) & finite,
     )
 
 
 class AbstractZ4cBoundary(StrictModule, NonTrainableState):
-    boundary_id: AbstractAttribute[str]
+    boundary_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def apply_state(
@@ -159,7 +159,11 @@ class AnalyticBoundary(AbstractZ4cBoundary):
         self, time: Array, state: Z4cState, grid: FixedGridGeometry, /
     ) -> Z4cState:
         value = self.solution(jnp.asarray(time), grid.coordinates)
-        exact = value if isinstance(value, Z4cState) else Z4cState(value, grid_id=grid.grid_id)
+        exact = (
+            value
+            if isinstance(value, Z4cState)
+            else Z4cState(value, grid_id=grid.grid_id)
+        )
         if exact.grid_id != grid.grid_id or exact.values.shape != state.values.shape:
             raise ValueError("Analytic boundary solution does not match the fixed grid.")
         return exact
@@ -285,9 +289,7 @@ class CharacteristicRadiativeBoundary(AbstractZ4cBoundary):
             for axis in range(3)
         )
         safe_radius = jnp.where(radius > 0.0, radius, 1.0)
-        outgoing = -self.speed * (
-            radial_derivative + difference / safe_radius[None, ...]
-        )
+        outgoing = -self.speed * (radial_derivative + difference / safe_radius[None, ...])
         mask = grid.boundary_mask(self.width)
         values = jnp.where(mask[None, ...], outgoing, rates.values)
         result = rates.with_values(values)

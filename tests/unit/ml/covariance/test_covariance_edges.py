@@ -11,7 +11,7 @@ from phydrax.ml.covariance import EmpiricalCovariance, WeightedCovariance
 def test_covariance_distinguishes_empty_and_singleton_batches():
     features = jnp.array([[2.0, -1.0], [4.0, 3.0]])
     empty = EmpiricalCovariance(regularization=1e-4).fit_batch(
-        MLBatch(features, sample_mask=jnp.zeros(2, dtype=bool))
+        MLBatch(features, sample_mask=jnp.zeros(2, dtype="bool"))
     )
     singleton = EmpiricalCovariance(regularization=1e-4).fit_batch(MLBatch(features[:1]))
     corrected_singleton = WeightedCovariance(

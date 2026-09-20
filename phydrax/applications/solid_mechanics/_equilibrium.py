@@ -148,7 +148,7 @@ class MechanicsEquilibriumProblem(StrictModule):
     ) -> Array:
         numerical = jnp.asarray(
             self.root_problem.valid(state, residual, auxiliary, args),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         if numerical.shape != ():
             raise ValueError("Mechanics root validity must return one scalar boolean.")
@@ -156,7 +156,7 @@ class MechanicsEquilibriumProblem(StrictModule):
             return numerical.reshape(())
         physical = jnp.asarray(
             self.admissibility_function(state, residual, auxiliary, args),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         if physical.shape != ():
             raise ValueError("Mechanics admissibility must return one scalar boolean.")

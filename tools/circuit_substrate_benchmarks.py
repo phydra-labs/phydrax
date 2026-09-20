@@ -209,8 +209,8 @@ def _macromodel_row():
         )
     )
     return {
-        "frequencies": int(frequencies.size),
-        "poles": int(fit.model.poles.size),
+        "frequencies": frequencies.size,
+        "poles": fit.model.poles.size,
         "fit_seconds": fit_seconds,
         "relative_residual": float(fit.evidence.relative_residual),
         "maximum_error": float(fit.evidence.maximum_error),

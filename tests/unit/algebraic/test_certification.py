@@ -47,6 +47,4 @@ def test_exact_real_root_isolation_preserves_multiplicity() -> None:
 
     assert len(square_roots) == 2
     assert square_roots[0].upper < 0 < square_roots[1].lower
-    assert repeated == (
-        phx.algebraic.ExactRealRootInterval(Fraction(1), Fraction(1), 2),
-    )
+    assert repeated == (phx.algebraic.ExactRealRootInterval(Fraction(1), Fraction(1), 2),)

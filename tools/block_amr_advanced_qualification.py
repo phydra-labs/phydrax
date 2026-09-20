@@ -36,7 +36,7 @@ def _configuration():
     )
     compiler = phx.discretization.VariablePatchTopologyCompiler(hierarchy)
     initial = compiler.initial_topology()
-    tags = ((jnp.zeros((1, 4, 4), dtype=bool).at[0, 1, 1].set(True),),)
+    tags = ((jnp.zeros((1, 4, 4), dtype="bool").at[0, 1, 1].set(True),),)
     compiled = compiler.compile(initial, tags)
     topology = compiled.topology
     capacity = phx.discretization.BlockHierarchyCapacityPlan(

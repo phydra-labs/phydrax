@@ -66,7 +66,7 @@ def prepare_compatible_maxwell_case_batch(
 
     runtimes_ = tuple(runtimes)
     states = tuple(initial_states)
-    shape = tuple(int(value) for value in case_shape)
+    shape = tuple(case_shape)
     if not shape or any(value <= 0 for value in shape):
         raise ValueError("Maxwell case_shape must contain positive dimensions.")
     count = int(np.prod(shape))

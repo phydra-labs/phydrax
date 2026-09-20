@@ -39,8 +39,8 @@ class PreparedGeometryPathKernel(StrictModule):
         diffusion: float = 1.0,
         image_capacity: int,
     ):
-        low = jnp.asarray(lower, dtype=float)
-        high = jnp.asarray(upper, dtype=float)
+        low = jnp.asarray(lower, dtype=jnp.float64)
+        high = jnp.asarray(upper, dtype=jnp.float64)
         if low.shape != () or high.shape != ():
             raise ValueError("The prepared image route currently supports one interval.")
         if behavior not in ("absorbing", "reflecting"):
@@ -173,7 +173,7 @@ def killed_path_mask(boundary_values: ArrayLike, /) -> Array:
     if values.ndim < 1:
         raise ValueError("boundary_values must have a trailing path-node axis.")
     inside = jnp.isfinite(values) & (values <= 0.0)
-    return jnp.cumprod(inside.astype(jnp.int32), axis=-1).astype(bool)
+    return jnp.cumprod(inside.astype(jnp.int32), axis=-1).astype("bool")
 
 
 def prepare_path_boundary_schedule(

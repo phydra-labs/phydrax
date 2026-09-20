@@ -317,8 +317,7 @@ def semiconductor_reprepare(
         )
         if bool(jnp.any(source_active & (coverage_for_field <= 0))):
             raise ValueError(
-                "Native transition leaves differential material energy without "
-                "a same-material differential target."
+                "Native transition leaves differential material energy without a same-material differential target."
             )
         safe_coverage = jnp.where(source_active, coverage_for_field, 1.0)
         source_extensive = prepared.field(source_storage, name)

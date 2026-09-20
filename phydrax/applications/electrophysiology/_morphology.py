@@ -87,7 +87,7 @@ class CompartmentSpec(StrictModule, NonTrainableState):
         self.axial_resistivity_ohm_cm = resistivity
         self.spec_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-compartment-v1",
+                "kind": "electrophysiology-compartment",
                 "compartment_id": compartment,
                 "parent_id": parent,
                 "length_um": length,
@@ -119,7 +119,7 @@ class BranchSpec(StrictModule, NonTrainableState):
         self.compartment_ids = values
         self.branch_spec_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-branch-v1",
+                "kind": "electrophysiology-branch",
                 "branch_id": identifier,
                 "compartments": list(values),
             }
@@ -160,8 +160,7 @@ class CellMorphologyPlan(StrictModule, NonTrainableState):
         for spec in specs:
             if spec.parent_id is not None and spec.parent_id not in identifier_set:
                 raise ValueError(
-                    f"Compartment {spec.compartment_id!r} references missing parent "
-                    f"{spec.parent_id!r}."
+                    f"Compartment {spec.compartment_id!r} references missing parent {spec.parent_id!r}."
                 )
         by_id = {spec.compartment_id: spec for spec in specs}
         connected = {roots[0]}
@@ -202,7 +201,7 @@ class CellMorphologyPlan(StrictModule, NonTrainableState):
         self.compartment_ids = identifiers
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-cell-morphology-v1",
+                "kind": "electrophysiology-cell-morphology",
                 "cell_id": cell,
                 "compartments": [spec.spec_id for spec in specs],
                 "branches": [branch.branch_spec_id for branch in branch_values],
@@ -282,23 +281,25 @@ def prepare_cell_morphology(plan: CellMorphologyPlan, /) -> PreparedCellMorpholo
     micrometer_to_centimeter = float(_unit_conversion_factor(MICROMETER, CENTIMETER))
     reciprocal_ohm = derived_unit("1/ohm", ((OHM, -1),))
     reciprocal_ohm_to_uS = float(_unit_conversion_factor(reciprocal_ohm, MICROSIEMENS))
-    length = np.asarray([spec.length_um for spec in plan.compartments], dtype=float)
-    diameter = np.asarray([spec.diameter_um for spec in plan.compartments], dtype=float)
+    length = np.asarray([spec.length_um for spec in plan.compartments], dtype=np.float64)
+    diameter = np.asarray(
+        [spec.diameter_um for spec in plan.compartments], dtype=np.float64
+    )
     area = pi * diameter * length
     capacitance_density = np.asarray(
-        [spec.capacitance_density_uF_cm2 for spec in plan.compartments], dtype=float
+        [spec.capacitance_density_uF_cm2 for spec in plan.compartments], dtype=np.float64
     )
     capacitance = capacitance_density * area * capacitance_density_area_to_nF
     resistivity = np.asarray(
-        [spec.axial_resistivity_ohm_cm for spec in plan.compartments], dtype=float
+        [spec.axial_resistivity_ohm_cm for spec in plan.compartments], dtype=np.float64
     )
     half_resistance = (
         resistivity
         * (0.5 * length * micrometer_to_centimeter)
         / (pi * (0.5 * diameter * micrometer_to_centimeter) ** 2)
     )
-    edge_conductance = np.zeros((count,), dtype=float)
-    axial_diagonal = np.zeros((count,), dtype=float)
+    edge_conductance = np.zeros((count,), dtype=np.float64)
+    axial_diagonal = np.zeros((count,), dtype=np.float64)
     for child, parent_index in enumerate(parent.tolist()):
         if parent_index < 0:
             continue
@@ -309,7 +310,7 @@ def prepare_cell_morphology(plan: CellMorphologyPlan, /) -> PreparedCellMorpholo
         axial_diagonal[parent_index] += conductance
     runtime_id = canonical_fingerprint(
         {
-            "kind": "prepared-electrophysiology-morphology-v1",
+            "kind": "prepared-electrophysiology-morphology",
             "plan": plan.plan_id,
             "parent_index": parent.tolist(),
             "topology": topology.topology_id,

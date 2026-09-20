@@ -8,7 +8,7 @@ import phydrax as phx
 
 def _mesh(cell_kind):
     topology = phx.discretization.reference_cell_topology(cell_kind)
-    coordinates = np.asarray(topology.vertices, dtype=float)
+    coordinates = np.asarray(topology.vertices, dtype="float64")
     return phx.discretization.CellMesh(
         coordinates,
         (

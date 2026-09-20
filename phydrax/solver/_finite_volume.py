@@ -267,8 +267,7 @@ def unstructured_ssprk33_content_candidate(
         != getattr(fallback_dynamics, "overset_epoch_id", None)
     ):
         raise ValueError(
-            "High-order and fallback stage dynamics must be aligned, including "
-            "the stationary overset map identity."
+            "High-order and fallback stage dynamics must be aligned, including the stationary overset map identity."
         )
     dt = jnp.asarray(step_size, dtype=initial.effective_cell_volumes.dtype)
     if dt.shape != ():
@@ -746,8 +745,7 @@ class UnsplitFiniteVolumeSSPRK3Plan(StrictModule, NonTrainableState):
             dynamics.method.interface_solver, ShallowWaterHydrostaticHLLPlan
         ):
             raise ValueError(
-                "Hydrostatic wet/dry shallow water requires "
-                "PreparedFiniteVolumeRuntime stage positivity."
+                "Hydrostatic wet/dry shallow water requires PreparedFiniteVolumeRuntime stage positivity."
             )
         self.dynamics = dynamics
         self.temporal_method_id = "temporal:ssprk:3:3"

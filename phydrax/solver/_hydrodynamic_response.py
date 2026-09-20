@@ -63,7 +63,7 @@ def _relative_defect(left: np.ndarray, right: np.ndarray, /) -> float:
     scale = max(
         float(np.max(np.abs(left))),
         float(np.max(np.abs(right))),
-        np.finfo(float).tiny,
+        np.finfo(np.float64).tiny,
     )
     return float(np.max(np.abs(left - right)) / scale)
 
@@ -104,7 +104,7 @@ def _require_positive_definite(
     name: str,
     /,
 ) -> None:
-    scale = max(float(np.max(np.abs(np.asarray(matrix)))), np.finfo(float).tiny)
+    scale = max(float(np.max(np.abs(np.asarray(matrix)))), np.finfo(np.float64).tiny)
     if minimum <= tolerance * scale:
         raise ValueError(f"{name} must be positive definite.")
 
@@ -116,7 +116,7 @@ def _require_positive_semidefinite(
     name: str,
     /,
 ) -> None:
-    scale = max(float(np.max(np.abs(np.asarray(matrix)))), np.finfo(float).tiny)
+    scale = max(float(np.max(np.abs(np.asarray(matrix)))), np.finfo(np.float64).tiny)
     if minimum < -tolerance * scale:
         raise ValueError(f"{name} violates the declared passive envelope.")
 
@@ -127,8 +127,7 @@ def _checked_excitation(value: ArrayLike, size: int, /) -> Array:
         host = host[:, None]
     if host.ndim != 2 or host.shape[0] != size or host.shape[1] < 1:
         raise ValueError(
-            "incident_excitation must have shape (rigid_dof_count,) or "
-            "(rigid_dof_count, load_case_count)."
+            "incident_excitation must have shape (rigid_dof_count,) or (rigid_dof_count, load_case_count)."
         )
     if np.any(~np.isfinite(host)):
         raise ValueError("incident_excitation must be finite.")
@@ -136,8 +135,8 @@ def _checked_excitation(value: ArrayLike, size: int, /) -> Array:
 
 
 def _block_diagonal(left: Array, right: Array, /) -> Array:
-    left_size = int(left.shape[0])
-    right_size = int(right.shape[0])
+    left_size = left.shape[0]
+    right_size = right.shape[0]
     result = jnp.zeros(
         (left_size + right_size, left_size + right_size),
         dtype=jnp.result_type(left, right),
@@ -238,11 +237,10 @@ class WetSurfaceModalGeneralizedForceMap3D(StrictModule):
         self.physics_id = "linear-potential-flow-wet-force-to-structural-mode-map"
         self.formulation_id = "Q_modal=G*F_wet; q_wet=G^H*eta_modal"
         self.time_convention = _TIME_CONVENTION
-        self.resource_evidence = (int(host.nbytes), int(host.size))
+        self.resource_evidence = (host.nbytes, host.size)
         self.error_evidence = (
             (
-                "shape, finite coefficients, unique coordinate IDs, and "
-                "numerical rank checked"
+                "shape, finite coefficients, unique coordinate IDs, and numerical rank checked"
             ),
             "work conjugacy is exact algebraically through the conjugate-transpose map",
             "no continuum modal-projection error estimate",
@@ -492,8 +490,7 @@ def solve_hydrodynamic_response_3d(
     if any(value is not None for value in modal_values) and not modal_enabled:
         raise ValueError(
             (
-                "Modal mass, stiffness, damping, and modal_force_map must be "
-                "supplied together."
+                "Modal mass, stiffness, damping, and modal_force_map must be supplied together."
             )
         )
 
@@ -609,7 +606,7 @@ def solve_hydrodynamic_response_3d(
     minimum_total_damping = float(np.min(np.linalg.eigvalsh(total_damping_host)))
     minimum_total_restoring = float(np.min(np.linalg.eigvalsh(total_restoring_host)))
     total_damping_scale = max(
-        float(np.max(np.abs(total_damping_host))), np.finfo(float).tiny
+        float(np.max(np.abs(total_damping_host))), np.finfo(np.float64).tiny
     )
     passive = minimum_total_damping >= -passivity_limit * total_damping_scale
     _require_positive_definite(
@@ -624,7 +621,7 @@ def solve_hydrodynamic_response_3d(
         total_restoring - omega_array**2 * total_mass - 1j * omega_array * total_damping
     )
     operator = DenseLinearOperator(dynamic_matrix)
-    dof_count = int(dynamic_matrix.shape[0])
+    dof_count = dynamic_matrix.shape[0]
     entries = dof_count * dof_count
     policy = LinearSolvePolicy(
         DenseLU(),
@@ -795,25 +792,22 @@ def solve_hydrodynamic_response_3d(
         solver_provider_id="phydrax.linalg.DenseLU:" + ",".join(solver_providers),
         precision_id=hydrodynamics.precision_id + ":complex128-response",
         excitation_semantics=(
-            "complex fluid-on-body generalized-force amplitude per unit "
-            "incident-wave amplitude"
+            "complex fluid-on-body generalized-force amplitude per unit incident-wave amplitude"
         ),
         resource_evidence=(
-            int(dynamic_matrix.nbytes),
-            int(transform.nbytes),
-            int(generalized_excitation.nbytes),
+            dynamic_matrix.nbytes,
+            transform.nbytes,
+            generalized_excitation.nbytes,
             len(linear_results),
         ),
         error_evidence=(
             "exact discrete residual D*q-F is retained for every load column",
             (
-                "phydrax.linalg finite/status/residual diagnostics are retained "
-                "per DenseLU solve"
+                "phydrax.linalg finite/status/residual diagnostics are retained per DenseLU solve"
             ),
             "coefficient frequency and reference IDs are explicit caller assertions",
             (
-                "no continuum hydrodynamic, structural-discretization, or "
-                "modal-truncation bound"
+                "no continuum hydrodynamic, structural-discretization, or modal-truncation bound"
             ),
         ),
         non_goals=_NON_GOALS,

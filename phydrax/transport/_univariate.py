@@ -89,7 +89,7 @@ def _wasserstein_cost_1d(
 
 
 def _values_1d(values: ArrayLike, /, *, name: str) -> Array:
-    result = jnp.asarray(values, dtype=float)
+    result = jnp.asarray(values, dtype=jnp.float64)
     if result.ndim != 1 or result.shape[0] == 0:
         raise ValueError(f"{name} must be a nonempty rank-one array.")
     return eqx.error_if(

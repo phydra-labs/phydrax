@@ -116,14 +116,13 @@ def correlated_observable_diagnostics(
         raise ValueError("samples must have leading chain and draw axes.")
     if jnp.issubdtype(values.dtype, jnp.complexfloating):
         raise TypeError(
-            "Correlated-observable diagnostics require real samples; diagnose "
-            "real and imaginary components separately."
+            "Correlated-observable diagnostics require real samples; diagnose real and imaginary components separately."
         )
     if not jnp.issubdtype(values.dtype, jnp.floating):
         values = values.astype(jnp.float64)
 
-    num_chains = int(values.shape[0])
-    num_draws = int(values.shape[1])
+    num_chains = values.shape[0]
+    num_draws = values.shape[1]
     if num_chains < 1:
         raise ValueError("samples must contain at least one chain.")
     resolved_max_lag = min(
@@ -132,7 +131,7 @@ def correlated_observable_diagnostics(
     )
     resolved_max_lag = max(resolved_max_lag, 1)
 
-    output_shape = tuple(int(value) for value in values.shape[2:])
+    output_shape = tuple(values.shape[2:])
     output_size = 1
     for size in output_shape:
         output_size *= size
@@ -167,7 +166,7 @@ def correlated_observable_diagnostics(
     )
     monotone_pairs = jax.lax.associative_scan(jnp.minimum, paired, axis=0)
     positive_prefix = jnp.cumprod(monotone_pairs > 0.0, axis=0, dtype=jnp.int32)
-    included_pairs = jnp.where(positive_prefix.astype(bool), monotone_pairs, 0.0)
+    included_pairs = jnp.where(positive_prefix.astype("bool"), monotone_pairs, 0.0)
     tau = -1.0 + 2.0 * jnp.sum(included_pairs, axis=0)
     tau = jnp.maximum(tau, jnp.finfo(safe.dtype).eps)
     selected_pairs = jnp.sum(positive_prefix, axis=0, dtype=jnp.int32)

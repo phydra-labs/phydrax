@@ -258,7 +258,7 @@ def test_quantile_transform_uniform_normal_inverse_ties_empty_status_and_grad_co
     with pytest.raises(eqx.EquinoxRuntimeError, match="not bijective"):
         tied.as_trainable().inverse_transform(jnp.array([0.5]))
     empty = QuantileTransformer(5).fit_batch(
-        phx.ml.MLBatch(jnp.ones((3, 1)), sample_mask=jnp.zeros(3, dtype=bool))
+        phx.ml.MLBatch(jnp.ones((3, 1)), sample_mask=jnp.zeros(3, dtype="bool"))
     )
     assert int(empty.status) == phx.ml.ML_INSUFFICIENT_DATA
     assert jnp.all(jnp.isfinite(empty.as_trainable().quantiles))

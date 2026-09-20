@@ -45,7 +45,7 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
         periodic: bool = False,
         precision: FDExecutionPrecisionPolicy | None = None,
     ):
-        shape = tuple(int(size) for size in global_shape)
+        shape = tuple(global_shape)
         axis = int(partition_axis)
         if (
             not shape
@@ -138,7 +138,7 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
         if self.periodic:
             left_indices %= self.device_count
             right_indices %= self.device_count
-            left_valid = right_valid = jnp.ones((self.device_count,), dtype=bool)
+            left_valid = right_valid = jnp.ones((self.device_count,), dtype=jnp.bool_)
         else:
             left_valid = left_indices >= 0
             right_valid = right_indices < self.device_count
@@ -166,8 +166,8 @@ class HaloExchangeDescriptor(StrictModule, NonTrainableState):
     descriptor_id: str = eqx.field(static=True)
 
     def __init__(self, offset: Sequence[int], widths: Sequence[int], /):
-        offset_ = tuple(int(value) for value in offset)
-        widths_ = tuple(int(value) for value in widths)
+        offset_ = tuple(offset)
+        widths_ = tuple(widths)
         if (
             not offset_
             or len(offset_) != len(widths_)
@@ -218,8 +218,8 @@ class DistributedHaloSchedule(StrictModule, NonTrainableState):
         mesh_axis_prefix: str = "fd",
         precision: FDExecutionPrecisionPolicy | None = None,
     ):
-        shape = tuple(int(value) for value in global_shape)
-        partitions = tuple(int(value) for value in partition_shape)
+        shape = tuple(global_shape)
+        partitions = tuple(partition_shape)
         if (
             not shape
             or len(partitions) != len(shape)

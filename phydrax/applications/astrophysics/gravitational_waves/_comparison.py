@@ -49,7 +49,7 @@ class WaveformMatchPlan(StrictModule, NonTrainableState):
         self.normalization_tolerance = tolerance
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "gravitational-wave-match-plan-v1",
+                "kind": "gravitational-wave-match-plan",
                 "psd": psd.psd_id,
                 "normalization_tolerance": tolerance,
                 "inner_product": "one-sided-positive-frequency",

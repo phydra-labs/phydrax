@@ -49,14 +49,14 @@ def shard_array_axis(
             raise ValueError("process-local array placement requires global_axis_size")
         global_shape = list(array.shape)
         global_shape[array_axis] = int(global_axis_size)
-        if global_shape[array_axis] % int(execution_group.mesh.shape[selected_mesh_axis]):
+        if global_shape[array_axis] % execution_group.mesh.shape[selected_mesh_axis]:
             raise ValueError("global axis size must divide across the mesh axis")
         return jax.make_array_from_process_local_data(
             sharding,
             np.asarray(jax.device_get(array)),
             tuple(global_shape),
         )
-    if array.shape[array_axis] % int(execution_group.mesh.shape[selected_mesh_axis]):
+    if array.shape[array_axis] % execution_group.mesh.shape[selected_mesh_axis]:
         raise ValueError("array axis size must divide across the mesh axis")
     return jax.device_put(array, sharding)
 
@@ -111,7 +111,7 @@ def global_weighted_mean(
     if weights is not None:
         weight = jnp.broadcast_to(jnp.asarray(weights, dtype=weight.dtype), value.shape)
     if mask is not None:
-        valid = jnp.broadcast_to(jnp.asarray(mask, dtype=bool), value.shape)
+        valid = jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), value.shape)
         weight = jnp.where(valid, weight, 0)
     numerator = jnp.sum(weight * value)
     support = jnp.sum(weight)

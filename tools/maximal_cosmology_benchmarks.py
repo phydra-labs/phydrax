@@ -28,7 +28,7 @@ def _measure(function, *args):
 def main() -> None:
     cosmo = phx.applications.cosmology
     count = 64
-    coordinate = (jnp.arange(count, dtype=float) + 0.5) / count
+    coordinate = (jnp.arange(count, dtype="float64") + 0.5) / count
     positions = jnp.stack(
         (
             coordinate,
@@ -60,7 +60,7 @@ def main() -> None:
             value,
             jnp.zeros_like(value),
             masses,
-            jnp.ones((count,), dtype=bool),
+            jnp.ones((count,), dtype="bool"),
         )
     )
     fof_result, fof_compile = _measure(fof_function, positions)

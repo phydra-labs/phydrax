@@ -69,9 +69,7 @@ class _BenchmarkFitOperator(AbstractOperatorModel):
             raise TypeError("Named benchmark targets require a native operator model.")
         query = scenario.train_batch.require_single_query()
         prefix_rank = len(scenario.train_batch.case_shape) + len(query.sample_shape)
-        trailing = tuple(
-            int(size) for size in jnp.asarray(scenario.train_target).shape[prefix_rank:]
-        )
+        trailing = tuple(jnp.asarray(scenario.train_target).shape[prefix_rank:])
         self.model = model
         self.in_size = "scalar"
         if not trailing:
@@ -178,7 +176,7 @@ class OperatorBenchmarkResult:
 def parameter_count(model) -> int:
     trainable, _ = partition_trainable(model)
     return sum(
-        int(leaf.size) * (2 if jnp.issubdtype(leaf.dtype, jnp.complexfloating) else 1)
+        leaf.size * (2 if jnp.issubdtype(leaf.dtype, jnp.complexfloating) else 1)
         for leaf in jax.tree_util.tree_leaves(trainable)
         if isinstance(leaf, jax.Array)
     )
@@ -204,9 +202,9 @@ def _prediction_for_target(
     if isinstance(target, OperatorTargetBatch):
         if not isinstance(model, AbstractOperatorModel):
             raise TypeError(
-                "Named benchmark targets require an operator model with predict()."
+                "Named benchmark targets require an operator model with evaluate()."
             )
-        return model.predict(batch)
+        return model.evaluate(batch)
     return model(batch)
 
 

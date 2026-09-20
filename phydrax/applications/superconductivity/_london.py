@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
 import phydrax.linalg as la
 from phydrax.ein import contract
 
@@ -112,9 +113,9 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
             raise ValueError("Thin-film London geometry or material support is invalid.")
         vertex_count = vertices.shape[0]
         supplied = (
-            np.zeros((0, vertex_count), dtype=float)
+            np.zeros((0, vertex_count), dtype=np.float64)
             if constraint_matrix is None
-            else np.asarray(constraint_matrix, dtype=float)
+            else np.asarray(constraint_matrix, dtype=np.float64)
         )
         labels = tuple(str(value).strip() for value in constraint_labels)
         if (
@@ -129,7 +130,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         ddg = discrete_operators(mesh)
         basis_gradients = np.asarray(ddg.basis_gradients)
         face_count = faces.shape[0]
-        current_basis = np.zeros((face_count, 3, vertex_count), dtype=float)
+        current_basis = np.zeros((face_count, 3, vertex_count), dtype=np.float64)
         for face in range(face_count):
             for local in range(3):
                 vertex = faces[face, local]
@@ -175,11 +176,11 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
             la.DenseLinearOperator(jnp.asarray(kkt)), la.FactorizationPolicy("lu")
         )
         centered_faces = centers - np.mean(vertices, axis=0)
-        moment_load = np.zeros((vertex_count,), dtype=float)
+        moment_load = np.zeros((vertex_count,), dtype=np.float64)
         for vertex in range(vertex_count):
             moment_load[vertex] = 0.5 * np.sum(
                 face_area
-                * np.einsum(
+                * ein.contract(
                     "i,fi->f",
                     normal,
                     np.cross(centered_faces, current_basis[:, :, vertex]),

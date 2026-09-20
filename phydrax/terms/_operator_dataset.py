@@ -126,7 +126,7 @@ class OperatorDatasetTerm(AbstractScalarTerm):
         self.fields = (str(function),)
         self.loss_kind = loss
         self.relative = bool(relative)
-        self.weight = jnp.asarray(weight, dtype=float)
+        self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
         if loss not in ("l2", "h1", "spectral"):
             raise ValueError("loss must be 'l2', 'h1', or 'spectral'.")
@@ -146,7 +146,7 @@ class OperatorDatasetTerm(AbstractScalarTerm):
             raise KeyError(f"Missing operator function {function_name!r}.")
         model = _operator_callable(functions[function_name])
         keys = jr.split(key, len(self.batches))
-        total = jnp.asarray(0.0, dtype=float)
+        total = jnp.asarray(0.0, dtype=jnp.float64)
         for batch, target, batch_key in zip(
             self.batches, self.targets, keys, strict=True
         ):
@@ -172,8 +172,8 @@ class OperatorDatasetTerm(AbstractScalarTerm):
         del iter_, kwargs
         model = _operator_callable(functions[self.fields[0]])
         keys = jr.split(key, len(self.batches))
-        absolute = jnp.asarray(0.0, dtype=float)
-        relative = jnp.asarray(0.0, dtype=float)
+        absolute = jnp.asarray(0.0, dtype=jnp.float64)
+        relative = jnp.asarray(0.0, dtype=jnp.float64)
         for batch, target, batch_key in zip(
             self.batches, self.targets, keys, strict=True
         ):
@@ -218,7 +218,7 @@ class PhysicsInformedOperatorTerm(AbstractScalarTerm):
         self.residual_fn = residual_fn
         self.fields = (str(function),)
         self.loss_kind = loss
-        self.weight = jnp.asarray(weight, dtype=float)
+        self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
         if loss not in ("l2", "h1", "spectral"):
             raise ValueError("loss must be 'l2', 'h1', or 'spectral'.")
@@ -238,7 +238,7 @@ class PhysicsInformedOperatorTerm(AbstractScalarTerm):
             raise KeyError(f"Missing operator function {function_name!r}.")
         model = _operator_callable(functions[function_name])
         keys = jr.split(key, len(self.batches))
-        total = jnp.asarray(0.0, dtype=float)
+        total = jnp.asarray(0.0, dtype=jnp.float64)
         for batch, batch_key in zip(self.batches, keys, strict=True):
             prediction = jnp.asarray(model(batch, key=batch_key))
             residual = jnp.asarray(self.residual_fn(prediction, batch))
@@ -287,7 +287,7 @@ class DifferentialPhysicsInformedOperatorTerm(AbstractScalarTerm):
         self.residual_operator = residual_operator
         self.fields = (str(function),)
         self.loss_kind = loss
-        self.weight = jnp.asarray(weight, dtype=float)
+        self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
         if loss not in ("l2", "h1", "spectral"):
             raise ValueError("loss must be 'l2', 'h1', or 'spectral'.")
@@ -312,7 +312,7 @@ class DifferentialPhysicsInformedOperatorTerm(AbstractScalarTerm):
             raise KeyError(f"Missing operator function {function_name!r}.")
         model = _operator_callable(functions[function_name])
         keys = jr.split(key, len(self.batches))
-        total = jnp.asarray(0.0, dtype=float)
+        total = jnp.asarray(0.0, dtype=jnp.float64)
         for batch, batch_key in zip(self.batches, keys, strict=True):
             context = OperatorContextModel(model, batch)
             prediction = context.domain_function(
@@ -327,9 +327,7 @@ class DifferentialPhysicsInformedOperatorTerm(AbstractScalarTerm):
                 coordinates
             )
             values = jnp.moveaxis(flat_residual, 0, len(batch.case_shape))
-            trailing_shape = tuple(
-                int(size) for size in values.shape[len(batch.case_shape) + 1 :]
-            )
+            trailing_shape = tuple(values.shape[len(batch.case_shape) + 1 :])
             values = values.reshape(
                 batch.case_shape
                 + batch.require_single_query().sample_shape

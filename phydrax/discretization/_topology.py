@@ -26,7 +26,7 @@ def _array_digest(value: object, /) -> dict[str, object]:
 
 
 def _bool_array(name: str, value: ArrayLike, shape: tuple[int, ...], /) -> Array:
-    array = np.asarray(value, dtype=bool)
+    array = np.asarray(value, dtype=np.bool_)
     if array.shape != shape:
         raise ValueError(f"{name} must have shape {shape}; got {array.shape}.")
     return jnp.asarray(array)
@@ -48,7 +48,7 @@ class EntitySubset(StrictModule, NonTrainableState):
         subset_id: str | None = None,
     ):
         name_ = nonempty_identifier("name", name)
-        mask_ = np.asarray(mask, dtype=bool)
+        mask_ = np.asarray(mask, dtype=np.bool_)
         if mask_.ndim != 1:
             raise ValueError("Entity subset masks must be rank-1.")
         self.name = name_
@@ -94,11 +94,11 @@ class EntitySet(StrictModule, NonTrainableState):
         if identifiers.ndim != 1 or not np.issubdtype(identifiers.dtype, np.integer):
             raise TypeError("entity_ids must be one rank-1 integer array.")
         identifiers = identifiers.astype(np.int64, copy=False)
-        count = int(identifiers.shape[0])
+        count = identifiers.shape[0]
         active = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != (count,):
             raise ValueError(
@@ -116,11 +116,10 @@ class EntitySet(StrictModule, NonTrainableState):
         if len(set(names)) != len(names):
             raise ValueError("Entity subset names must be unique.")
         for subset in subsets_:
-            subset_mask = np.asarray(subset.mask, dtype=bool)
+            subset_mask = np.asarray(subset.mask, dtype=np.bool_)
             if subset_mask.shape != (count,):
                 raise ValueError(
-                    f"Subset {subset.name!r} must have shape {(count,)}; "
-                    f"got {subset_mask.shape}."
+                    f"Subset {subset.name!r} must have shape {(count,)}; got {subset_mask.shape}."
                 )
             if np.any(subset_mask & ~active):
                 raise ValueError("Entity subsets cannot include inactive entities.")
@@ -173,15 +172,15 @@ class EntitySelection(StrictModule, NonTrainableState):
     ):
         if isinstance(entities, EntitySet):
             entity_set_id = entities.entity_set_id
-            active = np.asarray(entities.active_mask, dtype=bool)
+            active = np.asarray(entities.active_mask, dtype=np.bool_)
         else:
             entity_set_id = nonempty_identifier("entity_set_id", entities)
             if active_mask is None:
                 raise ValueError(
                     "active_mask is required when constructing from an entity-set ID."
                 )
-            active = np.asarray(active_mask, dtype=bool)
-        mask_ = np.asarray(mask, dtype=bool)
+            active = np.asarray(active_mask, dtype=np.bool_)
+        mask_ = np.asarray(mask, dtype=np.bool_)
         if active.ndim != 1 or mask_.shape != active.shape:
             raise ValueError(
                 "Entity selection and active masks must share one rank-1 shape."
@@ -314,10 +313,9 @@ class OrientedIncidence(StrictModule, NonTrainableState):
         coefficients = np.asarray(signs)
         if coefficients.shape != relation.route_shape:
             raise ValueError(
-                f"Incidence signs must have shape {relation.route_shape}; "
-                f"got {coefficients.shape}."
+                f"Incidence signs must have shape {relation.route_shape}; got {coefficients.shape}."
             )
-        valid = np.asarray(relation.valid, dtype=bool)
+        valid = np.asarray(relation.valid, dtype=np.bool_)
         active_coefficients = coefficients[valid]
         if np.any(~np.isfinite(active_coefficients)):
             raise ValueError("Active incidence signs must be finite.")
@@ -347,7 +345,7 @@ class OrientedIncidence(StrictModule, NonTrainableState):
         self.lower_entity_set_id = lower.entity_set_id
         self.upper_entity_set_id = upper.entity_set_id
         self.relation = relation
-        self.signs = jnp.asarray(coefficients, dtype=float)
+        self.signs = jnp.asarray(coefficients, dtype=jnp.float64)
         self.incidence_id = resolved_identifier(
             "incidence_id",
             incidence_id,
@@ -382,7 +380,7 @@ class OrientedIncidence(StrictModule, NonTrainableState):
 
     def scipy_boundary(self, /) -> sp.csr_matrix:
         """Return a host-side sparse lower-by-upper boundary matrix."""
-        valid = np.asarray(self.relation.valid, dtype=bool)
+        valid = np.asarray(self.relation.valid, dtype=np.bool_)
         return sp.coo_matrix(
             (
                 np.asarray(self.signs)[valid],
@@ -415,7 +413,7 @@ class TensorTopology(StrictModule, NonTrainableState):
         topology_id: str | None = None,
     ):
         names = tuple(str(name) for name in axis_names)
-        sizes = tuple(int(size) for size in axis_sizes)
+        sizes = tuple(axis_sizes)
         if not names or any(not name for name in names):
             raise ValueError("Tensor topology requires non-empty axis names.")
         if len(set(names)) != len(names):
@@ -430,9 +428,9 @@ class TensorTopology(StrictModule, NonTrainableState):
         if len(periodic_) != len(names):
             raise ValueError("periodic must provide one value per axis.")
         active = (
-            np.ones(sizes, dtype=bool)
+            np.ones(sizes, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != sizes:
             raise ValueError(f"active_mask must have shape {sizes}; got {active.shape}.")

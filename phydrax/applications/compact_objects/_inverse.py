@@ -70,7 +70,7 @@ class FixedBranchModelEvaluation(StrictModule):
         if not eqx.is_inexact_array(values_):
             raise TypeError("Fixed-branch observable values must be inexact arrays.")
         flags = tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in (
                 finite,
                 converged,

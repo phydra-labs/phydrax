@@ -251,7 +251,7 @@ class TwoMaterialPrimitiveState(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return int(jnp.asarray(self.velocity).shape[-1])
+        return jnp.asarray(self.velocity).shape[-1]
 
     def as_array(self, /) -> Array:
         """Pack the state as ``[rho0, rho1, velocity..., p, alpha0]``."""
@@ -395,7 +395,7 @@ class TwoMaterialEOSClosure(StrictModule, NonTrainableState):
         self.density_floor = density_floor_
         self.mass_floor = mass_floor_
         self.energy_floor = energy_floor_
-        self.model_variant = "kapila-five-equation-v1"
+        self.model_variant = "kapila-five-equation"
         generated_id = canonical_fingerprint(
             {
                 "kind": "two-material-eos-closure",

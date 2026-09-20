@@ -220,13 +220,13 @@ def _prepared_geometry(
 ) -> tuple[Array, tuple[int, ...], int]:
     if not isinstance(time_space, PulseTimeSpace):
         raise TypeError("time_space must be a PulseTimeSpace.")
-    shape = tuple(int(size) for size in field_shape)
+    shape = tuple(field_shape)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError("field_shape must contain only positive dimensions.")
     axis = int(temporal_axis) % len(shape)
     if shape[axis] != time_space.size:
         raise ValueError("field_shape temporal axis must match time_space.")
-    mask = jnp.asarray(positive_frequency_mask, dtype=bool)
+    mask = jnp.asarray(positive_frequency_mask, dtype=jnp.bool_)
     if mask.shape != time_space.shape:
         raise ValueError("positive_frequency_mask must match time_space.")
     mask = eqx.error_if(
@@ -482,7 +482,7 @@ def _project_physical_to_analytic(
     /,
 ) -> Array:
     axis = int(temporal_axis) % physical_polarization.ndim
-    mask = jnp.asarray(positive_frequency_mask, dtype=bool)
+    mask = jnp.asarray(positive_frequency_mask, dtype=jnp.bool_)
     if mask.shape != (physical_polarization.shape[axis],):
         raise ValueError("positive_frequency_mask must match the temporal-axis length.")
     mask_shape = [1] * physical_polarization.ndim
@@ -801,18 +801,16 @@ def instantaneous_nonlinear_polarization(
     elif isinstance(susceptibility, OrientedTensorSusceptibility):
         if analytic.shape[-1] != 3 or axis == analytic.ndim - 1:
             raise ValueError(
-                "Tensor response requires lab-vector fields with trailing shape (3,) "
-                "and a distinct temporal axis."
+                "Tensor response requires lab-vector fields with trailing shape (3,) and a distinct temporal axis."
             )
         physical = susceptibility.physical_polarization(jnp.real(analytic))
     else:
         raise TypeError(
-            "susceptibility must be InstantaneousScalarSusceptibility or "
-            "OrientedTensorSusceptibility."
+            "susceptibility must be InstantaneousScalarSusceptibility or OrientedTensorSusceptibility."
         )
     return _project_physical_to_analytic(
         physical,
-        jnp.asarray(positive_frequency_mask, dtype=bool),
+        jnp.asarray(positive_frequency_mask, dtype=jnp.bool_),
         axis,
     )
 

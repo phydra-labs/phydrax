@@ -41,7 +41,7 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
     ):
         if not isinstance(factor, GaussianFactor):
             raise TypeError("factor must be a GaussianFactor.")
-        events = tuple(int(size) for size in event_shape)
+        events = tuple(event_shape)
         if not events or any(size <= 0 for size in events):
             raise ValueError("event_shape must contain positive dimensions.")
         size = prod(events)
@@ -101,7 +101,7 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
         return array.reshape(leading + (self.event_size,)), leading
 
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
         noise = jax.random.normal(
@@ -157,8 +157,7 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
     def score(self, value: ArrayLike, /) -> Array:
         if self.density_measure_kind != "lebesgue":
             raise ValueError(
-                "A singular Gaussian has no ambient Lebesgue score; "
-                "use subspace_score explicitly."
+                "A singular Gaussian has no ambient Lebesgue score; use subspace_score explicitly."
             )
         return self.subspace_score(value)
 

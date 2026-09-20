@@ -47,7 +47,7 @@ class TTCrossPlan(StrictModule):
         regularization: float,
         relative_tolerance: float,
     ):
-        modes = tuple(int(size) for size in mode_sizes)
+        modes = tuple(mode_sizes)
         rank = int(max_rank)
         sweep_count = int(sweeps)
         budget = int(evaluation_budget)
@@ -137,7 +137,7 @@ class TTCrossEvidence(StrictModule):
             holdout_relative_error_estimator
         )
         self.holdout_maximum_absolute_error = jnp.asarray(holdout_maximum_absolute_error)
-        self.evaluations_used = int(indices.shape[0])
+        self.evaluations_used = indices.shape[0]
         self.holdout_count = int(holdout_count)
         self.estimator_is_guarantee = False
 
@@ -173,7 +173,7 @@ def _permuted_indices(mode_sizes: tuple[int, ...], count: int, /) -> Array:
     selected_set = set(selected)
     for point in np.ndindex(mode_sizes):
         if point not in selected_set:
-            selected.append(tuple(int(value) for value in point))
+            selected.append(tuple(point))
         if len(selected) >= count:
             break
     return jnp.asarray(selected[:count], dtype=jnp.int32)
@@ -266,8 +266,7 @@ def _update_pair(
     design = _two_site_design(tensor, points, axis)
     if design.shape[1] > plan.max_local_unknowns:
         raise ValueError(
-            f"TT cross local pair needs {design.shape[1]} unknowns, exceeding "
-            f"budget {plan.max_local_unknowns}."
+            f"TT cross local pair needs {design.shape[1]} unknowns, exceeding budget {plan.max_local_unknowns}."
         )
     local = regularized_least_squares(design, values, plan.regularization)
     left_rank = tensor.cores[axis].shape[0]

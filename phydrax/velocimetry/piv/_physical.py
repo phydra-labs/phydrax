@@ -27,7 +27,7 @@ class AffinePixelMap2D(StrictModule, NonTrainableState):
     def __init__(
         self, matrix: Array, /, *, spatial_unit: str, transform_id: str | None = None
     ):
-        matrix_ = jnp.asarray(matrix, dtype=float)
+        matrix_ = jnp.asarray(matrix, dtype=jnp.float64)
         if matrix_.shape != (2, 3):
             raise ValueError("Affine matrix must have shape (2, 3).")
         if not bool(jnp.all(jnp.isfinite(matrix_))):
@@ -60,7 +60,7 @@ class HomographyPixelMap2D(StrictModule, NonTrainableState):
     def __init__(
         self, matrix: Array, /, *, spatial_unit: str, transform_id: str | None = None
     ):
-        matrix_ = jnp.asarray(matrix, dtype=float)
+        matrix_ = jnp.asarray(matrix, dtype=jnp.float64)
         if matrix_.shape != (3, 3):
             raise ValueError("Homography matrix must have shape (3, 3).")
         if not bool(jnp.all(jnp.isfinite(matrix_))):
@@ -90,7 +90,7 @@ def map_pixels_to_physical(
     """Map row/column positions to right-handed named coordinates ``(x, y)``."""
     if not isinstance(transform, (AffinePixelMap2D, HomographyPixelMap2D)):
         raise TypeError("transform must be an AffinePixelMap2D or HomographyPixelMap2D.")
-    positions = jnp.asarray(positions_rc, dtype=float)
+    positions = jnp.asarray(positions_rc, dtype=jnp.float64)
     if positions.shape[-1] != 2:
         raise ValueError("positions_rc must have shape (..., 2).")
     homogeneous = jnp.stack(
@@ -136,7 +136,7 @@ def convert_to_physical(
     time_unit_ = str(time_unit)
     if not time_unit_:
         raise ValueError("time_unit must be non-empty.")
-    elapsed = jnp.asarray(delta_t, dtype=float)
+    elapsed = jnp.asarray(delta_t, dtype=jnp.float64)
     if elapsed.shape != ():
         raise ValueError("delta_t must be scalar.")
     start_xy, start_valid = map_pixels_to_physical(transform, field.positions_rc)

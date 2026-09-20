@@ -63,7 +63,7 @@ class NestedQuadratureResult(StrictModule):
         self.posterior_effective_sample_size = jnp.asarray(
             posterior_effective_sample_size
         )
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 def compute_nested_quadrature(
@@ -78,7 +78,7 @@ def compute_nested_quadrature(
     if replicates < 2:
         raise ValueError("num_replicates must be at least two.")
     likelihood = jnp.asarray(particles.loglikelihood)
-    if likelihood.ndim != 1 or int(likelihood.size) < 2:
+    if likelihood.ndim != 1 or likelihood.size < 2:
         raise ValueError("Nested quadrature requires at least two particles.")
     if bool(jnp.any(jnp.isnan(likelihood))) or bool(jnp.any(jnp.isposinf(likelihood))):
         raise ValueError("Nested likelihoods cannot contain NaN or positive infinity.")

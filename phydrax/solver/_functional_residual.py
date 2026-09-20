@@ -85,7 +85,7 @@ class ResidualRootBlock(StrictModule):
         self.block_name = str(block_name)
         self.source_index = int(source_index)
         self.coordinate_kind = coordinate_kind
-        self.event_shape = tuple(int(size) for size in event_shape)
+        self.event_shape = tuple(event_shape)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +121,7 @@ class FunctionalResidualLayout(StrictModule):
                 raise TypeError(
                     "Functional residual layouts require ResidualRootBlock values."
                 )
-            stop = start + int(block.values.size)
+            stop = start + block.values.size
             entries.append(
                 ResidualRootEntry(
                     block.term_index,
@@ -154,20 +154,19 @@ class FunctionalResidualLayout(StrictModule):
                 or block.source_index != entry.source_index
                 or block.coordinate_kind != entry.coordinate_kind
                 or tuple(block.event_shape) != entry.event_shape
-                or int(block.values.size) != entry.size
+                or block.values.size != entry.size
             ):
                 raise ValueError("Residual-root structure changed after preparation.")
             pieces.append(block.values)
         if not pieces:
-            return jnp.zeros((0,), dtype=float)
+            return jnp.zeros((0,), dtype=jnp.float64)
         return jnp.concatenate(tuple(pieces), axis=0)
 
     def split(self, coordinates: Any, /) -> tuple[Array, ...]:
         vector = jnp.asarray(coordinates)
         if vector.shape != (self.total_size,):
             raise ValueError(
-                f"Residual coordinates must have shape ({self.total_size},); "
-                f"got {vector.shape}."
+                f"Residual coordinates must have shape ({self.total_size},); got {vector.shape}."
             )
         return tuple(vector[entry.start : entry.stop] for entry in self.entries)
 
@@ -238,7 +237,7 @@ def materialize_prepared_residual_terms(
 
 def _event_shape(field: cx.AxisArray, /) -> tuple[int, ...]:
     return tuple(
-        int(field.data.shape[index])
+        field.data.shape[index]
         for index, dimension in enumerate(field.dims)
         if dimension is None
     )
@@ -341,7 +340,7 @@ def prepared_term_residual_vector(
     )
     pieces = tuple(block.values for block in blocks)
     if not pieces:
-        return jnp.zeros((0,), dtype=float)
+        return jnp.zeros((0,), dtype=jnp.float64)
     return pieces[0] if len(pieces) == 1 else jnp.concatenate(pieces)
 
 
@@ -355,7 +354,7 @@ def prepared_residual_terms_loss(
     iteration: Array | int | None,
 ) -> Array:
     """Evaluate one pure prepared residual objective from its exact roots."""
-    total = jnp.asarray(0.0, dtype=float)
+    total = jnp.asarray(0.0, dtype=jnp.float64)
     for term in terms:
         roots = prepared_term_residual_vector(
             params,
@@ -525,7 +524,7 @@ def prepared_residual_jacobians(
             return pieces[0] if len(pieces) == 1 else jnp.concatenate(pieces)
 
         jacobian = jax.jacrev(term_roots)(flat_params)
-        jacobians.append(jnp.asarray(jacobian).reshape((-1, int(flat_params.size))))
+        jacobians.append(jnp.asarray(jacobian).reshape((-1, flat_params.size)))
     return flat_params, tuple(jacobians), unravel
 
 

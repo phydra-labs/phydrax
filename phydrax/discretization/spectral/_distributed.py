@@ -28,7 +28,7 @@ SpectralRepresentation: TypeAlias = Literal["physical", "modal"]
 
 
 def _positive_shape(shape: Sequence[int], owner: str, /) -> tuple[int, ...]:
-    result = tuple(int(value) for value in shape)
+    result = tuple(shape)
     if not result or any(value <= 0 for value in result):
         raise ValueError(f"{owner} must contain positive dimensions.")
     return result
@@ -85,7 +85,7 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
                 )
             mesh = mesh_or_shape
             names = tuple(str(name) for name in mesh.axis_names)
-            mesh_shape = tuple(int(mesh.shape[name]) for name in names)
+            mesh_shape = tuple(mesh.shape[name] for name in names)
             selected = tuple(mesh.devices.flat)
         else:
             mesh_shape = _positive_shape(mesh_or_shape, "mesh_shape")
@@ -158,7 +158,7 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
     ) -> SpectralMeshTopology:
         mesh = execution_group.mesh
         if axis_names is not None:
-            shape = tuple(int(mesh.shape[name]) for name in mesh.axis_names)
+            shape = tuple(mesh.shape[name] for name in mesh.axis_names)
             mesh = Mesh(
                 np.asarray(execution_group.devices, dtype=object).reshape(shape),
                 axis_names,
@@ -186,8 +186,7 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
         )
         if missing:
             raise RuntimeError(
-                "Spectral topology devices are unavailable in the current JAX process: "
-                f"{missing}."
+                f"Spectral topology devices are unavailable in the current JAX process: {missing}."
             )
 
 
@@ -546,7 +545,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             if padded_shape is None
             else _positive_shape(padded_shape, "padded_shape")
         )
-        trailing = tuple(int(value) for value in state_shape)
+        trailing = tuple(state_shape)
         if any(value <= 0 for value in trailing):
             raise ValueError("state_shape dimensions must be positive.")
         if len(padded) != len(shape) or any(
@@ -602,8 +601,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         maximum = index(maximum_bytes)
         if stages <= 0 or checkpoints < 0 or closure_workspace < 0 or maximum <= 0:
             raise ValueError(
-                "stage_count, checkpoint_count, closure_workspace_bytes, and "
-                "maximum_bytes are invalid."
+                "stage_count, checkpoint_count, closure_workspace_bytes, and maximum_bytes are invalid."
             )
         mesh_names = topology.mesh_axis_names
         mesh_shape = topology.mesh_shape
@@ -615,20 +613,17 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         if schedule == "pencil":
             if len(mesh_shape) != 2 or rank < 3:
                 reasons.append(
-                    "pencil execution requires a two-dimensional mesh and "
-                    "spatial rank at least three"
+                    "pencil execution requires a two-dimensional mesh and spatial rank at least three"
                 )
             if len(mesh_shape) == 2 and rank >= 3:
                 px, py = mesh_shape
                 if shape[0] % px or shape[1] % py or shape[2] % (px * py):
                     reasons.append(
-                        "canonical pencil dimensions are not divisible by their "
-                        "transform partitions"
+                        "canonical pencil dimensions are not divisible by their transform partitions"
                     )
                 if padded[0] % px or padded[1] % py or padded[2] % (px * py):
                     reasons.append(
-                        "padded pencil dimensions are not divisible by their "
-                        "transform partitions"
+                        "padded pencil dimensions are not divisible by their transform partitions"
                     )
                 physical_partition = (
                     mesh_names[0],
@@ -644,7 +639,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 physical_partition = (None,) * len(full_shape)
                 modal_partition = physical_partition
         elif schedule == "channel":
-            axes = tuple(int(value) for value in horizontal_axes)
+            axes = tuple(horizontal_axes)
             if (
                 len(axes) != 2
                 or len(set(axes)) != 2
@@ -657,8 +652,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 1,
             ):
                 reasons.append(
-                    "channel distribution requires rank three with replicated "
-                    "Chebyshev axis 1"
+                    "channel distribution requires rank three with replicated Chebyshev axis 1"
                 )
             if rank == 3 and padded[1] != shape[1]:
                 reasons.append(
@@ -673,8 +667,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 count = mesh_shape[mesh_axis]
                 if shape[spatial_axis] % count or padded[spatial_axis] % count:
                     reasons.append(
-                        "channel horizontal dimensions are not divisible by their "
-                        "mesh partitions"
+                        "channel horizontal dimensions are not divisible by their mesh partitions"
                     )
                 channel_entries[spatial_axis] = mesh_names[mesh_axis]
             physical_partition = tuple(channel_entries)
@@ -907,7 +900,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         padded: bool,
         /,
     ) -> SpectralLayout:
-        shape = tuple(int(value) for value in global_shape)
+        shape = tuple(global_shape)
         spatial = self.padded_shape if padded else self.spatial_shape
         rank = len(spatial)
         if len(shape) < rank or shape[:rank] != spatial:
@@ -1293,7 +1286,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 squared = jax.lax.psum(squared, axes)
                 maximum = jax.lax.pmax(maximum, axes)
                 finite = jax.lax.pmin(finite, axes)
-            return total, maximum, jnp.sqrt(squared), finite.astype(bool)
+            return total, maximum, jnp.sqrt(squared), finite.astype("bool")
 
         mapped = jax.shard_map(
             reduce_local,
@@ -1395,7 +1388,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         padded: bool = False,
     ) -> Array:
         """Return a replicated all-shard conjunction without a host transfer."""
-        value = jnp.asarray(predicates, dtype=bool)
+        value = jnp.asarray(predicates, dtype=jnp.bool_)
         layout = self._batched_layout(value.shape, representation, padded)
         self.topology.require_available()
         placed = jax.device_put(value, layout.sharding(self.topology))
@@ -1405,7 +1398,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             result = jnp.all(local).astype(jnp.int32)
             if axes:
                 result = jax.lax.pmin(result, axes)
-            return result.astype(bool)
+            return result.astype("bool")
 
         mapped = jax.shard_map(
             all_local,

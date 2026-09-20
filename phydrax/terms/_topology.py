@@ -51,7 +51,7 @@ class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
             raise ValueError("Frozen topology field name must be non-empty.")
         if int(degree) < 0 or float(exponent) <= 0.0:
             raise ValueError("Frozen topology degree and exponent are invalid.")
-        coefficient = jnp.asarray(weight, dtype=float)
+        coefficient = jnp.asarray(weight, dtype=jnp.float64)
         if coefficient.shape != () or not bool(jnp.isfinite(coefficient)):
             raise ValueError("Frozen topology weight must be one finite scalar.")
         if float(coefficient) < 0.0:
@@ -92,7 +92,7 @@ class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
             degree=self.degree,
             exponent=self.exponent,
         )
-        value = self.weight * jnp.asarray(objective, dtype=float).reshape(())
+        value = self.weight * jnp.asarray(objective, dtype=jnp.float64).reshape(())
         return TermEvaluation(
             value,
             diagnostics=frozendict(

@@ -36,7 +36,7 @@ class ProjectionSupport:
     def __post_init__(self) -> None:
         if not isinstance(self.rays, RaySampleSupport):
             raise TypeError("rays must be RaySampleSupport.")
-        shape = tuple(int(value) for value in self.projection_shape)
+        shape = tuple(self.projection_shape)
         if (
             not shape
             or any(value < 1 for value in shape)
@@ -105,9 +105,9 @@ class VoxelXRayTransformPlan(StrictModule, NonTrainableState):
         spacing: ArrayLike,
         /,
     ):
-        shape = tuple(int(value) for value in volume_shape)
-        origin_ = np.asarray(origin, dtype=float)
-        spacing_ = np.asarray(spacing, dtype=float)
+        shape = tuple(volume_shape)
+        origin_ = np.asarray(origin, dtype=np.float64)
+        spacing_ = np.asarray(spacing, dtype=np.float64)
         if (
             len(shape) != 3
             or any(value < 1 for value in shape)
@@ -189,14 +189,14 @@ def _siddon_routes(
     far = np.asarray(rays.far)
     maximum = int(sum(shape) + 1)
     indices = np.full((origins.shape[0], maximum), -1, dtype=np.int32)
-    lengths = np.zeros((origins.shape[0], maximum), dtype=float)
-    valid = np.zeros((origins.shape[0], maximum), dtype=bool)
+    lengths = np.zeros((origins.shape[0], maximum), dtype=np.float64)
+    valid = np.zeros((origins.shape[0], maximum), dtype=np.bool_)
     bounds_min = origin
     bounds_max = origin + spacing * np.asarray(shape)
     for ray, (position, direction) in enumerate(zip(origins, directions, strict=True)):
         t_lower, t_upper = -np.inf, np.inf
         for axis in range(3):
-            if abs(direction[axis]) <= np.finfo(float).eps:
+            if abs(direction[axis]) <= np.finfo(np.float64).eps:
                 if position[axis] < bounds_min[axis] or position[axis] > bounds_max[axis]:
                     t_lower, t_upper = 1.0, 0.0
                     break
@@ -214,7 +214,7 @@ def _siddon_routes(
         t_lower = max(t_lower, 0.0)
         crossings = [t_lower, t_upper]
         for axis in range(3):
-            if abs(direction[axis]) > np.finfo(float).eps:
+            if abs(direction[axis]) > np.finfo(np.float64).eps:
                 planes = origin[axis] + spacing[axis] * np.arange(1, shape[axis])
                 times = (planes - position[axis]) / direction[axis]
                 crossings.extend(times[(times > t_lower) & (times < t_upper)].tolist())
@@ -223,7 +223,7 @@ def _siddon_routes(
             zip(crossings[:-1], crossings[1:], strict=True)
         ):
             midpoint = position + 0.5 * (left + right) * direction
-            cell = np.floor((midpoint - origin) / spacing).astype(int)
+            cell = np.floor((midpoint - origin) / spacing).astype("int64")
             if np.all((cell >= 0) & (cell < np.asarray(shape))):
                 indices[ray, segment] = np.ravel_multi_index(tuple(cell), shape)
                 lengths[ray, segment] = right - left
@@ -250,7 +250,7 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
         *,
         maximum_segments_per_ray: int = 64,
     ):
-        vertices_ = np.asarray(vertices, dtype=float)
+        vertices_ = np.asarray(vertices, dtype=np.float64)
         cells_ = np.asarray(tetrahedra, dtype=np.int32)
         if (
             vertices_.ndim != 2
@@ -262,8 +262,7 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
             or np.any(cells_ >= vertices_.shape[0])
         ):
             raise ValueError(
-                "vertices and tetrahedra require shapes (V,3) and nonempty (C,4) "
-                "with valid vertex indices."
+                "vertices and tetrahedra require shapes (V,3) and nonempty (C,4) with valid vertex indices."
             )
         requested_capacity = int(maximum_segments_per_ray)
         if requested_capacity <= 0:
@@ -284,7 +283,7 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
         directions = jnp.asarray(support.rays.directions, dtype=origins.dtype)
         near = jnp.asarray(support.rays.near, dtype=origins.dtype)
         far = jnp.asarray(support.rays.far, dtype=origins.dtype)
-        active = jnp.asarray(support.rays.active_mask, dtype=bool)
+        active = jnp.asarray(support.rays.active_mask, dtype=jnp.bool_)
         candidate_capacity = min(cells_.shape[0], max(capacity, 4 * capacity))
         candidates, candidate_valid, search_complete = ray_select_leaf_items(
             origins,
@@ -409,7 +408,7 @@ class BeerLambertPlan:
     saturation: float = np.inf
 
     def __post_init__(self) -> None:
-        incident = np.array(self.incident_signal, dtype=float, copy=True)
+        incident = np.array(self.incident_signal, dtype=np.float64, copy=True)
         if (
             not np.all(np.isfinite(incident))
             or np.any(incident < 0.0)

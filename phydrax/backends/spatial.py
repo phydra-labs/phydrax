@@ -75,8 +75,8 @@ def _pallas_squared_norm(
     from jax.experimental import pallas as pl
 
     values = jnp.asarray(relative)
-    dimension = int(values.shape[-1])
-    leading_shape = tuple(int(size) for size in values.shape[:-1])
+    dimension = values.shape[-1]
+    leading_shape = values.shape[:-1]
     item_count = values.size // dimension
     blocks = ceil(item_count / block_size)
     padded_count = blocks * block_size
@@ -142,7 +142,7 @@ def _pallas_pair_acceleration(
 ) -> jax.Array:
     from jax.experimental import pallas as pl
 
-    dimension = int(relative.shape[-1])
+    dimension = relative.shape[-1]
     leading_shape = relative.shape[:-1]
     item_count = source_mass.size
     blocks = ceil(item_count / block_size)
@@ -231,7 +231,7 @@ def spatial_squared_norm(
 ) -> jax.Array:
     """Squared trailing-axis norm with an explicit portable backend policy."""
     values = jnp.asarray(relative)
-    if values.ndim < 1 or int(values.shape[-1]) < 1:
+    if values.ndim < 1 or values.shape[-1] < 1:
         raise ValueError("relative must have one non-empty trailing coordinate axis.")
     if not jnp.issubdtype(values.dtype, jnp.floating):
         raise TypeError("relative must have floating dtype.")
@@ -265,7 +265,7 @@ def spatial_pair_acceleration(
     """Evaluate softened inverse-cube pair acceleration with native gradients."""
     displacement = jnp.asarray(relative)
     mass = jnp.asarray(source_mass, dtype=displacement.dtype)
-    mask = jnp.asarray(valid, dtype=bool)
+    mask = jnp.asarray(valid, dtype=jnp.bool_)
     if displacement.shape[:-1] != mass.shape or mass.shape != mask.shape:
         raise ValueError("Pair acceleration arrays have incompatible shapes.")
 
@@ -297,6 +297,6 @@ def spatial_pair_acceleration(
 __all__ = [
     "PALLAS_SPATIAL_CAPABILITIES",
     "pallas_spatial_availability",
-    "spatial_squared_norm",
     "spatial_pair_acceleration",
+    "spatial_squared_norm",
 ]

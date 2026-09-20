@@ -96,7 +96,7 @@ def test_uniform_guo_acceleration_preserves_mass_and_updates_momentum():
 
 
 def test_compiled_dynamics_keeps_frozen_solid_populations_inert():
-    fluid = np.ones((12, 12), dtype=bool)
+    fluid = np.ones((12, 12), dtype="bool")
     fluid[4, 5] = False
     compiled = _compiled_flow(fluid_mask=fluid)
     parameters = phx.discretization.LatticeBoltzmannRuntimeParameters(0.04)

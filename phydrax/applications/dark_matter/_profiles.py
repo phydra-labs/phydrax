@@ -65,7 +65,7 @@ def _manifest(
 
 
 def _external_array(value: ArrayLike, /) -> Array:
-    return jax.lax.stop_gradient(jnp.asarray(value, dtype=float))
+    return jax.lax.stop_gradient(jnp.asarray(value, dtype=jnp.float64))
 
 
 class RadialProfileEvaluation(StrictModule):
@@ -120,10 +120,10 @@ class LayeredTerrestrialProfile(StrictModule, NonTrainableState):
         training_use: bool = False,
         export: bool = False,
     ):
-        radii = np.asarray(outer_radii_m, dtype=float)
-        densities = np.asarray(mass_densities_kg_m3, dtype=float)
-        number = np.asarray(target_number_densities_m3, dtype=float)
-        temperatures = np.asarray(temperatures_K, dtype=float)
+        radii = np.asarray(outer_radii_m, dtype=np.float64)
+        densities = np.asarray(mass_densities_kg_m3, dtype=np.float64)
+        number = np.asarray(target_number_densities_m3, dtype=np.float64)
+        temperatures = np.asarray(temperatures_K, dtype=np.float64)
         targets = _target_ids(target_ids)
         frame = _identifier(frame_id, "frame_id")
         requested = _requested_use(commercial_use, redistribution, training_use, export)
@@ -193,7 +193,7 @@ class LayeredTerrestrialProfile(StrictModule, NonTrainableState):
 
     @property
     def num_layers(self) -> int:
-        return int(self.outer_radii_m.shape[0])
+        return self.outer_radii_m.shape[0]
 
     def evaluate(self, positions_m: ArrayLike, /) -> RadialProfileEvaluation:
         positions = jnp.asarray(positions_m, dtype=self.outer_radii_m.dtype)
@@ -298,11 +298,11 @@ class SmoothStellarRadialProfile(StrictModule, NonTrainableState):
         training_use: bool = False,
         export: bool = False,
     ):
-        radii = np.asarray(radii_m, dtype=float)
-        densities = np.asarray(mass_densities_kg_m3, dtype=float)
-        number = np.asarray(target_number_densities_m3, dtype=float)
-        temperatures = np.asarray(temperatures_K, dtype=float)
-        masses = np.asarray(enclosed_masses_kg, dtype=float)
+        radii = np.asarray(radii_m, dtype=np.float64)
+        densities = np.asarray(mass_densities_kg_m3, dtype=np.float64)
+        number = np.asarray(target_number_densities_m3, dtype=np.float64)
+        temperatures = np.asarray(temperatures_K, dtype=np.float64)
+        masses = np.asarray(enclosed_masses_kg, dtype=np.float64)
         targets = _target_ids(target_ids)
         frame = _identifier(frame_id, "frame_id")
         requested = _requested_use(commercial_use, redistribution, training_use, export)

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from functools import partial
+from math import prod
 
 import equinox as eqx
 import jax
@@ -13,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-import phydrax.ein as ein
+from phydrax import ein
 
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
@@ -48,7 +49,7 @@ from ._types import (
 
 
 def _batch_shape(value: Sequence[int], /) -> tuple[int, ...]:
-    return tuple(int(size) for size in value)
+    return tuple(value)
 
 
 def _canonical_matrix(
@@ -171,7 +172,7 @@ class QuadraticProgram(StrictModule):
             raise ValueError(
                 "quadratic must have shape batch_shape + (variables, variables)."
             )
-        variables = int(quadratic_value.shape[-1])
+        variables = quadratic_value.shape[-1]
         if variables < 1:
             raise ValueError("QuadraticProgram requires at least one decision variable.")
         if linear_value.ndim < 1 or linear_value.shape[-1] != variables:
@@ -206,8 +207,8 @@ class QuadraticProgram(StrictModule):
             inequality_value.shape[:-2],
             inequality_rhs_value.shape[:-1],
         )
-        user_equalities = int(equality_value.shape[-2])
-        user_inequalities = int(inequality_value.shape[-2])
+        user_equalities = equality_value.shape[-2]
+        user_inequalities = inequality_value.shape[-2]
         quadratic_value = jnp.broadcast_to(
             quadratic_value, batch + (variables, variables)
         )
@@ -239,16 +240,11 @@ class QuadraticProgram(StrictModule):
         roles = np.stack((lower_finite, upper_finite, fixed), axis=-1)
         if not np.all(roles == roles[:1]):
             raise ValueError(
-                "QuadraticProgram bounds must have one shared finite/fixed role "
-                "pattern across the batch."
+                "QuadraticProgram bounds must have one shared finite/fixed role pattern across the batch."
             )
-        fixed_indices = tuple(int(index) for index in np.flatnonzero(fixed[0]))
-        lower_indices = tuple(
-            int(index) for index in np.flatnonzero(lower_finite[0] & ~fixed[0])
-        )
-        upper_indices = tuple(
-            int(index) for index in np.flatnonzero(upper_finite[0] & ~fixed[0])
-        )
+        fixed_indices = tuple(np.flatnonzero(fixed[0]))
+        lower_indices = tuple(np.flatnonzero(lower_finite[0] & ~fixed[0]))
+        upper_indices = tuple(np.flatnonzero(upper_finite[0] & ~fixed[0]))
         identity = jnp.eye(variables, dtype=dtype)
         fixed_matrix = jnp.broadcast_to(
             identity[jnp.asarray(fixed_indices, dtype=jnp.int32)],
@@ -419,8 +415,8 @@ def _validate_quadratic_materialization(
         problem.lower_bounds,
         problem.upper_bounds,
     )
-    input_entries = sum(int(array.size) for array in arrays)
-    input_bytes = sum(int(array.size) * int(array.dtype.itemsize) for array in arrays)
+    input_entries = sum(array.size for array in arrays)
+    input_bytes = sum(array.size * array.dtype.itemsize for array in arrays)
     if input_entries > policy.materialization.max_entries:
         raise ValueError(
             f"Quadratic program requires {input_entries} materialized entries, "
@@ -447,11 +443,10 @@ def _validate_quadratic_resources(
     )
     if kkt_dimension > max_dense_dimension:
         raise ValueError(
-            f"Dense QP dimension {kkt_dimension} exceeds "
-            f"max_dense_dimension={max_dense_dimension}."
+            f"Dense QP dimension {kkt_dimension} exceeds max_dense_dimension={max_dense_dimension}."
         )
-    batch_count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
-    itemsize = int(problem.linear.dtype.itemsize)
+    batch_count = prod(problem.batch_shape or (1,))
+    itemsize = problem.linear.dtype.itemsize
     kkt_entries = batch_count * kkt_dimension * kkt_dimension
     kkt_bytes = kkt_entries * itemsize
     materialization_entries = max(input_entries, kkt_entries)
@@ -733,7 +728,7 @@ def _dense_constrained_single(
             complementarity,
             regularization,
         )
-        primal_affine, slack_affine, dual_affine, _ = affine
+        _, slack_affine, dual_affine, _ = affine
         alpha_primal_affine = _fraction_to_boundary(slack, slack_affine, 1.0)
         alpha_dual_affine = _fraction_to_boundary(inequality_dual, dual_affine, 1.0)
         mean_complementarity = jnp.mean(complementarity)
@@ -919,7 +914,7 @@ def _dense_single(
 def _flatten_problem(
     problem: QuadraticProgram, /
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
-    count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
+    count = prod(problem.batch_shape or (1,))
     return (
         problem.quadratic.reshape((count, problem.num_variables, problem.num_variables)),
         problem.linear.reshape((count, problem.num_variables)),
@@ -1018,7 +1013,7 @@ def _warm_start_arrays(
         ~(finite & interior),
         "Dense QP warm starts require finite data and strictly positive slacks/duals.",
     )
-    count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
+    count = prod(problem.batch_shape or (1,))
     return (
         primal.reshape((count, problem.num_variables)),
         slack.reshape((count, problem.num_inequalities)),
@@ -1226,7 +1221,7 @@ def _diagnostics(
         ).value
         return matrix @ candidate - rhs
 
-    flat_count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
+    flat_count = prod(problem.batch_shape or (1,))
     equality_candidate = jax.vmap(equality_infeasibility_candidate)(
         equality_matrix.reshape(
             (flat_count, problem.num_equalities, problem.num_variables)
@@ -1435,7 +1430,7 @@ def _diagnostics(
         complementarity_gap=complementarity_gap,
         kkt_residual_norm=kkt_norm,
         iterations=iterations,
-        backend_converged=jnp.asarray(input_backend_converged, dtype=bool),
+        backend_converged=jnp.asarray(input_backend_converged, dtype=jnp.bool_),
         valid=valid,
         status=status,
         certificate=certificate,
@@ -2373,14 +2368,13 @@ def solve_quadratic_program_primal(
         _validate_quadratic_materialization(problem, selected)
         if derivative.mode != "algorithmic" or not method.plan.unroll:
             raise ValueError(
-                "MPAX QP differentiation requires an unrolled method and "
-                "ConvexDifferentiationPolicy('algorithmic')."
+                "MPAX QP differentiation requires an unrolled method and ConvexDifferentiationPolicy('algorithmic')."
             )
         from ._mpax import solve_mpax_program
 
         return solve_mpax_program(problem, selected).primal
     if isinstance(method, MPAXr2HPDHG):
-        raise ValueError("MPAXr2HPDHG supports LinearProgram only.")
+        raise TypeError("MPAXr2HPDHG supports LinearProgram only.")
     if derivative.mode == "algorithmic":
         raise ValueError(
             "Dense primal-dual QP does not expose algorithmic differentiation."

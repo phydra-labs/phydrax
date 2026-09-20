@@ -36,7 +36,7 @@ def clip_positive_polygon(vertices, values, /):
             output.append(point)
             intersections.append(point)
     scale = max(np.max(np.linalg.norm(vertices - vertices[0], axis=-1)), 1.0)
-    tolerance = 128.0 * np.finfo(float).eps * scale
+    tolerance = 128.0 * np.finfo(np.float64).eps * scale
     output = unique_points(output, tolerance)
     intersections = unique_points(intersections, tolerance)
     return np.asarray(output), intersections
@@ -44,8 +44,8 @@ def clip_positive_polygon(vertices, values, /):
 
 def open_positive_segment(start, stop, start_value, stop_value, /):
     """Return positive-subsegment fraction, measure, centroid, and endpoints."""
-    start_ = np.asarray(start, dtype=float)
-    stop_ = np.asarray(stop, dtype=float)
+    start_ = np.asarray(start, dtype=np.float64)
+    stop_ = np.asarray(stop, dtype=np.float64)
     first = float(start_value)
     second = float(stop_value)
     length = float(np.linalg.norm(stop_ - start_))

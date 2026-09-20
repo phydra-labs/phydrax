@@ -73,7 +73,7 @@ class SoftMatterAtomisticProtocol(StrictModule, NonTrainableState):
                 "A soft-matter protocol requires exactly one Lennard-Jones term."
             )
         lj = lennard_jones[0]
-        active = np.asarray(dynamics.system.active_mask, dtype=bool)
+        active = np.asarray(dynamics.system.active_mask, dtype=np.bool_)
         types = np.asarray(dynamics.system.plan.atom_type_ids)[active]
         topology = dynamics.system.plan.topology
         if kind is SoftMatterProtocolKind.LENNARD_JONES_LIQUID:

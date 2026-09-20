@@ -58,8 +58,7 @@ class ADMDecomposition(StrictModule):
             )
         if spatial_array.shape != expected_spatial:
             raise ValueError(
-                "ADM spatial metric must have shape "
-                f"{expected_spatial}; got {spatial_array.shape}."
+                f"ADM spatial metric must have shape {expected_spatial}; got {spatial_array.shape}."
             )
         if not jnp.issubdtype(lapse_array.dtype, jnp.floating):
             raise TypeError("ADM lapse must have a real floating-point dtype.")
@@ -192,11 +191,11 @@ class ADMValidationReport(StrictModule):
         maximum_inverse_residual: Array,
         maximum_reconstruction_residual: Array,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.lapse_positive = jnp.asarray(lapse_positive, dtype=bool)
-        self.spatial_symmetric = jnp.asarray(spatial_symmetric, dtype=bool)
-        self.signature_matches = jnp.asarray(signature_matches, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.lapse_positive = jnp.asarray(lapse_positive, dtype=jnp.bool_)
+        self.spatial_symmetric = jnp.asarray(spatial_symmetric, dtype=jnp.bool_)
+        self.signature_matches = jnp.asarray(signature_matches, dtype=jnp.bool_)
         self.minimum_lapse = jnp.asarray(minimum_lapse)
         self.minimum_spatial_eigenvalue = jnp.asarray(minimum_spatial_eigenvalue)
         self.maximum_spatial_asymmetry = jnp.asarray(maximum_spatial_asymmetry)
@@ -389,8 +388,7 @@ class ADMParameterization(StrictModule):
         expected_factor = (spatial_dimension, spatial_dimension)
         if raw_factor.shape != expected_factor:
             raise ValueError(
-                "raw_spatial_factor must return shape "
-                f"{expected_factor}; got {raw_factor.shape}."
+                f"raw_spatial_factor must return shape {expected_factor}; got {raw_factor.shape}."
             )
         if not jnp.issubdtype(raw_lapse.dtype, jnp.floating):
             raise TypeError("raw_lapse must return a real floating-point scalar.")
@@ -432,8 +430,7 @@ class ADMParameterization(StrictModule):
         points = jnp.asarray(coordinates)
         if points.ndim < 1 or points.shape[-1] != self.chart.dimension:
             raise ValueError(
-                "ADM coordinates must have trailing dimension "
-                f"{self.chart.dimension}; got {points.shape}."
+                f"ADM coordinates must have trailing dimension {self.chart.dimension}; got {points.shape}."
             )
         leading_shape = points.shape[:-1]
         if not leading_shape:

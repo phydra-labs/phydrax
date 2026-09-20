@@ -10,7 +10,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
+SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
 def _schrodinger_constraint(time, hamiltonian):

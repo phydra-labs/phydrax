@@ -55,7 +55,7 @@ def qualification() -> dict:
 
     gap, temperature, speed, volume = 1.2 * _E, 300.0, 1.7e5, 1.0e-28
     energies = jnp.asarray([[-0.5 * gap, 0.5 * gap]])
-    velocity = jnp.zeros((1, 2, 2, 1), dtype=complex)
+    velocity = jnp.zeros((1, 2, 2, 1), dtype="complex128")
     velocity = velocity.at[0, 0, 1, 0].set(speed).at[0, 1, 0, 0].set(speed)
     f_difference = np.tanh(gap / (4.0 * _KB * temperature))
     f_sum = np.pi * _E**2 / volume * f_difference / gap * speed**2

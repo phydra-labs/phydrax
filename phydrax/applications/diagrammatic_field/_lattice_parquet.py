@@ -126,7 +126,7 @@ class LatticeParquetPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "channel_bubbles must be finite with shape (3, transfer, left, right)."
             )
-        required = int(fully_irreducible_vertex.values.size + 8 * bubbles.size)
+        required = fully_irreducible_vertex.values.size + 8 * bubbles.size
         if required > self.maximum_elements:
             raise ValueError("Prepared lattice parquet arrays exceed maximum_elements.")
         channels = tuple(
@@ -343,7 +343,7 @@ def lattice_schwinger_dyson_evidence(
     ):
         raise ValueError("Schwinger--Dyson parameters are invalid.")
     minimum = int(np.min(labels))
-    count = int(labels.size)
+    count = labels.size
     if not np.array_equal(np.sort(labels), np.arange(minimum, minimum + count)):
         raise ValueError(
             "Schwinger--Dyson contraction requires a contiguous cyclic fermion bank."

@@ -91,11 +91,10 @@ class MultipleShootingDecisionLayout(StrictModule):
             or not geometry.supports_exact_differential
         ):
             raise ValueError(
-                "MultipleShootingDecisionLayout requires exact inverse-retraction "
-                "and retraction-differential geometry."
+                "MultipleShootingDecisionLayout requires exact inverse-retraction and retraction-differential geometry."
             )
         states = state_layout.shape
-        controls = tuple(int(size) for size in control_shape)
+        controls = tuple(control_shape)
         if steps < 1:
             raise ValueError("Multiple shooting requires at least one segment.")
         if any(size <= 0 for size in states + controls):
@@ -144,8 +143,7 @@ class MultipleShootingDecisionLayout(StrictModule):
             )
         if tuple(controls.shape) != expected_controls:
             raise ValueError(
-                f"control_nodes must have shape {expected_controls}; "
-                f"got {controls.shape}."
+                f"control_nodes must have shape {expected_controls}; got {controls.shape}."
             )
         if self.state_layout.geometry.trivial:
             state_coordinates = states.reshape((self.num_steps + 1, self.state_size))
@@ -251,7 +249,7 @@ class MultipleShootingLinearization(StrictModule):
         self.inequality_residuals = jnp.asarray(inequality_residuals)
         self.equality_jacobian = jnp.asarray(equality_jacobian)
         self.inequality_jacobian = jnp.asarray(inequality_jacobian)
-        self.integration_valid = jnp.asarray(integration_valid, dtype=bool)
+        self.integration_valid = jnp.asarray(integration_valid, dtype=jnp.bool_)
         self.equality_provenance = equality_provenance
         self.inequality_provenance = inequality_provenance
         self.hessian_regularization = float(hessian_regularization)
@@ -287,7 +285,7 @@ class MultipleShootingHistory(StrictModule):
         maximum_constraint_violation_ = jnp.asarray(maximum_constraint_violation)
         kkt_residual_norm_ = jnp.asarray(kkt_residual_norm)
         step_size_ = jnp.asarray(step_size)
-        accepted_ = jnp.asarray(accepted, dtype=bool)
+        accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
         qp_status_ = jnp.asarray(qp_status, dtype=jnp.int32)
         lengths = {
             value.shape
@@ -317,7 +315,7 @@ class MultipleShootingHistory(StrictModule):
 
     @property
     def num_iterations(self) -> int:
-        return int(self.objective.shape[0])
+        return self.objective.shape[0]
 
 
 class MultipleShootingResult(StrictModule):
@@ -380,7 +378,7 @@ class MultipleShootingResult(StrictModule):
         self.last_qp_result = last_qp_result
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.status = jnp.asarray(status, dtype=jnp.int32)
-        self.valid = jnp.asarray(status == MULTIPLE_SHOOTING_SUCCESS, dtype=bool)
+        self.valid = jnp.asarray(status == MULTIPLE_SHOOTING_SUCCESS, dtype=jnp.bool_)
         self.layout = layout
         self.method_id = "control:multiple-shooting:dense-sqp"
 
@@ -425,8 +423,7 @@ def _validate_problem(problem: ControlProblem, /) -> None:
         raise TypeError("problem must be a ControlProblem.")
     if problem.case_shape:
         raise ValueError(
-            "Multiple shooting currently supports one optimization case only; "
-            f"got case_shape={problem.case_shape}."
+            f"Multiple shooting currently supports one optimization case only; got case_shape={problem.case_shape}."
         )
 
 
@@ -483,8 +480,7 @@ def _evaluate_held_control(
     expected = problem.case_shape + parameterization.parameter_shape
     if tuple(values.shape) != expected:
         raise ValueError(
-            f"Piecewise-constant coefficients must have shape {expected}; "
-            f"got {values.shape}."
+            f"Piecewise-constant coefficients must have shape {expected}; got {values.shape}."
         )
     if parameterization.time_grid.time_id != problem.time_grid.time_id:
         return problem.evaluate(
@@ -496,7 +492,7 @@ def _evaluate_held_control(
     time_axis = len(problem.case_shape)
     states = [problem.initial_state]
     controls = []
-    validity = [jnp.ones(problem.case_shape, dtype=bool)]
+    validity = [jnp.ones(problem.case_shape, dtype=jnp.bool_)]
     backend_statuses = []
     method_id = ""
     current = problem.initial_state
@@ -685,8 +681,8 @@ def _segment_state_and_validity(
     )
     next_state = solution.states[-1]
     valid = (
-        jnp.all(jnp.asarray(solution.valid, dtype=bool))
-        & jnp.asarray(solution.backend_result == dfx.RESULTS.successful, dtype=bool)
+        jnp.all(jnp.asarray(solution.valid, dtype=jnp.bool_))
+        & jnp.asarray(solution.backend_result == dfx.RESULTS.successful, dtype=jnp.bool_)
         & jnp.all(jnp.isfinite(next_state))
     )
     return next_state, valid
@@ -975,8 +971,7 @@ def linearize_multiple_shooting(
     geometry = state_layout.geometry
     if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
         raise ValueError(
-            "Multiple shooting requires exact inverse-retraction and "
-            "retraction-differential geometry."
+            "Multiple shooting requires exact inverse-retraction and retraction-differential geometry."
         )
     state_nodes_ = jnp.asarray(state_nodes)
     layout = MultipleShootingDecisionLayout(
@@ -1159,7 +1154,7 @@ def _history(
         maximum_constraint_violation=vector("maximum_constraint_violation"),
         kkt_residual_norm=vector("kkt_residual_norm"),
         step_size=vector("step_size"),
-        accepted=vector("accepted", requested_dtype=bool),
+        accepted=vector("accepted", requested_dtype=jnp.bool_),
         qp_status=vector("qp_status", requested_dtype=jnp.int32),
     )
 
@@ -1217,7 +1212,7 @@ def _seed_nodes(
             f"initial_controls must have shape {expected_controls}; got {controls.shape}."
         )
     if not jnp.issubdtype(controls.dtype, jnp.inexact):
-        controls = controls.astype(float)
+        controls = controls.astype("float64")
 
     if states_input is None:
         parameterization = PiecewiseConstantControlParameterization(
@@ -1239,7 +1234,7 @@ def _seed_nodes(
             f"initial_states must have shape {expected_states}; got {states.shape}."
         )
     if not jnp.issubdtype(states.dtype, jnp.inexact):
-        states = states.astype(float)
+        states = states.astype("float64")
     return states, controls
 
 
@@ -1307,8 +1302,7 @@ def solve_multiple_shooting(
     geometry = state_layout.geometry
     if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
         raise ValueError(
-            "Multiple shooting requires exact inverse-retraction and "
-            "retraction-differential geometry."
+            "Multiple shooting requires exact inverse-retraction and retraction-differential geometry."
         )
     options = _solver_options(
         solver=solver,
@@ -1630,8 +1624,7 @@ def compile_structured_multiple_shooting(
     geometry = state_layout.geometry
     if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
         raise ValueError(
-            "Structured multiple shooting requires exact inverse-retraction and "
-            "retraction-differential geometry."
+            "Structured multiple shooting requires exact inverse-retraction and retraction-differential geometry."
         )
     anchors = jnp.asarray(initial_states)
     layout = MultipleShootingDecisionLayout(

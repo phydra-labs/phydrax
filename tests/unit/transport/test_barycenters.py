@@ -19,8 +19,8 @@ def _measure(
     mask=None,
     provenance="barycenter-test",
 ):
-    points = jnp.asarray(points, dtype=float)
-    weights = jnp.asarray(weights, dtype=float)
+    points = jnp.asarray(points, dtype="float64")
+    weights = jnp.asarray(weights, dtype="float64")
     return phx.integration.discrete(
         points,
         cx.AxisArray(weights, dims=("atom",)),
@@ -28,7 +28,7 @@ def _measure(
         mask=(
             None
             if mask is None
-            else cx.AxisArray(jnp.asarray(mask, dtype=bool), dims=("atom",))
+            else cx.AxisArray(jnp.asarray(mask, dtype="bool"), dims=("atom",))
         ),
         normalized=True,
         target_mass=None if mass is None else jnp.asarray(mass),

@@ -307,7 +307,7 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
         position_coordinates = coordinate.reshape((-1,))
         density_shape = state.density.shape
         position_shape = coordinate.shape
-        coordinate_count = int(coordinate.size)
+        coordinate_count = coordinate.size
 
         def residual_flat(current_density, current_positions):
             density = current_density.reshape(density_shape)

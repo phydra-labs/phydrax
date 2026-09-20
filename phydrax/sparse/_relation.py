@@ -24,8 +24,8 @@ def _integer_indices(name: str, value: ArrayLike, /) -> Array:
 
 def _valid_mask(value: ArrayLike | None, shape: tuple[int, ...], /) -> Array:
     if value is None:
-        return jnp.ones(shape, dtype=bool)
-    valid = jnp.asarray(value, dtype=bool)
+        return jnp.ones(shape, dtype=jnp.bool_)
+    valid = jnp.asarray(value, dtype=jnp.bool_)
     if valid.shape != shape:
         raise ValueError(f"valid must have shape {shape}; got {valid.shape}.")
     return valid
@@ -38,7 +38,7 @@ def _check_bounds(
     size: int,
     /,
 ) -> Array:
-    if int(indices.size) == 0:
+    if indices.size == 0:
         return indices
     return eqx.error_if(
         indices,
@@ -79,12 +79,12 @@ class EdgeRelation(StrictModule, NonTrainableState):
             raise ValueError("Edge relation indices must be rank-1.")
         if source.shape != target.shape:
             raise ValueError("Edge relation source and target indices must match.")
-        if int(source.size) > 0 and (source_count == 0 or target_count == 0):
+        if source.size > 0 and (source_count == 0 or target_count == 0):
             raise ValueError(
                 "A non-empty edge relation requires non-empty source and target spaces."
             )
 
-        route_valid = _valid_mask(valid, tuple(int(size) for size in source.shape))
+        route_valid = _valid_mask(valid, tuple(source.shape))
         self.source_indices = _check_bounds(
             "edge source index", source, route_valid, source_count
         )
@@ -97,11 +97,11 @@ class EdgeRelation(StrictModule, NonTrainableState):
 
     @property
     def route_shape(self) -> tuple[int, ...]:
-        return (int(self.source_indices.shape[0]),)
+        return (self.source_indices.shape[0],)
 
     @property
     def capacity(self) -> int:
-        return int(self.source_indices.shape[0])
+        return self.source_indices.shape[0]
 
     @property
     def input_shape(self) -> tuple[int, ...]:
@@ -153,7 +153,7 @@ class RowRelation(StrictModule, NonTrainableState):
         source_count = int(source_size)
         if source_count <= 0:
             raise ValueError("Row relation source_size must be positive.")
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("Row relation case dimensions must be positive.")
 
@@ -162,15 +162,14 @@ class RowRelation(StrictModule, NonTrainableState):
             raise ValueError(
                 "Row relation indices must contain target rows and a route-width axis."
             )
-        if tuple(int(size) for size in source.shape[: len(cases)]) != cases:
+        if tuple(source.shape[: len(cases)]) != cases:
             raise ValueError(
-                f"Row relation indices must begin with case_shape {cases}; "
-                f"got {source.shape}."
+                f"Row relation indices must begin with case_shape {cases}; got {source.shape}."
             )
-        if int(source.shape[-1]) <= 0:
+        if source.shape[-1] <= 0:
             raise ValueError("Row relation route width must be positive.")
 
-        route_valid = _valid_mask(valid, tuple(int(size) for size in source.shape))
+        route_valid = _valid_mask(valid, tuple(source.shape))
         self.source_indices = _check_bounds(
             "row source index", source, route_valid, source_count
         )
@@ -180,7 +179,7 @@ class RowRelation(StrictModule, NonTrainableState):
 
     @property
     def route_shape(self) -> tuple[int, ...]:
-        return tuple(int(size) for size in self.source_indices.shape)
+        return tuple(self.source_indices.shape)
 
     @property
     def target_shape(self) -> tuple[int, ...]:
@@ -188,7 +187,7 @@ class RowRelation(StrictModule, NonTrainableState):
 
     @property
     def width(self) -> int:
-        return int(self.source_indices.shape[-1])
+        return self.source_indices.shape[-1]
 
     @property
     def num_cases(self) -> int:
@@ -200,7 +199,7 @@ class RowRelation(StrictModule, NonTrainableState):
 
     @property
     def capacity(self) -> int:
-        return int(self.source_indices.size)
+        return self.source_indices.size
 
     @property
     def input_shape(self) -> tuple[int, ...]:

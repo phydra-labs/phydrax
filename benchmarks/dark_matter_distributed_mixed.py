@@ -263,9 +263,7 @@ def main() -> None:
             "required_checkpoint_bytes": checkpoint.required_bytes,
             "maximum_checkpoint_bytes": checkpoint.maximum_bytes,
             "checkpoint_unpadded_bytes": distributed.checkpoint_unpadded_bytes,
-            "checkpoint_payload_bytes": int(
-                distributed.checkpoint_tree(state)["payload"].size
-            ),
+            "checkpoint_payload_bytes": distributed.checkpoint_tree(state)["payload"].size,
             "checkpoint_padding_bytes": (
                 distributed.checkpoint_payload_bytes
                 - distributed.checkpoint_unpadded_bytes

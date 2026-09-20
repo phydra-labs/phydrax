@@ -91,7 +91,7 @@ def triangulate_weighted_rays(
 
     origins_ = jnp.asarray(origins)
     directions_ = jnp.asarray(directions)
-    valid_ = jnp.asarray(valid, dtype=bool)
+    valid_ = jnp.asarray(valid, dtype=jnp.bool_)
     weights_ = jnp.asarray(weights)
     if origins_.shape != directions_.shape or origins_.shape[-1:] != (3,):
         raise ValueError("origins and directions must have the same shape (..., R, 3).")
@@ -113,9 +113,9 @@ def triangulate_weighted_rays(
     ):
         raise TypeError("Ray geometry and weights must be real-valued.")
     if not jnp.issubdtype(origins_.dtype, jnp.inexact):
-        origins_ = origins_.astype(float)
+        origins_ = origins_.astype("float64")
     if not jnp.issubdtype(directions_.dtype, jnp.inexact):
-        directions_ = directions_.astype(float)
+        directions_ = directions_.astype("float64")
     dtype = jnp.result_type(origins_, directions_, weights_, 0.0)
     origins_ = origins_.astype(dtype)
     directions_ = directions_.astype(dtype)
@@ -166,7 +166,7 @@ def triangulate_weighted_rays(
         return solved, normal, solved.value[..., 0], solved.value[..., 1:]
 
     linear, normal, point, inverse_normal = solve_with(base_weights)
-    converged = jnp.zeros(batch_shape, dtype=bool)
+    converged = jnp.zeros(batch_shape, dtype=jnp.bool_)
     iterations = jnp.zeros(batch_shape, dtype=jnp.int32)
     ray_weights = base_weights
     for _ in range(int(maximum_iterations)):

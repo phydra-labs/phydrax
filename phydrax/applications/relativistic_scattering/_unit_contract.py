@@ -206,8 +206,7 @@ class RelativisticUnitContract(StrictModule, NonTrainableState):
         dimensional = scale.dimensional_scale
         momentum = derived_unit(
             (
-                f"{dimensional.mass_unit.symbol}*{dimensional.length_unit.symbol}/"
-                f"{dimensional.time_unit.symbol}"
+                f"{dimensional.mass_unit.symbol}*{dimensional.length_unit.symbol}/{dimensional.time_unit.symbol}"
             ),
             (
                 (dimensional.mass_unit, 1),

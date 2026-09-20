@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 def _host_array(value: object, /, *, name: str) -> np.ndarray:
     try:
-        result = np.asarray(value, dtype=float)
+        result = np.asarray(value, dtype=np.float64)
     except (TypeError, ValueError) as error:
         raise TypeError(f"{name} must be a concrete real array.") from error
     if not np.all(np.isfinite(result)):
@@ -205,7 +205,7 @@ class FacetCorrespondence:
             dimension = len(right_axis_reversed) if right_axis_reversed is not None else 0
             order = tuple(range(dimension))
         else:
-            order = tuple(int(value) for value in right_axis_order)
+            order = tuple(right_axis_order)
         reversed_ = (
             (False,) * len(order)
             if right_axis_reversed is None

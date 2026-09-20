@@ -44,13 +44,13 @@ class AffineSimplexMap(StrictModule, NonTrainableState):
     def __init__(self, vertices: ArrayLike, /):
         points = jnp.asarray(vertices)
         if not jnp.issubdtype(points.dtype, jnp.inexact):
-            points = points.astype(float)
+            points = points.astype("float64")
         if points.ndim < 2:
             raise ValueError(
                 "vertices must end in (simplex_vertices, ambient_dimension)."
             )
-        vertex_count = int(points.shape[-2])
-        ambient_dimension = int(points.shape[-1])
+        vertex_count = points.shape[-2]
+        ambient_dimension = points.shape[-1]
         intrinsic_dimension = vertex_count - 1
         if not (
             1 <= intrinsic_dimension <= ambient_dimension <= 3
@@ -149,7 +149,7 @@ class AffineSimplexMap(StrictModule, NonTrainableState):
         """Number of simplices on the indexed collection axis."""
         if self.vertices.ndim < 3:
             raise ValueError("Indexed simplex operations require a simplex collection.")
-        return int(self.vertices.shape[-3])
+        return self.vertices.shape[-3]
 
     def _indices(self, simplex_indices: ArrayLike, /) -> Array:
         indices = jnp.asarray(simplex_indices)

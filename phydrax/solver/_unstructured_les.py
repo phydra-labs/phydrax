@@ -494,12 +494,12 @@ class UnstructuredLowMachLESFixedStepMethod(AbstractFixedStepMethod, NonTrainabl
         dtype = density.dtype
         volumes = discretization.cell_volumes.astype(dtype)
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         interior = self.dynamics.operators.interior_faces
         flux_magnitude = jnp.abs(rate.fluxes.mass_flux)
         throughput = jnp.zeros_like(density).at[owner].add(flux_magnitude)
-        throughput = throughput.at[safe_neighbour].add(
+        throughput = throughput.at[safe_neighbor].add(
             jnp.where(interior, flux_magnitude, 0.0)
         )
         advective_frequency = throughput / (density * volumes)
@@ -1075,7 +1075,7 @@ def _real_inexact(value: ArrayLike, name: str, /) -> Array:
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(jnp.result_type(array, float))
+        array = array.astype(jnp.result_type(array, jnp.float64))
     return array
 
 
@@ -1147,9 +1147,9 @@ def _transition_balance(
 
 def _negative_divergence(face_flux: Array, discretization, /) -> Array:
     owner = discretization.owner_cells
-    neighbour = discretization.neighbour_cells
-    interior = neighbour >= 0
-    safe_neighbour = jnp.maximum(neighbour, 0)
+    neighbor = discretization.neighbor_cells
+    interior = neighbor >= 0
+    safe_neighbor = jnp.maximum(neighbor, 0)
     trailing = face_flux.shape[1:]
     net = jnp.zeros(
         (discretization.cell_count,) + trailing,
@@ -1157,7 +1157,7 @@ def _negative_divergence(face_flux: Array, discretization, /) -> Array:
     )
     net = net.at[owner].add(face_flux)
     mask = interior.reshape((interior.shape[0],) + (1,) * len(trailing))
-    net = net.at[safe_neighbour].add(jnp.where(mask, -face_flux, 0.0))
+    net = net.at[safe_neighbor].add(jnp.where(mask, -face_flux, 0.0))
     volumes = discretization.cell_volumes.astype(face_flux.dtype)
     return -net / volumes.reshape((discretization.cell_count,) + (1,) * len(trailing))
 

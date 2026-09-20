@@ -480,7 +480,9 @@ def evaluate_fidelity_pinn(
             f"Target test groups were used before final evaluation: {overlap}."
         )
     functions = result.functions
-    counts = jnp.asarray([len(item.evaluation_ids) for item in observations], dtype=float)
+    counts = jnp.asarray(
+        [len(item.evaluation_ids) for item in observations], dtype=jnp.float64
+    )
     metrics = tuple(item.term.data_metrics(functions) for item in observations)
     total = jnp.sum(counts)
     rmse = jnp.sqrt(
@@ -504,7 +506,7 @@ def evaluate_fidelity_pinn(
     physics_losses = (
         jnp.stack(tuple(term.loss(functions) for term in physics))
         if physics
-        else jnp.zeros((0,), dtype=float)
+        else jnp.zeros((0,), dtype=jnp.float64)
     )
     observation_ids = tuple(item.observation_set_id for item in observations)
     evaluation_id = canonical_fingerprint(

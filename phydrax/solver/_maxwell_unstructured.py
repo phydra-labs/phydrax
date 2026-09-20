@@ -68,7 +68,7 @@ def tetrahedral_maxwell_hodge(
     permittivity: float = 1.0,
     inverse_permeability: float = 1.0,
 ) -> TetrahedralMaxwellHodge:
-    points = np.asarray(vertices, dtype=float)
+    points = np.asarray(vertices, dtype=np.float64)
     cells = np.asarray(tetrahedra, dtype=np.int32)
     if points.ndim != 2 or points.shape[1] != 3:
         raise ValueError("vertices must have shape (vertices, 3).")
@@ -101,7 +101,7 @@ def tetrahedral_maxwell_hodge(
         )
         determinant = np.linalg.det(jacobian)
         volume = abs(determinant) / 6.0
-        if volume <= np.finfo(float).eps:
+        if volume <= np.finfo(np.float64).eps:
             raise ValueError("Tetrahedral Maxwell mesh contains a degenerate cell.")
         cell_volume[cell_index] = volume
         gradient = np.empty((4, 3))
@@ -181,10 +181,10 @@ def tetrahedral_maxwell_hodge(
     face_diagonal = np.diag(magnetic_mass)
     cell_measure = cell_volume
     hodge = (
-        np.maximum(vertex_dual, np.finfo(float).eps),
+        np.maximum(vertex_dual, np.finfo(np.float64).eps),
         edge_diagonal,
         face_diagonal,
-        np.maximum(cell_measure, np.finfo(float).eps),
+        np.maximum(cell_measure, np.finfo(np.float64).eps),
     )
     coordinates = (
         points,
@@ -196,7 +196,7 @@ def tetrahedral_maxwell_hodge(
         np.asarray(connectivity.boundary_vertices),
         np.asarray(connectivity.boundary_edges),
         np.asarray(connectivity.boundary_faces),
-        np.zeros(cells.shape[0], dtype=bool),
+        np.zeros(cells.shape[0], dtype=np.bool_),
     )
     cochain = CochainDiscretization(
         topology,
@@ -298,7 +298,7 @@ class CochainHaloExchange(StrictModule, NonTrainableState):
         if degree_ < 0 or degree_ >= cochain.max_degree:
             raise ValueError("Halo exchange degree must have a following incidence.")
         incidence = cochain.topology.incidences[degree_]
-        valid = np.asarray(incidence.relation.valid, dtype=bool)
+        valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
         sources = np.asarray(incidence.relation.source_indices)[valid]
         targets = np.asarray(incidence.relation.target_indices)[valid]
         source_owner = np.asarray(partition.owners[degree_])[sources]

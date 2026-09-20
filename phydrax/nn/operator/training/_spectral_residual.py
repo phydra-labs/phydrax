@@ -204,8 +204,7 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
             )
             if value.shape != expected:
                 raise ValueError(
-                    f"Prediction field {prediction_name!r} must have shape {expected}; "
-                    f"got {value.shape}."
+                    f"Prediction field {prediction_name!r} must have shape {expected}; got {value.shape}."
                 )
             flat_fields[pde_name] = value.reshape(
                 (case_count,)
@@ -249,8 +248,7 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
             expected = case_shape + sample_shape
             if value.shape != expected:
                 raise ValueError(
-                    f"Functional parameter {parameter_name!r} must have shape "
-                    f"{expected}; got {value.shape}."
+                    f"Functional parameter {parameter_name!r} must have shape {expected}; got {value.shape}."
                 )
             value = eqx.error_if(
                 value,

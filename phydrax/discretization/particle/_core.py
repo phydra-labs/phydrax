@@ -80,11 +80,11 @@ class ParticleSetPlan(AbstractDiscretizationPlan):
         if masses_host.shape != ids_host.shape:
             raise ValueError("masses must have the particle_ids shape.")
         if not np.issubdtype(masses_host.dtype, np.inexact):
-            masses_host = masses_host.astype(float)
+            masses_host = masses_host.astype("float64")
         active_host = (
-            np.ones(ids_host.shape, dtype=bool)
+            np.ones(ids_host.shape, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active_host.shape != ids_host.shape:
             raise ValueError("active_mask must have the particle_ids shape.")
@@ -112,7 +112,7 @@ class ParticleSetPlan(AbstractDiscretizationPlan):
         )
         self.particle_ids = jnp.asarray(ids_host, dtype=jnp.int64)
         self.masses = jnp.asarray(masses_host)
-        self.active_mask = jnp.asarray(active_host, dtype=bool)
+        self.active_mask = jnp.asarray(active_host, dtype=jnp.bool_)
         self.subsets = subsets_
         self.ambient_dimension = dimension
         self.coordinate_dtype = dtype
@@ -166,7 +166,7 @@ class ParticleDiscretization(AbstractPreparedDiscretization):
             raise ValueError("numeric_version must be non-empty.")
         ids_host = np.asarray(plan.particle_ids, dtype=np.int64)
         masses_host = np.asarray(plan.masses)
-        active_host = np.asarray(plan.active_mask, dtype=bool)
+        active_host = np.asarray(plan.active_mask, dtype=np.bool_)
         entities = EntitySet(
             plan.key.name,
             0,
@@ -179,7 +179,7 @@ class ParticleDiscretization(AbstractPreparedDiscretization):
             {
                 "kind": "particle-geometry-layout",
                 "topology": topology.topology_id,
-                "capacity": int(ids_host.size),
+                "capacity": ids_host.size,
                 "ambient_dimension": plan.ambient_dimension,
                 "coordinate_dtype": plan.coordinate_dtype,
             }
@@ -193,16 +193,16 @@ class ParticleDiscretization(AbstractPreparedDiscretization):
         safe_masses = jnp.asarray(safe_masses_host, dtype=plan.coordinate_dtype)
         vector_weights = jnp.broadcast_to(
             safe_masses[:, None],
-            (int(ids_host.size), plan.ambient_dimension),
+            (ids_host.size, plan.ambient_dimension),
         )
         vector_layout = EntityDofLayout(
             entities.entity_set_id,
-            int(ids_host.size),
-            int(ids_host.size),
+            ids_host.size,
+            ids_host.size,
             component_shape=(plan.ambient_dimension,),
         )
         vector_space = ArraySpace(
-            (int(ids_host.size), plan.ambient_dimension),
+            (ids_host.size, plan.ambient_dimension),
             dtype=plan.coordinate_dtype,
             pairing=DiagonalPairing(vector_weights),
         )
@@ -236,10 +236,10 @@ class ParticleDiscretization(AbstractPreparedDiscretization):
                 "active-mask changes are topology events",
             ),
             resource_counts={
-                "particle_capacity": int(ids_host.size),
+                "particle_capacity": ids_host.size,
                 "active_particles": int(np.count_nonzero(active_host)),
                 "ambient_dimension": plan.ambient_dimension,
-                "coordinate_values": int(ids_host.size) * plan.ambient_dimension,
+                "coordinate_values": ids_host.size * plan.ambient_dimension,
             },
         )
         field_spaces, measures, capabilities = validate_prepared_metadata(

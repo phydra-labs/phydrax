@@ -42,7 +42,7 @@ class PreparedBulkDGTransport(StrictModule):
     mesh: CellMesh
     mass: Array
     owner: Array
-    neighbour: Array
+    neighbor: Array
     volume_flux: Array
     transmissibility: Array
     boundary_owner: Array
@@ -54,7 +54,7 @@ class PreparedBulkDGTransport(StrictModule):
 
     @property
     def cell_count(self) -> int:
-        return int(self.mass.shape[0])
+        return self.mass.shape[0]
 
     def advective_residual(self, concentration: ArrayLike, /) -> Array:
         value = jnp.asarray(concentration)
@@ -63,11 +63,11 @@ class PreparedBulkDGTransport(StrictModule):
         upwind = jnp.where(
             self.volume_flux >= 0.0,
             value[self.owner],
-            value[self.neighbour],
+            value[self.neighbor],
         )
         flux = self.volume_flux * upwind
         result = jnp.zeros_like(value).at[self.owner].add(flux)
-        result = result.at[self.neighbour].add(-flux)
+        result = result.at[self.neighbor].add(-flux)
         boundary_trace = jnp.where(
             self.boundary_volume_flux >= 0.0,
             value[self.boundary_owner],
@@ -81,9 +81,9 @@ class PreparedBulkDGTransport(StrictModule):
         value = jnp.asarray(concentration)
         if value.shape != self.mass.shape:
             raise ValueError("Bulk concentration must contain one value per cell.")
-        flux = -self.transmissibility * (value[self.neighbour] - value[self.owner])
+        flux = -self.transmissibility * (value[self.neighbor] - value[self.owner])
         result = jnp.zeros_like(value).at[self.owner].add(flux)
-        return result.at[self.neighbour].add(-flux)
+        return result.at[self.neighbor].add(-flux)
 
     def residual(self, concentration: ArrayLike, /) -> Array:
         value = jnp.asarray(concentration)
@@ -130,9 +130,9 @@ class BulkDGTransportPlan:
         ):
             raise TypeError("Bulk DG0 transport requires a tetrahedral CellMesh.")
         count = sum(block.cell_count for block in self.mesh.blocks)
-        porosity = np.asarray(self.porosity, dtype=float)
-        diffusivity = np.asarray(self.diffusivity, dtype=float)
-        velocity = np.asarray(self.velocity, dtype=float)
+        porosity = np.asarray(self.porosity, dtype=np.float64)
+        diffusivity = np.asarray(self.diffusivity, dtype=np.float64)
+        velocity = np.asarray(self.velocity, dtype=np.float64)
         if (
             porosity.shape != (count,)
             or np.any(~np.isfinite(porosity))
@@ -149,7 +149,9 @@ class BulkDGTransportPlan:
         else:
             symmetric = 0.5 * (diffusivity + np.swapaxes(diffusivity, -1, -2))
             tolerance = (
-                128.0 * np.finfo(float).eps * max(1.0, float(np.max(np.abs(diffusivity))))
+                128.0
+                * np.finfo(np.float64).eps
+                * max(1.0, float(np.max(np.abs(diffusivity))))
             )
             if not np.allclose(
                 diffusivity, symmetric, atol=tolerance, rtol=0.0
@@ -162,22 +164,22 @@ class BulkDGTransportPlan:
             raise ValueError("velocity must have finite shape (cell_count, 3).")
         connectivity = self.mesh.connectivity
         boundary_count = int(
-            np.count_nonzero(np.asarray(connectivity.boundary_faces, dtype=bool))
+            np.count_nonzero(np.asarray(connectivity.boundary_faces, dtype=np.bool_))
         )
         boundary_flux = (
-            np.zeros((boundary_count,), dtype=float)
+            np.zeros((boundary_count,), dtype=np.float64)
             if self.boundary_volume_flux is None
-            else np.asarray(self.boundary_volume_flux, dtype=float)
+            else np.asarray(self.boundary_volume_flux, dtype=np.float64)
         )
         boundary_inflow = (
-            np.zeros((boundary_count,), dtype=float)
+            np.zeros((boundary_count,), dtype=np.float64)
             if self.boundary_inflow_concentration is None
-            else np.asarray(self.boundary_inflow_concentration, dtype=float)
+            else np.asarray(self.boundary_inflow_concentration, dtype=np.float64)
         )
         removal = (
-            np.zeros((count,), dtype=float)
+            np.zeros((count,), dtype=np.float64)
             if self.removal_rate is None
-            else np.asarray(self.removal_rate, dtype=float)
+            else np.asarray(self.removal_rate, dtype=np.float64)
         )
         if boundary_flux.shape == ():
             boundary_flux = np.full((boundary_count,), float(boundary_flux))
@@ -256,7 +258,7 @@ class BulkDGTransportPlan:
             for face_index in face_row:
                 incidents[int(face_index)].append(cell_index)
         owners = []
-        neighbours = []
+        neighbors = []
         normals = []
         areas = []
         distances = []
@@ -267,20 +269,20 @@ class BulkDGTransportPlan:
                 continue
             if len(adjacent) != 2:
                 raise ValueError("Bulk mesh faces must have one or two incident cells.")
-            owner, neighbour = adjacent
+            owner, neighbor = adjacent
             normal = face_normal[face_index]
-            if np.dot(normal, centroids[neighbour] - centroids[owner]) < 0.0:
+            if np.dot(normal, centroids[neighbor] - centroids[owner]) < 0.0:
                 normal = -normal
             owners.append(owner)
-            neighbours.append(neighbour)
+            neighbors.append(neighbor)
             normals.append(normal)
             areas.append(face_area[face_index])
             distances.append(
-                abs(float(np.dot(centroids[neighbour] - centroids[owner], normal)))
+                abs(float(np.dot(centroids[neighbor] - centroids[owner], normal)))
             )
         owner = np.asarray(owners, dtype=np.int32)
-        neighbour = np.asarray(neighbours, dtype=np.int32)
-        normal = np.asarray(normals, dtype=float).reshape((-1, 3))
+        neighbor = np.asarray(neighbors, dtype=np.int32)
+        normal = np.asarray(normals, dtype=np.float64).reshape((-1, 3))
         area = np.asarray(areas)
         distance = np.asarray(distances)
         boundary_owner = np.asarray(boundary_owners, dtype=np.int32)
@@ -290,24 +292,24 @@ class BulkDGTransportPlan:
             )
         if np.any(distance <= 0.0) or np.any(area <= 0.0):
             raise ValueError("Bulk mesh contains a degenerate interior face route.")
-        face_velocity = 0.5 * (self.velocity[owner] + self.velocity[neighbour])
+        face_velocity = 0.5 * (self.velocity[owner] + self.velocity[neighbor])
         volume_flux = area * np.sum(face_velocity * normal, axis=1)
         if self.diffusivity.ndim == 1:
             owner_diffusion = self.diffusivity[owner]
-            neighbour_diffusion = self.diffusivity[neighbour]
+            neighbor_diffusion = self.diffusivity[neighbor]
         else:
             owner_diffusion = np.sum(
                 normal * contract("fij,fj->fi", self.diffusivity[owner], normal),
                 axis=1,
             )
-            neighbour_diffusion = np.sum(
-                normal * contract("fij,fj->fi", self.diffusivity[neighbour], normal),
+            neighbor_diffusion = np.sum(
+                normal * contract("fij,fj->fi", self.diffusivity[neighbor], normal),
                 axis=1,
             )
-        denominator = owner_diffusion + neighbour_diffusion
+        denominator = owner_diffusion + neighbor_diffusion
         harmonic = np.zeros_like(denominator)
         np.divide(
-            2.0 * owner_diffusion * neighbour_diffusion,
+            2.0 * owner_diffusion * neighbor_diffusion,
             denominator,
             out=harmonic,
             where=denominator > 0.0,
@@ -330,7 +332,7 @@ class BulkDGTransportPlan:
             self.mesh,
             jnp.asarray(mass),
             jnp.asarray(owner),
-            jnp.asarray(neighbour),
+            jnp.asarray(neighbor),
             jnp.asarray(volume_flux),
             jnp.asarray(transmissibility),
             jnp.asarray(boundary_owner),
@@ -343,7 +345,7 @@ class BulkDGTransportPlan:
                     "kind": "prepared-bulk-dg0-transport",
                     "plan": self.plan_id,
                     "owner": array_tree_fingerprint(owner),
-                    "neighbour": array_tree_fingerprint(neighbour),
+                    "neighbor": array_tree_fingerprint(neighbor),
                     "volume_flux": array_tree_fingerprint(volume_flux),
                     "transmissibility": array_tree_fingerprint(transmissibility),
                     "boundary_owner": array_tree_fingerprint(boundary_owner),
@@ -391,8 +393,8 @@ class NetworkTransportPlan:
         if not isinstance(self.network, PreparedMetricNetwork):
             raise TypeError("network must be PreparedMetricNetwork.")
         count = len(self.network.lengths)
-        diffusivity = np.asarray(self.diffusivity, dtype=float)
-        flow = np.asarray(self.volume_flow, dtype=float)
+        diffusivity = np.asarray(self.diffusivity, dtype=np.float64)
+        flow = np.asarray(self.volume_flow, dtype=np.float64)
         if diffusivity.shape == ():
             diffusivity = np.full((count,), float(diffusivity))
         if (
@@ -497,8 +499,8 @@ class ReservoirCouplingPlan(StrictModule):
         network_size: int,
     ):
         indices = np.asarray(network_indices)
-        volume = np.asarray(volumes, dtype=float)
-        coefficient = np.asarray(coefficients, dtype=float)
+        volume = np.asarray(volumes, dtype=np.float64)
+        coefficient = np.asarray(coefficients, dtype=np.float64)
         if not np.issubdtype(indices.dtype, np.integer) or indices.ndim != 1:
             raise TypeError("network_indices must be one integer vector.")
         if volume.shape != indices.shape or coefficient.shape != indices.shape:

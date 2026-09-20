@@ -41,7 +41,7 @@ from ..stochastic._smp import (
 from ._layout import PlayerControlPartition
 
 
-_METHOD_ID = "pathwise-euler-open-loop-stochastic-game-smp-v1"
+_METHOD_ID = "pathwise-euler-open-loop-stochastic-game-smp"
 _CERTIFICATE = "OPEN_LOOP_NASH_SMP_STATIONARY"
 
 
@@ -740,7 +740,7 @@ def evaluate_open_loop_stochastic_game_smp(
     integrand_measurability_array = jnp.stack(integrand_measurability, axis=0)
     measurable_array = jnp.stack(measurable, axis=0)
     conditional_counts_array = jnp.stack(conditional_counts, axis=0)
-    causal_flags = jnp.asarray(causal_checked, dtype=bool)
+    causal_flags = jnp.asarray(causal_checked, dtype=jnp.bool_)
     causal = causal_flags & jnp.all(measurable_array, axis=(1, 2))
     path_causal = causal_flags[:, None] & jnp.all(measurable_array, axis=2)
     causal_evidence = GameSMPCausalInformationEvidence(

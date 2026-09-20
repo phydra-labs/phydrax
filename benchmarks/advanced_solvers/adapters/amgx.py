@@ -178,7 +178,7 @@ class AmgxAdapter(BenchmarkAdapter):
                 "matvecs": None,
                 "preconditioner_applications": None,
                 "linear_solves": (
-                    1 if problem.rhs.ndim == 1 else int(problem.rhs.shape[1])
+                    1 if problem.rhs.ndim == 1 else problem.rhs.shape[1]
                 ),
                 "nonlinear_evaluations": 0,
                 "jacobian_evaluations": 0,
@@ -327,7 +327,7 @@ def _jax_array_bytes(value: Any, /) -> int:
     for leaf in jax.tree.leaves(value):
         if isinstance(leaf, jax.Array) and id(leaf) not in seen:
             seen.add(id(leaf))
-            total += int(leaf.size * leaf.dtype.itemsize)
+            total += leaf.size * leaf.dtype.itemsize
     return total
 
 

@@ -128,16 +128,6 @@ class AbstractOperatorModel(
         self.operator_contract.validate(batch).require_runtime()
         return self.predict_prevalidated(batch, key=key)
 
-    def predict(
-        self,
-        batch: OperatorBatch,
-        /,
-        *,
-        key: EvalKey = DOC_KEY0,
-    ) -> OperatorPrediction:
-        """Compatibility spelling for :meth:`evaluate` during runtime migration."""
-        return self.evaluate(batch, key=key)
-
     def __call_axis_batch__(
         self,
         batch: Any,
@@ -178,8 +168,7 @@ class AbstractOperatorModel(
             query_value = batch.points[query_label]
             if not isinstance(query_value, cx.AxisArray):
                 raise TypeError(
-                    "Automatic point-domain operator dispatch requires one Field "
-                    "for the final query dependency."
+                    "Automatic point-domain operator dispatch requires one Field for the final query dependency."
                 )
             named_query_axes = tuple(dim for dim in query_value.dims if dim is not None)
             structure_axes = tuple(batch.structure.axis_names or ())
@@ -239,8 +228,7 @@ class AbstractOperatorModel(
             return view.layouts["query"].restore(values)
         if not isinstance(batch, GridBatch):
             raise TypeError(
-                "Neural-operator axis-batch execution requires a supported "
-                "structured domain batch."
+                "Neural-operator axis-batch execution requires a supported structured domain batch."
             )
         coordinate_labels = tuple(
             dep for dep in deps if isinstance(batch.points[dep], tuple)

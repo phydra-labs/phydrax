@@ -130,9 +130,9 @@ class MemberReferenceState(StrictModule, NonTrainableState):
             else jnp.asarray(installation_stage, dtype=jnp.int32)
         )
         active = (
-            jnp.ones((structure.member_count,), dtype=bool)
+            jnp.ones((structure.member_count,), dtype=jnp.bool_)
             if cable_active is None
-            else jnp.asarray(cable_active, dtype=bool)
+            else jnp.asarray(cable_active, dtype=jnp.bool_)
         )
         if (
             curvature.shape != (structure.member_count, rotation_dimension)
@@ -209,9 +209,9 @@ class MemberDOFLayout(StrictModule, NonTrainableState):
             raise ValueError("Member networks currently require dimension two or three.")
         rotation_dimension = 1 if structure.dimension == 2 else 3
         constrained = (
-            jnp.zeros((structure.node_count, rotation_dimension), dtype=bool)
+            jnp.zeros((structure.node_count, rotation_dimension), dtype=jnp.bool_)
             if rotation_constrained is None
-            else jnp.asarray(rotation_constrained, dtype=bool)
+            else jnp.asarray(rotation_constrained, dtype=jnp.bool_)
         )
         if constrained.shape != (structure.node_count, rotation_dimension):
             raise ValueError("rotation_constrained has the wrong shape.")

@@ -181,7 +181,7 @@ def test_minkowski_and_homogeneous_flrw_geodesic_rates():
         momentum,
         energy,
         _geodesic_payload(identity),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
     )
     np.testing.assert_allclose(minkowski.position_rate, momentum / energy[:, None])
     np.testing.assert_allclose(minkowski.covariant_momentum_rate, 0.0)
@@ -196,7 +196,7 @@ def test_minkowski_and_homogeneous_flrw_geodesic_rates():
         momentum,
         flrw_energy,
         _geodesic_payload(inverse_flrw),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
     )
     np.testing.assert_allclose(
         flrw.position_rate,

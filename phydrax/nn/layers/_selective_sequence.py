@@ -94,7 +94,7 @@ class ResetAwareCausalConv1D(StrictModule):
         if not isinstance(batch, RecurrentBatch):
             raise TypeError("batch must be a RecurrentBatch.")
         values = jnp.asarray(batch.inputs)
-        if values.ndim < 1 or int(values.shape[-1]) != self.channels:
+        if values.ndim < 1 or values.shape[-1] != self.channels:
             raise ValueError(
                 f"Causal convolution inputs must end in width {self.channels}."
             )
@@ -257,7 +257,7 @@ class SelectiveStateSpaceBlock(StrictModule):
                 dtype=resolved_dtype,
             ),
             last_time=jnp.zeros(tuple(case_shape), dtype=resolved_dtype),
-            has_time=jnp.zeros(tuple(case_shape), dtype=bool),
+            has_time=jnp.zeros(tuple(case_shape), dtype=jnp.bool_),
         )
 
     def evaluate_with_state(
@@ -273,7 +273,7 @@ class SelectiveStateSpaceBlock(StrictModule):
         if not isinstance(batch, RecurrentBatch):
             raise TypeError("batch must be a RecurrentBatch.")
         values = jnp.asarray(batch.inputs)
-        if values.ndim < 1 or int(values.shape[-1]) != self.input_size:
+        if values.ndim < 1 or values.shape[-1] != self.input_size:
             raise ValueError(
                 f"Selective block inputs must end in width {self.input_size}."
             )
@@ -318,7 +318,7 @@ class SelectiveStateSpaceBlock(StrictModule):
         if batch.time is None:
             physical_step = batch.valid.astype(compute_dtype)
             final_time = jnp.asarray(state0.last_time, dtype=compute_dtype)
-            final_has_time = jnp.asarray(state0.has_time, dtype=bool)
+            final_has_time = jnp.asarray(state0.has_time, dtype=jnp.bool_)
         else:
             direction_sign = jnp.asarray(
                 1.0 if batch.time_direction == "forward" else -1.0,
@@ -335,7 +335,7 @@ class SelectiveStateSpaceBlock(StrictModule):
             )
             times = direction_sign * directed_times
             previous_time = jnp.asarray(state0.last_time, dtype=compute_dtype)
-            previous_has_time = jnp.asarray(state0.has_time, dtype=bool)
+            previous_has_time = jnp.asarray(state0.has_time, dtype=jnp.bool_)
             if (
                 previous_time.shape != batch.case_shape
                 or previous_has_time.shape != batch.case_shape
@@ -350,8 +350,7 @@ class SelectiveStateSpaceBlock(StrictModule):
             times = eqx.error_if(
                 times,
                 jnp.any(first_continuation & (directed_first_step < 0)),
-                "Continuation times must follow the declared physical-time "
-                "direction across sequence chunks.",
+                "Continuation times must follow the declared physical-time direction across sequence chunks.",
             )
             first_step = jnp.where(
                 first_continuation,

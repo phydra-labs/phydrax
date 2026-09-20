@@ -101,8 +101,8 @@ class StructuredRefractiveIndexField(AbstractRefractiveIndexField, NonTrainableS
         field_id: str,
     ):
         values_host = np.asarray(values)
-        origin_host = np.asarray(origin, dtype=float)
-        spacing_host = np.asarray(spacing, dtype=float)
+        origin_host = np.asarray(origin, dtype=np.float64)
+        spacing_host = np.asarray(spacing, dtype=np.float64)
         if values_host.ndim != 3 or any(size < 2 for size in values_host.shape):
             raise ValueError(
                 "values must be a three-dimensional grid with at least two nodes per axis."
@@ -207,9 +207,9 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
         field_id: str,
         maximum_candidates: int = 64,
     ):
-        vertices_host = np.asarray(vertices, dtype=float)
+        vertices_host = np.asarray(vertices, dtype=np.float64)
         tetrahedra_host = np.asarray(tetrahedra, dtype=np.int32)
-        values_host = np.asarray(vertex_values, dtype=float)
+        values_host = np.asarray(vertex_values, dtype=np.float64)
         if (
             vertices_host.ndim != 2
             or vertices_host.shape[1] != 3
@@ -516,7 +516,7 @@ class RayFanPlan:
     determinant_tolerance: float = 1.0e-8
 
     def __post_init__(self) -> None:
-        basis = np.array(self.transverse_basis, dtype=float, copy=True)
+        basis = np.array(self.transverse_basis, dtype=np.float64, copy=True)
         tolerance = float(self.determinant_tolerance)
         if basis.shape != (2, 3) or not np.allclose(
             basis @ basis.T, np.eye(2), atol=1.0e-10, rtol=0.0

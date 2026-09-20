@@ -59,8 +59,8 @@ def _simplex_rules(modepy_root: Path, /):
         rules = {}
         for degree in degrees:
             source = XiaoGimbutasSimplexQuadrature(degree, dimension)
-            points = 0.5 * (np.asarray(source.nodes, dtype=float).T + 1.0)
-            weights = np.asarray(source.weights, dtype=float) / scale
+            points = 0.5 * (np.asarray(source.nodes, dtype="float64").T + 1.0)
+            weights = np.asarray(source.weights, dtype="float64") / scale
             rules[degree] = (points, weights)
         return rules
 
@@ -78,8 +78,8 @@ def _lebedev_rules():
     rules = {}
     for order in _LEBEDEV_ORDERS:
         points, weights = lebedev_rule(order)
-        points_ = np.asarray(points, dtype=float).T
-        weights_ = np.asarray(weights, dtype=float)
+        points_ = np.asarray(points, dtype="float64").T
+        weights_ = np.asarray(weights, dtype="float64")
         if np.all(weights_ > 0.0):
             rules[order] = (points_, weights_)
     import scipy.integrate._lebedev as module

@@ -100,7 +100,9 @@ class SkeletalSurrogateReplayPlan(StrictModule):
         if not isinstance(source_problem, ControlProblem):
             raise TypeError("source_problem must be ControlProblem.")
         if not isinstance(parameterization, AbstractControlParameterization):
-            raise TypeError("parameterization must implement AbstractControlParameterization.")
+            raise TypeError(
+                "parameterization must implement AbstractControlParameterization."
+            )
         if parameterization.control_shape != source_problem.control_shape:
             raise ValueError("Parameterization and source problem control shapes differ.")
         if not isinstance(observation_operator, SkeletalReplayObservationOperator):
@@ -110,7 +112,7 @@ class SkeletalSurrogateReplayPlan(StrictModule):
         identifiers = tuple(str(value).strip() for value in (surrogate_id, quantity_id))
         if any(not value for value in identifiers):
             raise ValueError("Surrogate and quantity IDs must be nonempty.")
-        mask = jnp.asarray(valid_mask, dtype=bool)
+        mask = jnp.asarray(valid_mask, dtype=jnp.bool_)
         if mask.ndim == 0 or not bool(np.any(np.asarray(mask))):
             raise ValueError("valid_mask must contain at least one active sample.")
         absolute = float(absolute_tolerance)
@@ -122,7 +124,9 @@ class SkeletalSurrogateReplayPlan(StrictModule):
             or relative < 0.0
             or (absolute == 0.0 and relative == 0.0)
         ):
-            raise ValueError("At least one finite nonnegative replay tolerance is required.")
+            raise ValueError(
+                "At least one finite nonnegative replay tolerance is required."
+            )
         self.source_problem = source_problem
         self.parameterization = parameterization
         self.observation_operator = observation_operator
@@ -167,7 +171,7 @@ class SkeletalSurrogateReplayPlan(StrictModule):
             surrogate_input.dtype, jnp.complexfloating
         ):
             raise TypeError("Exact replay and surrogate predictions must be real-valued.")
-        comparison_dtype = jnp.result_type(exact_input, surrogate_input, float)
+        comparison_dtype = jnp.result_type(exact_input, surrogate_input, jnp.float64)
         exact = exact_input.astype(comparison_dtype)
         surrogate = surrogate_input.astype(comparison_dtype)
         if exact.shape != self.valid_mask.shape or surrogate.shape != exact.shape:
@@ -191,10 +195,9 @@ class SkeletalSurrogateReplayPlan(StrictModule):
             ),
             0.0,
         )
-        finite = (
-            jnp.all(jnp.isfinite(active_exact) & jnp.isfinite(active_surrogate))
-            & jnp.all(jnp.isfinite(relative))
-        )
+        finite = jnp.all(
+            jnp.isfinite(active_exact) & jnp.isfinite(active_surrogate)
+        ) & jnp.all(jnp.isfinite(relative))
         maximum_absolute = jnp.max(difference)
         maximum_relative = jnp.max(relative)
         accepted = (

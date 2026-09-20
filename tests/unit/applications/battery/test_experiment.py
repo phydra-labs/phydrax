@@ -523,7 +523,9 @@ def test_dae_linspace_transition_roundoff_preserves_saved_outputs(node_side):
     assert bool(result.successful)
     np.testing.assert_array_equal(result.outputs.times_s, save_times)
     expected_charge = 4.0 + np.minimum(np.asarray(save_times), 0.1)
-    expected_current = (np.arange(21) < (11 if node_side == "left" else 10)).astype(float)
+    expected_current = (np.arange(21) < (11 if node_side == "left" else 10)).astype(
+        "float64"
+    )
     np.testing.assert_allclose(
         result.outputs.values,
         np.stack(

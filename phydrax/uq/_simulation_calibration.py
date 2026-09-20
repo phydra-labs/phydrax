@@ -81,7 +81,7 @@ class SimulationCalibrationCase(StrictModule, NonTrainableState):
             raise ValueError("Simulation-calibration truth must contain finite arrays.")
         self.truth = truth_
         self.posterior = posterior
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.case_id = _identifier(case_id, "calibration case ID")
         self.analysis_id = _identifier(analysis_id, "calibration analysis ID")
         self.status = _identifier(status, "calibration case status")
@@ -239,13 +239,13 @@ def simulation_calibration(
                     jnp.sum(
                         weights * (sample_components[:, index] < truth_components[index])
                     )
-                    for index in range(int(truth_components.size))
+                    for index in range(truth_components.size)
                 )
                 upper_values.extend(
                     jnp.sum(
                         weights * (sample_components[:, index] <= truth_components[index])
                     )
-                    for index in range(int(truth_components.size))
+                    for index in range(truth_components.size)
                 )
             lower = jnp.stack(tuple(lower_values))
             upper = jnp.stack(tuple(upper_values))
@@ -263,7 +263,7 @@ def simulation_calibration(
     ranks = jnp.stack(tuple(rank_rows))
     lower_ranks = jnp.stack(tuple(lower_rows))
     upper_ranks = jnp.stack(tuple(upper_rows))
-    case_valid = jnp.asarray(validity, dtype=bool)
+    case_valid = jnp.asarray(validity, dtype=jnp.bool_)
     valid_count = jnp.sum(case_valid)
     edges = jnp.linspace(0.0, 1.0, plan.num_bins + 1)
     histograms = []

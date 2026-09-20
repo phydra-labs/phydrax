@@ -68,8 +68,8 @@ def _stage(size: int) -> tuple[FullDarkSectorStageToken, DarkSectorEpochPlan]:
         identity,
         jnp.ones((size,)),
         jnp.zeros((size, 3, 3)),
-        jnp.ones((size,), dtype=bool),
-        jnp.ones((size,), dtype=bool),
+        jnp.ones((size,), dtype="bool"),
+        jnp.ones((size,), dtype="bool"),
         snapshot_token=jnp.asarray(1, dtype=jnp.int32),
         chart_id="benchmark-cartesian",
         convention_id=units.convention.convention_id,
@@ -129,7 +129,7 @@ def _stage(size: int) -> tuple[FullDarkSectorStageToken, DarkSectorEpochPlan]:
 def _components(
     stage: FullDarkSectorStageToken, size: int, count: int, /
 ) -> tuple[NamedStressEnergyComponent, ...]:
-    active = jnp.ones((size,), dtype=bool)
+    active = jnp.ones((size,), dtype="bool")
     zeros = jnp.zeros((size,))
     values = []
     for index, name in enumerate(_COMPONENT_NAMES[:count]):

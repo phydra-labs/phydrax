@@ -40,7 +40,7 @@ class FDAMRPhysicalBoundaryRequest(StrictModule, NonTrainableState):
     request_id: str = eqx.field(static=True)
 
     def __init__(self, level: int, mask: ArrayLike, plan_id: str, /):
-        mask_ = jnp.asarray(mask, dtype=bool)
+        mask_ = jnp.asarray(mask, dtype=jnp.bool_)
         self.level = int(level)
         self.mask = mask_
         self.request_id = canonical_fingerprint(
@@ -57,7 +57,7 @@ class FDAMRPhysicalBoundaryRequest(StrictModule, NonTrainableState):
 
 
 class FDAMRFillPatchWorkspace(StrictModule):
-    """Padded cell-centred blocks plus validity and per-cell source evidence."""
+    """Padded cell-centered blocks plus validity and per-cell source evidence."""
 
     values: Array
     valid: Array
@@ -73,7 +73,7 @@ class FDAMRFillPatchWorkspace(StrictModule):
         /,
     ):
         values_ = jnp.asarray(values)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         sources = jnp.asarray(source_class, dtype=jnp.int8)
         if valid_.shape != sources.shape or values_.shape[: valid_.ndim] != valid_.shape:
             raise ValueError("FillPatch values, validity, and source classes must align.")
@@ -106,7 +106,7 @@ class FDAMRFillPatchResult(StrictModule):
 
 
 class FDAMRFillPatchPlan(StrictModule, NonTrainableState):
-    """Prepared, source-classified cell-centred FillPatch routes for one AMR level."""
+    """Prepared, source-classified cell-centered FillPatch routes for one AMR level."""
 
     topology: BlockHierarchyTopology
     level: int = eqx.field(static=True)
@@ -143,7 +143,8 @@ class FDAMRFillPatchPlan(StrictModule, NonTrainableState):
                 raise TypeError("Fine FillPatch requires an AMREntityTransferPlan.")
             if transfer.axis_entities != ("interval",) * dimension:
                 raise NotImplementedError(
-                    "Prepared FillPatch is cell-centred; AMREntityTransferPlan is the explicit non-cell extension seam."
+                    "Prepared FillPatch is cell-centered; AMREntityTransferPlan "
+                    "is the explicit non-cell extension seam."
                 )
             if (
                 transfer.refinement_ratio
@@ -169,9 +170,7 @@ class FDAMRFillPatchPlan(StrictModule, NonTrainableState):
         logical = np.asarray(metadata.logical_indices, dtype=np.int32)
         global_shape = topology.plan.global_cell_shapes[level_]
         block_shape = level_plan.block_shape
-        logical_to_slot = {
-            tuple(int(value) for value in logical[slot]): slot for slot in range(count)
-        }
+        logical_to_slot = {tuple(logical[slot]): slot for slot in range(count)}
         ratio = None if level_ == 0 else topology.plan.levels[level_ - 1].refinement_ratio
         for slot in range(count):
             block_origin = tuple(
@@ -245,23 +244,21 @@ class FDAMRFillPatchPlan(StrictModule, NonTrainableState):
                 sources[route_index] = int(FillPatchSource.UNRESOLVED)
         if np.any(sources == int(FillPatchSource.UNRESOLVED)):
             raise ValueError(
-                "Prepared FillPatch rejected an unresolved interior/coarse route; "
-                "increase proper nesting or coverage."
+                "Prepared FillPatch rejected an unresolved interior/coarse route; increase proper nesting or coverage."
             )
         donor_count = 3**dimension
         coarse_donor_slots = np.full(route_shape + (donor_count,), -1, dtype=np.int32)
         coarse_donor_local = np.full(
             route_shape + (donor_count, dimension), -1, dtype=np.int32
         )
-        coarse_donor_valid = np.zeros(route_shape + (donor_count,), dtype=bool)
+        coarse_donor_valid = np.zeros(route_shape + (donor_count,), dtype=np.bool_)
         coarse_child_indices = np.full(route_shape + (dimension,), -1, dtype=np.int32)
         if level_ > 0 and ratio is not None:
             coarse_metadata = topology.levels[level_ - 1]
             coarse_count = int(np.count_nonzero(np.asarray(coarse_metadata.active)))
             coarse_logical = np.asarray(coarse_metadata.logical_indices, dtype=np.int32)
             coarse_logical_to_slot = {
-                tuple(int(value) for value in coarse_logical[slot]): slot
-                for slot in range(coarse_count)
+                tuple(coarse_logical[slot]): slot for slot in range(coarse_count)
             }
             coarse_block_shape = topology.plan.levels[level_ - 1].block_shape
             coarse_global_shape = topology.plan.global_cell_shapes[level_ - 1]
@@ -273,8 +270,8 @@ class FDAMRFillPatchPlan(StrictModule, NonTrainableState):
                 sources == int(FillPatchSource.COARSE_TIME_INTERPOLATED)
             )
             for route_row in coarse_routes:
-                route_index = tuple(int(value) for value in route_row)
-                fine_global = tuple(int(value) for value in mapped_global[route_index])
+                route_index = tuple(route_row)
+                fine_global = tuple(mapped_global[route_index])
                 coarse_center = tuple(value // ratio for value in fine_global)
                 coarse_child_indices[route_index] = tuple(
                     value % ratio for value in fine_global

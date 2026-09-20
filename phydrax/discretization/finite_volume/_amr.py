@@ -106,7 +106,7 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
             )
             active.append(
                 np.repeat(
-                    np.asarray(metadata.active, dtype=bool),
+                    np.asarray(metadata.active, dtype=np.bool_),
                     prod(level_plan.block_shape),
                 )
             )
@@ -118,11 +118,11 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
             fine_size = fine_plan.maximum_blocks * prod(fine_plan.block_shape)
             source_indices: list[int] = []
             target_indices: list[int] = []
-            coarse_active = np.asarray(topology.levels[level].active, dtype=bool)
+            coarse_active = np.asarray(topology.levels[level].active, dtype=np.bool_)
             coarse_logical = np.asarray(
                 topology.levels[level].logical_indices, dtype=np.int32
             )
-            covered = np.asarray(topology.covered_cells[level], dtype=bool)
+            covered = np.asarray(topology.covered_cells[level], dtype=np.bool_)
             for coarse_slot in np.flatnonzero(coarse_active):
                 origin = tuple(
                     int(index) * size
@@ -343,7 +343,10 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
         if restricted.shape != coarse_flux.shape:
             raise ValueError("Restricted fine flux must match the coarse route shape.")
         mask = jnp.asarray(interface_mask)
-        if mask.dtype != jnp.dtype(bool) or mask.shape != coarse_block.active_mask.shape:
+        if (
+            mask.dtype != jnp.dtype(jnp.bool_)
+            or mask.shape != coarse_block.active_mask.shape
+        ):
             raise ValueError("interface_mask must select the coarse route faces.")
         mask = mask & coarse_block.active_mask
         component_rank = coarse_flux.ndim - mask.ndim
@@ -360,20 +363,20 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
                 dtype=self.precision.reduction_dtype,
             )
             result = result.at[coarse_block.owner_cells].add(-values)
-            neighbours = coarse_block.neighbour_cells
-            safe = jnp.maximum(neighbours, 0)
-            neighbour_mask = (neighbours >= 0).reshape(
-                neighbours.shape + (1,) * component_rank
+            neighbors = coarse_block.neighbor_cells
+            safe = jnp.maximum(neighbors, 0)
+            neighbor_mask = (neighbors >= 0).reshape(
+                neighbors.shape + (1,) * component_rank
             )
-            return result.at[safe].add(jnp.where(neighbour_mask, values, 0.0))
+            return result.at[safe].add(jnp.where(neighbor_mask, values, 0.0))
 
         cell_coarse = scatter(masked_coarse)
         cell_fine = scatter(masked_fine)
-        cell_mask = jnp.zeros((coarse.cell_count,), dtype=bool)
+        cell_mask = jnp.zeros((coarse.cell_count,), dtype=jnp.bool_)
         cell_mask = cell_mask.at[coarse_block.owner_cells].max(mask)
-        valid_neighbour = mask & (coarse_block.neighbour_cells >= 0)
-        cell_mask = cell_mask.at[jnp.maximum(coarse_block.neighbour_cells, 0)].max(
-            valid_neighbour
+        valid_neighbor = mask & (coarse_block.neighbor_cells >= 0)
+        cell_mask = cell_mask.at[jnp.maximum(coarse_block.neighbor_cells, 0)].max(
+            valid_neighbor
         )
         return FluxRegister(
             cell_coarse,

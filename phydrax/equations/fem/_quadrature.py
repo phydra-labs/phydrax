@@ -92,8 +92,7 @@ class QuadratureAccuracyPolicy(StrictModule, NonTrainableState):
         if coefficient_order is None or kernel_polynomial_degree is None:
             if self.kind != "overintegrated":
                 raise ValueError(
-                    "Polynomial exactness requires declared coefficient and kernel "
-                    "degrees."
+                    "Polynomial exactness requires declared coefficient and kernel degrees."
                 )
             base_degree = trial + test + max(coordinate - 1, 0)
             if coefficient_order is not None:

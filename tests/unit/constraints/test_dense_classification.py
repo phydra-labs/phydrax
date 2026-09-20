@@ -57,7 +57,7 @@ def test_dense_site_named_axes_and_exact_binary_nll():
 
 
 def test_dense_masks_sanitize_poisoned_targets_before_geometry_weighting():
-    target_mask = jnp.ones((3, 5), dtype=bool).at[:, 0].set(False)
+    target_mask = jnp.ones((3, 5), dtype="bool").at[:, 0].set(False)
     term, field, logits, targets = _binary_problem(
         target_mask=target_mask,
         where=lambda x: x[0] <= 0.75,

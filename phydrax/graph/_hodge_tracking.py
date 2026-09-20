@@ -58,15 +58,15 @@ class HodgeSubspaceTracking(StrictModule, NonTrainableState):
         self.principal_angles = angles
         self.projector_residual = jnp.linalg.norm(source_projector - target_projector)
         self.rank_changed = jnp.asarray(source.shape[1] != target.shape[1])
-        self.source_dimension = int(source.shape[1])
-        self.target_dimension = int(target.shape[1])
+        self.source_dimension = source.shape[1]
+        self.target_dimension = target.shape[1]
         self.tracking_id = canonical_fingerprint(
             {
                 "kind": "hodge-subspace-tracking",
                 "source": str(source_id),
                 "target": str(target_id),
-                "source_dimension": int(source.shape[1]),
-                "target_dimension": int(target.shape[1]),
+                "source_dimension": source.shape[1],
+                "target_dimension": target.shape[1],
             }
         )
 

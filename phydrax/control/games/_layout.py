@@ -81,8 +81,7 @@ class PlayerControlPartition(StrictModule):
         array = jnp.asarray(joint_controls)
         if array.ndim < 1 or array.shape[-1] != self.joint_control_size:
             raise ValueError(
-                "joint_controls must have trailing shape "
-                f"({self.joint_control_size},); got {array.shape}."
+                f"joint_controls must have trailing shape ({self.joint_control_size},); got {array.shape}."
             )
         return tuple(array[..., start:stop] for start, stop in self.control_slices)
 
@@ -100,8 +99,7 @@ class PlayerControlPartition(StrictModule):
         ):
             if array.ndim < 1 or array.shape[-1] != size:
                 raise ValueError(
-                    f"Player {player_id!r} controls must have trailing shape ({size},); "
-                    f"got {array.shape}."
+                    f"Player {player_id!r} controls must have trailing shape ({size},); got {array.shape}."
                 )
             if array.shape[:-1] != leading_shape:
                 raise ValueError("All player control arrays must share leading axes.")
@@ -112,7 +110,6 @@ class PlayerControlPartition(StrictModule):
         array = jnp.asarray(gain)
         if array.ndim < 2 or array.shape[-2] != self.joint_control_size:
             raise ValueError(
-                "gain must have penultimate control axis of size "
-                f"{self.joint_control_size}; got {array.shape}."
+                f"gain must have penultimate control axis of size {self.joint_control_size}; got {array.shape}."
             )
         return tuple(array[..., start:stop, :] for start, stop in self.control_slices)

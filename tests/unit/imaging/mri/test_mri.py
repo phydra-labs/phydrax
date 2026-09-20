@@ -20,17 +20,17 @@ def test_cartesian_encoding_adjoint_and_cg_sense_recover_image():
     assert bool(reconstruction.successful)
 
 
-def test_nufft_encoding_and_adjoint_obey_complex_inner_product():
+def test_nonuniform_encoding_and_adjoint_obey_complex_inner_product():
     coils = phx.imaging.mri.CoilSensitivityField(
         np.ones((1, 4, 4), dtype=np.complex64),
         ("coil-0",),
-        field_id="nufft-coil",
+        field_id="nonuniform-coil",
     )
     coordinates = np.asarray(((-1.0, -0.5), (0.0, 0.0), (0.7, 1.2)))
     support = phx.imaging.mri.KSpaceSupport(
         coordinates, ("coil-0",), "trajectory", "scanner"
     )
-    plan = phx.imaging.mri.NUFFTMRIEncodingPlan(coils, support, tolerance=1e-5)
+    plan = phx.imaging.mri.NonuniformMRIEncodingPlan(coils, support, chunk_size=2)
     image = np.arange(16, dtype=np.float32).reshape((4, 4)).astype(np.complex64)
     data = np.asarray(((1.0 + 1.0j,), (2.0 - 0.5j,), (-1.0 + 0.2j,)))
     encoded, evidence = plan.forward(image)
@@ -65,7 +65,7 @@ def test_coil_prewhitening_regularization_and_timed_off_resonance():
         "scanner",
         time,
     )
-    encoding = phx.imaging.mri.NUFFTMRIEncodingPlan(coils, support)
+    encoding = phx.imaging.mri.NonuniformMRIEncodingPlan(coils, support)
     off_resonance = phx.imaging.mri.OffResonanceMRIEncodingPlan(
         encoding, np.zeros((4, 4))
     )

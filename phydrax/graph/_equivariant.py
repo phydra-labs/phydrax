@@ -6,6 +6,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 
+from phydrax._strict import StrictModule
+
 from ._graph import ensure_graph
 from ._ir import GraphIR
 from ._kernels import segment_sum
@@ -45,9 +47,9 @@ def _node_scalar(graph: GraphIR, input_key: str | None, /) -> jnp.ndarray:
     if input_key is None:
         if isinstance(graph.nodes, Mapping):
             raise TypeError("mapping-valued graph nodes require input_key.")
-        arr = jnp.asarray(graph.nodes, dtype=float)
+        arr = jnp.asarray(graph.nodes, dtype=jnp.float64)
     else:
-        arr = _mapping_value(graph.nodes, input_key, "nodes").astype(float)
+        arr = _mapping_value(graph.nodes, input_key, "nodes").astype("float64")
     if arr.ndim == 1:
         return arr[:, None]
     if arr.ndim != 2:
@@ -64,8 +66,8 @@ def _edge_weight(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray 
         raise TypeError("edge_weight_key requires mapping-valued graph edges.")
     if edge_weight_key not in graph.edges:
         raise KeyError(f"Graph edges do not contain edge_weight_key {edge_weight_key!r}.")
-    weight = jnp.asarray(graph.edges[edge_weight_key], dtype=float)
-    if weight.ndim == 2 and int(weight.shape[1]) == 1:
+    weight = jnp.asarray(graph.edges[edge_weight_key], dtype=jnp.float64)
+    if weight.ndim == 2 and weight.shape[1] == 1:
         weight = weight[:, 0]
     if weight.ndim != 1:
         raise ValueError("edge weights must have shape (n_edge,) or (n_edge, 1).")
@@ -139,11 +141,11 @@ def gaussian_radial_basis(
     gamma: float = 1.0,
 ) -> jnp.ndarray:
     """Evaluate Gaussian radial basis features from pairwise distances."""
-    d = jnp.asarray(distance, dtype=float)
-    c = jnp.asarray(centers, dtype=float).reshape((1, -1))
+    d = jnp.asarray(distance, dtype=jnp.float64)
+    c = jnp.asarray(centers, dtype=jnp.float64).reshape((1, -1))
     if d.ndim == 1:
         d = d[:, None]
-    if d.ndim != 2 or int(d.shape[1]) != 1:
+    if d.ndim != 2 or d.shape[1] != 1:
         raise ValueError("distance must have shape (n_edge,) or (n_edge, 1).")
     return jnp.exp(-float(gamma) * jnp.square(d - c))
 
@@ -162,7 +164,7 @@ def _mask_by_node_mask(value: jnp.ndarray, mask: jnp.ndarray | None, /) -> jnp.n
     return value * mask.astype(value.dtype)
 
 
-class EquivariantGraphConvolution(eqx.Module):
+class EquivariantGraphConvolution(StrictModule):
     """SE(n)-equivariant scalar/vector graph convolution.
 
     Scalar messages aggregate invariant source features. Vector messages are
@@ -221,7 +223,7 @@ class EquivariantGraphConvolution(eqx.Module):
         sent = scalars[source]
         recv = scalars[target]
 
-        weight = jnp.ones((int(source.shape[0]),), dtype=scalars.dtype)
+        weight = jnp.ones((source.shape[0],), dtype=scalars.dtype)
         edge_weight = _edge_weight(graph, self.edge_weight_key)
         if edge_weight is not None:
             weight = weight * edge_weight.astype(weight.dtype)
@@ -230,7 +232,7 @@ class EquivariantGraphConvolution(eqx.Module):
                 self.radial_fn(graph.edges, distance, unit, sent, recv),
                 dtype=scalars.dtype,
             )
-            if radial.ndim == 2 and int(radial.shape[1]) == 1:
+            if radial.ndim == 2 and radial.shape[1] == 1:
                 radial = radial[:, 0]
             if radial.ndim != 1:
                 raise ValueError("radial_fn must return shape (n_edge,) or (n_edge, 1).")
@@ -239,17 +241,17 @@ class EquivariantGraphConvolution(eqx.Module):
             weight = weight * graph.edge_mask.astype(weight.dtype)
 
         scalar_messages = sent * _broadcast_edge_weight(weight, sent)
-        scalar_out = segment_sum(scalar_messages, target, int(scalars.shape[0]))
+        scalar_out = segment_sum(scalar_messages, target, scalars.shape[0])
 
         vector_messages = (
             relative[:, :, None]
             * sent[:, None, :]
             * _broadcast_edge_weight(weight, sent)[:, None, :]
         )
-        vector_out = segment_sum(vector_messages, target, int(scalars.shape[0]))
+        vector_out = segment_sum(vector_messages, target, scalars.shape[0])
 
         if self.normalize:
-            denom = segment_sum(jnp.abs(weight), target, int(scalars.shape[0]))
+            denom = segment_sum(jnp.abs(weight), target, scalars.shape[0])
             scale = jnp.where(denom > 0, 1.0 / denom, 0.0)
             scalar_out = scalar_out * scale[:, None]
             vector_out = vector_out * scale[:, None, None]

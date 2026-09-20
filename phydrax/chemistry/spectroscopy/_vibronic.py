@@ -62,7 +62,7 @@ class DuschinskyResult(StrictModule, NonTrainableState):
         self.subspace_residual = jnp.asarray(
             subspace_residual, dtype=matrix.dtype
         ).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.initial_vibration_id = str(initial_vibration_id)
         self.final_vibration_id = str(final_vibration_id)
         self.result_id = canonical_fingerprint(
@@ -104,8 +104,8 @@ def duschinsky_analysis(
     final_modes_full = np.asarray(final_vibration.normal_modes)
     initial_masses_full = np.asarray(initial_structure.masses)
     final_masses_full = np.asarray(final_structure.masses)
-    initial_active = np.asarray(initial_structure.active_mask, dtype=bool)
-    final_active = np.asarray(final_structure.active_mask, dtype=bool)
+    initial_active = np.asarray(initial_structure.active_mask, dtype=np.bool_)
+    final_active = np.asarray(final_structure.active_mask, dtype=np.bool_)
     if (
         initial_modes_full.shape != final_modes_full.shape
         or initial_masses_full.shape != final_masses_full.shape
@@ -239,7 +239,7 @@ class FranckCondonResult(StrictModule, NonTrainableState):
         self.photon_energies = photons
         self.emission_rates = rates
         self.quadrature_points = int(quadrature_points)
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
             {
@@ -306,7 +306,7 @@ class DuschinskyFranckCondonPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Franck--Condon frequencies, units, or quadrature are invalid."
             )
-        point_count = order ** int(initial.size)
+        point_count = order**initial.size
         if point_count > maximum:
             raise ValueError(
                 "Franck--Condon tensor quadrature exceeds maximum_quadrature_points."
@@ -342,8 +342,8 @@ class DuschinskyFranckCondonPlan(StrictModule, NonTrainableState):
         herzberg_teller_derivatives: ArrayLike | None = None,
         zero_zero_energy_hartree: float | None = None,
     ) -> FranckCondonResult:
-        quanta = np.asarray(final_quanta, dtype=int)
-        mode_count = int(self.initial_angular_frequencies.size)
+        quanta = np.asarray(final_quanta, dtype=np.int64)
+        mode_count = self.initial_angular_frequencies.size
         if quanta.ndim != 2 or quanta.shape[1] != mode_count or np.any(quanta < 0):
             raise ValueError("Final vibrational quanta must have shape (state, mode).")
         condon = None if condon_dipole is None else np.asarray(condon_dipole)

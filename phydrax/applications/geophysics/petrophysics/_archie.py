@@ -161,8 +161,8 @@ class HydrogeophysicalPlan(StrictModule):
             raise ValueError(
                 "Water transfer requires constant, conservative, positive and adjoint-paired contracts."
             )
-        source = np.asarray(source_volumes_m3, dtype=float).reshape(-1)
-        target = np.asarray(target_volumes_m3, dtype=float).reshape(-1)
+        source = np.asarray(source_volumes_m3, dtype=np.float64).reshape(-1)
+        target = np.asarray(target_volumes_m3, dtype=np.float64).reshape(-1)
         source_space = transfer.primal_operator.source
         target_space = transfer.primal_operator.target
         if source.size != source_space.size or target.size != target_space.size:

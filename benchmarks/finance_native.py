@@ -229,9 +229,9 @@ def _run_suite(
         _synchronize(operation())
         samples.append(time.perf_counter() - started)
 
-    expected = np.asarray(reference["expected"], dtype=float)
-    result_host = np.asarray(result, dtype=float)
-    replay_host = np.asarray(replay, dtype=float)
+    expected = np.asarray(reference["expected"], dtype="float64")
+    result_host = np.asarray(result, dtype="float64")
+    replay_host = np.asarray(replay, dtype="float64")
     if result_host.shape != expected.shape:
         raise ValueError(f"Reference shape for suite {name!r} is inconsistent.")
     tolerance = float(reference["absolute_tolerance"])

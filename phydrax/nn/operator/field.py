@@ -180,8 +180,7 @@ class OperatorFieldSpec(StrictModule):
         if classification is not None:
             if role != "target":
                 raise ValueError(
-                    "Classification fields are target-only until physical label "
-                    "channels are explicitly supported."
+                    "Classification fields are target-only until physical label channels are explicitly supported."
                 )
             if (
                 channels != "scalar"
@@ -241,10 +240,9 @@ class OperatorFieldSpec(StrictModule):
         offset = jnp.asarray(self.offset, dtype=array.dtype)
         if self.channels == "scalar":
             return (array - offset[0]) / scale[0]
-        if int(array.shape[-1]) != self.channel_count:
+        if array.shape[-1] != self.channel_count:
             raise ValueError(
-                f"Field {self.name!r} expected {self.channel_count} channels; "
-                f"got {array.shape[-1]}."
+                f"Field {self.name!r} expected {self.channel_count} channels; got {array.shape[-1]}."
             )
         return (array - offset) / scale
 
@@ -256,10 +254,9 @@ class OperatorFieldSpec(StrictModule):
         offset = jnp.asarray(self.offset, dtype=array.dtype)
         if self.channels == "scalar":
             return array * scale[0] + offset[0]
-        if int(array.shape[-1]) != self.channel_count:
+        if array.shape[-1] != self.channel_count:
             raise ValueError(
-                f"Field {self.name!r} expected {self.channel_count} channels; "
-                f"got {array.shape[-1]}."
+                f"Field {self.name!r} expected {self.channel_count} channels; got {array.shape[-1]}."
             )
         return array * scale + offset
 

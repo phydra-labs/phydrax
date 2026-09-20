@@ -74,7 +74,7 @@ class KeyGroupPlan(StrictModule):
             None if maximum_group_size is None else int(maximum_group_size)
         )
         self.key_upper_bound = int(key_upper_bound)
-        self.case_shape = tuple(int(size) for size in case_shape)
+        self.case_shape = tuple(case_shape)
         self.plan_id = canonical_fingerprint(
             {
                 "type": "key-group-plan",
@@ -102,7 +102,7 @@ class KeyGroupPlan(StrictModule):
             raise ValueError(
                 f"keys must have shape {expected_shape}; got {key_array.shape}."
             )
-        valid_array = jnp.asarray(valid, dtype=bool)
+        valid_array = jnp.asarray(valid, dtype=jnp.bool_)
         if valid_array.shape != expected_shape:
             raise ValueError(
                 f"valid must have shape {expected_shape}; got {valid_array.shape}."
@@ -206,17 +206,15 @@ class KeyGroupState(NonTrainableState, StrictModule):
             raise TypeError("lookup keys must have an integer dtype.")
         if query.shape[: len(self.plan.case_shape)] != self.plan.case_shape:
             raise ValueError(
-                "lookup keys must begin with the grouping case shape "
-                f"{self.plan.case_shape}; got {query.shape}."
+                f"lookup keys must begin with the grouping case shape {self.plan.case_shape}; got {query.shape}."
             )
         if valid is None:
-            query_valid = jnp.ones(query.shape, dtype=bool)
+            query_valid = jnp.ones(query.shape, dtype=jnp.bool_)
         else:
-            query_valid = jnp.asarray(valid, dtype=bool)
+            query_valid = jnp.asarray(valid, dtype=jnp.bool_)
             if query_valid.shape != query.shape:
                 raise ValueError(
-                    f"lookup valid must have shape {query.shape}; got "
-                    f"{query_valid.shape}."
+                    f"lookup valid must have shape {query.shape}; got {query_valid.shape}."
                 )
 
         batch_size = 1
@@ -334,10 +332,10 @@ def _build_one(
             storage_to_logical=jnp.zeros((0,), dtype=jnp.int32),
             logical_to_storage=jnp.zeros((0,), dtype=jnp.int32),
             sorted_keys=jnp.zeros((0,), dtype=keys.dtype),
-            sorted_item_valid=jnp.zeros((0,), dtype=bool),
+            sorted_item_valid=jnp.zeros((0,), dtype=jnp.bool_),
             item_group_slots=jnp.zeros((0,), dtype=jnp.int32),
             group_keys=jnp.full(group_shape, sentinel),
-            group_active=jnp.zeros(group_shape, dtype=bool),
+            group_active=jnp.zeros(group_shape, dtype=jnp.bool_),
             group_starts=jnp.zeros(group_shape, dtype=jnp.int32),
             group_counts=jnp.zeros(group_shape, dtype=jnp.int32),
             requested_items=jnp.asarray(0, dtype=jnp.int32),
@@ -364,7 +362,9 @@ def _build_one(
     sorted_keys = safe_keys[order]
     sorted_valid = key_valid[order]
 
-    previous_valid = jnp.concatenate((jnp.zeros((1,), dtype=bool), sorted_valid[:-1]))
+    previous_valid = jnp.concatenate(
+        (jnp.zeros((1,), dtype=jnp.bool_), sorted_valid[:-1])
+    )
     previous_keys = jnp.concatenate((jnp.full((1,), sentinel), sorted_keys[:-1]))
     group_start_mask = sorted_valid & ((~previous_valid) | (sorted_keys != previous_keys))
     sorted_group_slots = jnp.cumsum(group_start_mask.astype(jnp.int32)) - 1
@@ -378,7 +378,9 @@ def _build_one(
     group_keys = jnp.where(group_active, sorted_keys[start_positions], sentinel)
     group_starts = jnp.where(group_active, start_positions, 0)
     following_starts = jnp.concatenate((group_starts[1:], active_items[None]))
-    following_active = jnp.concatenate((group_active[1:], jnp.zeros((1,), dtype=bool)))
+    following_active = jnp.concatenate(
+        (group_active[1:], jnp.zeros((1,), dtype=jnp.bool_))
+    )
     next_starts = jnp.where(following_active, following_starts, active_items)
     group_counts = jnp.where(group_active, next_starts - group_starts, 0)
     maximum_size = jnp.max(group_counts, initial=0)

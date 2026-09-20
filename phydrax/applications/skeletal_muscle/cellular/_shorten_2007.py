@@ -115,13 +115,7 @@ _STATE_NAMES = (
     "P_SR",
     "P_C_SR",
 )
-_STATE_UNITS = (
-    ("mV",) * 2
-    + ("mM",) * 6
-    + ("1",) * 20
-    + ("uM",) * 25
-    + ("mM",) * 3
-)
+_STATE_UNITS = ("mV",) * 2 + ("mM",) * 6 + ("1",) * 20 + ("uM",) * 25 + ("mM",) * 3
 _STATE_SYMBOLS = (
     _symbols("wal_environment", _STATE_NAMES[:8])
     + _symbols("sarco_DR_channel", _STATE_NAMES[8:10])
@@ -824,8 +818,6 @@ def _parameters_admissible(parameters: ArrayLike, /) -> Array:
     )
 
 
-
-
 def _x_over_one_minus_exp_minus_x(value: Array, /) -> Array:
     """Stable ``x/(1-exp(-x))`` including its removable zero singularity."""
     small = jnp.abs(value) < 1.0e-4
@@ -845,12 +837,10 @@ def _ghk_drive(
     temperature_K: Array,
     /,
 ) -> Array:
-    z = charge * faraday_C_per_mol * voltage_mV / (
-        gas_mJ_per_K_mol * temperature_K
-    )
+    z = charge * faraday_C_per_mol * voltage_mV / (gas_mJ_per_K_mol * temperature_K)
     factor = gas_mJ_per_K_mol * temperature_K / (charge * faraday_C_per_mol)
-    return factor * _x_over_one_minus_exp_minus_x(z) * (
-        inside_mM - outside_mM * jnp.exp(-z)
+    return (
+        factor * _x_over_one_minus_exp_minus_x(z) * (inside_mM - outside_mM * jnp.exp(-z))
     )
 
 
@@ -922,6 +912,7 @@ class ShortenPulseProtocol(StrictModule, NonTrainableState):
     def event_times_ms(self) -> Array:
         starts = self.onset_ms + self.period_ms * jnp.arange(self.pulse_count)
         return jnp.stack((starts, starts + self.width_ms), axis=-1).reshape(-1)
+
 
 _DEFAULT_PULSE_PROTOCOL = ShortenPulseProtocol()
 
@@ -1012,7 +1003,7 @@ class ShortenFastTwitchModel(StrictModule):
         *,
         dtype: object | None = None,
     ) -> Array:
-        shape = tuple(int(size) for size in batch_shape)
+        shape = tuple(batch_shape)
         if any(size < 0 for size in shape):
             raise ValueError("batch_shape entries must be nonnegative.")
         resolved_dtype = self.parameters.dtype if dtype is None else jnp.dtype(dtype)
@@ -1228,9 +1219,7 @@ class ShortenFastTwitchModel(StrictModule):
         del volume, sr_volume
 
         if stimulus_current_uA_per_cm2 is None:
-            selected_protocol = (
-                _DEFAULT_PULSE_PROTOCOL if protocol is None else protocol
-            )
+            selected_protocol = _DEFAULT_PULSE_PROTOCOL if protocol is None else protocol
             if not isinstance(selected_protocol, ShortenPulseProtocol):
                 raise TypeError("protocol must be a ShortenPulseProtocol or None.")
             stimulus = selected_protocol.current(time)
@@ -1331,11 +1320,7 @@ class ShortenFastTwitchModel(StrictModule):
         positive_saturation = jnp.where(saturation > 0.0, saturation, 0.0)
         negative_saturation = jnp.where(saturation < 0.0, -saturation, 0.0)
         precipitation = (
-            a_precip
-            * positive_saturation
-            * 0.001
-            * phosphate_sr
-            * ca_sr2
+            a_precip * positive_saturation * 0.001 * phosphate_sr * ca_sr2
             - b_precip * phosphate_complex_sr * negative_saturation
         )
 
@@ -1380,9 +1365,7 @@ class ShortenFastTwitchModel(StrictModule):
         rate_ca_t2 = binding_t0_ca - binding_t2_ca - k0_on * ca_t2 + k0_off * d1
         rate_ca_cat2 = binding_t2_ca - kca_on * ca_cat2 + kca_off * d2
         rate_d0 = -binding_d0_ca + k0_on * t0 - k0_off * d0
-        rate_d1 = (
-            binding_d0_ca + k0_on * ca_t2 - k0_off * d1 - binding_d1_ca
-        )
+        rate_d1 = binding_d0_ca + k0_on * ca_t2 - k0_off * d1 - binding_d1_ca
         rate_d2 = (
             binding_d1_ca
             + kca_on * ca_cat2
@@ -1400,8 +1383,7 @@ class ShortenFastTwitchModel(StrictModule):
             - k_p_transport * (phosphate - phosphate_sr) / volume2
         )
         rate_p_sr = (
-            k_p_transport * (phosphate - phosphate_sr) / sr_volume2
-            - precipitation
+            k_p_transport * (phosphate - phosphate_sr) / sr_volume2 - precipitation
         )
         rate_p_complex_sr = precipitation
 
@@ -1415,34 +1397,13 @@ class ShortenFastTwitchModel(StrictModule):
         rate_ca_atp2 = ca_atp_binding2 + tau_atp * (ca_atp1 - ca_atp2) / volume2
         rate_mg_atp1 = mg_atp_binding1 - tau_atp * (mg_atp1 - mg_atp2) / volume1
         rate_mg_atp2 = mg_atp_binding2 + tau_atp * (mg_atp1 - mg_atp2) / volume2
-        rate_atp1 = (
-            -ca_atp_binding1
-            - mg_atp_binding1
-            - tau_atp * (atp1 - atp2) / volume1
-        )
-        rate_atp2 = (
-            -ca_atp_binding2
-            - mg_atp_binding2
-            + tau_atp * (atp1 - atp2) / volume2
-        )
-        rate_mg1 = (
-            -mg_p_binding1
-            - mg_atp_binding1
-            - tau_mg * (mg1 - mg2) / volume1
-        )
-        rate_mg2 = (
-            -mg_p_binding2
-            - mg_atp_binding2
-            + tau_mg * (mg1 - mg2) / volume2
-        )
+        rate_atp1 = -ca_atp_binding1 - mg_atp_binding1 - tau_atp * (atp1 - atp2) / volume1
+        rate_atp2 = -ca_atp_binding2 - mg_atp_binding2 + tau_atp * (atp1 - atp2) / volume2
+        rate_mg1 = -mg_p_binding1 - mg_atp_binding1 - tau_mg * (mg1 - mg2) / volume1
+        rate_mg2 = -mg_p_binding2 - mg_atp_binding2 + tau_mg * (mg1 - mg2) / volume2
 
         rate_c0 = -k_l * c0 + k_lm * o0 - 4.0 * k_c * c0 + k_cm * c1
-        rate_o0 = (
-            k_l * c0
-            - k_lm * o0
-            - 4.0 * k_c * o0 / f_ratio
-            + f_ratio * k_cm * o1
-        )
+        rate_o0 = k_l * c0 - k_lm * o0 - 4.0 * k_c * o0 / f_ratio + f_ratio * k_cm * o1
         rate_c1 = (
             4.0 * k_c * c0
             - k_cm * c1
@@ -1492,10 +1453,7 @@ class ShortenFastTwitchModel(StrictModule):
             + 4.0 * f_ratio * k_cm * o4
         )
         rate_c4 = (
-            k_c * c3
-            - 4.0 * k_cm * c4
-            - k_l * c4 / f_ratio**4
-            + k_lm * f_ratio**4 * o4
+            k_c * c3 - 4.0 * k_cm * c4 - k_l * c4 / f_ratio**4 + k_lm * f_ratio**4 * o4
         )
         rate_o4 = (
             k_c * o3 / f_ratio
@@ -1514,13 +1472,7 @@ class ShortenFastTwitchModel(StrictModule):
             * (1.0 + k_r**2 / k_k)
             / (
                 s_i**2
-                * jnp.exp(
-                    2.0
-                    * (1.0 - delta)
-                    * v_s
-                    * faraday
-                    / (gas * temperature)
-                )
+                * jnp.exp(2.0 * (1.0 - delta) * v_s * faraday / (gas * temperature))
             )
         )
         g_ir = g_ir_bar * y_ir
@@ -1536,8 +1488,8 @@ class ShortenFastTwitchModel(StrictModule):
             + 0.12 * jnp.exp(-0.1 * v_s * faraday / (gas * temperature))
             + 0.04 * sigma * jnp.exp(-v_s * faraday / (gas * temperature))
         )
-        i_nak_bar = faraday * j_nak_bar / (
-            (1.0 + km_k / k_e) ** 2 * (1.0 + km_na / na_i) ** 3
+        i_nak_bar = (
+            faraday * j_nak_bar / ((1.0 + km_k / k_e) ** 2 * (1.0 + km_na / na_i) ** 3)
         )
         i_nak = i_nak_bar * pump_voltage
         cl_i = 156.5 / (5.0 + jnp.exp(-faraday * e_k / (gas * temperature)))
@@ -1557,13 +1509,7 @@ class ShortenFastTwitchModel(StrictModule):
             * (1.0 + k_r_t**2 / k_k)
             / (
                 s_i**2
-                * jnp.exp(
-                    2.0
-                    * (1.0 - delta)
-                    * v_t
-                    * faraday
-                    / (gas * temperature)
-                )
+                * jnp.exp(2.0 * (1.0 - delta) * v_t * faraday / (gas * temperature))
             )
         )
         g_ir_t = g_ir_bar_t * y_ir_t
@@ -1579,8 +1525,8 @@ class ShortenFastTwitchModel(StrictModule):
             + 0.12 * jnp.exp(-0.1 * v_t * faraday / (gas * temperature))
             + 0.04 * sigma_t * jnp.exp(-v_t * faraday / (gas * temperature))
         )
-        i_nak_bar_t = faraday * j_nak_bar / (
-            (1.0 + km_k / k_t) ** 2 * (1.0 + km_na / na_i) ** 3
+        i_nak_bar_t = (
+            faraday * j_nak_bar / ((1.0 + km_k / k_t) ** 2 * (1.0 + km_na / na_i) ** 3)
         )
         i_nak_t = eta_nak * i_nak_bar_t * pump_voltage_t
         cl_i_t = 156.5 / (5.0 + jnp.exp(-faraday * e_k_t / (gas * temperature)))
@@ -1595,40 +1541,24 @@ class ShortenFastTwitchModel(StrictModule):
         ionic_t = i_cl_t + i_ir_t + i_dr_t + i_na_t + i_nak_t
         rate_vs = -(ionic_s + axial_current) / capacitance
         rate_vt = -(ionic_t - axial_current / gamma) / capacitance
-        rate_ke = (
-            (i_ir + i_dr + i_k_rest - 2.0 * i_nak)
-            / (1000.0 * faraday * e_shell)
-            + (k_t - k_e) / tau_k2
-        )
-        rate_nae = (
-            (i_na + i_na_rest + 3.0 * i_nak)
-            / (1000.0 * faraday * e_shell)
-            + (na_t - na_e) / tau_na2
-        )
-        rate_ki = (
-            -f_t
-            * (i_ir_t + i_dr_t + i_k_rest - 2.0 * i_nak_t)
-            / (1000.0 * faraday * t_shell)
-            - (i_ir + i_dr + i_k_rest - 2.0 * i_nak)
-            / (1000.0 * faraday * s_shell)
-        )
-        rate_kt = (
-            (i_ir_t + i_dr_t + i_k_rest - 2.0 * i_nak_t)
-            / (1000.0 * faraday * t_shell)
-            - (k_t - k_e) / tau_k
-        )
-        rate_nai = (
-            -f_t
-            * (i_na_t + i_na_rest + 3.0 * i_nak_t)
-            / (1000.0 * faraday * t_shell)
-            - (i_na + i_na_rest + 3.0 * i_nak)
-            / (1000.0 * faraday * s_shell)
-        )
-        rate_nat = (
-            (i_na_t + i_na_rest + 3.0 * i_nak_t)
-            / (1000.0 * faraday * t_shell)
-            - (na_t - na_e) / tau_na
-        )
+        rate_ke = (i_ir + i_dr + i_k_rest - 2.0 * i_nak) / (
+            1000.0 * faraday * e_shell
+        ) + (k_t - k_e) / tau_k2
+        rate_nae = (i_na + i_na_rest + 3.0 * i_nak) / (1000.0 * faraday * e_shell) + (
+            na_t - na_e
+        ) / tau_na2
+        rate_ki = -f_t * (i_ir_t + i_dr_t + i_k_rest - 2.0 * i_nak_t) / (
+            1000.0 * faraday * t_shell
+        ) - (i_ir + i_dr + i_k_rest - 2.0 * i_nak) / (1000.0 * faraday * s_shell)
+        rate_kt = (i_ir_t + i_dr_t + i_k_rest - 2.0 * i_nak_t) / (
+            1000.0 * faraday * t_shell
+        ) - (k_t - k_e) / tau_k
+        rate_nai = -f_t * (i_na_t + i_na_rest + 3.0 * i_nak_t) / (
+            1000.0 * faraday * t_shell
+        ) - (i_na + i_na_rest + 3.0 * i_nak) / (1000.0 * faraday * s_shell)
+        rate_nat = (i_na_t + i_na_rest + 3.0 * i_nak_t) / (1000.0 * faraday * t_shell) - (
+            na_t - na_e
+        ) / tau_na
 
         rate_n = alpha_n * (1.0 - n) - beta_n * n
         rate_hk = (h_k_inf - h_k) / tau_h_k
@@ -1779,9 +1709,7 @@ class ShortenFastTwitchModel(StrictModule):
             axis=-1,
         )
         sarco_currents = jnp.stack((i_cl, i_ir, i_dr, i_na, i_nak), axis=-1)
-        tubular_currents = jnp.stack(
-            (i_cl_t, i_ir_t, i_dr_t, i_na_t, i_nak_t), axis=-1
-        )
+        tubular_currents = jnp.stack((i_cl_t, i_ir_t, i_dr_t, i_na_t, i_nak_t), axis=-1)
         valid = self.admissible(y, precomputed_rates=rates, t0=t0)
         return ShortenFastTwitchEvaluation(
             rates,
@@ -1827,9 +1755,7 @@ class ShortenFastTwitchModel(StrictModule):
         dt_ms: ArrayLike,
         /,
     ) -> Array:
-        evaluation = self.evaluate(
-            time_ms, state, stimulus_current_uA_per_cm2=0.0
-        )
+        evaluation = self.evaluate(time_ms, state, stimulus_current_uA_per_cm2=0.0)
         return _EXACT_GATES.update(
             state,
             evaluation.gate_steady_state,
@@ -1860,9 +1786,7 @@ class ShortenFastTwitchModel(StrictModule):
         )
         nonnegative_pools = jnp.all(y[..., 28:] >= -1.0e-8, axis=-1)
         free_troponin = (
-            self.parameters[69]
-            - y[..., 32]
-            - jnp.sum(y[..., 47:53], axis=-1)
+            self.parameters[69] - y[..., 32] - jnp.sum(y[..., 47:53], axis=-1)
             if t0 is None
             else jnp.asarray(t0)
         )
@@ -1935,8 +1859,7 @@ class _ShortenIntegrationSchedule(StrictModule, NonTrainableState):
         )
         if missing:
             raise ValueError(
-                "time_grid_ms must pin every stimulus start/end in its support; "
-                f"missing={missing}."
+                f"time_grid_ms must pin every stimulus start/end in its support; missing={missing}."
             )
         time_grid = jnp.asarray(grid)
         self.time_grid_ms = time_grid
@@ -1975,20 +1898,14 @@ class ShortenIntegrationPlan(StrictModule):
     ):
         if not isinstance(model, ShortenFastTwitchModel):
             raise TypeError("model must be a ShortenFastTwitchModel.")
-        selected_protocol = (
-            _DEFAULT_PULSE_PROTOCOL if protocol is None else protocol
-        )
+        selected_protocol = _DEFAULT_PULSE_PROTOCOL if protocol is None else protocol
         schedule = _ShortenIntegrationSchedule(time_grid_ms, selected_protocol)
         scalars = (relative_tolerance, absolute_tolerance, initial_step_ms)
         if any(
-            isinstance(value, bool)
-            or not isfinite(float(value))
-            or float(value) <= 0.0
+            isinstance(value, bool) or not isfinite(float(value)) or float(value) <= 0.0
             for value in scalars
         ):
-            raise ValueError(
-                "Integration tolerances and initial step must be positive."
-            )
+            raise ValueError("Integration tolerances and initial step must be positive.")
         if (
             not isinstance(maximum_steps, int)
             or isinstance(maximum_steps, bool)
@@ -2093,9 +2010,7 @@ class PreparedShortenIntegrator(StrictModule):
         index = jnp.asarray(step_index, dtype=jnp.int32)
         if index.shape != ():
             raise ValueError("step_index must be scalar.")
-        valid_index = (index >= 0) & (
-            index < self.plan.time_grid_ms.shape[0] - 1
-        )
+        valid_index = (index >= 0) & (index < self.plan.time_grid_ms.shape[0] - 1)
         index = jnp.clip(index, 0, self.plan.time_grid_ms.shape[0] - 2)
         start = self.plan.time_grid_ms[index].astype(state.values.dtype)
         end = self.plan.time_grid_ms[index + 1].astype(state.values.dtype)
@@ -2162,9 +2077,7 @@ class PreparedShortenIntegrator(StrictModule):
                 candidate.status,
             )
 
-        final, (times, values, successful, status) = jax.lax.scan(
-            advance, state, indices
-        )
+        final, (times, values, successful, status) = jax.lax.scan(advance, state, indices)
         del final
         times = jnp.concatenate((state.time_ms[None], times), axis=0)
         states = jnp.concatenate((state.values[None, ...], values), axis=0)

@@ -58,7 +58,7 @@ class TwistedN2SYMPlan(StrictModule):
         maximum_field_elements: int = 10_000_000,
         maximum_fermion_elements: int = 10_000_000,
     ):
-        shape = tuple(int(value) for value in lattice_shape)
+        shape = tuple(lattice_shape)
         if len(shape) != 2:
             raise ValueError("TwistedN2SYMPlan requires exactly two lattice axes.")
         rank = int(matrix_rank)
@@ -91,8 +91,7 @@ class TwistedN2SYMPlan(StrictModule):
         required = prod(shape) * 4 * rank * rank
         if maximum_fermions < 1 or required > maximum_fermions:
             raise ValueError(
-                f"Twisted Kähler–Dirac fields require {required} complex elements; "
-                f"capacity is {maximum_fermions}."
+                f"Twisted Kähler–Dirac fields require {required} complex elements; capacity is {maximum_fermions}."
             )
         link_frobenius_bound = sqrt(2.0) * rank * bound
         derivative_bound = 16.0 * link_frobenius_bound / bosonic.lattice_spacing

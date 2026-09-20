@@ -139,7 +139,7 @@ def test_large_objective_dual_and_failure_contracts_are_audited():
         project_conflict_free_direction(
             jnp.ones((1,)),
             (jnp.ones((1,)),),
-            active=jnp.ones((2,), dtype=bool),
+            active=jnp.ones((2,), dtype="bool"),
         )
 
 

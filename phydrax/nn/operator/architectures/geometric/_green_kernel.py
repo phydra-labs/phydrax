@@ -35,7 +35,7 @@ def _coordinates(
         (
             prod(case_shape) if case_shape else 1,
             prod(samples.sample_shape),
-            int(coordinates.shape[-1]),
+            coordinates.shape[-1],
         )
     )
 
@@ -54,18 +54,16 @@ def _values(
     if not sample_shape:
         raise ValueError(f"{name} must define a non-empty sample geometry.")
     prefix = case_shape + sample_shape
-    if tuple(int(size) for size in values.shape[: len(prefix)]) != prefix:
+    if tuple(values.shape[: len(prefix)]) != prefix:
         raise ValueError(
-            f"{name} values must start with case/sample shape {prefix}; "
-            f"got {values.shape}."
+            f"{name} values must start with case/sample shape {prefix}; got {values.shape}."
         )
-    trailing = tuple(int(size) for size in values.shape[len(prefix) :])
+    trailing = tuple(values.shape[len(prefix) :])
     if not trailing and channels == 1:
         values = values[..., None]
     elif trailing != (channels,):
         raise ValueError(
-            f"{name} values must be scalar or channel-last with {channels} "
-            f"channels; got trailing shape {trailing}."
+            f"{name} values must be scalar or channel-last with {channels} channels; got trailing shape {trailing}."
         )
     return values.reshape(
         (
@@ -88,8 +86,7 @@ def _physical_weights(
     )
     if not has_measure:
         raise ValueError(
-            f"{name} requires physical quadrature weights; unit-counting measures "
-            "are not used by GreenKernelOperator."
+            f"{name} requires physical quadrature weights; unit-counting measures are not used by GreenKernelOperator."
         )
     return samples.weights(case_shape=case_shape, normalized=False).reshape(
         (
@@ -101,7 +98,7 @@ def _physical_weights(
 
 def _apply_rows(model: _AbstractBaseModel, values: Array, key: EvalKey, /) -> Array:
     shape = values.shape[:-1]
-    flattened = values.reshape((-1, int(values.shape[-1])))
+    flattened = values.reshape((-1, values.shape[-1]))
     output = jax.vmap(lambda row: model(row, key=key))(flattened)
     return jnp.asarray(output).reshape(shape + (_get_size(model.out_size),))
 
@@ -254,9 +251,9 @@ class GreenKernelOperator(AbstractOperatorModel):
             batch.require_single_query(), batch.case_shape, "Query"
         )
         if (
-            int(forcing_coordinates.shape[-1]) != self.coord_dim
-            or int(boundary_coordinates.shape[-1]) != self.coord_dim
-            or int(query_coordinates.shape[-1]) != self.coord_dim
+            forcing_coordinates.shape[-1] != self.coord_dim
+            or boundary_coordinates.shape[-1] != self.coord_dim
+            or query_coordinates.shape[-1] != self.coord_dim
         ):
             raise ValueError(
                 "Forcing, boundary, and query coordinate dimensions must match coord_dim."
@@ -289,7 +286,7 @@ class GreenKernelOperator(AbstractOperatorModel):
         forcing_eval_key, boundary_eval_key, head_eval_key = split_eval_key(key, 3)
 
         chunks: list[Array] = []
-        for start in range(0, int(query_coordinates.shape[1]), self.query_chunk_size):
+        for start in range(0, query_coordinates.shape[1], self.query_chunk_size):
             query_chunk = query_coordinates[:, start : start + self.query_chunk_size]
             forcing_state = self._branch_integral(
                 self.forcing_kernel,

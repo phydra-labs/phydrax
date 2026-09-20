@@ -132,11 +132,7 @@ class EmbeddedLevelSetBodySet(StrictModule, NonTrainableState):
     ):
         bodies_ = tuple(sorted(bodies, key=lambda body: body.body_tag))
         operation_ = str(operation)
-        signs = (
-            (1,) * len(bodies_)
-            if body_signs is None
-            else tuple(int(value) for value in body_signs)
-        )
+        signs = (1,) * len(bodies_) if body_signs is None else tuple(body_signs)
         if (
             not bodies_
             or not all(isinstance(body, EmbeddedLevelSetBody) for body in bodies_)
@@ -169,7 +165,7 @@ class EmbeddedLevelSetBodySet(StrictModule, NonTrainableState):
     ) -> tuple[np.ndarray, np.ndarray]:
         values = np.stack(
             [
-                np.asarray(body.level_set(points, time, args), dtype=float)
+                np.asarray(body.level_set(points, time, args), dtype=np.float64)
                 for body in self.bodies
             ],
             axis=0,
@@ -182,7 +178,7 @@ class EmbeddedLevelSetBodySet(StrictModule, NonTrainableState):
             raise ValueError(
                 "Every embedded level set must return one finite scalar per point."
             )
-        signed = np.asarray(self.body_signs, dtype=float)[:, None] * values
+        signed = np.asarray(self.body_signs, dtype=np.float64)[:, None] * values
         if self.operation == "union":
             active = np.argmin(signed, axis=0)
             composite = np.min(signed, axis=0)
@@ -268,7 +264,7 @@ class MultivaluedCutCellEvidence(StrictModule, NonTrainableState):
             self.component_count,
             self.face_count,
             self.maximum_components_in_cell,
-        ) = tuple(int(value) for value in counts)
+        ) = tuple(counts)
         self.minimum_predicate_margin = margin
         self.maximum_volume_closure_defect = volume_defect
         self.maximum_face_closure_defect = face_defect
@@ -304,7 +300,7 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
     ] = eqx.field(static=True)
     face_active: Array
     face_owner_components: Array
-    face_neighbour_components: Array
+    face_neighbor_components: Array
     face_mesh_indices: Array
     face_kinds: Array
     face_body_tags: Array
@@ -337,7 +333,7 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
         component_tetrahedra: Sequence[Sequence[ArrayLike]],
         face_active: ArrayLike,
         face_owner_components: ArrayLike,
-        face_neighbour_components: ArrayLike,
+        face_neighbor_components: ArrayLike,
         face_mesh_indices: ArrayLike,
         face_kinds: ArrayLike,
         face_body_tags: ArrayLike,
@@ -353,7 +349,7 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
             mesh, CellMesh
         ):
             raise TypeError("Cut-cell complex requires canonical hierarchy and CellMesh.")
-        active = np.asarray(component_active, dtype=bool)
+        active = np.asarray(component_active, dtype=np.bool_)
         levels = np.asarray(component_levels)
         coordinates = np.asarray(component_cell_coordinates)
         slots = np.asarray(component_slots)
@@ -369,9 +365,9 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
             )
             for component in component_tetrahedra
         )
-        face_active_ = np.asarray(face_active, dtype=bool)
+        face_active_ = np.asarray(face_active, dtype=np.bool_)
         owners = np.asarray(face_owner_components)
-        neighbours = np.asarray(face_neighbour_components)
+        neighbors = np.asarray(face_neighbor_components)
         mesh_indices = np.asarray(face_mesh_indices)
         kinds = np.asarray(face_kinds)
         tags = np.asarray(face_body_tags)
@@ -392,7 +388,7 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
             or centers.shape != (component_capacity, dimension)
             or fractions.shape != active.shape
             or owners.shape != (face_capacity,)
-            or neighbours.shape != (face_capacity,)
+            or neighbors.shape != (face_capacity,)
             or kinds.shape != (face_capacity,)
             or mesh_indices.shape != (face_capacity,)
             or tags.shape != (face_capacity,)
@@ -416,13 +412,13 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
             )
         if np.any(face_active_ & ((owners < 0) | (owners >= component_capacity))):
             raise ValueError("Active cut faces require in-range owner components.")
-        safe_neighbours = np.maximum(neighbours, 0)
+        safe_neighbors = np.maximum(neighbors, 0)
         if np.any(
             face_active_
-            & (neighbours >= 0)
-            & ((safe_neighbours >= component_capacity) | ~active[safe_neighbours])
+            & (neighbors >= 0)
+            & ((safe_neighbors >= component_capacity) | ~active[safe_neighbors])
         ):
-            raise ValueError("Active interior cut faces require active neighbours.")
+            raise ValueError("Active interior cut faces require active neighbors.")
         self.hierarchy = hierarchy
         self.mesh = mesh
         self.component_active = jnp.asarray(active)
@@ -435,7 +431,7 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
         self.face_active = jnp.asarray(face_active_)
         self.face_owner_components = jnp.asarray(owners, dtype=jnp.int32)
         self.face_mesh_indices = jnp.asarray(mesh_indices, dtype=jnp.int32)
-        self.face_neighbour_components = jnp.asarray(neighbours, dtype=jnp.int32)
+        self.face_neighbor_components = jnp.asarray(neighbors, dtype=jnp.int32)
         self.component_tetrahedra = tetrahedra
         self.face_kinds = jnp.asarray(kinds, dtype=jnp.int32)
         self.face_body_tags = jnp.asarray(tags, dtype=jnp.int32)
@@ -459,7 +455,7 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
                 "component_cells": array_tree_fingerprint(coordinates[active]),
                 "component_slots": array_tree_fingerprint(slots[active]),
                 "face_routes": array_tree_fingerprint(
-                    np.stack((owners[face_active_], neighbours[face_active_]), axis=-1)
+                    np.stack((owners[face_active_], neighbors[face_active_]), axis=-1)
                 ),
                 "face_kinds": array_tree_fingerprint(kinds[face_active_]),
                 "body_set": body_set_id,
@@ -493,8 +489,8 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
         """Lower the active component complex to the canonical polyhedral FV plan."""
         from ..finite_volume._unstructured import UnstructuredFiniteVolumePlan
 
-        active = np.asarray(self.face_active, dtype=bool)
-        boundary = active & (np.asarray(self.face_neighbour_components) < 0)
+        active = np.asarray(self.face_active, dtype=np.bool_)
+        boundary = active & (np.asarray(self.face_neighbor_components) < 0)
         mesh_indices = np.asarray(self.face_mesh_indices, dtype=np.int32)
         kinds = np.asarray(self.face_kinds, dtype=np.int32)
         axes = np.asarray(self.face_axes, dtype=np.int32)
@@ -575,7 +571,7 @@ def _clip_face_positive(face: tuple[_Vertex, ...]) -> tuple[_Vertex, ...]:
 def _polygon_area_vector(vertices: tuple[_Vertex, ...]) -> np.ndarray:
     points = np.stack([vertex.point for vertex in vertices])
     origin = np.mean(points, axis=0)
-    area = np.zeros((3,), dtype=float)
+    area = np.zeros((3,), dtype=np.float64)
     for left, right in zip(points, np.roll(points, -1, axis=0), strict=True):
         area += 0.5 * np.cross(left - origin, right - origin)
     return area
@@ -651,7 +647,7 @@ def _polyhedron_moments(
     unique = {vertex.key: vertex.point for face in faces for vertex in face.vertices}
     reference = np.mean(np.stack(tuple(unique.values())), axis=0)
     volume = 0.0
-    first_moment = np.zeros((3,), dtype=float)
+    first_moment = np.zeros((3,), dtype=np.float64)
     for face in faces:
         points = np.stack([vertex.point for vertex in face.vertices])
         for index in range(1, points.shape[0] - 1):
@@ -711,11 +707,11 @@ def _tetrahedra_in_subcube(
     result = []
     for ordering in permutations(range(3)):
         point = np.asarray(lower, dtype=np.int64)
-        vertices = [tuple(int(value) for value in point)]
+        vertices = [tuple(point)]
         for axis in ordering:
             point = point.copy()
             point[axis] += 1
-            vertices.append(tuple(int(value) for value in point))
+            vertices.append(tuple(point))
         result.append(tuple(vertices))
     return tuple(result)
 
@@ -726,7 +722,7 @@ def _leaf_cells(
     cells = []
     for level in hierarchy.levels:
         for bucket in level.buckets:
-            leaf = np.asarray(bucket.leaf_active, dtype=bool)
+            leaf = np.asarray(bucket.leaf_active, dtype=np.bool_)
             for lane, box in enumerate(bucket.boxes):
                 if box is None:
                     continue
@@ -851,7 +847,7 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
                 axis.bounds[0]
                 for axis in self.hierarchy.topology.plan.grid.structured_axes
             ],
-            dtype=float,
+            dtype=np.float64,
         )
         records = []
         minimum_margin = np.inf
@@ -859,12 +855,14 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
         for level_index, cell_coordinate, patch_id in _leaf_cells(self.hierarchy):
             level = self.hierarchy.levels[level_index]
             divisions = self.subdivision * _fine_scale(self.hierarchy, level_index)
-            spacing = np.asarray(level.spacing, dtype=float)
-            cell_lower = lower_bounds + spacing * np.asarray(cell_coordinate, dtype=float)
+            spacing = np.asarray(level.spacing, dtype=np.float64)
+            cell_lower = lower_bounds + spacing * np.asarray(
+                cell_coordinate, dtype=np.float64
+            )
             indices = tuple(np.ndindex((divisions + 1,) * 3))
             references = np.stack(
                 [
-                    cell_lower + spacing * np.asarray(index, dtype=float) / divisions
+                    cell_lower + spacing * np.asarray(index, dtype=np.float64) / divisions
                     for index in indices
                 ]
             )
@@ -874,7 +872,7 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
                 else self.coordinate_map
             )
             points = np.asarray(
-                mapped(jnp.asarray(references), time_array, args), dtype=float
+                mapped(jnp.asarray(references), time_array, args), dtype=jnp.float64
             )
             values, tags = self.bodies.evaluate(jnp.asarray(points), time_array, args)
             if values.shape != (len(indices),) or np.any(~np.isfinite(values)):
@@ -915,7 +913,7 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
         leaf_cells = _leaf_cells(hierarchy)
         lower_bounds = np.asarray(
             [axis.bounds[0] for axis in hierarchy.topology.plan.grid.structured_axes],
-            dtype=float,
+            dtype=np.float64,
         )
         global_vertices: dict[tuple[Any, ...], int] = {}
         global_points: list[np.ndarray] = []
@@ -954,14 +952,16 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
             level = hierarchy.levels[level_index]
             fine_scale = _fine_scale(hierarchy, level_index)
             divisions = self.subdivision * fine_scale
-            spacing = np.asarray(level.spacing, dtype=float)
-            cell_lower = lower_bounds + spacing * np.asarray(cell_coordinate, dtype=float)
+            spacing = np.asarray(level.spacing, dtype=np.float64)
+            cell_lower = lower_bounds + spacing * np.asarray(
+                cell_coordinate, dtype=np.float64
+            )
             cell_upper = cell_lower + spacing
             sample_shape = (divisions + 1,) * 3
             sample_indices = tuple(np.ndindex(sample_shape))
             references = np.stack(
                 [
-                    cell_lower + spacing * np.asarray(index, dtype=float) / divisions
+                    cell_lower + spacing * np.asarray(index, dtype=np.float64) / divisions
                     for index in sample_indices
                 ]
             )
@@ -972,7 +972,7 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
             )
             points = np.asarray(
                 mapped(jnp.asarray(references), time_array, args),
-                dtype=float,
+                dtype=np.float64,
             )
             if points.shape != references.shape or np.any(~np.isfinite(points)):
                 raise ValueError(
@@ -1063,7 +1063,7 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
                     tuple[tuple[Any, ...], ...], list[tuple[int, _Face]]
                 ] = {}
                 volume = 0.0
-                moment = np.zeros((3,), dtype=float)
+                moment = np.zeros((3,), dtype=np.float64)
                 for fragment_index in group:
                     fragment = fragment_tuple[fragment_index]
                     volume += fragment.volume
@@ -1206,14 +1206,14 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
         if len(face_records) > face_capacity:
             raise ValueError("Cut-complex face capacity is exceeded.")
 
-        component_active = np.zeros((component_capacity,), dtype=bool)
+        component_active = np.zeros((component_capacity,), dtype=np.bool_)
         component_active[:active_component_count] = True
         component_levels_array = np.full((component_capacity,), -1, dtype=np.int32)
         component_coordinates_array = np.full((component_capacity, 3), -1, dtype=np.int32)
         component_slots_array = np.full((component_capacity,), -1, dtype=np.int32)
-        component_volumes_array = np.zeros((component_capacity,), dtype=float)
-        component_centers_array = np.zeros((component_capacity, 3), dtype=float)
-        component_fractions_array = np.zeros((component_capacity,), dtype=float)
+        component_volumes_array = np.zeros((component_capacity,), dtype=np.float64)
+        component_centers_array = np.zeros((component_capacity, 3), dtype=np.float64)
+        component_fractions_array = np.zeros((component_capacity,), dtype=np.float64)
         component_levels_array[:active_component_count] = np.asarray(component_levels)[
             component_order
         ]
@@ -1233,30 +1233,30 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
             component_fractions
         )[component_order]
 
-        face_active = np.zeros((face_capacity,), dtype=bool)
+        face_active = np.zeros((face_capacity,), dtype=np.bool_)
         face_owner = np.zeros((face_capacity,), dtype=np.int32)
-        face_neighbour = np.full((face_capacity,), -1, dtype=np.int32)
+        face_neighbor = np.full((face_capacity,), -1, dtype=np.int32)
         face_kind = np.zeros((face_capacity,), dtype=np.int32)
         face_tag = np.full((face_capacity,), -1, dtype=np.int32)
         face_axis = np.full((face_capacity,), -1, dtype=np.int32)
         face_side = np.full((face_capacity,), -1, dtype=np.int32)
         face_mesh_index = np.full((face_capacity,), -1, dtype=np.int32)
-        face_centers = np.zeros((face_capacity, 3), dtype=float)
-        face_area = np.zeros((face_capacity, 3), dtype=float)
-        face_measure = np.zeros((face_capacity,), dtype=float)
-        closure = np.zeros((active_component_count, 3), dtype=float)
+        face_centers = np.zeros((face_capacity, 3), dtype=np.float64)
+        face_area = np.zeros((face_capacity, 3), dtype=np.float64)
+        face_measure = np.zeros((face_capacity,), dtype=np.float64)
+        closure = np.zeros((active_component_count, 3), dtype=np.float64)
         embedded_counts: dict[tuple[int, tuple[int, ...]], int] = {}
         aperture_counts: dict[tuple[int, tuple[int, ...], int, int], int] = {}
-        for index, (owner, neighbour, face) in enumerate(face_records):
+        for index, (owner, neighbor, face) in enumerate(face_records):
             points = np.stack([vertex.point for vertex in face.vertices])
             area = _polygon_area_vector(face.vertices)
             center = np.mean(points, axis=0)
             measure = float(np.linalg.norm(area))
             if not np.isfinite(measure) or measure <= self.predicate_tolerance:
                 raise ValueError("Cut-complex face has unresolved measure.")
-            if neighbour >= 0:
+            if neighbor >= 0:
                 direction = (
-                    component_centers_array[neighbour] - component_centers_array[owner]
+                    component_centers_array[neighbor] - component_centers_array[owner]
                 )
                 if float(np.dot(area, direction)) < 0.0:
                     area = -area
@@ -1267,8 +1267,8 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
             face_mesh_index[index] = face_mesh_records[index]
             face_active[index] = True
             face_owner[index] = owner
-            face_neighbour[index] = neighbour
-            face_kind[index] = face.kind if neighbour < 0 else _FACE_INTERNAL
+            face_neighbor[index] = neighbor
+            face_kind[index] = face.kind if neighbor < 0 else _FACE_INTERNAL
             face_tag[index] = face.body_tag
             face_axis[index] = face.axis
             face_side[index] = face.side
@@ -1276,11 +1276,11 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
             face_area[index] = area
             face_measure[index] = measure
             closure[owner] += area
-            if neighbour >= 0:
-                closure[neighbour] -= area
+            if neighbor >= 0:
+                closure[neighbor] -= area
             owner_key = (
                 int(component_levels_array[owner]),
-                tuple(int(value) for value in component_coordinates_array[owner]),
+                tuple(component_coordinates_array[owner]),
             )
             if face.kind == _FACE_EMBEDDED:
                 embedded_counts[owner_key] = embedded_counts.get(owner_key, 0) + 1
@@ -1300,7 +1300,7 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
             raise ValueError("Cut face exceeds maximum_apertures_per_face.")
         closure_defect = np.linalg.norm(closure, axis=1)
         geometry_scale = max(1.0, float(np.max(face_measure[: len(face_records)])))
-        closure_tolerance = 512.0 * np.finfo(float).eps * geometry_scale
+        closure_tolerance = 512.0 * np.finfo(np.float64).eps * geometry_scale
         evidence = MultivaluedCutCellEvidence(
             leaf_cell_count=len(leaf_cells),
             regular_cell_count=regular_cells,
@@ -1331,7 +1331,7 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
             component_volume_fractions=component_fractions_array,
             face_active=face_active,
             face_owner_components=face_owner,
-            face_neighbour_components=face_neighbour,
+            face_neighbor_components=face_neighbor,
             face_kinds=face_kind,
             face_mesh_indices=face_mesh_index,
             face_body_tags=face_tag,

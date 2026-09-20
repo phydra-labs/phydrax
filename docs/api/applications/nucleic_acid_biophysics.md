@@ -246,7 +246,7 @@ and thermalization are not an experimentally calibrated folding clock.
 
 ## Secondary-state CTMCs (N4)
 
-`secondary_kinetics` compiles exhaustive bounded, linear, labelled-strand,
+`secondary_kinetics` compiles exhaustive bounded, linear, labeled-strand,
 pseudoknot-free states. `pair_loop` and `nearest_neighbor_loop` use admitted dimensionless
 molar G/(RT) tables at one temperature. Standard-state and fixed-volume association
 are distinct. Named rate laws supply independent inverse-time prefactors; only the

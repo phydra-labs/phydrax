@@ -35,7 +35,7 @@ CoupledCost: TypeAlias = Callable[[Any, StochasticLevelSpec], ArrayLike]
 
 
 def _nonnegative_scalar(value: ArrayLike, name: str, /) -> Array:
-    resolved = jnp.asarray(value, dtype=float)
+    resolved = jnp.asarray(value, dtype=jnp.float64)
     if resolved.shape != () or bool(~jnp.isfinite(resolved)) or bool(resolved < 0.0):
         raise ValueError(f"{name} must be a finite non-negative scalar.")
     return resolved
@@ -52,11 +52,10 @@ def _default_validity(observable: Array, sample_shape: tuple[int, ...], /) -> Ar
 
 
 def _validate_validity(value: ArrayLike, sample_shape: tuple[int, ...], /) -> Array:
-    valid = jnp.asarray(value, dtype=bool)
+    valid = jnp.asarray(value, dtype=jnp.bool_)
     if valid.shape != sample_shape:
         raise ValueError(
-            f"Level validity must have realization sample shape {sample_shape}; "
-            f"got {valid.shape}."
+            f"Level validity must have realization sample shape {sample_shape}; got {valid.shape}."
         )
     return valid
 
@@ -93,7 +92,7 @@ class CoupledLevelResult(StrictModule):
         coupling_id: str | None,
         state_transfer_id: str | None,
     ):
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         values = jnp.asarray(observable)
         if values.shape[: len(samples)] != samples:
             raise ValueError("observable does not begin with sample_shape.")
@@ -138,8 +137,8 @@ class CoupledHierarchyResult(StrictModule):
     ):
         records = tuple(levels)
         values = tuple(jnp.asarray(correction) for correction in corrections)
-        valid = tuple(jnp.asarray(mask, dtype=bool) for mask in correction_valid)
-        samples = tuple(int(size) for size in sample_shape)
+        valid = tuple(jnp.asarray(mask, dtype=jnp.bool_) for mask in correction_valid)
+        samples = tuple(sample_shape)
         if len(records) != hierarchy.num_levels:
             raise ValueError(
                 "Coupled records must align one-to-one with hierarchy levels."
@@ -247,8 +246,7 @@ def solve_coupled_hierarchy(
         if level.state_transfer_id is not None:
             if level.state_transfer_id not in transfers:
                 raise ValueError(
-                    f"Hierarchy level {level.level_id!r} requires state transfer "
-                    f"{level.state_transfer_id!r}."
+                    f"Hierarchy level {level.level_id!r} requires state transfer {level.state_transfer_id!r}."
                 )
             transfer = transfers[level.state_transfer_id]
             parent = hierarchy.levels[position - 1]

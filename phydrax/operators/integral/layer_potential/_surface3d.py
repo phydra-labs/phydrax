@@ -44,7 +44,7 @@ from ....linalg import (
 def _surface_support_id(atlas: BoundaryAtlas, /) -> str:
     return canonical_fingerprint(
         {
-            "kind": "surface-singular-support-3d-v1",
+            "kind": "surface-singular-support-3d",
             "source_id": atlas.source_id,
             "atlas_type": f"{type(atlas).__module__}.{type(atlas).__qualname__}",
             "atlas_arrays": array_tree_fingerprint(atlas),
@@ -84,7 +84,7 @@ def interpolate_surface_panel_density(
     first_weights = jnp.reciprocal(jnp.prod(first_difference + jnp.eye(order), axis=1))
     second_weights = jnp.reciprocal(jnp.prod(second_difference + jnp.eye(order), axis=1))
     vertices = panelization.panel_reference_vertices[panel_id]
-    affine = jnp.stack((vertices[1] - vertices[0], vertices[2] - vertices[0]), axis=-1)
+    jnp.stack((vertices[1] - vertices[0], vertices[2] - vertices[0]), axis=-1)
     local = (reference - vertices[0]) @ panelization.panel_reference_inverses[panel_id].T
     first_basis = jax.vmap(
         lambda value: barycentric_basis(value, first_nodes, first_weights)
@@ -161,7 +161,7 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
         panel_id = 0
         standard_vertices = np.asarray(
             ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
-            dtype=float,
+            dtype=np.float64,
         )
         standard_points = np.asarray(data.points)
         for chart in range(atlas.num_charts):
@@ -189,7 +189,7 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
                 np.asarray(_reference_inverse(jnp.asarray(affine), panel_id))
             )
             mapped = vertices[0] + standard_points @ affine.T
-            count = int(data.points.shape[0])
+            count = data.points.shape[0]
             references.extend(mapped)
             chart_indices.extend([chart] * count)
             panel_ids.extend([panel_id] * count)
@@ -199,7 +199,7 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
         if not references:
             raise ValueError("Surface panelization has no owned charts.")
         chart_array = jnp.asarray(chart_indices, dtype=jnp.int32)
-        reference_array = jnp.asarray(np.asarray(references), dtype=float)
+        reference_array = jnp.asarray(np.asarray(references), dtype=jnp.float64)
         frame = atlas.frame(chart_array, reference_array)
         physical_weights = jnp.asarray(weights) * frame.jacobian
         if not bool(jnp.all(jnp.isfinite(frame.origin))) or not bool(
@@ -213,20 +213,20 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
         self.geometry = geometry
         self.chart_indices = chart_array
         self.references = reference_array
-        self.panel_reference_vertices = jnp.asarray(reference_vertices, dtype=float)
+        self.panel_reference_vertices = jnp.asarray(reference_vertices, dtype=jnp.float64)
         self.points = frame.origin
         self.normals = frame.normal
         self.weights = physical_weights
         self.panel_ids = jnp.asarray(panel_ids, dtype=jnp.int32)
         self.quadrature_order = order
-        self.nodes_per_panel = int(data.points.shape[0])
+        self.nodes_per_panel = data.points.shape[0]
         rule_id = f"reference-triangle:{type(rule.rule).__name__}"
         self.quadrature_rule_id = rule_id
         self.source_support_id = support_id
-        self.panel_reference_inverses = jnp.asarray(reference_inverses, dtype=float)
+        self.panel_reference_inverses = jnp.asarray(reference_inverses, dtype=jnp.float64)
         self.panelization_id = canonical_fingerprint(
             {
-                "kind": "surface-panelization-3d-v2",
+                "kind": "surface-panelization-3d",
                 "source_support_id": support_id,
                 "quadrature_rule_id": rule_id,
                 "chart_indices": array_tree_fingerprint(chart_array),
@@ -242,7 +242,7 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
 
     @property
     def node_count(self) -> int:
-        return int(self.points.shape[0])
+        return self.points.shape[0]
 
     @property
     def panel_count(self) -> int:
@@ -276,7 +276,7 @@ class SurfaceTargetReport3D(AbstractTrialSpaceAdmissibility):
         target_side: Literal["interior", "exterior", "boundary"],
         accuracy_clearance: float = 0.0,
     ):
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim == 1:
             values = values[None, :]
         if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
@@ -310,7 +310,7 @@ class SurfaceTargetReport3D(AbstractTrialSpaceAdmissibility):
         scale = jnp.maximum(jnp.max(jnp.abs(values)), 1.0)
         tolerance = 64.0 * jnp.finfo(values.dtype).eps * scale
         on_boundary = jnp.abs(signed_distance) <= tolerance
-        inside = jnp.asarray(geometry.contains(values), dtype=bool)
+        inside = jnp.asarray(geometry.contains(values), dtype=jnp.bool_)
         if target_side == "interior":
             side_matches = jnp.all(inside & (signed_distance < -tolerance))
         elif target_side == "exterior":
@@ -325,13 +325,13 @@ class SurfaceTargetReport3D(AbstractTrialSpaceAdmissibility):
         self.pde_membership_valid = membership
         self.requested_accuracy_clearance = jnp.asarray(clearance)
         self.accuracy_supported = minimum >= clearance
-        self.target_count = int(values.shape[0])
+        self.target_count = values.shape[0]
         self.singular_support_id = panelization.source_support_id
         self.target_side = target_side
         self.target_fingerprint = trial_target_fingerprint(values, 3)
         self.report_id = canonical_fingerprint(
             {
-                "kind": "surface-target-report-3d-v1",
+                "kind": "surface-target-report-3d",
                 "support_id": panelization.source_support_id,
                 "target_fingerprint": self.target_fingerprint,
                 "target_side": target_side,

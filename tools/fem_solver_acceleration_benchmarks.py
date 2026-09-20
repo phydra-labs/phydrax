@@ -62,7 +62,7 @@ def run():
 
     return {
         "collocated_apply_seconds": collocated_time,
-        "collocated_dofs": int(value.size),
+        "collocated_dofs": value.size,
         "history_effective_dimension": int(diagnostics.effective_dimension),
         "history_projection_residual": float(diagnostics.projection_residual_norm),
         "history_guess_norm": float(jnp.linalg.norm(guess)),

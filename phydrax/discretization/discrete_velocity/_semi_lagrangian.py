@@ -147,14 +147,13 @@ class PeriodicUniformGridDepartureTransfer(StrictModule, NonTrainableState):
         periodic_axes: Sequence[bool] = (True, True),
         dtype: object = jnp.float64,
     ):
-        shape = tuple(int(value) for value in spatial_shape)
+        shape = tuple(spatial_shape)
         spacing = tuple(float(value) for value in cell_spacing)
         offset = tuple(float(value) for value in offset_in_cells)
         periodic = tuple(bool(value) for value in periodic_axes)
         if len(shape) != 2 or any(value < 2 for value in shape):
             raise ValueError(
-                "Periodic multilinear departure transfer requires a 2-D shape "
-                "with at least two cells per axis."
+                "Periodic multilinear departure transfer requires a 2-D shape with at least two cells per axis."
             )
         if len(spacing) != 2 or any(
             not isfinite(value) or value <= 0.0 for value in spacing
@@ -340,7 +339,7 @@ class SemiLagrangianTransferRequirements(StrictModule, NonTrainableState):
         self.exact_on = exact
         self.requirement_id = canonical_fingerprint(
             {
-                "kind": "semi-lagrangian-transfer-requirements-v1",
+                "kind": "semi-lagrangian-transfer-requirements",
                 "constant_preserving": bool(constant_preserving),
                 "conservative": bool(conservative),
                 "positivity_preserving": bool(positivity_preserving),
@@ -514,7 +513,7 @@ class PreparedOffLatticeSemiLagrangianDVM(StrictModule, NonTrainableState):
         self.target_shape = target.vector_space.shape
         self.prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-off-lattice-semi-lagrangian-dvm-v1",
+                "kind": "prepared-off-lattice-semi-lagrangian-dvm",
                 "quadrature": quadrature.quadrature_id,
                 "transfers": [transfer.transfer_id for transfer in transfers],
                 "requirements": requirements_.requirement_id,
@@ -687,7 +686,7 @@ class PreparedCoupledD2V37OffLatticeTransport(StrictModule, NonTrainableState):
             raise TypeError(
                 "Coupled D2V37 transport requires prepared periodic multilinear transfers."
             )
-        scaled = np.asarray(quadrature.velocities, dtype=float)
+        scaled = np.asarray(quadrature.velocities, dtype=np.float64)
         scaled = scaled * population_transport.time_step / np.asarray(spacing)[None, :]
         for index, transfer in enumerate(transfers):
             if transfer.cell_spacing != spacing or not all(transfer.periodic_axes):
@@ -697,7 +696,7 @@ class PreparedCoupledD2V37OffLatticeTransport(StrictModule, NonTrainableState):
             actual = np.asarray(transfer.offset_in_cells)
             expected_offset = scaled[index]
             scale = max(float(np.max(np.abs(expected_offset))), 1.0)
-            offset_tolerance = 64.0 * np.finfo(float).eps * scale
+            offset_tolerance = 64.0 * np.finfo(np.float64).eps * scale
             if float(np.max(np.abs(actual - expected_offset))) > offset_tolerance:
                 raise ValueError(
                     "Prepared departure offsets must equal velocity*time_step/cell_spacing."
@@ -783,7 +782,7 @@ class PreparedCoupledD2V37OffLatticeTransport(StrictModule, NonTrainableState):
             raise ValueError("cell_spacing must contain two finite positive values.")
         if not isfinite(step) or step <= 0.0:
             raise ValueError("time_step must be finite and positive.")
-        scaled = np.asarray(quadrature.velocities, dtype=float)
+        scaled = np.asarray(quadrature.velocities, dtype=np.float64)
         scaled = scaled * step / np.asarray(spacing)[None, :]
         transfers = tuple(
             PeriodicUniformGridDepartureTransfer(
@@ -973,8 +972,7 @@ class PreparedCoupledD2V37OffLatticeTransport(StrictModule, NonTrainableState):
         checked_particles = eqx.error_if(
             state.particle_populations,
             ~self._step_matches(step),
-            "Coupled D2V37 transport refuses a time step other than its "
-            "prepared fixed step.",
+            "Coupled D2V37 transport refuses a time step other than its prepared fixed step.",
         )
         checked_state = SmoothCompressibleKineticState(
             checked_particles, state.total_energy_populations

@@ -58,13 +58,12 @@ def _sphere_points(
     tolerance: float,
     /,
 ) -> Array:
-    array = jnp.asarray(points, dtype=float)
+    array = jnp.asarray(points, dtype=jnp.float64)
     if array.ndim == 1:
         array = array[None, :]
-    if array.ndim != 2 or int(array.shape[1]) != ambient_dimension:
+    if array.ndim != 2 or array.shape[1] != ambient_dimension:
         raise ValueError(
-            f"Sphere points must have shape ({ambient_dimension},) or "
-            f"(point, {ambient_dimension})."
+            f"Sphere points must have shape ({ambient_dimension},) or (point, {ambient_dimension})."
         )
     norms = jnp.sum(array * array, axis=-1)
     squared_radius = float(radius) ** 2
@@ -169,7 +168,9 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
             self.multiplier,
             self.spectrum.eigenvalues / self.radius**2,
             float(self.spectrum.dimension),
-            level_multiplicities=jnp.asarray(self.spectrum.multiplicities, dtype=float),
+            level_multiplicities=jnp.asarray(
+                self.spectrum.multiplicities, dtype=jnp.float64
+            ),
             normalize=self.normalize,
         )
 
@@ -256,12 +257,12 @@ def _real_matrix_points(
     *,
     special: bool,
 ) -> Array:
-    array = jnp.asarray(points, dtype=float)
+    array = jnp.asarray(points, dtype=jnp.float64)
     if array.shape == (rows, columns):
         array = array[None, :, :]
-    elif array.ndim == 1 and int(array.size) == rows * columns:
+    elif array.ndim == 1 and array.size == rows * columns:
         array = array.reshape((1, rows, columns))
-    elif array.ndim == 2 and int(array.shape[1]) == rows * columns:
+    elif array.ndim == 2 and array.shape[1] == rows * columns:
         array = array.reshape((array.shape[0], rows, columns))
     if array.ndim != 3 or tuple(array.shape[1:]) != (rows, columns):
         raise ValueError(
@@ -290,9 +291,9 @@ def _complex_matrix_points(
     array = jnp.asarray(points)
     if array.shape == (dimension, dimension):
         array = array[None, :, :]
-    elif array.ndim == 1 and int(array.size) == dimension * dimension:
+    elif array.ndim == 1 and array.size == dimension * dimension:
         array = array.reshape((1, dimension, dimension))
-    elif array.ndim == 2 and int(array.shape[1]) == dimension * dimension:
+    elif array.ndim == 2 and array.shape[1] == dimension * dimension:
         array = array.reshape((array.shape[0], dimension, dimension))
     if array.ndim != 3 or tuple(array.shape[1:]) != (dimension, dimension):
         raise ValueError(
@@ -354,7 +355,7 @@ class AbstractHomogeneousPolynomialKernel(AbstractPositiveDefiniteKernel):
         raise NotImplementedError
 
     def _coefficients(self) -> Array:
-        levels = jnp.arange(self.max_level + 1, dtype=float)
+        levels = jnp.arange(self.max_level + 1, dtype=jnp.float64)
         eigenvalues = levels * (levels + self.casimir_shift)
         return _spectral_coefficients(
             self.multiplier,
@@ -366,7 +367,7 @@ class AbstractHomogeneousPolynomialKernel(AbstractPositiveDefiniteKernel):
 
     def _series(self, similarity: Array, /) -> Array:
         coefficients = self._coefficients()
-        value = jnp.zeros_like(similarity, dtype=jnp.result_type(similarity, float))
+        value = jnp.zeros_like(similarity, dtype=jnp.result_type(similarity, jnp.float64))
         for coefficient in coefficients[::-1]:
             value = coefficient + similarity * value
         return value

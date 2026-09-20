@@ -75,14 +75,14 @@ class SlidingMortarPlan(StrictModule, NonTrainableState):
                     value,
                     backend="jax",
                 )
-                neighbour = -ein.contract(
+                neighbor = -ein.contract(
                     "q,qi,qv->iv",
                     prepared.physical_weights,
-                    prepared.neighbour_basis,
+                    prepared.neighbor_basis,
                     value,
                     backend="jax",
                 )
-                contributions.append((owner, neighbour))
+                contributions.append((owner, neighbor))
         return tuple(contributions)
 
 
@@ -166,10 +166,10 @@ class OversetConnectivity(StrictModule, NonTrainableState):
     ):
         donors = np.asarray(donor_cells, dtype=np.int32)
         receptors = np.asarray(receptor_cells, dtype=np.int32)
-        interpolation = np.asarray(interpolation_weights, dtype=float)
-        donor_weights = np.asarray(donor_content_weights, dtype=float)
-        receptor_weights = np.asarray(receptor_content_weights, dtype=float)
-        active_ = np.asarray(active, dtype=bool)
+        interpolation = np.asarray(interpolation_weights, dtype=np.float64)
+        donor_weights = np.asarray(donor_content_weights, dtype=np.float64)
+        receptor_weights = np.asarray(receptor_content_weights, dtype=np.float64)
+        active_ = np.asarray(active, dtype=np.bool_)
         count = receptors.shape[0]
         if (
             donors.ndim != 2

@@ -46,7 +46,7 @@ def _asset(values):
         quantity_kind="ct_number",
         compatibility_key="imaging.ct_number",
     )
-    array = np.asarray(values, dtype=float).reshape((-1, 1, 1))
+    array = np.asarray(values, dtype="float64").reshape((-1, 1, 1))
     return phx.imaging.MedicalImageAsset(
         "synthetic-ct",
         "ct",

@@ -52,7 +52,7 @@ class PointInTimePanel(StrictModule, NonTrainableState):
         event_host = np.asarray(event_time_ns, dtype=np.int64)
         decision_host = np.asarray(decision_time_ns, dtype=np.int64)
         value_host = np.asarray(values)
-        valid_host = np.asarray(valid_mask, dtype=bool)
+        valid_host = np.asarray(valid_mask, dtype=np.bool_)
         status_host = np.asarray(status, dtype=np.int32)
         available_host = np.asarray(availability_time_ns, dtype=np.int64)
         if event_host.ndim != 1 or decision_host.shape != event_host.shape:
@@ -129,8 +129,8 @@ class PointInTimePanel(StrictModule, NonTrainableState):
             [value.epoch_nanoseconds for value in decisions], dtype=np.int64
         )
         shape = (len(events), layout.factor_count)
-        values = np.zeros(shape, dtype=float)
-        valid = np.zeros(shape, dtype=bool)
+        values = np.zeros(shape, dtype=np.float64)
+        valid = np.zeros(shape, dtype=np.bool_)
         status = np.zeros(shape, dtype=np.int32)
         available = np.zeros(shape, dtype=np.int64)
         identifiers = [[""] * shape[1] for _ in range(shape[0])]
@@ -321,10 +321,10 @@ class PreparedMarketEventStream(StrictModule, NonTrainableState):
             factor.quote_key.key_id: index for index, factor in enumerate(layout.keys)
         }
         factor_index = np.full((capacity,), -1, dtype=np.int32)
-        values = np.zeros((capacity,), dtype=float)
+        values = np.zeros((capacity,), dtype=np.float64)
         event = np.zeros((capacity,), dtype=np.int64)
         available = np.zeros((capacity,), dtype=np.int64)
-        valid = np.zeros((capacity,), dtype=bool)
+        valid = np.zeros((capacity,), dtype=np.bool_)
         for index, observation in enumerate(selected):
             factor_index[index] = factor_lookup.get(observation.key.key_id, -1)
             values[index] = float(np.asarray(observation.value))

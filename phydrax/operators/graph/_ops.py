@@ -39,8 +39,7 @@ def _require_node_batch(batch: Any, /) -> GraphBatch:
         raise TypeError("Graph operators require GraphBatch evaluation.")
     if batch.component_kind != "nodes":
         raise ValueError(
-            "This graph operator must be evaluated on a GraphBatch over Nodes(). "
-            f"Got {batch.component_kind!r}."
+            f"This graph operator must be evaluated on a GraphBatch over Nodes(). Got {batch.component_kind!r}."
         )
     return batch
 
@@ -50,27 +49,26 @@ def _require_edge_batch(batch: Any, /) -> GraphBatch:
         raise TypeError("Graph operators require GraphBatch evaluation.")
     if batch.component_kind != "edges":
         raise ValueError(
-            "This graph operator must be evaluated on a GraphBatch over Edges(). "
-            f"Got {batch.component_kind!r}."
+            f"This graph operator must be evaluated on a GraphBatch over Edges(). Got {batch.component_kind!r}."
         )
     return batch
 
 
 def _num_nodes(batch: GraphBatch, /) -> int:
     if batch.graph.node_mask is not None:
-        return int(batch.graph.node_mask.shape[0])
+        return batch.graph.node_mask.shape[0]
     return int(batch.graph.num_nodes)
 
 
 def _num_edges(batch: GraphBatch, /) -> int:
     if batch.graph.edge_mask is not None:
-        return int(batch.graph.edge_mask.shape[0])
+        return batch.graph.edge_mask.shape[0]
     return int(batch.graph.num_edges)
 
 
 def _num_graphs(batch: GraphBatch, /) -> int:
     if batch.graph.graph_mask is not None:
-        return int(batch.graph.graph_mask.shape[0])
+        return batch.graph.graph_mask.shape[0]
     return int(batch.graph.num_graphs)
 
 
@@ -123,7 +121,7 @@ def _entity_payload(batch: GraphBatch, kind: GraphComponentKind, /) -> Any:
 
 
 def _pad_ids_to_length(ids: jnp.ndarray, size: int, /) -> jnp.ndarray:
-    pad = int(size) - int(ids.shape[0])
+    pad = int(size) - ids.shape[0]
     if pad <= 0:
         return ids
     return jnp.concatenate([ids, jnp.full((pad,), -1, dtype=jnp.int32)], axis=0)
@@ -178,7 +176,7 @@ def _remap_graph_axis_field(
         return field
     axis_pos = field.dims.index(axis)
     data = jnp.moveaxis(jnp.asarray(field.data), axis_pos, 0)
-    if int(data.shape[0]) != int(old_graph_ids.shape[0]):
+    if data.shape[0] != old_graph_ids.shape[0]:
         return field
 
     valid = old_graph_ids >= 0
@@ -187,7 +185,7 @@ def _remap_graph_axis_field(
     while mask.ndim < data.ndim:
         mask = jnp.expand_dims(mask, axis=-1)
     totals = segment_sum(data * mask, segment_ids, num_graphs)
-    counts = segment_sum(valid.astype(float), segment_ids, num_graphs)
+    counts = segment_sum(valid.astype("float64"), segment_ids, num_graphs)
     scale = jnp.where(counts > 0, 1.0 / counts, 0.0)
     while scale.ndim < totals.ndim:
         scale = jnp.expand_dims(scale, axis=-1)
@@ -367,7 +365,7 @@ class _GraphDegreeCallable(StrictModule, BatchEvaluator):
             raise ValueError("degree requires explicit graph senders/receivers.")
 
         n = _num_nodes(batch)
-        ones = jnp.ones((batch.graph.senders.shape[0],), dtype=float)
+        ones = jnp.ones((batch.graph.senders.shape[0],), dtype=jnp.float64)
         if self.mode == "in":
             deg = segment_sum(ones, batch.graph.receivers, n)
         elif self.mode == "out":
@@ -456,7 +454,7 @@ class _GraphLaplacianCallable(StrictModule, BatchEvaluator):
         messages = data[receivers] - data[senders]
 
         if self.normalize:
-            ones = jnp.ones((senders.shape[0],), dtype=float)
+            ones = jnp.ones((senders.shape[0],), dtype=jnp.float64)
             deg_in = segment_sum(ones, receivers, n)
             scale = jnp.where(deg_in > 0, 1.0 / deg_in, 0.0)
             messages = messages * scale[receivers].reshape(

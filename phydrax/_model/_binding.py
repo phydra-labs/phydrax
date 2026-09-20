@@ -71,7 +71,7 @@ class ModelBinding:
         for array in arrays:
             if array.ndim < 2:
                 continue
-            candidate = tuple(int(size) for size in array.shape[:-1])
+            candidate = tuple(array.shape[:-1])
             if leading_shape is None:
                 leading_shape = candidate
             elif candidate != leading_shape:
@@ -84,7 +84,7 @@ class ModelBinding:
 
         parts: list[Any] = []
         for array in arrays:
-            shape = tuple(int(size) for size in array.shape)
+            shape = tuple(array.shape)
             if array.ndim == 0:
                 part = jnp.broadcast_to(array, leading_shape + (1,))
             elif shape == leading_shape:

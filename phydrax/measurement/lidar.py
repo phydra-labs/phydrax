@@ -151,10 +151,10 @@ def cartesianize_lidar_scan(scan: LidarScan, /) -> LidarPointProduct:
             support.coordinate_contract.length_unit,
         )
     )
-    ranges = np.asarray(range_field.values, dtype=float) * factor
+    ranges = np.asarray(range_field.values, dtype=np.float64) * factor
     valid = (
-        np.asarray(range_field.valid_mask, dtype=bool)
-        & np.asarray(support.active_mask, dtype=bool)
+        np.asarray(range_field.valid_mask, dtype=np.bool_)
+        & np.asarray(support.active_mask, dtype=np.bool_)
         & np.isfinite(ranges)
         & (ranges >= np.asarray(support.near))
         & (ranges <= np.asarray(support.far))
@@ -202,7 +202,7 @@ def cartesianize_lidar_scan(scan: LidarScan, /) -> LidarPointProduct:
             point_support,
             point_sampling,
             asset.field.values,
-            np.asarray(asset.field.valid_mask, dtype=bool) & valid,
+            np.asarray(asset.field.valid_mask, dtype=np.bool_) & valid,
             asset.field.uncertainty,
             asset.field.quality_flags,
         )

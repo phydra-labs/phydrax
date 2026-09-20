@@ -48,11 +48,11 @@ class SpatialChemoMechanicalSystem:
         *,
         tolerance: float = 1e-10,
     ) -> SpatialChemoMechanicalSystem:
-        mechanical = np.asarray(mechanical_stiffness, dtype=float)
-        chemical = np.asarray(chemical_hessian, dtype=float)
-        coupling = np.asarray(chemical_expansion_coupling, dtype=float)
-        mobility = np.asarray(mobility_laplacian, dtype=float)
-        weights = np.asarray(storage_weights, dtype=float)
+        mechanical = np.asarray(mechanical_stiffness, dtype=np.float64)
+        chemical = np.asarray(chemical_hessian, dtype=np.float64)
+        coupling = np.asarray(chemical_expansion_coupling, dtype=np.float64)
+        mobility = np.asarray(mobility_laplacian, dtype=np.float64)
+        weights = np.asarray(storage_weights, dtype=np.float64)
         if mechanical.ndim != 2 or mechanical.shape[0] != mechanical.shape[1]:
             raise ValueError("Chemo-mechanical stiffness must be square.")
         if chemical.ndim != 2 or chemical.shape[0] != chemical.shape[1]:

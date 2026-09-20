@@ -44,11 +44,7 @@ class BasisSpectralConvND(StrictModule):
     ):
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
-        modes = (
-            (int(n_modes),)
-            if isinstance(n_modes, int)
-            else tuple(int(mode) for mode in n_modes)
-        )
+        modes = (int(n_modes),) if isinstance(n_modes, int) else tuple(n_modes)
         bases_value = (
             (cast(ModalTransformKind, bases),) * len(modes)
             if isinstance(bases, str)
@@ -97,11 +93,11 @@ class BasisSpectralConvND(StrictModule):
             raise ValueError(
                 f"Expected {ndim} OperatorAxis values, got {len(axes_value)}."
             )
-        if array.ndim < ndim + 1 or int(array.shape[-1]) != self.in_channels:
+        if array.ndim < ndim + 1 or array.shape[-1] != self.in_channels:
             raise ValueError(
                 "BasisSpectralConvND expects (..., spatial..., in_channels) input."
             )
-        sample_shape = tuple(int(size) for size in array.shape[-ndim - 1 : -1])
+        sample_shape = tuple(array.shape[-ndim - 1 : -1])
         if sample_shape != tuple(axis.size for axis in axes_value):
             raise ValueError(
                 f"Input spatial shape {sample_shape} does not match axis sizes "

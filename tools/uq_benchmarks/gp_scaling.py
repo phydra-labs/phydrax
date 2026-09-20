@@ -329,7 +329,7 @@ def _case(
     exact_log_probability = exact_factor.log_probability(residual)
     cagp_elbo = computation_aware_factor.elbo(residual)
     cagp_elbo_gap = exact_log_probability - cagp_elbo
-    dtype_bytes = int(observations.dtype.itemsize)
+    dtype_bytes = observations.dtype.itemsize
     exact_factor_bytes = dtype_bytes * exact_factor.factor_storage_elements
     fitc_factor_bytes = dtype_bytes * sparse_factor.factor_storage_elements
     cagp_factor_bytes = dtype_bytes * computation_aware_factor.factor_storage_elements
@@ -631,8 +631,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         status = "PASS" if scenario.passed else "FAIL"
         print(f"{status} {scenario.name}")
     print(
-        f"{report.summary['scenarios_passed']}/{len(report.scenarios)} cases passed "
-        f"in {report.duration_seconds:.3f}s"
+        f"{report.summary['scenarios_passed']}/{len(report.scenarios)} cases passed in {report.duration_seconds:.3f}s"
     )
     print(output)
     return 0 if report.passed or args.no_fail else 1

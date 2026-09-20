@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -53,7 +55,7 @@ def _identifier(value: str, name: str) -> str:
 def _ifc2_keys(
     relation: EdgeRelation, translations: np.ndarray
 ) -> dict[tuple[int, int, tuple[int, ...]], int]:
-    valid = np.asarray(relation.valid, dtype=bool)
+    valid = np.asarray(relation.valid, dtype=np.bool_)
     sources = np.asarray(relation.source_indices)
     targets = np.asarray(relation.target_indices)
     result: dict[tuple[int, int, tuple[int, ...]], int] = {}
@@ -61,7 +63,7 @@ def _ifc2_keys(
         key = (
             int(sources[route]),
             int(targets[route]),
-            tuple(int(x) for x in translations[route]),
+            tuple(translations[route]),
         )
         if key in result:
             raise ValueError(
@@ -92,8 +94,8 @@ def _ifc3_permutation_indices(
     for route in np.flatnonzero(valid):
         key = (
             *(int(value) for value in atom_triplets[route]),
-            tuple(int(value) for value in translations[route, 0]),
-            tuple(int(value) for value in translations[route, 1]),
+            tuple(translations[route, 0]),
+            tuple(translations[route, 1]),
         )
         if key in keys:
             raise ValueError("IFC3 routes must not contain duplicate triplet records.")
@@ -117,8 +119,8 @@ def _ifc3_permutation_indices(
                 int(atoms[permutation[0]]),
                 int(atoms[permutation[1]]),
                 int(atoms[permutation[2]]),
-                tuple(int(value) for value in cells[permutation[1]] - origin),
-                tuple(int(value) for value in cells[permutation[2]] - origin),
+                tuple(cells[permutation[1]] - origin),
+                tuple(cells[permutation[2]] - origin),
             )
             if key not in keys:
                 raise ValueError(
@@ -222,7 +224,7 @@ class IFCConstraintEvidence(StrictModule, NonTrainableState):
         ).reshape(())
         self.constraint_rank = int(rank)
         self.constraint_condition_number = float(condition)
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "ifc-constraint-evidence",
@@ -251,7 +253,7 @@ def _constraint_matrix(
     routes = relation.capacity
     columns = routes * 9
     rows: list[np.ndarray] = []
-    valid = np.asarray(relation.valid, dtype=bool)
+    valid = np.asarray(relation.valid, dtype=np.bool_)
     source = np.asarray(relation.source_indices)
     target = np.asarray(relation.target_indices)
     if policy.enforce_pair_symmetry:
@@ -261,7 +263,7 @@ def _constraint_matrix(
                 continue
             for alpha in range(3):
                 for beta in range(3):
-                    row = np.zeros((columns,), dtype=float)
+                    row = np.zeros((columns,), dtype=np.float64)
                     row[route * 9 + alpha * 3 + beta] = 1.0
                     row[partner * 9 + beta * 3 + alpha] -= 1.0
                     if np.any(row):
@@ -271,7 +273,7 @@ def _constraint_matrix(
             selected = np.flatnonzero(valid & (target == atom))
             for alpha in range(3):
                 for beta in range(3):
-                    row = np.zeros((columns,), dtype=float)
+                    row = np.zeros((columns,), dtype=np.float64)
                     row[selected * 9 + alpha * 3 + beta] = 1.0
                     if np.any(row):
                         rows.append(row)
@@ -284,7 +286,7 @@ def _constraint_matrix(
             for alpha in range(3):
                 for beta in range(3):
                     for gamma in range(beta + 1, 3):
-                        row = np.zeros((columns,), dtype=float)
+                        row = np.zeros((columns,), dtype=np.float64)
                         row[selected * 9 + alpha * 3 + beta] += displacement[
                             selected, gamma
                         ]
@@ -293,7 +295,7 @@ def _constraint_matrix(
                         ]
                         if np.any(row):
                             rows.append(row)
-    return np.stack(rows) if rows else np.zeros((0, columns), dtype=float)
+    return np.stack(rows) if rows else np.zeros((0, columns), dtype=np.float64)
 
 
 def _residuals(
@@ -304,7 +306,7 @@ def _residuals(
     cell: PeriodicCell,
     reverse: np.ndarray,
 ) -> np.ndarray:
-    valid = np.asarray(relation.valid, dtype=bool)
+    valid = np.asarray(relation.valid, dtype=np.bool_)
     source = np.asarray(relation.source_indices)
     target = np.asarray(relation.target_indices)
     pair = float(
@@ -321,12 +323,12 @@ def _residuals(
         acoustic = max(
             acoustic, float(np.max(np.abs(np.sum(values[selected], axis=0)), initial=0.0))
         )
-        moment = np.einsum("eab,eg->abg", values[selected], displacement[selected])
+        moment = ein.contract("eab,eg->abg", values[selected], displacement[selected])
         rotation = max(
             rotation,
             float(np.max(np.abs(moment - np.swapaxes(moment, 1, 2)), initial=0.0)),
         )
-    return np.asarray((pair, acoustic, rotation), dtype=float)
+    return np.asarray((pair, acoustic, rotation), dtype=np.float64)
 
 
 def _project_ifc2(
@@ -341,10 +343,10 @@ def _project_ifc2(
     matrix = _constraint_matrix(
         relation, translations, fractional_positions, cell, reverse, policy
     )
-    vector = raw.reshape((-1,)).astype(float, copy=False)
+    vector = raw.reshape((-1,)).astype("float64", copy=False)
     if matrix.shape[0]:
         _, singular, vh = np.linalg.svd(matrix, full_matrices=False)
-        threshold = np.finfo(float).eps * max(matrix.shape) * singular[0]
+        threshold = np.finfo(np.float64).eps * max(matrix.shape) * singular[0]
         rank = int(np.count_nonzero(singular > threshold))
         basis = vh[:rank]
         corrected_vector = vector - basis.T @ (basis @ vector)
@@ -362,7 +364,7 @@ def _project_ifc2(
     )
     norm = np.linalg.norm(vector)
     relative = float(
-        np.linalg.norm(corrected_vector - vector) / max(norm, np.finfo(float).tiny)
+        np.linalg.norm(corrected_vector - vector) / max(norm, np.finfo(np.float64).tiny)
     )
     selected = np.asarray(
         (
@@ -553,9 +555,9 @@ class ThirdOrderForceConstants(StrictModule, NonTrainableState):
         ):
             raise ValueError("IFC3 translations must have integer shape (E,2,rank).")
         valid_ = (
-            np.ones((routes,), dtype=bool)
+            np.ones((routes,), dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if valid_.shape != (routes,) or np.any(
             valid_
@@ -786,7 +788,7 @@ class FiniteDisplacementIFC2Result(StrictModule, NonTrainableState):
         ).reshape(())
         self.refinement_residual = jnp.asarray(refinement, dtype=dtype).reshape(())
         self.force_evaluations = int(force_evaluations)
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.result_id = canonical_fingerprint(
             {
                 "kind": "finite-displacement-ifc2-result",

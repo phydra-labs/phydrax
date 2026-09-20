@@ -83,7 +83,7 @@ class FLIPSolidBoundaryPlan(StrictModule, NonTrainableState):
         start = particles.position
         end = jnp.asarray(proposed_position, dtype=start.dtype)
         masses = jnp.asarray(mass, dtype=start.dtype)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         time_ = jnp.asarray(time, dtype=start.dtype)
         phi_start = jnp.asarray(self.signed_distance(start, time_, args))
         phi_end = jnp.asarray(self.signed_distance(end, time_, args))

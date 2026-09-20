@@ -1179,8 +1179,7 @@ def prepare_sonata_network(
         elif isinstance(node.model, PreparedCableSolver):
             if node.key not in detector_map:
                 _unsupported(
-                    "Executing a SONATA cable node requires an explicit "
-                    "compartment, threshold, and rearm binding."
+                    "Executing a SONATA cable node requires an explicit compartment, threshold, and rearm binding."
                 )
             compartment, threshold, rearm = detector_map.pop(node.key)
             detector = (

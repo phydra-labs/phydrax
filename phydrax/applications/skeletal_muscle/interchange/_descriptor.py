@@ -42,7 +42,9 @@ def _atomic_owner(value: str, /) -> str:
 
 def _sha256(value: str, name: str, /) -> str:
     digest = _identifier(value, name).lower()
-    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
         raise ValueError(f"{name} must be a 64-character hexadecimal SHA-256 digest.")
     return digest
 
@@ -242,7 +244,7 @@ class ExternalModelQuantity(StrictModule, NonTrainableState):
                 "si_dimensions must contain seven integer SI base exponents in "
                 "(mass, length, time, current, temperature, amount, luminous intensity) order."
             )
-        dimensions = tuple(int(value) for value in dimensions_)
+        dimensions = tuple(dimensions_)
         source_unit = _identifier(external_unit, "external_unit")
         target_unit = _identifier(phydrax_unit, "phydrax_unit")
         self.quantity_name = name
@@ -281,10 +283,10 @@ class ExternalModelDimensionalContract(StrictModule, NonTrainableState):
         reference: str,
     ):
         values = tuple(quantities)
-        if not values or not all(isinstance(value, ExternalModelQuantity) for value in values):
-            raise TypeError(
-                "quantities must contain at least one ExternalModelQuantity."
-            )
+        if not values or not all(
+            isinstance(value, ExternalModelQuantity) for value in values
+        ):
+            raise TypeError("quantities must contain at least one ExternalModelQuantity.")
         names = tuple(value.quantity_name for value in values)
         if len(set(names)) != len(names):
             raise ValueError("Dimensional-contract quantity names must be unique.")
@@ -310,7 +312,9 @@ class ExternalModelDimensionalContract(StrictModule, NonTrainableState):
 
     def quantity(self, name: str, /) -> ExternalModelQuantity:
         identifier = _identifier(name, "quantity name")
-        matches = tuple(value for value in self.quantities if value.quantity_name == identifier)
+        matches = tuple(
+            value for value in self.quantities if value.quantity_name == identifier
+        )
         if len(matches) != 1:
             raise KeyError(f"Unknown dimensional-contract quantity {identifier!r}.")
         return matches[0]
@@ -341,8 +345,14 @@ class ExternalModelChannelBinding(StrictModule, NonTrainableState):
         quantity = _identifier(quantity_name, "channel quantity_name")
         scale_value = float(scale)
         offset_value = float(offset)
-        if not np.isfinite(scale_value) or scale_value == 0.0 or not np.isfinite(offset_value):
-            raise ValueError("Channel scale must be finite and nonzero; offset must be finite.")
+        if (
+            not np.isfinite(scale_value)
+            or scale_value == 0.0
+            or not np.isfinite(offset_value)
+        ):
+            raise ValueError(
+                "Channel scale must be finite and nonzero; offset must be finite."
+            )
         self.source_name = source
         self.target_name = target
         self.quantity_name = quantity
@@ -424,8 +434,7 @@ class ExternalModelDescriptor(StrictModule, NonTrainableState):
             for binding in bindings:
                 if binding.quantity_name not in quantities:
                     raise ValueError(
-                        f"{role} binding references unknown quantity "
-                        f"{binding.quantity_name!r}."
+                        f"{role} binding references unknown quantity {binding.quantity_name!r}."
                     )
                 if quantities[binding.quantity_name].role != role:
                     raise ValueError(
@@ -439,15 +448,21 @@ class ExternalModelDescriptor(StrictModule, NonTrainableState):
         previous_output: str | None = None
         for transformation in transformations_:
             inputs = set(transformation.input_sha256)
-            allowed = available_digests | ({previous_output} if previous_output else set())
-            if not inputs <= allowed or (previous_output is not None and previous_output not in inputs):
+            allowed = available_digests | (
+                {previous_output} if previous_output else set()
+            )
+            if not inputs <= allowed or (
+                previous_output is not None and previous_output not in inputs
+            ):
                 raise ValueError(
                     "Transformation inputs must form one ordered chain from declared assets."
                 )
             used_assets.update(inputs & available_digests)
             previous_output = transformation.output_sha256
         if used_assets != available_digests:
-            raise ValueError("Every declared asset must participate in the transformation chain.")
+            raise ValueError(
+                "Every declared asset must participate in the transformation chain."
+            )
         if previous_output != compiled:
             raise ValueError("Final transformation output must equal compiled_sha256.")
         ordered_assets = tuple(sorted(asset_values, key=lambda value: value.asset_name))
@@ -631,7 +646,9 @@ class PreparedExternalModelDescriptor(StrictModule, NonTrainableState):
     def coordinate_to_phydrax(self, external_coordinates: ArrayLike, /) -> Array:
         values = jnp.asarray(external_coordinates)
         if values.ndim < 1 or values.shape[-1] != len(self.inventory.coordinate_channels):
-            raise ValueError("External coordinates do not match the prepared coordinate map.")
+            raise ValueError(
+                "External coordinates do not match the prepared coordinate map."
+            )
         return (
             values[..., self.coordinate_external_indices] * self.coordinate_scale
             + self.coordinate_offset
@@ -675,7 +692,9 @@ def prepare_external_model_descriptor(
         raise TypeError("descriptor must be ExternalModelDescriptor.")
     if not isinstance(inventory, ExternalModelHostInventory):
         raise TypeError("inventory must be ExternalModelHostInventory.")
-    expected_assets = tuple((value.asset_name, value.sha256) for value in descriptor.assets)
+    expected_assets = tuple(
+        (value.asset_name, value.sha256) for value in descriptor.assets
+    )
     expected_coordinates = tuple(value.source_name for value in descriptor.coordinate_map)
     expected_actuators = tuple(value.target_name for value in descriptor.actuator_map)
     expected_sensors = tuple(value.source_name for value in descriptor.sensor_map)
@@ -707,27 +726,25 @@ def prepare_external_model_descriptor(
     coordinate_indices = _external_indices(
         inventory.coordinate_channels, expected_coordinates
     )
-    actuator_indices = _external_indices(
-        inventory.actuator_channels, expected_actuators
-    )
+    actuator_indices = _external_indices(inventory.actuator_channels, expected_actuators)
     sensor_indices = _external_indices(inventory.sensor_channels, expected_sensors)
     coordinate_scale = np.asarray(
-        [value.scale for value in descriptor.coordinate_map], dtype=float
+        [value.scale for value in descriptor.coordinate_map], dtype=np.float64
     )
     coordinate_offset = np.asarray(
-        [value.offset for value in descriptor.coordinate_map], dtype=float
+        [value.offset for value in descriptor.coordinate_map], dtype=np.float64
     )
     actuator_scale = np.asarray(
-        [value.scale for value in descriptor.actuator_map], dtype=float
+        [value.scale for value in descriptor.actuator_map], dtype=np.float64
     )
     actuator_offset = np.asarray(
-        [value.offset for value in descriptor.actuator_map], dtype=float
+        [value.offset for value in descriptor.actuator_map], dtype=np.float64
     )
     sensor_scale = np.asarray(
-        [value.scale for value in descriptor.sensor_map], dtype=float
+        [value.scale for value in descriptor.sensor_map], dtype=np.float64
     )
     sensor_offset = np.asarray(
-        [value.offset for value in descriptor.sensor_map], dtype=float
+        [value.offset for value in descriptor.sensor_map], dtype=np.float64
     )
     prepared_id = canonical_fingerprint(
         {

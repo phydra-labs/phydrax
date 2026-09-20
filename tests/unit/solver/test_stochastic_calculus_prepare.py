@@ -62,7 +62,7 @@ def test_rough_preparation_selects_existing_davie_route_and_executes():
     solution = solve_prepared_rough(prepared, save_times=jnp.asarray([1.0]))
 
     assert prepared.solver.solver_name == "Davie"
-    assert solution.solver_id == "rough-solver:davie:v1"
+    assert solution.solver_id == "rough-solver:davie"
     assert solution.valid[0]
 
 

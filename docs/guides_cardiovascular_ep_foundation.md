@@ -9,7 +9,7 @@ transmembrane current density.
 
 ## Numerical and unit contract
 
-The kernel uses millimetres and milliseconds in this route:
+The kernel uses millimeters and milliseconds in this route:
 
 | Quantity | Kernel unit | Meaning |
 | --- | --- | --- |
@@ -54,9 +54,9 @@ fem = phx.discretization.FiniteElementPlan(
     ),
 ).prepare()
 
-cell_fibres = jnp.asarray(fibre_vectors)
+cell_fibers = jnp.asarray(fiber_vectors)
 diffusivity = phx.applications.cardiovascular.electrophysiology.CellwiseDiffusivity.from_fibers(
-    cell_fibres,
+    cell_fibers,
     longitudinal_mm2_per_ms=0.5,
     transverse_mm2_per_ms=0.05,
 )
@@ -78,9 +78,9 @@ plan = phx.applications.cardiovascular.electrophysiology.PhenomenologicalMonodom
 runtime = plan.prepare(0.02)
 ```
 
-The fibre construction uses
+The fiber construction uses
 `K = d_transverse I + (d_longitudinal-d_transverse) f f^T` after normalizing
-`f`. Reversing a fibre leaves K and its identity unchanged. Direct tensor input
+`f`. Reversing a fiber leaves K and its identity unchanged. Direct tensor input
 must be finite, symmetric, and positive semidefinite. The sign convention is
 explicit: positive K smooths activation through `-M_lumped^-1 S u`.
 
@@ -167,7 +167,7 @@ chord = ep.ChordConductionVelocityPlan.from_coordinates(
 cv = ep.evaluate_chord_conduction_velocity(chord, result)
 ```
 
-`velocity_mm_per_ms` is numerically equal to metres per second, but remains labeled
+`velocity_mm_per_ms` is numerically equal to meters per second, but remains labeled
 with its kernel unit and is a chord estimate rather than local wave speed.
 
 ## Checkpoint, restart, and replay identity

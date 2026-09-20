@@ -344,15 +344,14 @@ class CompressiblePlaneBaseflowPlan(StrictModule, NonTrainableState):
             and case.system.transports_sgs_kinetic_energy
         ):
             raise TypeError(
-                "Slow growth requires a one-temperature canonical gas state "
-                "without transported auxiliary energy."
+                "Slow growth requires a one-temperature canonical gas state without transported auxiliary energy."
             )
         coordinates = jnp.asarray(wall_normal_coordinates)
         wall_axis = int(wall_normal_axis)
         axes = (
             tuple(axis for axis in range(case.dimension) if axis != wall_axis)
             if homogeneous_axes is None
-            else tuple(int(axis) for axis in homogeneous_axes)
+            else tuple(homogeneous_axes)
         )
         expected = tuple(axis for axis in range(case.dimension) if axis != wall_axis)
         values = np.asarray(coordinates)
@@ -1079,7 +1078,7 @@ def _model_options(
     evidence_tolerance: float,
     /,
 ) -> tuple[WallThermalMode, tuple[int, ...], float | None, float | None, float]:
-    indices = tuple(int(index) for index in wall_indices)
+    indices = tuple(wall_indices)
     displacement = (
         None
         if displacement_thickness_rate is None

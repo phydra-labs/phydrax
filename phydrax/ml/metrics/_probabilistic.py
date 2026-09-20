@@ -289,7 +289,7 @@ def _ensemble_crps(
         metric=metric,
         allow_complex=False,
     )
-    member_shape = tuple(int(size) for size in forecast.shape)
+    member_shape = tuple(forecast.shape)
     member_dtype = _real_dtype(true, forecast)
     if member_weight is None:
         member_weight_ = jnp.ones(member_shape, dtype=member_dtype)
@@ -301,7 +301,7 @@ def _ensemble_crps(
     member_included = _broadcast_full(
         member_mask,
         member_shape,
-        dtype=bool,
+        dtype=jnp.bool_,
         fill=True,
         name="member_mask",
     )
@@ -471,7 +471,7 @@ def _energy_score(
     included_member = _broadcast_full(
         member_mask,
         member_shape,
-        dtype=bool,
+        dtype=jnp.bool_,
         fill=True,
         name="member_mask",
     )

@@ -28,7 +28,9 @@ def test_regular_connectivity_closes_oriented_wrapped_plaquettes():
     plan = prepared.plan
 
     displacements = np.asarray(prepared.fractional_displacements)
-    for edges, signs in zip(plan.plaquette_edges, plan.plaquette_orientations, strict=True):
+    for edges, signs in zip(
+        plan.plaquette_edges, plan.plaquette_orientations, strict=True
+    ):
         np.testing.assert_allclose(
             np.sum(displacements[np.asarray(edges)] * np.asarray(signs)[:, None], axis=0),
             0.0,

@@ -159,7 +159,7 @@ requires it.
 `direct`, `cell_list`, or `morton_plane` realizations. Group slots are ordered
 by each component's minimum stable particle ID. Group and link capacities,
 topology completeness, convergence, finite arithmetic, and success are
-reported independently; overflow never publishes a partial catalogue as
+reported independently; overflow never publishes a partial catalog as
 successful.
 
 `MortonRadiusRelationPlan` separately controls pair capacity and open or closed

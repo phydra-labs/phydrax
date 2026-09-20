@@ -57,7 +57,7 @@ def _effective_measure(
     )
     if source_mask is not None:
         measure = measure * jnp.broadcast_to(
-            jnp.asarray(source_mask, dtype=bool),
+            jnp.asarray(source_mask, dtype=jnp.bool_),
             (batch, source_count),
         ).astype(dtype)
     return jnp.where(
@@ -96,7 +96,7 @@ def _blockwise_softmax_attention(
     block_size: int,
 ) -> Array:
     batch, query_count, heads, head_dim = query.shape
-    source_count = int(key.shape[1])
+    source_count = key.shape[1]
     q = jnp.transpose(query, (0, 2, 1, 3))
     running_max = jnp.full(
         (batch, heads, query_count),
@@ -254,8 +254,7 @@ class MeasureAwareAttention(StrictModule):
             )
         if self.execution not in _ATTENTION_EXECUTIONS:
             raise ValueError(
-                "execution must be one of "
-                f"{_ATTENTION_EXECUTIONS}; got {self.execution!r}."
+                f"execution must be one of {_ATTENTION_EXECUTIONS}; got {self.execution!r}."
             )
         if self.num_heads <= 0 or self.head_dim <= 0 or self.out_channels <= 0:
             raise ValueError("num_heads, head_dim, and out_channels must be positive.")
@@ -327,7 +326,7 @@ class MeasureAwareAttention(StrictModule):
             raise ValueError("Projected query has incompatible head dimensions.")
         if k.shape[-2:] != expected_heads:
             raise ValueError("Projected key/value have incompatible head dimensions.")
-        if int(k.shape[1]) == 0:
+        if k.shape[1] == 0:
             raise ValueError("Projected attention requires at least one source.")
         if not all(jnp.issubdtype(array.dtype, jnp.floating) for array in (q, k, v)):
             raise ValueError("Projected attention arrays must have floating dtype.")
@@ -342,8 +341,8 @@ class MeasureAwareAttention(StrictModule):
         measure = _effective_measure(
             source_weights,
             source_mask,
-            batch=int(k.shape[0]),
-            source_count=int(k.shape[1]),
+            batch=k.shape[0],
+            source_count=k.shape[1],
             dtype=dtype,
         )
         source_support = measure > 0.0
@@ -408,7 +407,7 @@ class MeasureAwareAttention(StrictModule):
             raise ValueError(f"Unknown attention execution {self.execution!r}.")
         if query_mask is not None:
             mask = jnp.broadcast_to(
-                jnp.asarray(query_mask, dtype=bool),
+                jnp.asarray(query_mask, dtype=jnp.bool_),
                 q.shape[:2],
             )
             output_mask = output_mask & mask

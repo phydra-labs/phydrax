@@ -27,11 +27,10 @@ def frame(
     length = _positive_int(frame_length, "frame_length")
     hop = _positive_int(hop_length, "hop_length")
     canonical, resolved_axis = _signal_to_last(values, axis)
-    sample_count = int(canonical.shape[-1])
+    sample_count = canonical.shape[-1]
     if sample_count < length:
         raise ValueError(
-            "The signal axis length must be at least frame_length; "
-            f"got {sample_count} and {length}."
+            f"The signal axis length must be at least frame_length; got {sample_count} and {length}."
         )
     frame_count = 1 + (sample_count - length) // hop
     starts = hop * jnp.arange(frame_count, dtype=jnp.int64)
@@ -52,7 +51,7 @@ def overlap_add(
     hop = _positive_int(hop_length, "hop_length")
     array = jnp.asarray(frames)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     resolved_frame = _normalize_axis(frame_axis, array.ndim)
     resolved_sample = _normalize_axis(sample_axis, array.ndim)
     if resolved_frame == resolved_sample:
@@ -62,8 +61,8 @@ def overlap_add(
         (resolved_frame, resolved_sample),
         (-2, -1),
     )
-    frame_count = int(canonical.shape[-2])
-    frame_length = int(canonical.shape[-1])
+    frame_count = canonical.shape[-2]
+    frame_length = canonical.shape[-1]
     if frame_count <= 0 or frame_length <= 0:
         raise ValueError("frames must contain positive frame and sample dimensions.")
     output_length = hop * (frame_count - 1) + frame_length

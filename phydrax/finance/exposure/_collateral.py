@@ -41,7 +41,7 @@ def _scalar(
     nonnegative: bool = False,
     positive: bool = False,
 ) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     host = float(np.asarray(jax.device_get(result)))
@@ -55,7 +55,7 @@ def _scalar(
 
 
 def _time_grid(value: ArrayLike, /) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     host = np.asarray(jax.device_get(result))
     if result.ndim != 1 or result.shape[0] < 2:
         raise ValueError("times must be a vector with at least two nodes.")
@@ -230,7 +230,7 @@ class PreparedCollateralAgreement(StrictModule):
         nodes = _time_grid(times)
         indices = jnp.asarray(settlement_indices)
         settles = jnp.asarray(settles_on_grid)
-        if settles.dtype != jnp.dtype(bool):
+        if settles.dtype != jnp.dtype(jnp.bool_):
             raise TypeError("settles_on_grid must have a boolean dtype.")
         host_indices = np.asarray(jax.device_get(indices))
         host_settles = np.asarray(jax.device_get(settles))
@@ -326,7 +326,7 @@ def net_trade_values(trade_values: ArrayLike, netting_set: NettingSet, /) -> Arr
 
     if not isinstance(netting_set, NettingSet):
         raise TypeError("netting_set must be a NettingSet.")
-    values = jnp.asarray(trade_values, dtype=float)
+    values = jnp.asarray(trade_values, dtype=jnp.float64)
     if values.ndim != 3:
         raise ValueError("trade_values must have shape (path, time, trade).")
     if (
@@ -347,7 +347,7 @@ def collateral_target(
 
     if not isinstance(agreement, CollateralAgreement):
         raise TypeError("agreement must be a CollateralAgreement.")
-    value = jnp.asarray(netted_value, dtype=float)
+    value = jnp.asarray(netted_value, dtype=jnp.float64)
     variation = jnp.where(
         value > agreement.threshold_receivable,
         value - agreement.threshold_receivable,
@@ -411,15 +411,15 @@ def evolve_collateral(
         raise TypeError("prepared must be a PreparedCollateralAgreement.")
     agreement = prepared.agreement
     nodes = prepared.times
-    values = jnp.asarray(netted_values, dtype=float)
+    values = jnp.asarray(netted_values, dtype=jnp.float64)
     if values.ndim != 2 or values.shape[1] != nodes.shape[0]:
         raise ValueError("netted_values must have shape (path, time).")
     path_count, time_count = values.shape
     if path_valid is None:
-        valid = jnp.ones((path_count,), dtype=bool)
+        valid = jnp.ones((path_count,), dtype=jnp.bool_)
     else:
         valid = jnp.asarray(path_valid)
-        if valid.dtype != jnp.dtype(bool):
+        if valid.dtype != jnp.dtype(jnp.bool_):
             raise TypeError("path_valid must have a boolean dtype.")
     if valid.shape != (path_count,):
         raise ValueError("path_valid must have shape (path,).")
@@ -517,7 +517,7 @@ def resolve_closeout(
     """Apply default ordering, MPOR/lag, collateral freeze, then calculate residual."""
 
     nodes = _time_grid(times)
-    values = jnp.asarray(netted_values, dtype=float)
+    values = jnp.asarray(netted_values, dtype=jnp.float64)
     if values.ndim != 2 or values.shape[1] != nodes.shape[0]:
         raise ValueError("netted_values must have shape (path, time).")
     if not isinstance(collateral, CollateralPath):

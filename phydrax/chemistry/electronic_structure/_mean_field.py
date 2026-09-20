@@ -180,7 +180,7 @@ class ElectronicOccupationPlan(StrictModule, NonTrainableState):
         explicit = (
             None
             if explicit_occupations is None
-            else jnp.asarray(explicit_occupations, dtype=float).reshape((-1,))
+            else jnp.asarray(explicit_occupations, dtype=jnp.float64).reshape((-1,))
         )
         if not isfinite(smearing) or smearing < 0.0:
             raise ValueError("smearing_energy must be finite and non-negative.")

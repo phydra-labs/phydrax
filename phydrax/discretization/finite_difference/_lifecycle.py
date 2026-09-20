@@ -26,7 +26,6 @@ from ._precision import FDExecutionPrecisionPolicy
 
 
 _FD_CHECKPOINT_FORMAT = "phydrax-fd-checkpoint"
-_FD_CHECKPOINT_VERSION = 2
 
 
 class FDCheckpointPlan(StrictModule, NonTrainableState):
@@ -167,8 +166,7 @@ def write_fd_checkpoint(
         array = jnp.asarray(value)
         if array.dtype != expected_field_dtype:
             raise TypeError(
-                f"FD checkpoint field {name!r} has dtype {array.dtype}; "
-                f"expected {expected_field_dtype}."
+                f"FD checkpoint field {name!r} has dtype {array.dtype}; expected {expected_field_dtype}."
             )
     for name, value in auxiliary_values.items():
         array = jnp.asarray(value)
@@ -197,7 +195,6 @@ def write_fd_checkpoint(
     )
     manifest = {
         "format": _FD_CHECKPOINT_FORMAT,
-        "version": _FD_CHECKPOINT_VERSION,
         "plan_id": plan.plan_id,
         "identity": plan.manifest_identity(),
         "checkpoint_id": checkpoint_id,
@@ -218,7 +215,6 @@ def read_fd_checkpoint(
     manifest, arrays = read_array_archive(path)
     expected_keys = {
         "format",
-        "version",
         "plan_id",
         "identity",
         "checkpoint_id",
@@ -229,10 +225,7 @@ def read_fd_checkpoint(
     }
     if set(manifest) != expected_keys:
         raise ArrayArchiveCorruptionError("FD checkpoint manifest fields are invalid.")
-    if (
-        manifest["format"] != _FD_CHECKPOINT_FORMAT
-        or manifest["version"] != _FD_CHECKPOINT_VERSION
-    ):
+    if manifest["format"] != _FD_CHECKPOINT_FORMAT:
         raise ArrayArchiveCorruptionError("Archive is not a supported FD checkpoint.")
     if (
         manifest["plan_id"] != expected_plan.plan_id

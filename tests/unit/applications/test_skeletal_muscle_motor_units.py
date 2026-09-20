@@ -48,9 +48,7 @@ def test_source_distributions_and_truncated_normal_statistics():
     assert np.isclose(
         float(prepared.recruitment_threshold_excitation[-1]), 30.0, rtol=1.0e-6
     )
-    assert np.isclose(
-        float(prepared.peak_twitch_force_arbitrary[-1]), 100.0, rtol=1.0e-6
-    )
+    assert np.isclose(float(prepared.peak_twitch_force_arbitrary[-1]), 100.0, rtol=1.0e-6)
     assert np.isclose(float(prepared.contraction_time_ms[-1]), 30.0, rtol=1.0e-6)
     assert scores.min() >= -3.9
     assert scores.max() <= 3.9
@@ -134,6 +132,9 @@ def test_event_topology_and_times_are_excluded_from_ad():
 
     derivative = jax.grad(endpoint_force)(prepared.maximum_excitation)
     assert float(derivative) == 0.0
-    assert prepared.evaluate(
-        state, prepared.maximum_excitation, 10.0, random_input
-    ).evidence.topology_gradient_supported is False
+    assert (
+        prepared.evaluate(
+            state, prepared.maximum_excitation, 10.0, random_input
+        ).evidence.topology_gradient_supported
+        is False
+    )

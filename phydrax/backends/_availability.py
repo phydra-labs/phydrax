@@ -32,6 +32,7 @@ def distribution_versions(
         versions.append((distribution, version))
     return tuple(versions)
 
+
 def _probe_result(
     capabilities: BackendCapabilities,
     /,

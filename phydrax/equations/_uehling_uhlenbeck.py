@@ -125,12 +125,12 @@ class UehlingUhlenbeckPlan(StrictModule, NonTrainableState):
         entropy_tolerance: float = 1.0e-10,
     ):
         statistics_ = np.asarray(statistics)
-        weights = np.asarray(phase_space_weights, dtype=float)
+        weights = np.asarray(phase_space_weights, dtype=np.float64)
         species = np.asarray(event_species)
         momenta = np.asarray(event_momenta)
-        kernels = np.asarray(event_kernels, dtype=float)
-        momenta4 = np.asarray(four_momenta, dtype=float)
-        charges_ = np.asarray(charges, dtype=float)
+        kernels = np.asarray(event_kernels, dtype=np.float64)
+        momenta4 = np.asarray(four_momenta, dtype=np.float64)
+        charges_ = np.asarray(charges, dtype=np.float64)
         time_unit_id_ = str(time_unit_id).strip()
         if not time_unit_id_:
             raise ValueError("time_unit_id must be a nonempty explicit unit identity.")
@@ -140,7 +140,7 @@ class UehlingUhlenbeckPlan(StrictModule, NonTrainableState):
             raise TypeError("statistics must use integer QuantumStatistics marks.")
         if np.any(~np.isin(statistics_, (-1, 0, 1))):
             raise ValueError("statistics entries must be FERMI, CLASSICAL, or BOSE.")
-        species_count = int(statistics_.size)
+        species_count = statistics_.size
         if (
             weights.ndim != 2
             or weights.shape[0] != species_count
@@ -151,7 +151,7 @@ class UehlingUhlenbeckPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "phase_space_weights must be finite positive species-by-momentum values."
             )
-        momentum_count = int(weights.shape[1])
+        momentum_count = weights.shape[1]
         if species.ndim != 2 or species.shape[1] != 4:
             raise ValueError("event_species must have shape (event_capacity, 4).")
         if not np.issubdtype(species.dtype, np.integer):
@@ -160,13 +160,13 @@ class UehlingUhlenbeckPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "event_momenta must be integer indices matching event_species."
             )
-        capacity = int(species.shape[0])
+        capacity = species.shape[0]
         if capacity == 0 or kernels.shape != (capacity,):
             raise ValueError(
                 "event_kernels must have one value per nonempty event capacity."
             )
         active = (
-            np.ones((capacity,), dtype=bool)
+            np.ones((capacity,), dtype=np.bool_)
             if event_active is None
             else np.asarray(event_active)
         )
@@ -249,7 +249,7 @@ class UehlingUhlenbeckPlan(StrictModule, NonTrainableState):
         self.species_count = species_count
         self.momentum_count = momentum_count
         self.event_capacity = capacity
-        self.charge_count = int(charges_.shape[1])
+        self.charge_count = charges_.shape[1]
         self.time_unit_id = time_unit_id_
         self.plan_id = canonical_fingerprint(
             {

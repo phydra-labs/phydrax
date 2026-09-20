@@ -75,12 +75,12 @@ def test_dfn_current_step_is_finite_and_mass_directions_are_physical() -> None:
 
     assert bool(result.accepted)
     assert jnp.isfinite(result.evaluation.voltage_v)
-    assert jnp.mean(result.accepted_state.negative_particle_concentration_mol_m3) < jnp.mean(
-        state.negative_particle_concentration_mol_m3
-    )
-    assert jnp.mean(result.accepted_state.positive_particle_concentration_mol_m3) > jnp.mean(
-        state.positive_particle_concentration_mol_m3
-    )
+    assert jnp.mean(
+        result.accepted_state.negative_particle_concentration_mol_m3
+    ) < jnp.mean(state.negative_particle_concentration_mol_m3)
+    assert jnp.mean(
+        result.accepted_state.positive_particle_concentration_mol_m3
+    ) > jnp.mean(state.positive_particle_concentration_mol_m3)
 
 
 def test_series_pack_commits_cells_atomically_and_sums_voltage() -> None:

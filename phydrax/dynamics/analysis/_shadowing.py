@@ -125,7 +125,7 @@ class ShadowingCandidateResult(StrictModule):
 
 def _quadrature_weights(trajectory: EvolutionTrajectory, /) -> Array:
     coordinates = trajectory.grid.coordinates
-    count = int(coordinates.size)
+    count = coordinates.size
     if isinstance(trajectory.grid, TimeGrid):
         intervals = coordinates[1:] - coordinates[:-1]
         weights = jnp.zeros((count,), dtype=coordinates.dtype)
@@ -133,7 +133,7 @@ def _quadrature_weights(trajectory: EvolutionTrajectory, /) -> Array:
         weights = weights.at[1:].add(0.5 * intervals)
         return weights / jnp.sum(weights)
     if isinstance(trajectory.grid, IterationGrid):
-        return jnp.full((count,), 1.0 / count, dtype=float)
+        return jnp.full((count,), 1.0 / count, dtype=jnp.float64)
     raise TypeError("Unsupported trajectory grid.")
 
 

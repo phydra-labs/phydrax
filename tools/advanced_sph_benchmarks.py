@@ -30,7 +30,6 @@ class IntervalGeometry:
 
 @dataclass(frozen=True)
 class AdvancedSPHBenchmark:
-    schema_version: int
     maturity: str
     execution_successful: bool
     numerical_constraints_satisfied: bool
@@ -103,7 +102,7 @@ def _phase(name, count=6):
             count * (count - 1) // 2, box=box
         ),
     )
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     state = compiled.initialize_state(position, -0.02 * (position - 0.5))
     return compiled, position, state, box
 
@@ -243,7 +242,6 @@ def run_advanced_sph_benchmark():
         )
     )
     return AdvancedSPHBenchmark(
-        schema_version=2,
         maturity="experimental",
         execution_successful=bool(iisph_result.successful & dfsph_result.successful),
         numerical_constraints_satisfied=bool(

@@ -33,7 +33,7 @@ def _problem(*, num_steps=9, failed=False):
     valid_count = max(num_steps - 3, 1)
     step_valid = jnp.stack(
         (
-            jnp.ones(num_steps, dtype=bool),
+            jnp.ones(num_steps, dtype="bool"),
             jnp.arange(num_steps) < valid_count,
         )
     )
@@ -135,7 +135,7 @@ def test_parallel_filter_preserves_multidimensional_case_batches():
     num_steps = 5
     observations = phx.stochastic.ObservationSequence(
         jnp.linspace(0.1, 0.5, num_steps),
-        jnp.arange(20, dtype=float).reshape(case_shape + (num_steps, 1)) / 10.0,
+        jnp.arange(20, dtype="float64").reshape(case_shape + (num_steps, 1)) / 10.0,
         case_axes=("row", "column"),
         case_shape=case_shape,
         case_ids=("00", "01", "10", "11"),
@@ -285,7 +285,7 @@ def _markov_marginals(*, node_count=6, padded=False):
         covariance = transition @ covariance @ transition.T + process_covariance
         means.append(mean)
         covariances.append(covariance)
-    node_valid = jnp.ones((node_count,), dtype=bool)
+    node_valid = jnp.ones((node_count,), dtype="bool")
     if padded:
         node_valid = node_valid.at[-2:].set(False)
     return phx.uq.gaussian_markov_moments_from_marginals(
@@ -454,7 +454,9 @@ def test_information_chain_is_jittable_and_coherent_samples_recover_lag_moments(
     draws = phx.uq.sample_gaussian_markov(jr.key(912), recovered, sample_shape=(20_000,))
     empirical_mean = jnp.mean(draws, axis=0)
     centered = draws - empirical_mean
-    empirical_covariance = oe.contract("sni,snj->nij", centered, centered) / draws.shape[0]
+    empirical_covariance = (
+        oe.contract("sni,snj->nij", centered, centered) / draws.shape[0]
+    )
     empirical_cross = (
         oe.contract("sni,snj->nij", centered[:, :-1], centered[:, 1:]) / draws.shape[0]
     )

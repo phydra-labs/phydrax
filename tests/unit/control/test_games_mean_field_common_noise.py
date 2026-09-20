@@ -102,7 +102,7 @@ def _induced(response, value, *, source_path_id=None):
     )
 
 
-def _normalised_weights(flow):
+def _normalized_weights(flow):
     weights = flow.weights.reshape((flow.num_particles, flow.times.size))
     return weights / jnp.sum(weights, axis=0, keepdims=True)
 
@@ -122,8 +122,8 @@ def _law_mixture(current, induced, damping, iteration, history, args):
     )
     weights = jnp.concatenate(
         (
-            (1.0 - damping) * _normalised_weights(current),
-            damping * _normalised_weights(induced),
+            (1.0 - damping) * _normalized_weights(current),
+            damping * _normalized_weights(induced),
         )
     )
     valid = jnp.concatenate(
@@ -138,8 +138,7 @@ def _law_mixture(current, induced, damping, iteration, history, args):
         sample_shape=(current.num_particles + induced.num_particles,),
         state_shape=current.state_shape,
         mean_field_id=(
-            f"conditional-union-mixture:{iteration}:"
-            f"{current.mean_field_id}+{induced.mean_field_id}"
+            f"conditional-union-mixture:{iteration}:{current.mean_field_id}+{induced.mean_field_id}"
         ),
         weights=weights,
         valid=valid,

@@ -43,7 +43,7 @@ def _deformation_gradient(value: ArrayLike, /) -> Array:
     if deformation.shape[0] not in (2, 3):
         raise ValueError("Mixed hyperelasticity supports 2D and 3D gradients.")
     if not jnp.issubdtype(deformation.dtype, jnp.inexact):
-        deformation = deformation.astype(float)
+        deformation = deformation.astype("float64")
     if jnp.issubdtype(deformation.dtype, jnp.complexfloating):
         raise TypeError("Deformation gradient must be real.")
     return deformation
@@ -727,7 +727,7 @@ class MixedAugmentedLagrangianPlan(StrictModule, NonTrainableState):
         deformation = _deformation_gradient(candidate_deformation_gradient)
         if deformation.shape != state.deformation_gradient.shape:
             raise ValueError("Candidate and accepted deformation gradients must match.")
-        successful = jnp.asarray(inner_successful, dtype=bool)
+        successful = jnp.asarray(inner_successful, dtype=jnp.bool_)
         if successful.shape != ():
             raise ValueError("inner_successful must be scalar.")
         constraint = self.law.volumetric_value(deformation)

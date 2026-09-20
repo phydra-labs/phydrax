@@ -20,7 +20,7 @@ from phydrax.applications.skeletal_muscle.fibers import (
 
 
 def _source_candidate():
-    mask = jnp.ones((1, 1, 3), dtype=bool)
+    mask = jnp.ones((1, 1, 3), dtype="bool")
     stimulus = PrescribedFiberStimulusSchedule(
         jnp.asarray([0.0]),
         jnp.asarray([0.05]),

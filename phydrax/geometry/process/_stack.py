@@ -200,7 +200,7 @@ class ProcessStack:
 
 
 def _footprint_payload(region: PlanarMeshRegion, /) -> dict[str, object]:
-    vertices = np.asarray(region.vertices, dtype=float)
+    vertices = np.asarray(region.vertices, dtype=np.float64)
     edges = np.asarray(region.edges, dtype=np.int64)
     offsets = np.asarray(region.loop_offsets, dtype=np.int64)
     if vertices.ndim != 2 or vertices.shape[1] != 2 or not np.all(np.isfinite(vertices)):

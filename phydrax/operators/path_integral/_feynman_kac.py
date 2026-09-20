@@ -13,6 +13,8 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax._strict import StrictModule
+
 from ..._doc import DOC_KEY0
 from ...discretization import TemporalMesh
 from ._action import _paths_array, potential_action
@@ -21,7 +23,7 @@ from ._estimate import _estimate_positive_log_weights, PathIntegralEstimate
 from ._potential import _as_point_time_callable, PotentialLike
 
 
-class SourceFeynmanKacEstimate(eqx.Module):
+class SourceFeynmanKacEstimate(StrictModule):
     """Terminal/source decomposition on one shared finite path population."""
 
     estimate: PathIntegralEstimate
@@ -34,7 +36,7 @@ class SourceFeynmanKacEstimate(eqx.Module):
     claim: str = eqx.field(static=True)
 
 
-class AdaptiveFeynmanKacEstimate(eqx.Module):
+class AdaptiveFeynmanKacEstimate(StrictModule):
     """Feynman-Kac estimate retaining canonical adaptive path/replay evidence."""
 
     source_estimate: SourceFeynmanKacEstimate
@@ -61,7 +63,7 @@ def _point_values(
     key: Key[Array, ""],
     role: str,
 ) -> Array:
-    state_dim = int(positions.shape[-1])
+    state_dim = positions.shape[-1]
     flat_positions = jnp.reshape(positions, (-1, state_dim))
     flat_times = jnp.reshape(
         jnp.broadcast_to(times, positions.shape[:-1]),
@@ -98,7 +100,7 @@ def _terminal_values(
     key: Key[Array, ""],
 ) -> Array:
     endpoint = paths[..., -1, :]
-    state_dim = int(endpoint.shape[-1])
+    state_dim = endpoint.shape[-1]
     flat_endpoint = jnp.reshape(endpoint, (-1, state_dim))
     terminal_fn = _as_point_time_callable(
         terminal,
@@ -113,8 +115,7 @@ def _terminal_values(
     expected_shape = (flat_endpoint.shape[0],)
     if values.shape != expected_shape:
         raise ValueError(
-            "terminal must return one real scalar per endpoint; "
-            f"got {values.shape}, expected {expected_shape}."
+            f"terminal must return one real scalar per endpoint; got {values.shape}, expected {expected_shape}."
         )
     if jnp.iscomplexobj(values):
         raise TypeError("Feynman-Kac terminal values must be real.")
@@ -158,7 +159,7 @@ def feynman_kac_from_paths(
             key=key,
         ).estimate
     q = _paths_array(paths, slicing)
-    count = int(q.shape[-3])
+    count = q.shape[-3]
     if count < 1:
         raise ValueError("paths must contain at least one path.")
     terminal_key, killing_key = jr.split(key)
@@ -230,7 +231,7 @@ def source_feynman_kac_from_paths(
     if source_quadrature not in ("left", "trapezoid", "midpoint"):
         raise ValueError("source_quadrature must be 'left', 'trapezoid', or 'midpoint'.")
     q = _paths_array(paths, slicing)
-    count = int(q.shape[-3])
+    count = q.shape[-3]
     if count < 1:
         raise ValueError("paths must contain at least one path.")
     terminal_key, source_key, killing_key, refinement_key = jr.split(key, 4)

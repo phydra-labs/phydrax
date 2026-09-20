@@ -301,7 +301,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
     def _active(self, active_mask: ArrayLike | None, /) -> Array:
         if active_mask is None:
             return self.default_active_mask
-        value = jnp.asarray(active_mask, dtype=bool)
+        value = jnp.asarray(active_mask, dtype=jnp.bool_)
         if value.shape != (self.particle_capacity,):
             raise ValueError("active_mask must have particle-capacity shape.")
         return self.default_active_mask & value

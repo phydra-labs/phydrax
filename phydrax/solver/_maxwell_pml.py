@@ -60,9 +60,7 @@ class MaxwellCPMLPlan(StrictModule, NonTrainableState):
         kappa_max: float = 5.0,
         alpha_max: float = 0.05,
     ):
-        values = (
-            (int(widths),) if isinstance(widths, int) else tuple(int(v) for v in widths)
-        )
+        values = (int(widths),) if isinstance(widths, int) else tuple(widths)
         reflection, order = float(target_reflection), int(sigma_order)
         kappa, alpha = float(kappa_max), float(alpha_max)
         if not values or any(value < 0 for value in values):
@@ -192,7 +190,7 @@ def _term_profile(
         indices.append(offset + flat[mask])
         depths.append(np.clip(depth[mask], 0.0, 1.0))
     if not indices:
-        empty = np.zeros((0,), dtype=float)
+        empty = np.zeros((0,), dtype=np.float64)
         return np.zeros((0,), dtype=np.int32), empty, empty + 1.0, empty
     index = np.concatenate(indices).astype(np.int32)
     depth = np.concatenate(depths)
@@ -266,7 +264,7 @@ class PreparedMaxwellCPML(StrictModule):
         for structured_axis, width in zip(
             bridge.grid.structured_axes, widths, strict=True
         ):
-            count = int(structured_axis.interval_centers.size)
+            count = structured_axis.interval_centers.size
             if width and structured_axis.periodic:
                 raise ValueError("Periodic/Bloch axes cannot also carry CPML.")
             if 2 * width >= count:
@@ -316,7 +314,7 @@ class PreparedMaxwellCPML(StrictModule):
             term.indices.size for term in (*self.electric_terms, *self.magnetic_terms)
         )
 
-    def initialize(self, /, *, dtype: Any = float) -> MaxwellCPMLState:
+    def initialize(self, /, *, dtype: Any = jnp.float64) -> MaxwellCPMLState:
         return MaxwellCPMLState(
             tuple(
                 jnp.zeros(term.indices.shape, dtype=dtype) for term in self.electric_terms

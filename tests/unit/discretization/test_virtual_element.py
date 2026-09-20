@@ -12,7 +12,7 @@ import phydrax as phx
 
 
 def _single_polygon(points, degree=1):
-    coordinates = jnp.asarray(points, dtype=float)
+    coordinates = jnp.asarray(points, dtype="float64")
     mesh = phx.discretization.CellMesh.from_polygons(
         coordinates, (tuple(range(len(points))),)
     )
@@ -32,7 +32,7 @@ def _two_cell_space(factory, degree=1):
             (1.0, 1.0),
             (2.0, 1.0),
         ),
-        dtype=float,
+        dtype="float64",
     )
     mesh = phx.discretization.CellMesh.from_polygons(
         coordinates,
@@ -45,7 +45,7 @@ def _two_cell_space(factory, degree=1):
 def _affine_vector_coefficients(space, components):
     projection = space.default_runtime.projections[0]
     geometry = space.default_runtime.geometries[0]
-    exponents = [tuple(int(value) for value in row) for row in projection.basis.exponents]
+    exponents = [tuple(row) for row in projection.basis.exponents]
     constant = exponents.index((0, 0))
     x_term = exponents.index((1, 0))
     y_term = exponents.index((0, 1))
@@ -263,7 +263,7 @@ def test_virtual_element_families_have_distinct_entity_topologies():
 
 def test_moment_virtual_element_projectors_reproduce_exact_sequence_polynomials():
     points = ((0.0, 0.0), (1.0, 0.0), (1.2, 0.8), (0.5, 1.3), (-0.2, 0.8))
-    coordinates = jnp.asarray(points, dtype=float)
+    coordinates = jnp.asarray(points, dtype="float64")
     mesh = phx.discretization.CellMesh.from_polygons(
         coordinates, (tuple(range(len(points))),)
     )
@@ -275,9 +275,7 @@ def test_moment_virtual_element_projectors_reproduce_exact_sequence_polynomials(
         field = phx.discretization.VirtualElementFieldSpec("v", element)
         space = phx.discretization.VirtualElementPlan(mesh, field).prepare()
         projection = space.default_runtime.projections[0]
-        exponents = [
-            tuple(int(value) for value in row) for row in projection.basis.exponents
-        ]
+        exponents = [tuple(row) for row in projection.basis.exponents]
         x_index = exponents.index((1, 0))
         y_index = exponents.index((0, 1))
         polynomial_count = projection.basis.feature_count
@@ -304,7 +302,7 @@ def test_moment_virtual_element_projectors_reproduce_exact_sequence_polynomials(
     field = phx.discretization.VirtualElementFieldSpec("q", element)
     space = phx.discretization.VirtualElementPlan(mesh, field).prepare()
     projection = space.default_runtime.projections[0]
-    polynomial = jnp.arange(projection.basis.feature_count, dtype=float)
+    polynomial = jnp.arange(projection.basis.feature_count, dtype="float64")
     dofs = projection.dof_matrix[0] @ polynomial
     recovered = projection.l2_coefficients[0] @ dofs
 
@@ -409,7 +407,7 @@ def test_discontinuous_l2_reconstructs_cell_polynomials_without_a_trace():
     space = _two_cell_space(phx.discretization.discontinuous_l2_virtual_element)
     projection = space.default_runtime.projections[0]
     geometry = space.default_runtime.geometries[0]
-    exponents = [tuple(int(value) for value in row) for row in projection.basis.exponents]
+    exponents = [tuple(row) for row in projection.basis.exponents]
     coefficients = jnp.zeros(
         (geometry.centroids.shape[0], projection.basis.feature_count)
     )

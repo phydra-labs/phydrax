@@ -189,8 +189,7 @@ def _select_plan(
         raise ValueError("Plan and problem IDs must match.")
     if selected_plan.problem_signature != _problem_structure(problem):
         raise ValueError(
-            "Plan reuse cannot change operator structure, weights or regularizers, "
-            "or nullspace policies."
+            "Plan reuse cannot change operator structure, weights or regularizers, or nullspace policies."
         )
     refreshed_plan = make_plan(
         problem,
@@ -251,7 +250,6 @@ def refresh(
             target_space_id=prepared.template.target_space_id,
             batch_shape=prepared.template.batch_shape,
             rejection_reason=prepared.template.rejection_reason,
-            schema_version=prepared.template.schema_version,
         )
         if refreshed_template.template_id != prepared.template.template_id:
             raise ValueError(
@@ -517,14 +515,14 @@ def _attach_terminal_linear_iteration(
         0,
         result.status,
         metrics,
-        active=jnp.ones_like(result.status, dtype=bool),
+        active=jnp.ones_like(result.status, dtype=jnp.bool_),
     )
     terminal = _linear_iteration_record(
         IterationPhase.TERMINAL,
         diagnostics.iterations,
         result.status,
         metrics,
-        active=jnp.ones_like(result.status, dtype=bool),
+        active=jnp.ones_like(result.status, dtype=jnp.bool_),
         committed=result.successful,
         terminal=True,
     )
@@ -608,7 +606,7 @@ def _initial_linear_iteration(
         jnp.asarray(0, dtype=jnp.int32),
         jnp.zeros_like(residual_out, dtype=jnp.int32),
         metrics,
-        active=jnp.ones_like(residual_out, dtype=bool),
+        active=jnp.ones_like(residual_out, dtype=jnp.bool_),
     )
     return scope, capabilities, initialize_iteration(iteration, initial_record)
 
@@ -642,7 +640,7 @@ def solve(
                     problem_or_prepared.operator.batch_shape,
                     rhs,
                 )
-                _require_rhs_resources(policy, int(canonical_rhs.shape[-1]))
+                _require_rhs_resources(policy, canonical_rhs.shape[-1])
         else:
             planned_layout = rhs_layout
             if planned_layout is None:
@@ -686,7 +684,7 @@ def solve(
         rhs,
         declared_layout,
     )
-    _require_rhs_resources(prepared.plan, int(canonical_rhs.shape[-1]))
+    _require_rhs_resources(prepared.plan, canonical_rhs.shape[-1])
     canonical_rhs, compatibility_residual = _apply_nullspace_compatibility(
         problem,
         canonical_rhs,
@@ -984,7 +982,7 @@ def solve(
             iterations_out,
             status_out,
             terminal_metrics,
-            active=jnp.ones_like(status_out, dtype=bool),
+            active=jnp.ones_like(status_out, dtype=jnp.bool_),
             committed=converged_out,
             terminal=True,
         )
@@ -1248,10 +1246,10 @@ def _assess_linear_system_result(
         & _operator_arrays_finite(operator)
     )
     finite_out = _restore_rhs_axes(finite, layout) & jnp.asarray(
-        result.diagnostics.finite, dtype=bool
+        result.diagnostics.finite, dtype=jnp.bool_
     )
-    converged = jnp.asarray(result.diagnostics.converged, dtype=bool) & jnp.asarray(
-        result.successful, dtype=bool
+    converged = jnp.asarray(result.diagnostics.converged, dtype=jnp.bool_) & jnp.asarray(
+        result.successful, dtype=jnp.bool_
     )
     (
         stability_checked,
@@ -1419,7 +1417,7 @@ def _solve_prepared_transformed(
         rhs,
         rhs_layout,
     )
-    _require_rhs_resources(prepared.plan, int(canonical_rhs.shape[-1]))
+    _require_rhs_resources(prepared.plan, canonical_rhs.shape[-1])
     canonical_rhs, compatibility_residual = _apply_nullspace_compatibility(
         transformed_problem,
         canonical_rhs,
@@ -1714,7 +1712,7 @@ def _pack_rhs(
             if array.shape[: len(prefix)] != prefix:
                 valid = False
                 break
-            remainder = tuple(int(size) for size in array.shape[len(prefix) :])
+            remainder = array.shape[len(prefix) :]
             if declared_layout is not None and remainder != declared_layout.shape:
                 valid = False
                 break
@@ -2211,7 +2209,7 @@ def _callable_gmres(
     plan: LinearSolvePlan,
     /,
 ) -> Array:
-    dimension = int(rhs.shape[0])
+    dimension = rhs.shape[0]
     policy = plan.policy.derivative_solve
     max_steps = policy.maximum_steps or dimension
     restart = (
@@ -2246,7 +2244,7 @@ def _callable_gmres_for_policy(
     method = policy.method
     if not isinstance(method, (GMRES, FGMRES)):
         raise TypeError("Callable GMRES requires an explicit GMRES or FGMRES policy.")
-    dimension = int(rhs.shape[0])
+    dimension = rhs.shape[0]
     max_steps = policy.tolerance.max_steps or dimension
     result = _run_callable_gmres(
         action,
@@ -2332,10 +2330,10 @@ def _stop_problem_arrays(problem: _ProblemT, /) -> _ProblemT:
 
 __all__ = [
     "bind_numeric",
+    "initialize_recycling",
     "prepare",
     "prepare_template",
     "refresh",
-    "initialize_recycling",
     "refresh_recycling",
     "solve",
     "solve_adjoint",

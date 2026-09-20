@@ -147,11 +147,11 @@ JAX_ENABLE_X64=true .venv/bin/python -m benchmarks.nucleic_secondary_kinetics \
   --paths 2048 --copies 1 --capacity 64 --repeats 3
 ```
 
-This is an independently specified labelled A/T binding CTMC, not experimental DNA
+This is an independently specified labeled A/T binding CTMC, not experimental DNA
 kinetics. It admits its mathematical parameter artifact, compiles the complete legal
 support, runs native direct SSA with a fixed random key, and compares with finite-generator
 transition probabilities and analytical first-hit behavior. `--copies` increases
-competing physically labelled T partners, not sequence length.
+competing physically labeled T partners, not sequence length.
 
 The analysis uses the actual event ledger even though only endpoint save times are
 requested. Inspect `successful_paths`, `capacity_failures`, `censored_paths`,

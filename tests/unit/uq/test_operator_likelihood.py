@@ -210,7 +210,7 @@ def test_operator_likelihood_rejects_empty_cases_and_contract_mismatches():
     batch = _batch()
     spec = phx.nn.operator.OperatorOutputSpec(2)
     target, _ = _target_and_mask()
-    empty_case_mask = jnp.ones_like(target, dtype=bool).at[1].set(False)
+    empty_case_mask = jnp.ones_like(target, dtype="bool").at[1].set(False)
 
     with pytest.raises(ValueError, match="at least one observation"):
         phx.uq.FixedOperatorObservationLikelihood(
@@ -247,7 +247,7 @@ def test_operator_likelihood_rejects_empty_cases_and_contract_mismatches():
 
 def _operator_dataset(cases=5, resolution=4):
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, resolution))
-    values = jnp.arange(cases, dtype=float)[:, None] + axis.nodes[None, :]
+    values = jnp.arange(cases, dtype="float64")[:, None] + axis.nodes[None, :]
     return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},
         {"solution": 2.0 * values},

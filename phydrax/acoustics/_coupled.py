@@ -50,14 +50,14 @@ class VibroacousticSystem:
         tolerance: float = 1e-10,
     ) -> VibroacousticSystem:
         structural = tuple(
-            np.asarray(value, dtype=float)
+            np.asarray(value, dtype=np.float64)
             for value in (structural_mass, structural_damping, structural_stiffness)
         )
         acoustic = tuple(
-            np.asarray(value, dtype=float)
+            np.asarray(value, dtype=np.float64)
             for value in (acoustic_mass, acoustic_damping, acoustic_stiffness)
         )
-        coupling = np.asarray(reciprocal_coupling, dtype=float)
+        coupling = np.asarray(reciprocal_coupling, dtype=np.float64)
         if structural[0].ndim != 2 or structural[0].shape[0] != structural[0].shape[1]:
             raise ValueError("Vibroacoustic structural matrices must be square.")
         if acoustic[0].ndim != 2 or acoustic[0].shape[0] != acoustic[0].shape[1]:
@@ -96,12 +96,12 @@ class VibroacousticSystem:
             raise ValueError("Vibroacoustic loads have incompatible shapes.")
         omega = float(angular_frequency_rad_s)
         structural_dynamic = (
-            self.structural_stiffness.astype(complex)
+            self.structural_stiffness.astype("complex128")
             - omega**2 * self.structural_mass
             + 1j * omega * self.structural_damping
         )
         acoustic_dynamic = (
-            self.acoustic_stiffness.astype(complex)
+            self.acoustic_stiffness.astype("complex128")
             - omega**2 * self.acoustic_mass
             + 1j * omega * self.acoustic_damping
         )

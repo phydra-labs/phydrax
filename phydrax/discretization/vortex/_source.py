@@ -68,13 +68,12 @@ class VortexSourceState(StrictModule):
         )
         if strength_.shape != expected_strength:
             raise ValueError(
-                f"Vortex source strength must have shape {expected_strength}, "
-                f"got {strength_.shape}."
+                f"Vortex source strength must have shape {expected_strength}, got {strength_.shape}."
             )
         active = (
-            jnp.ones((positions_.shape[0],), dtype=bool)
+            jnp.ones((positions_.shape[0],), dtype=jnp.bool_)
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         if active.shape != (positions_.shape[0],):
             raise ValueError("Vortex source active_mask must have source-capacity shape.")
@@ -123,7 +122,7 @@ class VortexSourceState(StrictModule):
                 "kind": "vortex-source-state",
                 "dimension": dimension_,
                 "source_kind": kind,
-                "capacity": int(positions_.shape[0]),
+                "capacity": positions_.shape[0],
                 "coordinate_dtype": str(positions_.dtype),
                 "strength_shape": list(strength_.shape),
                 "has_core_radius": core is not None,
@@ -141,7 +140,7 @@ class VortexSourceState(StrictModule):
 
     @property
     def capacity(self) -> int:
-        return int(self.positions.shape[0])
+        return self.positions.shape[0]
 
     def safe_positions(self) -> Array:
         return jnp.where(self.active_mask[:, None], self.positions, 0.0)
@@ -211,8 +210,8 @@ class VortexTargetState(StrictModule):
             target_id,
             {
                 "kind": "vortex-target-state",
-                "dimension": int(positions_.shape[1]),
-                "capacity": int(positions_.shape[0]),
+                "dimension": positions_.shape[1],
+                "capacity": positions_.shape[0],
                 "coordinate_dtype": str(positions_.dtype),
                 "has_source_identity": identity is not None,
             },
@@ -223,11 +222,11 @@ class VortexTargetState(StrictModule):
 
     @property
     def capacity(self) -> int:
-        return int(self.positions.shape[0])
+        return self.positions.shape[0]
 
     @property
     def dimension(self) -> int:
-        return int(self.positions.shape[1])
+        return self.positions.shape[1]
 
 
 __all__ = ["VortexSourceState", "VortexTargetState"]

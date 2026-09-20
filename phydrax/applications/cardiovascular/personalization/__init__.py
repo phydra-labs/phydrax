@@ -44,17 +44,14 @@ from ._design import (
 )
 from ._inverse import (
     __all__ as _inverse_all,
+    CardiovascularInverseProblem,
     CardiovascularInverseResult,
     CardiovascularMultiStartResult,
-    ElectrophysiologyInverseProblem,
     ElectrophysiologyInverseRoute,
     InverseAcceptanceEvidence,
     InverseObjectiveEvaluation,
-    LoadingInverseProblem,
     LoadingInverseRoute,
-    MechanicsInverseProblem,
     MechanicsInverseRoute,
-    UnloadedGeometryInverseProblem,
     UnloadedGeometryInverseRoute,
 )
 from ._likelihood import (

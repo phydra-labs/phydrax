@@ -15,8 +15,8 @@ def test_fourier_resample_preserves_representable_complex_modes(
     source_size,
     target_size,
 ):
-    source_points = jnp.arange(source_size, dtype=float) / source_size
-    target_points = jnp.arange(target_size, dtype=float) / target_size
+    source_points = jnp.arange(source_size, dtype="float64") / source_size
+    target_points = jnp.arange(target_size, dtype="float64") / target_size
     values = jnp.exp(2.0j * jnp.pi * source_points)
 
     output = fourier_resample(values, (target_size,))
@@ -32,7 +32,7 @@ def test_fourier_resample_preserves_representable_complex_modes(
 def test_even_nyquist_mode_splits_on_upsampling_and_merges_on_downsampling():
     source_size = 8
     fine_size = 13
-    source = (-1.0) ** jnp.arange(source_size, dtype=float)
+    source = (-1.0) ** jnp.arange(source_size, dtype="float64")
 
     fine = fourier_resample(source, (fine_size,))
     restored = fourier_resample(fine, (source_size,))
@@ -54,7 +54,7 @@ def test_explicit_axes_preserve_batch_and_payload_axes():
 
 
 def test_trailing_axis_default_and_explicit_middle_axis_are_unambiguous():
-    x = jnp.arange(5, dtype=float) / 5.0
+    x = jnp.arange(5, dtype="float64") / 5.0
     values = jnp.stack(
         (
             jnp.cos(2.0 * jnp.pi * x),
@@ -62,7 +62,7 @@ def test_trailing_axis_default_and_explicit_middle_axis_are_unambiguous():
         ),
         axis=0,
     )
-    target = jnp.arange(8, dtype=float) / 8.0
+    target = jnp.arange(8, dtype="float64") / 8.0
 
     output = fourier_resample(values, (8,), axes=(1,))
     trailing = fourier_resample(values, (8,))
@@ -97,8 +97,8 @@ def test_shifted_resampling_matches_direct_multiaxis_evaluation():
         jax.random.key(12), source_shape + (2,), dtype=jnp.complex128
     )
     q0, q1 = jnp.meshgrid(
-        offsets[0] + jnp.arange(target_shape[0], dtype=float) / target_shape[0],
-        offsets[1] + jnp.arange(target_shape[1], dtype=float) / target_shape[1],
+        offsets[0] + jnp.arange(target_shape[0], dtype="float64") / target_shape[0],
+        offsets[1] + jnp.arange(target_shape[1], dtype="float64") / target_shape[1],
         indexing="ij",
     )
     queries = jnp.stack((q0, q1), axis=-1)

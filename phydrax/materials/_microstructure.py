@@ -24,7 +24,11 @@ class GrainStructure:
         )
         if (
             value.grain_id.shape != value.phase_id.shape
-            or value.orientation_quaternion.shape != (*value.grain_id.shape, 4)
+            or value.orientation_quaternion.shape
+            != (
+                *value.grain_id.shape,
+                4,
+            )
         ):
             raise ValueError("Grain arrays do not align.")
         if not bool(

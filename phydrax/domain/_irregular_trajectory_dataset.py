@@ -47,7 +47,7 @@ def _tree_leading_axis_size(tree: PyTree[ArrayLike], /) -> int:
     first = jnp.asarray(leaves[0])
     if first.ndim == 0:
         raise ValueError("Trajectory input leaves must have a leading dataset axis.")
-    n = int(first.shape[0])
+    n = first.shape[0]
     if n <= 0:
         raise ValueError("Trajectory input leading axis must be non-empty.")
 
@@ -55,10 +55,10 @@ def _tree_leading_axis_size(tree: PyTree[ArrayLike], /) -> int:
         arr = jnp.asarray(leaf)
         if arr.ndim == 0:
             raise ValueError("Trajectory input leaves must have a leading dataset axis.")
-        if int(arr.shape[0]) != n:
+        if arr.shape[0] != n:
             raise ValueError(
                 "IrregularTrajectoryDatasetDomain requires all input leaves to share "
-                f"the same leading axis; got {int(arr.shape[0])} and {n}."
+                f"the same leading axis; got {arr.shape[0]} and {n}."
             )
     return n
 
@@ -67,8 +67,8 @@ def _as_lengths(lengths: ArrayLike, n: int, /) -> Array:
     arr = jnp.asarray(lengths)
     if arr.ndim != 1:
         raise ValueError(f"lengths must have shape (N,), got {arr.shape}.")
-    if int(arr.shape[0]) != n:
-        raise ValueError(f"lengths must have length {n}, got {int(arr.shape[0])}.")
+    if arr.shape[0] != n:
+        raise ValueError(f"lengths must have length {n}, got {arr.shape[0]}.")
     arr_i = arr.astype(jnp.int32)
     if bool(jnp.any(arr_i <= 0)):
         raise ValueError("All trajectory lengths must be positive.")
@@ -78,16 +78,15 @@ def _as_lengths(lengths: ArrayLike, n: int, /) -> Array:
 
 
 def _as_times(times: ArrayLike, lengths: Array, n: int, /) -> Array:
-    arr = jnp.asarray(times, dtype=float)
+    arr = jnp.asarray(times, dtype=jnp.float64)
     if arr.ndim != 2:
         raise ValueError(f"times must have shape (N, T_max), got {arr.shape}.")
-    if int(arr.shape[0]) != n:
+    if arr.shape[0] != n:
         raise ValueError(f"times leading axis must be N={n}, got {arr.shape[0]}.")
     max_length = int(jnp.max(lengths))
-    if int(arr.shape[1]) < max_length:
+    if arr.shape[1] < max_length:
         raise ValueError(
-            f"times second axis must be at least max(lengths)={max_length}, "
-            f"got {arr.shape[1]}."
+            f"times second axis must be at least max(lengths)={max_length}, got {arr.shape[1]}."
         )
 
     for case_id, length in enumerate(list(map(int, lengths.tolist()))):
@@ -129,8 +128,7 @@ def _single_axis_for_trajectory(
     block = frozenset(structure.blocks[0])
     if block != frozenset(domain.labels):
         raise ValueError(
-            "IrregularTrajectoryDatasetDomain sampling requires a paired block "
-            f"containing {domain.labels}."
+            f"IrregularTrajectoryDatasetDomain sampling requires a paired block containing {domain.labels}."
         )
     axis_names = structure.axis_names
     if axis_names is None:
@@ -201,8 +199,7 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
             "time_integral_sum",
         ):
             raise ValueError(
-                "measure must be one of 'case_time_probability', "
-                "'time_integral_average', or 'time_integral_sum'."
+                "measure must be one of 'case_time_probability', 'time_integral_average', or 'time_integral_sum'."
             )
         if measure_str == "case_time_probability":
             measure_value: TrajectoryMeasure = "case_time_probability"
@@ -314,7 +311,7 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
     @property
     def size(self) -> int:
         """Number of trajectory cases."""
-        return int(self.lengths.shape[0])
+        return self.lengths.shape[0]
 
     def field(self, values: ArrayLike, /) -> "DomainFunction":
         """Expose case-aligned target values at every sampled trajectory time."""
@@ -429,7 +426,7 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
     def lower_time_indices(self, case_indices: ArrayLike, times: ArrayLike, /) -> Array:
         """Return the lower bracketing time index for each requested time."""
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
-        t = jnp.asarray(times, dtype=float).reshape((-1,))
+        t = jnp.asarray(times, dtype=jnp.float64).reshape((-1,))
         rows = self.times[case_idx]
         lengths = self.lengths[case_idx]
         mask = jnp.arange(self.times.shape[1])[None, :] < lengths[:, None]
@@ -439,7 +436,7 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
     def nearest_time_indices(self, case_indices: ArrayLike, times: ArrayLike, /) -> Array:
         """Return the nearest valid time index for each requested time."""
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
-        t = jnp.asarray(times, dtype=float).reshape((-1,))
+        t = jnp.asarray(times, dtype=jnp.float64).reshape((-1,))
         lower = self.lower_time_indices(case_idx, t)
         lengths = self.lengths[case_idx]
         upper = jnp.minimum(lower + 1, lengths - 1)
@@ -453,7 +450,7 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
     ) -> tuple[Array, Array, Array]:
         """Return lower index, upper index, and interpolation fraction for times."""
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
-        t = jnp.asarray(times, dtype=float).reshape((-1,))
+        t = jnp.asarray(times, dtype=jnp.float64).reshape((-1,))
         lengths = self.lengths[case_idx]
         lower_raw = self.lower_time_indices(case_idx, t)
         lower_max = jnp.maximum(lengths - 2, 0)
@@ -479,14 +476,14 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
         structure_in = structure or SampleLayout((self.labels,))
         structure_, axis = _single_axis_for_trajectory(self, structure_in)
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
-        time_arr = jnp.asarray(times, dtype=float).reshape((-1,))
-        if int(case_idx.shape[0]) != int(time_arr.shape[0]):
+        time_arr = jnp.asarray(times, dtype=jnp.float64).reshape((-1,))
+        if case_idx.shape[0] != time_arr.shape[0]:
             raise ValueError("case_indices and times must have the same length.")
         if time_indices is None:
             time_idx = self.lower_time_indices(case_idx, time_arr)
         else:
             time_idx = jnp.asarray(time_indices, dtype=jnp.int32).reshape((-1,))
-            if int(time_idx.shape[0]) != int(case_idx.shape[0]):
+            if time_idx.shape[0] != case_idx.shape[0]:
                 raise ValueError(
                     "time_indices must have the same length as case_indices."
                 )
@@ -511,8 +508,8 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
 
 
 def _node_widths(times: Array, lengths: Array, /) -> Array:
-    n = int(times.shape[0])
-    t_max = int(times.shape[1])
+    n = times.shape[0]
+    t_max = times.shape[1]
     widths = jnp.zeros_like(times)
     for case_id, length in enumerate(list(map(int, lengths.tolist()))):
         if length <= 1:
@@ -547,7 +544,7 @@ def _sample_valid_cases(
     key: Key[Array, ""],
     /,
 ) -> Array:
-    valid_f = jnp.asarray(valid, dtype=float)
+    valid_f = jnp.asarray(valid, dtype=jnp.float64)
     valid_count = jnp.sum(valid_f)
     checked_count = eqx.error_if(
         valid_count,
@@ -555,7 +552,7 @@ def _sample_valid_cases(
         "No trajectories are valid for this fixed time component.",
     )
     probs = valid_f / checked_count
-    return jr.choice(key, int(valid.shape[0]), shape=(n,), p=probs).astype(jnp.int32)
+    return jr.choice(key, valid.shape[0], shape=(n,), p=probs).astype(jnp.int32)
 
 
 def _component_times(
@@ -585,8 +582,8 @@ def _component_times(
         return end_times, lengths - 1
 
     if isinstance(comp, Fixed):
-        value = jnp.asarray(comp.value, dtype=float).reshape(())
-        times = jnp.full((n,), value, dtype=float)
+        value = jnp.asarray(comp.value, dtype=jnp.float64).reshape(())
+        times = jnp.full((n,), value, dtype=jnp.float64)
         return times, domain.lower_time_indices(case_indices, times)
 
     if isinstance(comp, Boundary):
@@ -612,8 +609,7 @@ def sample_irregular_trajectory_component(
     domain = component.domain
     if not isinstance(domain, IrregularTrajectoryDatasetDomain):
         raise TypeError(
-            "sample_irregular_trajectory_component requires an "
-            "IrregularTrajectoryDatasetDomain."
+            "sample_irregular_trajectory_component requires an IrregularTrajectoryDatasetDomain."
         )
 
     data_comp = component.spec.selection_for(domain.data_label)
@@ -627,7 +623,7 @@ def sample_irregular_trajectory_component(
     if n == 0:
         return domain.points_from_case_time(
             jnp.zeros((0,), dtype=jnp.int32),
-            jnp.zeros((0,), dtype=float),
+            jnp.zeros((0,), dtype=jnp.float64),
             structure=structure_,
             time_indices=jnp.zeros((0,), dtype=jnp.int32),
         )
@@ -635,7 +631,7 @@ def sample_irregular_trajectory_component(
     case_key, time_key = jr.split(key)
     time_comp = component.spec.selection_for(domain.time_label)
     if isinstance(time_comp, Fixed):
-        fixed_value = jnp.asarray(time_comp.value, dtype=float).reshape(())
+        fixed_value = jnp.asarray(time_comp.value, dtype=jnp.float64).reshape(())
         valid = (domain.start_times <= fixed_value) & (fixed_value <= domain.end_times)
         case_indices = _sample_valid_cases(valid, n, case_key)
     elif domain.sampling_mode == "observation_uniform" and isinstance(
@@ -692,9 +688,9 @@ def irregular_trajectory_default_quadrature_total_weight(
         )
     case_idx = jnp.asarray(case_field.data, dtype=jnp.int32)
     time_idx = jnp.asarray(time_field.data, dtype=jnp.int32)
-    n = int(case_idx.shape[0])
+    n = case_idx.shape[0]
     if n == 0:
-        return cx.AxisArray(jnp.zeros((0,), dtype=float), dims=(axis,))
+        return cx.AxisArray(jnp.zeros((0,), dtype=jnp.float64), dims=(axis,))
 
     time_comp = component.spec.selection_for(domain.time_label)
     point_mass = isinstance(time_comp, (FixedStart, FixedEnd, Fixed))
@@ -702,11 +698,11 @@ def irregular_trajectory_default_quadrature_total_weight(
     durations = domain.durations[case_idx]
 
     if domain.measure_mode == "case_time_probability":
-        per_sample = jnp.ones((n,), dtype=float)
+        per_sample = jnp.ones((n,), dtype=jnp.float64)
     elif point_mass:
-        per_sample = jnp.ones((n,), dtype=float)
+        per_sample = jnp.ones((n,), dtype=jnp.float64)
     elif boundary:
-        per_sample = jnp.full((n,), 2.0, dtype=float)
+        per_sample = jnp.full((n,), 2.0, dtype=jnp.float64)
     elif domain.sampling_mode == "observation_uniform" and isinstance(
         time_comp, Interior
     ):

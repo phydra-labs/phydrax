@@ -66,7 +66,7 @@ class MatterPowerEstimate(StrictModule):
         k = jnp.asarray(wavenumbers, dtype=epoch.dtype).reshape((-1,))
         power = jnp.asarray(power_values, dtype=epoch.dtype).reshape((-1,))
         counts = jnp.asarray(mode_counts, dtype=epoch.dtype).reshape((-1,))
-        valid = jnp.asarray(valid_shells, dtype=bool).reshape((-1,))
+        valid = jnp.asarray(valid_shells, dtype=jnp.bool_).reshape((-1,))
         sources = tuple(str(value).strip() for value in source_product_ids)
         estimator = str(estimator_id).strip()
         if (

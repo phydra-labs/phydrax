@@ -49,21 +49,21 @@ class FidelityBatchEvaluation(StrictModule):
         arrays = tuple(jnp.asarray(leaf) for leaf in leaves)
         if any(array.ndim == 0 for array in arrays):
             raise ValueError("Fidelity batch value leaves require a leading sample axis.")
-        counts = {int(array.shape[0]) for array in arrays}
+        counts = {array.shape[0] for array in arrays}
         if len(counts) != 1:
             raise ValueError("Fidelity batch value leaves must share a sample axis.")
         count = counts.pop()
-        finite = jnp.ones((count,), dtype=bool)
+        finite = jnp.ones((count,), dtype=jnp.bool_)
         for array in arrays:
             axes = tuple(range(1, array.ndim))
             leaf_finite = jnp.isfinite(array)
             if axes:
                 leaf_finite = jnp.all(leaf_finite, axis=axes)
             finite = finite & leaf_finite
-        valid_ = finite if valid is None else jnp.asarray(valid, dtype=bool) & finite
+        valid_ = finite if valid is None else jnp.asarray(valid, dtype=jnp.bool_) & finite
         if valid_.shape != (count,):
             raise ValueError("valid must contain one entry per fidelity sample.")
-        costs_ = jnp.broadcast_to(jnp.asarray(costs, dtype=float), (count,))
+        costs_ = jnp.broadcast_to(jnp.asarray(costs, dtype=jnp.float64), (count,))
         if bool(jnp.any(~jnp.isfinite(costs_) | (costs_ <= 0.0))):
             raise ValueError("Fidelity evaluation costs must be finite and positive.")
         level = str(level_id)
@@ -82,7 +82,7 @@ class FidelityBatchEvaluation(StrictModule):
 
     @property
     def num_samples(self) -> int:
-        return int(self.valid.size)
+        return self.valid.size
 
 
 class FidelityMultilevelSampler(StrictModule):
@@ -139,7 +139,7 @@ class FidelityMultilevelSampler(StrictModule):
             raise ValueError("sample_indices must be consecutive and non-negative.")
         inputs = self.input_sampler(indices, jax.random.fold_in(root_key, level))
         fine = self.level_evaluator(self.path.levels[level], inputs)
-        self._validate_evaluation(fine, level, int(indices.size))
+        self._validate_evaluation(fine, level, indices.size)
         if level == 0:
             return MultilevelSampleBatch(
                 fine.values,
@@ -152,7 +152,7 @@ class FidelityMultilevelSampler(StrictModule):
                 provenance=self.sampler_id,
             )
         coarse = self.level_evaluator(self.path.levels[level - 1], inputs)
-        self._validate_evaluation(coarse, level - 1, int(indices.size))
+        self._validate_evaluation(coarse, level - 1, indices.size)
         return MultilevelSampleBatch(
             fine.values,
             coarse.values,

@@ -164,8 +164,8 @@ class SpectrumThreshold:
         /,
     ):
         scale_ = float(scale)
-        matrix_ = np.asarray(matrix, dtype=float)
-        offset_ = np.asarray(offset, dtype=float)
+        matrix_ = np.asarray(matrix, dtype=np.float64)
+        offset_ = np.asarray(offset, dtype=np.float64)
         source = str(source_id).strip()
         if scale_ <= 0.0 or matrix_.ndim != 2 or matrix_.shape[0] != matrix_.shape[1]:
             raise ValueError("Threshold scale and matching matrix are invalid.")
@@ -384,7 +384,7 @@ def native_beta_function(
 ) -> Array:
     if not isinstance(plan, NativeSpectrumModelPlan):
         raise TypeError("plan must be NativeSpectrumModelPlan.")
-    values = np.asarray(parameters, dtype=float)
+    values = np.asarray(parameters, dtype=np.float64)
     if values.shape != (len(plan.parameter_labels),):
         raise ValueError("Native spectrum parameters have the wrong shape.")
     beta = _sm_beta(values) if plan.model == "sm-one-loop" else _mssm_beta(values)
@@ -450,7 +450,7 @@ def integrate_native_rge(
 
     if not isinstance(plan, NativeSpectrumModelPlan):
         raise TypeError("plan must be NativeSpectrumModelPlan.")
-    values = np.asarray(initial_parameters, dtype=float)
+    values = np.asarray(initial_parameters, dtype=np.float64)
     if values.shape != (len(plan.parameter_labels),) or not np.all(np.isfinite(values)):
         raise ValueError("Initial native spectrum parameters are invalid.")
     initial = float(initial_scale)
@@ -563,7 +563,7 @@ def solve_mssm_electroweak_breaking(
     *,
     z_mass: float = 91.1876,
 ) -> ElectroweakSymmetryBreakingEvidence:
-    values = np.asarray(parameters, dtype=float)
+    values = np.asarray(parameters, dtype=np.float64)
     if values.shape != (len(_MSSM_LABELS),):
         raise ValueError(
             "MSSM electroweak breaking requires the native MSSM parameter vector."
@@ -624,7 +624,7 @@ def compute_native_mssm_pole_masses(
 ) -> NativePoleMassEvidence:
     """Compute bounded tree electroweakinos/stops and leading one-loop light Higgs."""
 
-    values = np.asarray(parameters, dtype=float)
+    values = np.asarray(parameters, dtype=np.float64)
     if values.shape != (len(_MSSM_LABELS),):
         raise ValueError("Native MSSM masses require the native MSSM parameter vector.")
     index = {label: position for position, label in enumerate(_MSSM_LABELS)}
@@ -699,7 +699,7 @@ def compute_native_mssm_pole_masses(
     )
     tachyonic = np.concatenate(
         (
-            np.zeros(6, dtype=bool),
+            np.zeros(6, dtype=np.bool_),
             stop_squared < 0.0,
             (tree_higgs_squared + loop_higgs_squared < 0.0,),
         )
@@ -739,7 +739,7 @@ def assess_native_vacuum_stability(
     parameters: ArrayLike,
     /,
 ) -> VacuumStabilityEvidence:
-    values = np.asarray(parameters, dtype=float)
+    values = np.asarray(parameters, dtype=np.float64)
     if values.shape != (len(plan.parameter_labels),):
         raise ValueError("Vacuum parameters do not match the model.")
     if plan.model == "sm-one-loop":
@@ -829,9 +829,9 @@ class NativeSpectrumBVPPlan(StrictModule):
     ):
         if not isinstance(model, NativeSpectrumModelPlan):
             raise TypeError("model must be NativeSpectrumModelPlan.")
-        unknown = tuple(int(value) for value in unknown_indices)
-        target = tuple(int(value) for value in target_indices)
-        target_values_ = np.asarray(target_values, dtype=float)
+        unknown = tuple(unknown_indices)
+        target = tuple(target_indices)
+        target_values_ = np.asarray(target_values, dtype=np.float64)
         if (
             not unknown
             or len(unknown) != len(target)
@@ -911,8 +911,8 @@ def solve_native_spectrum_bvp(
 
     if not isinstance(plan, NativeSpectrumBVPPlan):
         raise TypeError("plan must be NativeSpectrumBVPPlan.")
-    base = np.asarray(base_parameters, dtype=float)
-    seeds_ = np.asarray(seeds, dtype=float)
+    base = np.asarray(base_parameters, dtype=np.float64)
+    seeds_ = np.asarray(seeds, dtype=np.float64)
     if base.shape != (len(plan.model.parameter_labels),):
         raise ValueError("Base parameters have the wrong model shape.")
     if seeds_.ndim != 2 or seeds_.shape[1] != len(plan.unknown_indices):
@@ -939,7 +939,7 @@ def solve_native_spectrum_bvp(
             if norm <= plan.residual_tolerance:
                 status = NativeSpectrumStatus.SUCCESS
                 break
-            jacobian = np.empty((residual.size, residual.size), dtype=float)
+            jacobian = np.empty((residual.size, residual.size), dtype=np.float64)
             for column, parameter_index in enumerate(plan.unknown_indices):
                 displacement = plan.finite_difference_step * max(
                     1.0, abs(candidate[parameter_index])
@@ -1019,10 +1019,10 @@ def propagate_spectrum_uncertainty(
 ) -> SpectrumUncertaintyEvidence:
     """Separate parametric, scale, perturbative-order, and provider components."""
 
-    inputs = np.asarray(central_inputs, dtype=float)
-    covariance = np.asarray(input_covariance, dtype=float)
-    observables = np.asarray(observable_samples, dtype=float)
-    displacements = np.asarray(input_displacements, dtype=float)
+    inputs = np.asarray(central_inputs, dtype=np.float64)
+    covariance = np.asarray(input_covariance, dtype=np.float64)
+    observables = np.asarray(observable_samples, dtype=np.float64)
+    displacements = np.asarray(input_displacements, dtype=np.float64)
     if covariance.shape != (inputs.size, inputs.size):
         raise ValueError("input_covariance has the wrong shape.")
     if observables.ndim != 2 or displacements.shape != (
@@ -1037,7 +1037,7 @@ def propagate_spectrum_uncertainty(
     propagated = jacobian @ covariance @ jacobian.T
 
     def variation_covariance(values: ArrayLike) -> np.ndarray:
-        table = np.asarray(values, dtype=float)
+        table = np.asarray(values, dtype=np.float64)
         if table.ndim != 2 or table.shape[1] != central.size:
             raise ValueError("Spectrum variation tables must share the observable axis.")
         centered = table - central
@@ -1088,7 +1088,7 @@ def scan_native_spectrum(
     *,
     thresholds: Sequence[SpectrumThreshold] = (),
 ) -> SpectrumScanResult:
-    points = np.asarray(parameter_points, dtype=float)
+    points = np.asarray(parameter_points, dtype=np.float64)
     if points.ndim != 2 or points.shape[1] != len(plan.parameter_labels):
         raise ValueError("Spectrum scan points have the wrong shape.")
     histories = tuple(
@@ -1182,12 +1182,12 @@ def cross_qualify_spectra(
     relative_tolerance: float,
 ) -> SpectrumCrossQualificationEvidence:
     labels_ = tuple(str(value) for value in labels)
-    native = np.asarray(native_values, dtype=float)
+    native = np.asarray(native_values, dtype=np.float64)
     providers = tuple(sorted(provider_values))
     if native.shape != (len(labels_),) or not providers:
         raise ValueError("Spectrum cross-qualification inputs are incomplete.")
     table = np.stack(
-        [np.asarray(provider_values[value], dtype=float) for value in providers]
+        [np.asarray(provider_values[value], dtype=np.float64) for value in providers]
     )
     if table.shape != (len(providers), len(labels_)):
         raise ValueError("Provider spectra do not share the native observable roster.")

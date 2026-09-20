@@ -118,7 +118,7 @@ class DEMQualificationArtifact(StrictModule):
             raise TypeError("profile must be a DEMQualificationProfile.")
         if not isinstance(residuals, DEMConstraintResiduals):
             raise TypeError("residuals must be DEMConstraintResiduals.")
-        execution = jnp.asarray(execution_successful, dtype=bool)
+        execution = jnp.asarray(execution_successful, dtype=jnp.bool_)
         constraints = profile.constraints_satisfied(residuals)
         self.profile_id = profile.profile_id
         self.residuals = residuals
@@ -129,7 +129,7 @@ class DEMQualificationArtifact(StrictModule):
             {
                 "kind": "dem-qualification-artifact",
                 "profile": profile.profile_id,
-                "residual_schema": "dem-constraint-residuals:v1",
+                "residual_schema": "dem-constraint-residuals",
             }
         )
 

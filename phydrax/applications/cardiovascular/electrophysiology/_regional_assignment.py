@@ -85,8 +85,8 @@ class AnatomicalRegionSelector(StrictModule, NonTrainableState):
         *,
         stable_node_ids: tuple[int, ...] = (),
     ):
-        codes = tuple(int(code) for code in region_codes)
-        node_ids = tuple(int(node_id) for node_id in stable_node_ids)
+        codes = tuple(region_codes)
+        node_ids = tuple(stable_node_ids)
         if not codes:
             raise ValueError("region_codes must contain at least one code.")
         if len(set(codes)) != len(codes):
@@ -97,7 +97,7 @@ class AnatomicalRegionSelector(StrictModule, NonTrainableState):
         self.stable_node_ids = node_ids
         self.selector_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-anatomical-region-selector-v1",
+                "kind": "cardiovascular-anatomical-region-selector",
                 "region_codes": codes,
                 "stable_node_ids": node_ids,
             }
@@ -173,7 +173,7 @@ class ScarCore(StrictModule, NonTrainableState):
 
 
 class ScarBorderZone(StrictModule, NonTrainableState):
-    """Partially conducting, remodelled excitable scar border zone."""
+    """Partially conducting, remodeled excitable scar border zone."""
 
     phenotype_index: int = eqx.field(static=True)
     conductivity_scale: float = eqx.field(static=True)
@@ -207,7 +207,7 @@ class ScarBorderZone(StrictModule, NonTrainableState):
 
 
 class DiffuseFibrosis(StrictModule, NonTrainableState):
-    """Explicit stable-ID realization of diffuse fibrotic remodelling."""
+    """Explicit stable-ID realization of diffuse fibrotic remodeling."""
 
     phenotype_index: int = eqx.field(static=True)
     conductivity_scale: float = eqx.field(static=True)
@@ -282,7 +282,7 @@ RegionalEffect: TypeAlias = (
 def _effect_fingerprint(kind: str, effect: RegionalEffect, /) -> str:
     return canonical_fingerprint(
         {
-            "kind": f"cardiovascular-{kind}-v1",
+            "kind": f"cardiovascular-{kind}",
             "phenotype_index": effect.phenotype_index,
             "conductivity_scale": effect.conductivity_scale,
             "capacitance_scale": effect.capacitance_scale,
@@ -337,7 +337,7 @@ class RegionalAssignmentRule(StrictModule, NonTrainableState):
         self.rule_id = (
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-regional-ep-rule-v1",
+                    "kind": "cardiovascular-regional-ep-rule",
                     "selector": selector.selector_id,
                     "effect": effect.effect_id,
                 }
@@ -444,7 +444,7 @@ class RegionalElectrophysiologyPlan(StrictModule, NonTrainableState):
         self.rules = rules_
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-regional-ep-plan-v1",
+                "kind": "cardiovascular-regional-ep-plan",
                 "node_count": node_count,
                 "phenotypes": tuple(
                     (phenotype.phenotype_id, phenotype.reaction_index)
@@ -504,8 +504,7 @@ def prepare_regional_assignment(
             requested_mask = np.isin(node_ids, requested)
             if np.count_nonzero(mask & requested_mask) != requested.size:
                 raise ValueError(
-                    f"Rule {rule.rule_id!r} stable node IDs must belong to its "
-                    "declared anatomical regions."
+                    f"Rule {rule.rule_id!r} stable node IDs must belong to its declared anatomical regions."
                 )
             mask &= requested_mask
         if not np.any(mask):
@@ -541,7 +540,7 @@ def prepare_regional_assignment(
         workset_ids.append(
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-regional-default-workset-v1",
+                    "kind": "cardiovascular-regional-default-workset",
                     "plan": plan.plan_id,
                     "phenotype": default_phenotype.phenotype_id,
                 }
@@ -568,7 +567,7 @@ def prepare_regional_assignment(
         workset_ids.append(
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-regional-workset-v1",
+                    "kind": "cardiovascular-regional-workset",
                     "plan": plan.plan_id,
                     "rule": rule.rule_id,
                     "phenotype": phenotype.phenotype_id,
@@ -596,16 +595,16 @@ def prepare_regional_assignment(
     )
     runtime_id = canonical_fingerprint(
         {
-            "kind": "prepared-cardiovascular-regional-ep-v1",
+            "kind": "prepared-cardiovascular-regional-ep",
             "plan": plan.plan_id,
-            "stable_node_ids": tuple(int(value) for value in node_ids),
-            "anatomical_region_codes": tuple(int(value) for value in region_codes),
+            "stable_node_ids": tuple(node_ids),
+            "anatomical_region_codes": tuple(region_codes),
             "worksets": tuple(workset_ids),
         }
     )
     return PreparedRegionalAssignment(
         plan,
-        tuple(int(value) for value in node_ids),
+        tuple(node_ids),
         jnp.asarray(region_codes, dtype=jnp.int32),
         jnp.asarray(phenotype_indices, dtype=jnp.int32),
         jnp.asarray(tissue_codes, dtype=jnp.int32),

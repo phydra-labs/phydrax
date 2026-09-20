@@ -46,8 +46,8 @@ class NeuralBOLDDrive(StrictModule):
                 raise ValueError(
                     "BOLD drive weights/baseline require real [2] or [region,2] arrays."
                 )
-        weights = weights.astype(jnp.result_type(weights.dtype, float))
-        reference = reference.astype(jnp.result_type(reference.dtype, float))
+        weights = weights.astype(jnp.result_type(weights.dtype, jnp.float64))
+        reference = reference.astype(jnp.result_type(reference.dtype, jnp.float64))
         self.component_weights = eqx.error_if(
             weights, ~jnp.all(jnp.isfinite(weights)), "BOLD drive weights must be finite."
         )

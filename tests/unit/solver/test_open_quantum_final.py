@@ -93,7 +93,7 @@ def test_memory_execution_and_physicality_are_distinct():
 def test_process_physicality_rejects_negative_initial_state():
     initial = jnp.asarray([[2.0 + 0j, 0j], [0j, -1.0 + 0j]])
     process = phx.tensor_network.markov_process_tensor(
-        (jnp.eye(4, dtype=complex),), initial
+        (jnp.eye(4, dtype="complex128"),), initial
     )
     assert not bool(process.physicality().valid)
 
@@ -153,9 +153,7 @@ def test_open_system_artifact_roundtrip_and_identity(tmp_path):
     assert manifest["record"]["campaign_id"] == record.campaign_id
     assert stored.artifact_names == record.artifact_names
     with pytest.raises(ValueError):
-        read_open_system_artifact(
-            path, expected_campaign_id="wrong"
-        )
+        read_open_system_artifact(path, expected_campaign_id="wrong")
 
 
 def test_generic_quantum_jump_adapter():
@@ -176,9 +174,9 @@ def test_generic_quantum_jump_adapter():
 
 
 def test_local_lindblad_channel_and_purified_certificate():
-    lowering = jnp.asarray([[0, 1], [0, 0]], dtype=complex)
+    lowering = jnp.asarray([[0, 1], [0, 0]], dtype="complex128")
     prepared = phx.tensor_network.prepare_local_lindblad_channel(
-        jnp.zeros((2, 2), dtype=complex),
+        jnp.zeros((2, 2), dtype="complex128"),
         lowering[None, ...],
         0.01,
     )
@@ -205,8 +203,8 @@ def test_heom_bdf_grid_and_process_identifiability():
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.01, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
-        jnp.zeros((2, 2), dtype=complex),
-        jnp.asarray([[1, 0], [0, -1]], dtype=complex),
+        jnp.zeros((2, 2), dtype="complex128"),
+        jnp.asarray([[1, 0], [0, -1]], dtype="complex128"),
         expansion,
         phx.solver.HEOMHierarchy(1, 1),
         density,
@@ -235,20 +233,20 @@ def test_neural_rate_evidence_blocks_uncertain_rates():
 
 def test_complex_stiefel_and_sequential_process_tomography():
     manifold = phx.metrix.ComplexStiefelManifold(2, 2)
-    isometry = jnp.eye(2, dtype=complex)
+    isometry = jnp.eye(2, dtype="complex128")
     assert bool(manifold.contains(isometry))
     retracted = manifold.retract(isometry, 0.01j * jnp.asarray([[0.0, 1.0], [1.0, 0.0]]))
     assert bool(manifold.contains(retracted))
     spec = phx.tensor_network.CombLegSpec(2, 1, 1)
     model = phx.tensor_network.SequentialStinespringProcess(
         spec,
-        jnp.eye(2, dtype=complex),
+        jnp.eye(2, dtype="complex128"),
         (isometry,),
         (1,),
         process_id="identity-stinespring",
     )
     instrument = phx.tensor_network.QuantumInstrument(
-        jnp.eye(2, dtype=complex)[None, None, ...],
+        jnp.eye(2, dtype="complex128")[None, None, ...],
         jnp.asarray([True]),
         jnp.asarray([[True]]),
         instrument_id="identity",
@@ -264,9 +262,9 @@ def test_complex_stiefel_and_sequential_process_tomography():
     assert not bool(result.valid)
     assert bool(result.underidentified)
     source = phx.tensor_network.causal_process_from_lindblad(
-        jnp.zeros((2, 2), dtype=complex),
-        jnp.zeros((1, 2, 2), dtype=complex),
-        0.5 * jnp.eye(2, dtype=complex),
+        jnp.zeros((2, 2), dtype="complex128"),
+        jnp.zeros((1, 2, 2), dtype="complex128"),
+        0.5 * jnp.eye(2, dtype="complex128"),
         step_size=0.01,
         slot_count=1,
     )

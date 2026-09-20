@@ -95,11 +95,11 @@ class WaveletFilterBank(StrictModule, NonTrainableState):
         )
         if not identity:
             raise ValueError("Wavelet filter-bank names must be non-empty.")
-        if any(tap.ndim != 1 or int(tap.size) < 2 for tap in taps):
+        if any(tap.ndim != 1 or tap.size < 2 for tap in taps):
             raise ValueError(
                 "Wavelet filters must be one-dimensional with at least two taps."
             )
-        if len({int(tap.size) for tap in taps}) != 1:
+        if len({tap.size for tap in taps}) != 1:
             raise ValueError(
                 "Wavelet decomposition and reconstruction filters must align."
             )
@@ -112,7 +112,7 @@ class WaveletFilterBank(StrictModule, NonTrainableState):
         self.reconstruction_high = taps[3]
         self.name = identity
         self.fingerprint = canonical_fingerprint(
-            {"kind": "wavelet-filter-bank-v1", "name": identity, "taps": digest}
+            {"kind": "wavelet-filter-bank", "name": identity, "taps": digest}
         )
 
     @classmethod
@@ -150,7 +150,7 @@ class DiscreteWaveletTransform(StrictModule, NonTrainableState):
         wavelet: str | Sequence[str] = "haar",
         boundary: WaveletBoundary | Sequence[WaveletBoundary] = "periodization",
     ):
-        axes_value = tuple(int(axis) for axis in axes)
+        axes_value = tuple(axes)
         level_count = int(levels)
         if not axes_value:
             raise ValueError("Discrete wavelet transforms require at least one axis.")
@@ -174,7 +174,7 @@ class DiscreteWaveletTransform(StrictModule, NonTrainableState):
         self.levels = level_count
         self.fingerprint = canonical_fingerprint(
             {
-                "kind": "discrete-wavelet-transform-v1",
+                "kind": "discrete-wavelet-transform",
                 "axes": axes_value,
                 "levels": level_count,
                 "boundaries": boundaries,
@@ -210,7 +210,7 @@ class DiscreteWaveletTransform(StrictModule, NonTrainableState):
         reconstruction_shapes: list[tuple[int, ...]] = []
         all_low = (0,) * self.spatial_ndim
         for _ in range(self.levels):
-            shape = tuple(int(approximation.shape[axis]) for axis in axes)
+            shape = tuple(approximation.shape[axis] for axis in axes)
             if any(size <= 1 for size in shape):
                 raise ValueError(
                     "Too many wavelet levels for the transformed axis sizes."
@@ -259,7 +259,7 @@ class DiscreteWaveletTransform(StrictModule, NonTrainableState):
                 raise ValueError(
                     f"Each wavelet level requires {self.detail_count} detail bands."
                 )
-            reference_shape = tuple(int(details[0].shape[axis]) for axis in axes)
+            reference_shape = tuple(details[0].shape[axis] for axis in axes)
             approximation = _crop_axes(approximation, axes, reference_shape)
             bands = (approximation,) + details
             if len(bands) != expected_bands:

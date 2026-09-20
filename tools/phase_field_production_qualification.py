@@ -31,7 +31,7 @@ def _rectangle_mesh(
         raise ValueError("Structured triangle counts must be positive.")
     xs = np.linspace(x_bounds[0], x_bounds[1], nx + 1)
     ys = np.linspace(y_bounds[0], y_bounds[1], ny + 1)
-    vertices = np.asarray([(x, y) for y in ys for x in xs], dtype=float)
+    vertices = np.asarray([(x, y) for y in ys for x in xs], dtype="float64")
     cells = []
     for row in range(ny):
         for column in range(nx):
@@ -214,7 +214,7 @@ def _planar_interface_qualification() -> dict[str, object]:
             {
                 "x_cells": x_cells,
                 "y_cells": y_cells,
-                "degrees_of_freedom": int(profile.size),
+                "degrees_of_freedom": profile.size,
                 "cells_across_transition": float(
                     np.asarray(method.resolution.cells_across_transition)
                 ),

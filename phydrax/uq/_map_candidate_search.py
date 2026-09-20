@@ -21,7 +21,7 @@ from ..optim import (
 from ._posterior import PosteriorProblem
 
 
-_MAP_CANDIDATE_METHOD_ID = "finite-exhaustive-map-candidate-search-v1"
+_MAP_CANDIDATE_METHOD_ID = "finite-exhaustive-map-candidate-search"
 _DEFAULT_FINITE_SEARCH = FiniteExhaustiveSearch()
 
 
@@ -91,14 +91,14 @@ class MAPCandidateSearchResult(StrictModule):
                 raise ValueError("Valid MAP candidate indices must be nonnegative.")
             position_ = jax.tree_util.tree_map(jnp.asarray, position)
             parameters = problem.parameter_space.constrain(position_)
-            objective_ = jnp.asarray(objective, dtype=float).reshape(())
+            objective_ = jnp.asarray(objective, dtype=jnp.float64).reshape(())
             termination_reason = "finite_minimum"
         else:
             if flat_index != -1 or any(index != -1 for index in product_index):
                 raise ValueError("Invalid MAP candidate indices must use -1 sentinels.")
             position_ = None
             parameters = None
-            objective_ = jnp.asarray(jnp.nan, dtype=float)
+            objective_ = jnp.asarray(jnp.nan, dtype=jnp.float64)
             termination_reason = "no_finite_candidates"
 
         self.problem = problem
@@ -110,9 +110,9 @@ class MAPCandidateSearchResult(StrictModule):
         self.valid = valid_
         self.termination_reason = termination_reason
         self.flat_index = int(flat_index)
-        self.product_index = tuple(int(index) for index in product_index)
+        self.product_index = tuple(product_index)
         self.axis_paths = tuple(str(path) for path in axis_paths)
-        self.product_shape = tuple(int(size) for size in product_shape)
+        self.product_shape = tuple(product_shape)
         self.candidate_count = int(candidate_count)
         self.objective_evaluations = evaluations
         self.valid_evaluations = evaluations - invalid
@@ -133,15 +133,14 @@ def _validate_map_candidate_space(
     initial_structure = jax.tree_util.tree_structure(initial)
     if candidate_structure != initial_structure:
         raise ValueError(
-            "Finite candidate points must match the posterior initial-position "
-            "PyTree structure."
+            "Finite candidate points must match the posterior initial-position PyTree structure."
         )
 
     path_specs = jax.tree_util.tree_flatten_with_path(candidate_spec)[0]
     initial_leaves = jax.tree_util.tree_leaves(initial)
     for (path, spec), initial_leaf in zip(path_specs, initial_leaves, strict=True):
         initial_array = jnp.asarray(initial_leaf)
-        expected_shape = tuple(int(size) for size in initial_array.shape)
+        expected_shape = tuple(initial_array.shape)
         if tuple(spec.shape) != expected_shape:
             raise ValueError(
                 f"Finite candidate point leaf {jax.tree_util.keystr(path) or '<root>'} "

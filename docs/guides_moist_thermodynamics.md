@@ -93,7 +93,7 @@ caller responsibility, not a clipped unreported source.
 
 `conservative_radiation(temperature, layer_mass, heat_capacity,
 equilibrium_temperature, relaxation_time)` returns layer energy rates and their
-opposite summed environmental energy rate. This is Newtonian grey cooling, not
+opposite summed environmental energy rate. This is Newtonian gray cooling, not
 spectrally resolved radiative transfer. Retaining the opposite environmental
 inventory makes its energy exchange explicitly conservative.
 

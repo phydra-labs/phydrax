@@ -110,7 +110,7 @@ from phydrax.applications.robotics import OpenSimCylinderRouteWrapPlan
 
 prepared = OpenSimCylinderRouteWrapPlan().prepare(origin, axis, radius, length)
 source = prepared.initial_state()
-candidate = prepared.propose(source, endpoints)  # endpoints: (2, 3), metres
+candidate = prepared.propose(source, endpoints)  # endpoints: (2, 3), meters
 accepted = prepared.commit(candidate, source)
 fixed = prepared.evaluate_fixed_branch(accepted, endpoints)
 loads, power = prepared.tensile_force_pullback(

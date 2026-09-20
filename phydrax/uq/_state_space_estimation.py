@@ -76,7 +76,7 @@ def _case_contract(
     /,
 ) -> tuple[tuple[str, ...], tuple[int, ...], tuple[str, ...]]:
     axes = tuple(str(axis) for axis in case_axes)
-    shape = tuple(int(size) for size in case_shape)
+    shape = tuple(case_shape)
     identifiers = tuple(str(identifier) for identifier in case_ids)
     if any(not axis for axis in axes) or len(set(axes)) != len(axes):
         raise ValueError("case_axes must contain unique non-empty names.")
@@ -230,8 +230,7 @@ class StateSpaceExperiment(StrictModule):
             problem, (StateSpaceProblem, RaoBlackwellizedStateSpaceProblem)
         ):
             raise TypeError(
-                "problem(parameters) must return a StateSpaceProblem or "
-                "RaoBlackwellizedStateSpaceProblem."
+                "problem(parameters) must return a StateSpaceProblem or RaoBlackwellizedStateSpaceProblem."
             )
         if (
             isinstance(problem, RaoBlackwellizedStateSpaceProblem)
@@ -376,11 +375,7 @@ def _experiment_likelihood(
         status = backend.status
         method = "rao-blackwellized-particle"
         temporal_method = "sequential"
-        approximation_id = (
-            "rao-blackwellized:"
-            f"{backend.problem.model.nonlinear_transition.approximation_id}:"
-            f"{backend.num_particles}"
-        )
+        approximation_id = f"rao-blackwellized:{backend.problem.model.nonlinear_transition.approximation_id}:{backend.num_particles}"
         covariance_regularization = None
         curvature_damping = None
     else:
@@ -393,7 +388,7 @@ def _experiment_likelihood(
         raise ValueError(
             f"Experiment {experiment.experiment_id!r} likelihood backend must retain "
             "the exact evaluated StateSpaceProblem or RaoBlackwellizedStateSpaceProblem, "
-            "including its model, input, and observation schedule; cached or relabelled "
+            "including its model, input, and observation schedule; cached or relabeled "
             "diagnostics are not accepted."
         )
     expected_case_shape = experiment.case_shape

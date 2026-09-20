@@ -266,8 +266,8 @@ class FullNativeReanalysisRequest:
             raise ValueError(
                 "Reanalysis parameters must be a finite unique named record."
             )
-        initial = jnp.asarray(self.initial_guess, dtype=float)
-        geometry = jnp.asarray(self.geometry_coordinates_mm, dtype=float)
+        initial = jnp.asarray(self.initial_guess, dtype=jnp.float64)
+        geometry = jnp.asarray(self.geometry_coordinates_mm, dtype=jnp.float64)
         if initial.size == 0 or bool(jnp.any(~jnp.isfinite(initial))):
             raise ValueError("Reanalysis initial guesses must be non-empty and finite.")
         if (

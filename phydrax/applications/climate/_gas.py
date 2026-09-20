@@ -92,11 +92,11 @@ class GasBoxModel(StrictModule):
         solve_iterations: int = 64,
         solve_tolerance: float = 1.0e-6,
     ):
-        fractions_ = np.asarray(fractions, dtype=float)
-        rates = np.asarray(decay_rates, dtype=float)
-        background_ = np.asarray(background, dtype=float)
-        conversion = np.asarray(inventory_per_concentration, dtype=float)
-        response = np.asarray(response_coefficients, dtype=float)
+        fractions_ = np.asarray(fractions, dtype=np.float64)
+        rates = np.asarray(decay_rates, dtype=np.float64)
+        background_ = np.asarray(background, dtype=np.float64)
+        conversion = np.asarray(inventory_per_concentration, dtype=np.float64)
+        response = np.asarray(response_coefficients, dtype=np.float64)
         if (
             fractions_.ndim != 2
             or fractions_.shape[0] != 3
@@ -221,7 +221,7 @@ class GasBoxModel(StrictModule):
         )
         if not any(response_active):
             return LifetimeResult(
-                one, base, zero, jnp.ones_like(base, dtype=bool), jnp.asarray(True)
+                one, base, zero, jnp.ones_like(base, dtype=jnp.bool_), jnp.asarray(True)
             )
         target = (
             base

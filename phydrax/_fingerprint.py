@@ -102,8 +102,7 @@ def _array_records(tree: PyTree[Any], /) -> list[tuple[str, np.ndarray]]:
         if value.dtype.hasobject:
             if isinstance(leaf, np.ndarray):
                 raise TypeError(
-                    f"Array leaf {jax.tree_util.keystr(path) or '<root>'} "
-                    "has object dtype and cannot be fingerprinted."
+                    f"Array leaf {jax.tree_util.keystr(path) or '<root>'} has object dtype and cannot be fingerprinted."
                 )
             continue
         records.append((jax.tree_util.keystr(path) or "<root>", value))

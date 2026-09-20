@@ -2,8 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Hashable, ItemsView, Iterator, KeysView, Mapping, ValuesView
+from collections.abc import Hashable, Iterator, Mapping
 from typing import Any, NoReturn, TypeVar
+
+import equinox as eqx
 
 from ._strict import StrictModule
 
@@ -13,44 +15,42 @@ _VT = TypeVar("_VT", covariant=True)
 
 
 class frozendict(StrictModule, Mapping[_KT, _VT]):
-    _mapping: dict[_KT, _VT]
+    _keys: tuple[_KT, ...] = eqx.field(static=True)
+    _values: tuple[_VT, ...]
 
     def __init__(self, *args, **kwargs):
-        self._mapping = dict(*args, **kwargs)  # ty: ignore[invalid-assignment]
+        mapping = dict(*args, **kwargs)
+        self._keys = tuple(mapping)
+        self._values = tuple(mapping.values())
 
     def __len__(self) -> int:
-        return self._mapping.__len__()
+        return len(self._keys)
 
     def __iter__(self) -> Iterator[_KT]:
-        return iter(self._mapping.keys())
+        return iter(self._keys)
 
     def __getitem__(self, key: _KT, /) -> _VT:
-        return self._mapping.__getitem__(key)
+        for candidate, value in zip(self._keys, self._values, strict=True):
+            if candidate == key:
+                return value
+        raise KeyError(key)
 
-    def keys(self) -> KeysView[_KT]:
-        return self._mapping.keys()
-
-    def values(self) -> ValuesView[_VT]:
-        return self._mapping.values()
-
-    def items(self) -> ItemsView[_KT, _VT]:
-        return self._mapping.items()
-
-    def __contains__(self, key: Hashable) -> bool:
-        return self._mapping.__contains__(key)
+    def __contains__(self, key: object) -> bool:
+        return key in self._keys
 
     def __hash__(self) -> int:
-        items = self._mapping.items()
-        return hash(frozenset(items))
+        return hash(frozenset(zip(self._keys, self._values, strict=True)))
 
     def __repr__(self) -> str:
-        return f"frozendict({self._mapping!r})"
+        return f"frozendict({dict(zip(self._keys, self._values, strict=True))!r})"
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, frozendict):
-            return self._mapping == other._mapping
+            return dict(zip(self._keys, self._values, strict=True)) == dict(
+                zip(other._keys, other._values, strict=True)
+            )
         if isinstance(other, Mapping):
-            return self._mapping == dict(other)
+            return dict(zip(self._keys, self._values, strict=True)) == dict(other)
         return False
 
     @staticmethod

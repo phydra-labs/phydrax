@@ -37,10 +37,10 @@ class UnbinnedDataSet(StrictModule, NonTrainableState):
         weights: ArrayLike | None = None,
         active: ArrayLike | None = None,
     ):
-        values = np.asarray(observations, dtype=float)
+        values = np.asarray(observations, dtype=np.float64)
         names = tuple(str(value).strip() for value in observable_names)
-        lower_ = np.asarray(lower, dtype=float)
-        upper_ = np.asarray(upper, dtype=float)
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
         if (
             values.ndim != 2
             or values.shape[0] < 1
@@ -61,14 +61,14 @@ class UnbinnedDataSet(StrictModule, NonTrainableState):
         ):
             raise ValueError("Observable bounds must be finite, aligned, and increasing.")
         weights_ = (
-            np.ones((values.shape[0],), dtype=float)
+            np.ones((values.shape[0],), dtype=np.float64)
             if weights is None
-            else np.asarray(weights, dtype=float)
+            else np.asarray(weights, dtype=np.float64)
         )
         active_ = (
-            np.ones((values.shape[0],), dtype=bool)
+            np.ones((values.shape[0],), dtype=np.bool_)
             if active is None
-            else np.asarray(active, dtype=bool)
+            else np.asarray(active, dtype=np.bool_)
         )
         if weights_.shape != active_.shape or weights_.shape != (values.shape[0],):
             raise ValueError("Unbinned weights/activity must align with events.")

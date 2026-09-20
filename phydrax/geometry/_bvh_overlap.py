@@ -4,7 +4,7 @@
 
 """Deterministic, host-only broad phase for conservative geometry coupling.
 
-This module deliberately does not use the JAX nearest-neighbour BVH.  Coupling
+This module deliberately does not use the JAX nearest-neighbor BVH.  Coupling
 requires an exhaustive set of AABB candidates: dropping a pair because it is
 not among a nearest-item beam is not a safe failure mode.
 """
@@ -393,11 +393,11 @@ class HostAabbOverlapBvh:
 
     @property
     def dimension(self) -> int:
-        return int(self.bbox_min.shape[1]) if self.bbox_min.ndim == 2 else 0
+        return self.bbox_min.shape[1] if self.bbox_min.ndim == 2 else 0
 
     @property
     def size(self) -> int:
-        return int(self.bbox_min.shape[0]) if self.bbox_min.ndim == 2 else 0
+        return self.bbox_min.shape[0] if self.bbox_min.ndim == 2 else 0
 
 
 def build_host_aabb_overlap_bvh(

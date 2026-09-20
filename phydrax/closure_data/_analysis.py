@@ -331,7 +331,7 @@ class ClosureQualityReport(StrictModule, NonTrainableState):
         )
         finite = jnp.isfinite(flattened)
         safe = jnp.where(finite, flattened, jnp.zeros_like(flattened))
-        count = int(flattened.size)
+        count = flattened.size
         nonfinite = int(np.count_nonzero(~np.asarray(finite)))
         maximum = jnp.max(jnp.abs(safe), initial=0.0)
         passed = nonfinite == 0 and (limit is None or float(np.asarray(maximum)) <= limit)

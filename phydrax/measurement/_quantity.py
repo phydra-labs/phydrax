@@ -84,7 +84,7 @@ class ValueLayout:
             isinstance(size, bool) or not isinstance(size, Integral) for size in shape
         ):
             raise TypeError("component_shape entries must be integers.")
-        shape = tuple(int(size) for size in shape)
+        shape = tuple(shape)
         if any(size < 1 for size in shape):
             raise ValueError("component_shape entries must be positive.")
         labels = _axes(self.component_labels)

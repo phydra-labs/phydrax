@@ -190,21 +190,21 @@ def test_claim_evidence_preserves_all_requalification_triggers():
 
 def test_claim_evidence_identity_changes_when_prerequisite_is_replaced():
     profile = _profile()
-    calibration_v1 = _stage(
+    baseline_calibration = _stage(
         "measurement-calibration",
-        raw_artifact_id="calibration-v1",
+        raw_artifact_id="calibration-baseline",
     )
-    calibration_v2 = _stage(
+    replacement_calibration = _stage(
         "measurement-calibration",
-        raw_artifact_id="calibration-v2",
+        raw_artifact_id="calibration-replacement",
     )
     locked = _stage("locked-prediction")
 
-    first = _evaluate(profile, (calibration_v1, locked))
-    replaced = _evaluate(profile, (calibration_v2, locked))
+    first = _evaluate(profile, (baseline_calibration, locked))
+    replaced = _evaluate(profile, (replacement_calibration, locked))
 
-    assert calibration_v1.evidence_id in first.subject_ids
-    assert calibration_v2.evidence_id in replaced.subject_ids
+    assert baseline_calibration.evidence_id in first.subject_ids
+    assert replacement_calibration.evidence_id in replaced.subject_ids
     assert first.evidence_id != replaced.evidence_id
 
 

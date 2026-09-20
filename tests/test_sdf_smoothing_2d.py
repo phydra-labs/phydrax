@@ -24,18 +24,18 @@ def test_geometry2d_sdf_signs_and_boundary():
             [0.5, 0.5, 0.0],
             [-0.5, 0.5, 0.0],
         ],
-        dtype=float,
+        dtype="float64",
     )
-    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=int)
+    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype="int64")
     m = meshio.Mesh(points=pts, cells=[("triangle", faces)])
 
     geom = phx.domain.GeometryDomain(
         phx.geometry.planar_region_from_source(m, recenter=False).compile()
     )
 
-    inside = jnp.array([[0.0, 0.0]], dtype=float)
-    outside = jnp.array([[2.0, 0.0]], dtype=float)
-    boundary = jnp.array([[0.5, 0.0]], dtype=float)
+    inside = jnp.array([[0.0, 0.0]], dtype="float64")
+    outside = jnp.array([[2.0, 0.0]], dtype="float64")
+    boundary = jnp.array([[0.5, 0.0]], dtype="float64")
 
     sdf = jax.vmap(geom.adf)
     sd_inside = sdf(inside)
@@ -82,9 +82,9 @@ def _scaled_square(scale: float) -> phx.domain.GeometryDomain:
             [half, half, 0.0],
             [-half, half, 0.0],
         ],
-        dtype=float,
+        dtype="float64",
     )
-    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=int)
+    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype="int64")
     return phx.domain.GeometryDomain(
         phx.geometry.planar_region_from_source(
             meshio.Mesh(points=points, cells=[("triangle", faces)]),

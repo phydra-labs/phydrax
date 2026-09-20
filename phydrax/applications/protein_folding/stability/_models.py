@@ -63,7 +63,7 @@ def _role_case_ids(campaign: ScientificCampaign, role_name: str, /) -> tuple[str
 
 
 class UncertaintyComponent(StrictModule, NonTrainableState):
-    """One labelled predictive variance component; no anonymous variance sums."""
+    """One labeled predictive variance component; no anonymous variance sums."""
 
     variance: Array
     label: str = eqx.field(static=True)
@@ -79,7 +79,7 @@ class UncertaintyComponent(StrictModule, NonTrainableState):
         kind: UncertaintyKind,
         conditionally_independent: bool,
     ):
-        values = np.asarray(variance, dtype=float)
+        values = np.asarray(variance, dtype=np.float64)
         if values.ndim != 1 or not np.all(np.isfinite(values)) or np.any(values < 0.0):
             raise ValueError("Uncertainty variances must be finite non-negative vectors.")
         if kind not in ("aleatoric", "epistemic"):
@@ -119,8 +119,8 @@ class StabilityPrediction(StrictModule, NonTrainableState):
         sign_convention: str,
         model_id: str,
     ):
-        means = np.asarray(mean, dtype=float)
-        validity = np.asarray(valid, dtype=bool)
+        means = np.asarray(mean, dtype=np.float64)
+        validity = np.asarray(valid, dtype=np.bool_)
         ids = tuple(_identifier(value, "prediction case ID") for value in case_ids)
         reasons = tuple(abstention_reasons)
         if means.shape != (len(ids),) or validity.shape != means.shape:
@@ -247,8 +247,7 @@ class ProteinStabilityModelFit:
             self.successful and self.reasons
         ):
             raise ValueError(
-                "Successful fits require one predictor and no reasons; failed fits "
-                "require no predictor."
+                "Successful fits require one predictor and no reasons; failed fits require no predictor."
             )
         for value, name in (
             (self.campaign_id, "campaign_id"),
@@ -355,10 +354,10 @@ class GlobalSubstitutionBaseline(AbstractProteinStabilityPredictor):
         condition_id: str,
         ridge: float,
     ):
-        coefficient_array = jnp.asarray(coefficients, dtype=float)
-        covariance = jnp.asarray(parameter_covariance, dtype=float)
-        residual = jnp.asarray(residual_variance, dtype=float).reshape(())
-        indices = tuple(int(value) for value in feature_indices)
+        coefficient_array = jnp.asarray(coefficients, dtype=jnp.float64)
+        covariance = jnp.asarray(parameter_covariance, dtype=jnp.float64)
+        residual = jnp.asarray(residual_variance, dtype=jnp.float64).reshape(())
+        indices = tuple(feature_indices)
         if (
             coefficient_array.ndim != 1
             or covariance.shape != (coefficient_array.size, coefficient_array.size)
@@ -557,10 +556,10 @@ class RegularizedEnvironmentModel(AbstractProteinStabilityPredictor):
         family_effect_scale: float,
         ridge: float,
     ):
-        coefficients_ = jnp.asarray(coefficients, dtype=float)
-        covariance = jnp.asarray(parameter_covariance, dtype=float)
-        residual = jnp.asarray(residual_variance, dtype=float).reshape(())
-        unseen = jnp.asarray(unseen_family_variance, dtype=float).reshape(())
+        coefficients_ = jnp.asarray(coefficients, dtype=jnp.float64)
+        covariance = jnp.asarray(parameter_covariance, dtype=jnp.float64)
+        residual = jnp.asarray(residual_variance, dtype=jnp.float64).reshape(())
+        unseen = jnp.asarray(unseen_family_variance, dtype=jnp.float64).reshape(())
         families = tuple(
             sorted(
                 _identifier(value, "training family ID") for value in training_family_ids
@@ -871,11 +870,11 @@ class RegularizedPairInteractionModel(StrictModule):
         condition_id: str,
         sign_convention: str,
     ):
-        coefficients_ = jnp.asarray(coefficients, dtype=float)
-        covariance = jnp.asarray(parameter_covariance, dtype=float)
-        residual = jnp.asarray(residual_variance, dtype=float).reshape(())
-        mean_ = jnp.asarray(mean, dtype=float)
-        scale_ = jnp.asarray(scale, dtype=float)
+        coefficients_ = jnp.asarray(coefficients, dtype=jnp.float64)
+        covariance = jnp.asarray(parameter_covariance, dtype=jnp.float64)
+        residual = jnp.asarray(residual_variance, dtype=jnp.float64).reshape(())
+        mean_ = jnp.asarray(mean, dtype=jnp.float64)
+        scale_ = jnp.asarray(scale, dtype=jnp.float64)
         names = tuple(feature_names)
         if (
             mean_.shape != (len(names),)
@@ -1165,8 +1164,7 @@ def _candidate_hyperparameters(
             ("ridge", predictor.ridge),
         )
     raise TypeError(
-        "Protein stability selection candidates must be successful baseline or "
-        "regularized-environment fits."
+        "Protein stability selection candidates must be successful baseline or regularized-environment fits."
     )
 
 
@@ -1258,8 +1256,7 @@ class ProteinStabilityModelSelectionRecord:
             normalized_hyperparameters.append((model_fit.fit_id, normalized))
         if score_name != "family-macro-mae-kcal-per-mol":
             raise ValueError(
-                "Protein stability selection requires the prespecified family-macro "
-                "MAE score."
+                "Protein stability selection requires the prespecified family-macro MAE score."
             )
         feature_by_id = {item.measurement_id: item for item in values}
         if len(feature_by_id) != len(values):
@@ -1277,8 +1274,7 @@ class ProteinStabilityModelSelectionRecord:
             for case_id in selection_ids
         ):
             raise ValueError(
-                "Every model-selection case requires one exact uncensored "
-                "single-mutant feature."
+                "Every model-selection case requires one exact uncensored single-mutant feature."
             )
         selection_features = tuple(feature_by_id[case_id] for case_id in selection_ids)
         selection_measurements = tuple(
@@ -1298,8 +1294,7 @@ class ProteinStabilityModelSelectionRecord:
                 or not np.all(np.isfinite(means))
             ):
                 raise ValueError(
-                    "Every prespecified candidate must predict every model-selection "
-                    "case without abstention."
+                    "Every prespecified candidate must predict every model-selection case without abstention."
                 )
             group_errors: dict[str, list[float]] = {}
             for index, measurement in enumerate(selection_measurements):
@@ -1322,8 +1317,7 @@ class ProteinStabilityModelSelectionRecord:
         )
         if not baseline_fit_ids or not model_fit_ids:
             raise ValueError(
-                "Model selection requires prespecified baseline and environment "
-                "candidate ladders."
+                "Model selection requires prespecified baseline and environment candidate ladders."
             )
         chosen_baseline_fit_id = min(
             baseline_fit_ids,
@@ -1608,8 +1602,7 @@ def _aligned_calibration(
     expected_transform = fit_protein_feature_transform(features, cohort)
     if transform.transform_id != expected_transform.transform_id:
         raise ValueError(
-            "Feature transform must be generated from the exact campaign "
-            "calibration features."
+            "Feature transform must be generated from the exact campaign calibration features."
         )
     selected_ids = expected_transform.fit_case_ids
     calibration_ids = frozenset(_role_case_ids(cohort.campaign, "calibration"))
@@ -1863,8 +1856,7 @@ def fit_regularized_pair_interaction_model(
             or case.source_manifest_ids != expected_sources
         ):
             raise ValueError(
-                "Double-mutant campaign cases must retain exact pair, condition, "
-                "and source lineage."
+                "Double-mutant campaign cases must retain exact pair, condition, and source lineage."
             )
         pair_roles.setdefault(item.pair_features.pair_unit_id, set()).add(
             role_by_case[case_id]

@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 def _as_inexact_array(values: ArrayLike, /) -> Array:
     array = jnp.asarray(values)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        return array.astype(float)
+        return array.astype("float64")
     return array
 
 
@@ -72,7 +72,7 @@ def _replace_axis_size(
     size: int,
     /,
 ) -> tuple[int, ...]:
-    dimensions = tuple(int(dimension) for dimension in shape)
+    dimensions = tuple(shape)
     resolved = _normalize_axis(axis, len(dimensions))
     output = list(dimensions)
     output[resolved] = int(size)

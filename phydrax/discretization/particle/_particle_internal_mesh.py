@@ -13,14 +13,14 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._core import ParticleDiscretization
 
 
 class AbstractParticleInternalMeshPlan(StrictModule, NonTrainableState):
-    mesh_id: AbstractAttribute[str]
-    cell_capacity: AbstractAttribute[int]
+    mesh_id: eqx.AbstractVar[str]
+    cell_capacity: eqx.AbstractVar[int]
 
     @abc.abstractmethod
     def prepare(self):
@@ -28,8 +28,8 @@ class AbstractParticleInternalMeshPlan(StrictModule, NonTrainableState):
 
 
 class AbstractPreparedParticleInternalMesh(StrictModule, NonTrainableState):
-    prepared_id: AbstractAttribute[str]
-    cell_capacity: AbstractAttribute[int]
+    prepared_id: eqx.AbstractVar[str]
+    cell_capacity: eqx.AbstractVar[int]
 
     @abc.abstractmethod
     def metrics(self, outer_scale: ArrayLike, /):
@@ -79,7 +79,7 @@ class RadialShellMeshPlan(AbstractParticleInternalMeshPlan):
         faces = (
             np.linspace(0.0, 1.0, count + 1)
             if reference_faces is None
-            else np.asarray(reference_faces, dtype=float)
+            else np.asarray(reference_faces, dtype=np.float64)
         )
         if (
             faces.shape != (count + 1,)
@@ -272,7 +272,7 @@ class PreparedParticleInternalBatch(StrictModule, NonTrainableState):
 
     @property
     def particle_count(self) -> int:
-        return int(self.owner_indices.shape[0])
+        return self.owner_indices.shape[0]
 
     @property
     def cell_capacity(self) -> int:

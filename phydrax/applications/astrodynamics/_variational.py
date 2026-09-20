@@ -48,8 +48,8 @@ class VariationalPropagationPlan(StrictModule, NonTrainableState):
     ):
         if not callable(dynamics):
             raise TypeError("dynamics must be callable.")
-        times_host = np.asarray(times, dtype=float)
-        noise = np.asarray(process_noise, dtype=float)
+        times_host = np.asarray(times, dtype=np.float64)
+        noise = np.asarray(process_noise, dtype=np.float64)
         if (
             times_host.ndim != 1
             or times_host.size < 2
@@ -66,7 +66,7 @@ class VariationalPropagationPlan(StrictModule, NonTrainableState):
             {
                 "kind": "variational-propagation",
                 "dynamics": str(dynamics_id),
-                "times": int(times_host.size),
+                "times": times_host.size,
                 "parameters": int(parameter_dimension),
             }
         )
@@ -82,7 +82,7 @@ class VariationalPropagationPlan(StrictModule, NonTrainableState):
         state0 = jnp.asarray(initial_state)
         parameter_values = jnp.asarray(parameters)
         covariance0 = jnp.asarray(initial_covariance)
-        dimension = int(state0.size)
+        dimension = state0.size
         if (
             state0.shape != (dimension,)
             or covariance0.shape != (dimension, dimension)

@@ -232,7 +232,7 @@ def test_latent_contraction_product_domain_integral_over_x():
     t_axis = sep.dense_structure.axis_for("t")
     p_field = _scalar_field_from_dense(sep.points["p"], p_axis)
     t_field = _scalar_field_from_dense(sep.points["t"], t_axis)
-    area = jnp.asarray(geom.volume, dtype=float)
+    area = jnp.asarray(geom.volume, dtype="float64")
     expected = area * (p_field + 1.0) * (t_field + 2.0)
     _assert_field_allclose(out, expected)
 
@@ -307,7 +307,7 @@ def test_latent_contraction_multi_coord_separable_labels():
 
     t_axis = sep.dense_structure.axis_for("t")
     x_axes = sep.coord_axes_by_label["x"]
-    p_axis = sep.coord_axes_by_label["p"][0]
+    sep.coord_axes_by_label["p"][0]
     t_field = cx.AxisArray(sep.points["t"].data, dims=(t_axis,))
     x0 = cx.AxisArray(sep.points["x"][0].data, dims=(x_axes[0],))
     x1 = cx.AxisArray(sep.points["x"][1].data, dims=(x_axes[1],))

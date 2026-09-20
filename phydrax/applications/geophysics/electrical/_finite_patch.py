@@ -138,7 +138,7 @@ class FinitePatchDCPlan(StrictModule, NonTrainableState):
 
     Solves -div(sigma grad(phi)) = 0 with inward integrated patch currents,
     insulating remainder boundary, and the Euclidean minimum-norm nodal gauge.
-    The numerical kernel uses metres, S/m, amperes, and volts. Positive cellwise
+    The numerical kernel uses meters, S/m, amperes, and volts. Positive cellwise
     scalar or SPD tensor conductivity is supported. This is NOT the complete
     electrode model: no contact impedance, equipotential metal, point sources,
     infinite exterior, geometric factors, or apparent-resistivity convention.
@@ -208,7 +208,7 @@ class FinitePatchDCPlan(StrictModule, NonTrainableState):
         connectivity = mesh.connectivity
         if not isinstance(connectivity, TetrahedralConnectivity):
             raise TypeError("DC tetrahedral blocks require tetrahedral connectivity.")
-        exterior = np.asarray(connectivity.boundary_faces, dtype=bool)
+        exterior = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
         occupied = set()
         for patch in survey.patches:
             facets = np.asarray(patch.facet_indices)

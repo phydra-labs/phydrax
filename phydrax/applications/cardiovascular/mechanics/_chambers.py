@@ -65,8 +65,7 @@ class ChamberVolumePlan(StrictModule, NonTrainableState):
         )
         if not isfinite(threshold) or threshold < surface.geometric_tolerance:
             raise ValueError(
-                "minimum_volume must be finite and no smaller than the anatomical "
-                "geometric tolerance."
+                "minimum_volume must be finite and no smaller than the anatomical geometric tolerance."
             )
         orientation_id = canonical_fingerprint(
             {

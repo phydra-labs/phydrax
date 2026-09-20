@@ -25,7 +25,7 @@ def test_biophysical_profiles_are_narrow_unreleased_and_evidence_free():
 
 def test_coordinate_profile_refuses_an_equilibrium_claim():
     profile = biophysical_candidate_profile(
-        "protein.coordinate-proposal.fixed-construct-standard-chemistry.v1"
+        "protein.coordinate-proposal.fixed-construct-standard-chemistry"
     )
     support = dict(profile.support_tuples[0].attributes)
 

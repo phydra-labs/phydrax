@@ -75,13 +75,13 @@ class RCIPPreconditioner2D(StrictModule, NonTrainableState):
             raise ValueError(
                 "RCIP levels require matching fine, restriction, and prolongation tuples."
             )
-        previous_size = int(coarse.shape[0])
+        previous_size = coarse.shape[0]
         for matrix, restriction, prolongation in zip(
             fine, restrict, prolong, strict=True
         ):
             if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
                 raise ValueError("Every RCIP fine matrix must be square.")
-            fine_size = int(matrix.shape[0])
+            fine_size = matrix.shape[0]
             if restriction.shape != (previous_size, fine_size):
                 raise ValueError("RCIP restriction shape does not match adjacent levels.")
             if prolongation.shape != (fine_size, previous_size):
@@ -141,7 +141,7 @@ class RCIPPreconditioner2D(StrictModule, NonTrainableState):
         self.levels = len(fine)
         self.preconditioner_id = canonical_fingerprint(
             {
-                "kind": "rcip-nested-compression-2d-v1",
+                "kind": "rcip-nested-compression-2d",
                 "topology_id": self.topology_id,
                 "coarse_matrix": array_tree_fingerprint(coarse),
                 "fine_matrices": array_tree_fingerprint(fine),

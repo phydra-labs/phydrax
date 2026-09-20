@@ -40,7 +40,7 @@ class PreparedMetricLine(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.cell_measures.shape[0])
+        return self.cell_measures.shape[0]
 
     @property
     def face_count(self) -> int:
@@ -194,9 +194,9 @@ class MetricLinePlan:
         if np.any(~np.isfinite(face_measures)) or np.any(face_measures < 0.0):
             raise ValueError("face_measures must be finite and nonnegative.")
         active = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if self.active_cells is None
-            else np.array(self.active_cells, dtype=bool, copy=True)
+            else np.array(self.active_cells, dtype=np.bool_, copy=True)
         )
         if active.shape != (count,) or not np.any(active):
             raise ValueError("active_cells must match cells and contain an active cell.")

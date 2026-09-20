@@ -201,7 +201,7 @@ def operator_interval_coverage(
     covered_flat = covered.reshape((count, -1))
     mask_flat = mask.reshape((count, -1))
     if mode == "simultaneous":
-        per_case = jnp.all(covered_flat | ~mask_flat, axis=-1).astype(float)
+        per_case = jnp.all(covered_flat | ~mask_flat, axis=-1).astype("float64")
     elif mode == "pointwise":
         weights = _measure_weights(
             query,
@@ -209,7 +209,7 @@ def operator_interval_coverage(
             interval.lower.case_shape,
             measure=measure,
         ).reshape((count, -1))
-        per_case = _weighted_case_mean(covered_flat.astype(float), mask_flat, weights)
+        per_case = _weighted_case_mean(covered_flat.astype("float64"), mask_flat, weights)
     else:
         raise ValueError("mode must be 'pointwise' or 'simultaneous'.")
     return _reduce_cases(per_case, interval.lower.case_shape, reduction=reduction)

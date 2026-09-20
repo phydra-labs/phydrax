@@ -67,7 +67,7 @@ class MixedTensorReconstructionPlan(StrictModule, NonTrainableState):
 
     @property
     def sample_shape(self) -> tuple[int, ...]:
-        return tuple(int(axis.nodes.size) for axis in self.axes)
+        return tuple(axis.nodes.size for axis in self.axes)
 
 
 class MixedTensorInterpolant(StrictModule):
@@ -120,9 +120,7 @@ class MixedTensorInterpolant(StrictModule):
         ):
             raise TypeError("Mixed tensor coordinates must be real inexact arrays.")
         orders = (
-            (0,) * dimension
-            if derivative_orders is None
-            else tuple(int(order) for order in derivative_orders)
+            (0,) * dimension if derivative_orders is None else tuple(derivative_orders)
         )
         if len(orders) != dimension or any(order < 0 for order in orders):
             raise ValueError("derivative_orders must be nonnegative per axis.")

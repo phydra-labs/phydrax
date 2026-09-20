@@ -154,9 +154,9 @@ def particle_genealogical_score(
     prior_reference, unravel_prior = _filtered_ravel(prior_template)
     transition_reference, unravel_transition = _filtered_ravel(transition_template)
     observation_reference, unravel_observation = _filtered_ravel(observation_template)
-    prior_size = int(prior_reference.size)
-    transition_size = int(transition_reference.size)
-    observation_size = int(observation_reference.size)
+    prior_size = prior_reference.size
+    transition_size = transition_reference.size
+    observation_size = observation_reference.size
     parameter_size = prior_size + transition_size + observation_size
     if parameter_size < 1:
         raise ValueError("The stored state-space model has no differentiable parameters.")

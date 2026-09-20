@@ -99,7 +99,9 @@ class CoefficientStructure(StrictModule):
         flattened_members = tuple(member for group in resolved_groups for member in group)
         if len(set(flattened_members)) != len(flattened_members):
             raise ValueError("Coefficient groups must not overlap.")
-        allowed_values = None if allowed is None else jnp.asarray(allowed, dtype=bool)
+        allowed_values = (
+            None if allowed is None else jnp.asarray(allowed, dtype=jnp.bool_)
+        )
         if allowed_values is not None and allowed_values.ndim != 2:
             raise ValueError("allowed must be a rank-two output-by-feature mask.")
         if constraint is not None and not isinstance(
@@ -197,7 +199,9 @@ def _resolve_structure(
 ) -> tuple[Array, tuple[tuple[int, ...], ...], Array, Array]:
     shape = (design.output_size, design.num_features)
     allowed = (
-        jnp.ones(shape, dtype=bool) if structure.allowed is None else structure.allowed
+        jnp.ones(shape, dtype=jnp.bool_)
+        if structure.allowed is None
+        else structure.allowed
     )
     if allowed.shape != shape:
         raise ValueError(f"structure.allowed must have shape {shape}.")
@@ -319,8 +323,7 @@ class StructuredSequentialThresholdedLeastSquares(AbstractSparseRegression):
         coefficient_count = design.output_size * design.num_features
         if coefficient_count > self.max_coefficients:
             raise ValueError(
-                f"Structured regression has {coefficient_count} coefficients; "
-                f"max_coefficients={self.max_coefficients}."
+                f"Structured regression has {coefficient_count} coefficients; max_coefficients={self.max_coefficients}."
             )
         allowed, groups, physical_constraint, constraint_rhs = _resolve_structure(
             self.structure, design
@@ -568,7 +571,7 @@ class StructuredSequentialThresholdedLeastSquares(AbstractSparseRegression):
             iterations=jnp.full(
                 (design.output_size,), len(coefficient_history), dtype=jnp.int32
             ),
-            converged=jnp.full((design.output_size,), converged, dtype=bool),
+            converged=jnp.full((design.output_size,), converged, dtype=jnp.bool_),
             valid=output_valid,
             status=jnp.broadcast_to(status, (design.output_size,)),
             history=history,

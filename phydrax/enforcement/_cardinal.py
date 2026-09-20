@@ -45,36 +45,32 @@ def _anchor_coordinates(
             raise TypeError(
                 "Cardinal point observations require array-valued axis arrays."
             )
-        value = jnp.asarray(field.data, dtype=float)
+        value = jnp.asarray(field.data, dtype=jnp.float64)
         factor = _domain_factor(domain, label)
         if isinstance(factor, AbstractGeometry):
             dimension = int(factor.spatial_dim)
-            if value.ndim == 1 and int(value.shape[0]) == dimension:
+            if value.ndim == 1 and value.shape[0] == dimension:
                 value = jnp.broadcast_to(value, (count, dimension))
-            if value.ndim != 2 or int(value.shape[1]) != dimension:
+            if value.ndim != 2 or value.shape[1] != dimension:
                 raise ValueError(
-                    f"Geometry observations for {label!r} require shape "
-                    f"(N, {dimension}), got {value.shape}."
+                    f"Geometry observations for {label!r} require shape (N, {dimension}), got {value.shape}."
                 )
         elif isinstance(factor, AbstractScalarDomain):
             if value.ndim == 0:
                 value = jnp.broadcast_to(value, (count,))
-            elif value.ndim == 2 and int(value.shape[1]) == 1:
+            elif value.ndim == 2 and value.shape[1] == 1:
                 value = value[:, 0]
             if value.ndim != 1:
                 raise ValueError(
-                    f"Scalar observations for {label!r} require shape (N,), "
-                    f"got {value.shape}."
+                    f"Scalar observations for {label!r} require shape (N,), got {value.shape}."
                 )
         else:
             raise TypeError(
-                f"Cardinal corrections do not support factor "
-                f"{type(factor).__name__} for label {label!r}."
+                f"Cardinal corrections do not support factor {type(factor).__name__} for label {label!r}."
             )
-        if int(value.shape[0]) != count:
+        if value.shape[0] != count:
             raise ValueError(
-                f"Observation coordinate {label!r} has {value.shape[0]} rows; "
-                f"expected {count}."
+                f"Observation coordinate {label!r} has {value.shape[0]} rows; expected {count}."
             )
         coordinates.append(value)
     return tuple(coordinates)
@@ -89,7 +85,7 @@ def _validate_distinct_anchors(anchors: tuple[Array, ...], count: int, /) -> Non
         coordinates[:, None, :] == coordinates[None, :, :],
         axis=-1,
     )
-    coincident = coincident & ~jnp.eye(count, dtype=bool)
+    coincident = coincident & ~jnp.eye(count, dtype=jnp.bool_)
     if bool(jnp.any(coincident)):
         raise ValueError(
             "Cardinal correction anchors must be pairwise distinct; coincident "
@@ -98,7 +94,7 @@ def _validate_distinct_anchors(anchors: tuple[Array, ...], count: int, /) -> Non
 
 
 def _positive_vector(name: str, value: ArrayLike, count: int, /) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim == 0:
         array = jnp.broadcast_to(array, (count,))
     if array.shape != (count,):
@@ -109,7 +105,7 @@ def _positive_vector(name: str, value: ArrayLike, count: int, /) -> Array:
 
 
 def _nonnegative_vector(name: str, value: ArrayLike, count: int, /) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim == 0:
         array = jnp.broadcast_to(array, (count,))
     if array.shape != (count,):
@@ -180,12 +176,12 @@ class _CardinalBasisEvaluator(StrictModule):
             raise ValueError(
                 f"Cardinal basis expected {len(self.labels)} coordinates, got {len(args)}."
             )
-        count = int(self.valid.shape[0])
+        count = self.valid.shape[0]
         tuple_positions = tuple(
             i for i, value in enumerate(args) if isinstance(value, tuple)
         )
         if not tuple_positions:
-            distance = jnp.zeros((count,), dtype=float)
+            distance = jnp.zeros((count,), dtype=jnp.float64)
             for anchor, scale, geometry, query in zip(
                 self.anchors,
                 self.lengthscales,
@@ -193,7 +189,7 @@ class _CardinalBasisEvaluator(StrictModule):
                 args,
                 strict=True,
             ):
-                query_array = jnp.asarray(query, dtype=float)
+                query_array = jnp.asarray(query, dtype=jnp.float64)
                 if geometry:
                     difference = (anchor - query_array[None, :]) / scale[:, None]
                     distance = distance + jnp.sum(difference * difference, axis=1)
@@ -209,7 +205,7 @@ class _CardinalBasisEvaluator(StrictModule):
             for coordinate in range(len(coordinates)):
                 axis_positions[(position, coordinate)] = axis_count
                 axis_count += 1
-        distance = jnp.zeros((1,) * axis_count + (count,), dtype=float)
+        distance = jnp.zeros((1,) * axis_count + (count,), dtype=jnp.float64)
         for position, (anchor, scale, geometry, query) in enumerate(
             zip(
                 self.anchors,
@@ -222,18 +218,17 @@ class _CardinalBasisEvaluator(StrictModule):
             if isinstance(query, tuple):
                 if not geometry or anchor.ndim != 2:
                     raise TypeError(
-                        f"Coordinate-separable evaluation requires geometry label "
-                        f"{self.labels[position]!r}."
+                        f"Coordinate-separable evaluation requires geometry label {self.labels[position]!r}."
                     )
-                if len(query) != int(anchor.shape[1]):
+                if len(query) != anchor.shape[1]:
                     raise ValueError(
                         f"Coordinate-separable label {self.labels[position]!r} expects "
                         f"{anchor.shape[1]} axes, got {len(query)}."
                     )
                 for coordinate, values in enumerate(query):
-                    vector = jnp.asarray(values, dtype=float).reshape((-1,))
+                    vector = jnp.asarray(values, dtype=jnp.float64).reshape((-1,))
                     shape = [1] * axis_count + [count]
-                    shape[axis_positions[(position, coordinate)]] = int(vector.shape[0])
+                    shape[axis_positions[(position, coordinate)]] = vector.shape[0]
                     query_axis = vector.reshape(tuple(shape[:-1]) + (1,))
                     anchor_axis = anchor[:, coordinate].reshape(
                         (1,) * axis_count + (count,)
@@ -242,7 +237,7 @@ class _CardinalBasisEvaluator(StrictModule):
                     difference = (anchor_axis - query_axis) / scale_axis
                     distance = distance + difference * difference
                 continue
-            query_array = jnp.asarray(query, dtype=float)
+            query_array = jnp.asarray(query, dtype=jnp.float64)
             if geometry:
                 difference = (anchor - query_array[None, :]) / scale[:, None]
                 addition = jnp.sum(difference * difference, axis=1)
@@ -253,7 +248,7 @@ class _CardinalBasisEvaluator(StrictModule):
         return distance
 
     def _weights(self, distance: Array, /) -> Array:
-        count = int(self.valid.shape[0])
+        count = self.valid.shape[0]
         candidate_indices = jnp.broadcast_to(
             jnp.arange(count, dtype=jnp.int32),
             distance.shape,
@@ -302,13 +297,13 @@ class _CardinalBasisEvaluator(StrictModule):
     def _envelope(self, distance: Array, /) -> Array:
         if not any(self.envelope_enabled):
             return jnp.ones_like(distance)
-        count = int(self.valid.shape[0])
+        count = self.valid.shape[0]
         candidate_shape = (1,) * (distance.ndim - 1) + (count,)
         source = self.source_index.reshape(candidate_shape)
         factors: list[Array] = []
         for index, enabled in enumerate(self.envelope_enabled):
             if not enabled:
-                factors.append(jnp.ones(distance.shape[:-1], dtype=float))
+                factors.append(jnp.ones(distance.shape[:-1], dtype=jnp.float64))
                 continue
             mask = source == index
             nearest = jnp.min(jnp.where(mask, distance, jnp.inf), axis=-1)
@@ -321,11 +316,11 @@ class _CardinalBasisEvaluator(StrictModule):
         self, args: tuple[Any, ...], /, *, key=None, **kwargs: Any
     ) -> Array:
         if self.preservation_weight is None:
-            return jnp.asarray(1.0, dtype=float)
+            return jnp.asarray(1.0, dtype=jnp.float64)
         selected = tuple(args[position] for position in self.preservation_positions)
         return jnp.asarray(
             self.preservation_weight.func(*selected, key=key, **kwargs),
-            dtype=float,
+            dtype=jnp.float64,
         )
 
     def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
@@ -347,10 +342,12 @@ class _CardinalLinearCombination(StrictModule):
     output_width: int | None = eqx.field(static=True)
 
     def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
-        basis_values = jnp.asarray(self.basis.func(*args, key=key, **kwargs), dtype=float)
+        basis_values = jnp.asarray(
+            self.basis.func(*args, key=key, **kwargs), dtype=jnp.float64
+        )
         coefficients = jnp.asarray(self.coefficients)
-        event_shape = tuple(int(size) for size in coefficients.shape[1:])
-        flat = coefficients.reshape((int(coefficients.shape[0]), -1))
+        event_shape = tuple(coefficients.shape[1:])
+        flat = coefficients.reshape((coefficients.shape[0], -1))
         combined = contract("...i,ij->...j", basis_values, flat)
         combined = combined.reshape(basis_values.shape[:-1] + event_shape)
         if self.components is None:
@@ -414,13 +411,12 @@ class CardinalCorrectionAction(StrictModule):
             residual = product_residual[0]
         coefficients = jnp.asarray(residual)
         count = self.evidence.observation_count
-        if coefficients.ndim == 0 or int(coefficients.shape[0]) != count:
+        if coefficients.ndim == 0 or coefficients.shape[0] != count:
             raise ValueError(
-                f"Cardinal residual must have leading observation size {count}, "
-                f"got {coefficients.shape}."
+                f"Cardinal residual must have leading observation size {count}, got {coefficients.shape}."
             )
         if self.components is not None and (
-            coefficients.ndim < 2 or int(coefficients.shape[-1]) != len(self.components)
+            coefficients.ndim < 2 or coefficients.shape[-1] != len(self.components)
         ):
             raise ValueError(
                 "Component cardinal residuals must have a trailing axis with "
@@ -513,9 +509,9 @@ class CardinalCorrectionPlan(StrictModule):
         )
         radius_ = _positive_vector("support_radius", support_radius, count)
         valid_ = (
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if valid_.shape != (count,) or not bool(jnp.all(valid_)):
             raise ValueError(
@@ -548,7 +544,7 @@ class CardinalCorrectionPlan(StrictModule):
             evaluated = preservation_weight(action.batch)
             if not isinstance(evaluated, cx.AxisArray):
                 raise TypeError("preservation_weight batch evaluation must return Field.")
-            multiplier = jnp.asarray(evaluated.data, dtype=float)
+            multiplier = jnp.asarray(evaluated.data, dtype=jnp.float64)
             if multiplier.ndim > 1 and multiplier.shape[-1:] == (1,):
                 multiplier = multiplier[..., 0]
             if multiplier.ndim == 0:
@@ -567,11 +563,11 @@ class CardinalCorrectionPlan(StrictModule):
                 domain.labels.index(label) for label in preservation_weight.deps
             )
         else:
-            multiplier = jnp.ones((count,), dtype=float)
+            multiplier = jnp.ones((count,), dtype=jnp.float64)
             preservation_positions = ()
         provider_id = canonical_fingerprint(
             {
-                "kind": "cardinal-correction-plan-v1",
+                "kind": "cardinal-correction-plan",
                 "action": action.action_id,
                 "interpolation": interpolation,
                 "anchors": array_tree_fingerprint(anchors),

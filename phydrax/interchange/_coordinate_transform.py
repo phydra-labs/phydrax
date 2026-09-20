@@ -182,7 +182,7 @@ class CoordinateTransformResult(StrictModule, NonTrainableState):
         proj_version: str,
         reported_accuracy_m: float | None,
     ):
-        values = np.asarray(coordinates, dtype=float)
+        values = np.asarray(coordinates, dtype=np.float64)
         if (
             values.shape != source_shape
             or values.ndim < 2
@@ -195,7 +195,7 @@ class CoordinateTransformResult(StrictModule, NonTrainableState):
             raise ValueError("Coordinate transformation produced non-finite values.")
         self.coordinates = jnp.asarray(values)
         self.transform = transform
-        self.source_shape = tuple(int(value) for value in source_shape)
+        self.source_shape = tuple(source_shape)
         self.pyproj_version = str(pyproj_version)
         self.proj_version = str(proj_version)
         self.reported_accuracy_m = reported_accuracy_m
@@ -252,7 +252,7 @@ def execute_coordinate_transform(
 ) -> CoordinateTransformResult:
     if not isinstance(plan, CoordinateTransformPlan):
         raise TypeError("execute_coordinate_transform requires CoordinateTransformPlan.")
-    values = np.asarray(coordinates, dtype=float)
+    values = np.asarray(coordinates, dtype=np.float64)
     if values.ndim < 2 or values.shape[-1] not in (2, 3, 4):
         raise ValueError("Coordinates must have trailing arity two, three, or four.")
     if np.any(~np.isfinite(values)):

@@ -88,8 +88,7 @@ def from_ase_atoms(
                 f"arrays.{ASE_PARTICLE_ID_ARRAY}",
                 "import",
                 "synthesized",
-                "ASE supplied no stable particle IDs; AtomicStructure assigned its "
-                "deterministic order-based IDs.",
+                "ASE supplied no stable particle IDs; AtomicStructure assigned its deterministic order-based IDs.",
                 changes_interpretation=False,
             )
         )
@@ -111,8 +110,7 @@ def from_ase_atoms(
                 "calculator",
                 "import",
                 "unsupported",
-                "ASE calculator implementation and cached state were not inspected "
-                "or retained.",
+                "ASE calculator implementation and cached state were not inspected or retained.",
                 changes_interpretation=True,
             )
         )
@@ -145,13 +143,11 @@ def from_ase_atoms(
     ]
     if "masses" not in array_names:
         assumptions.append(
-            "ASE elemental default masses were materialized because no explicit "
-            "mass array was present."
+            "ASE elemental default masses were materialized because no explicit mass array was present."
         )
     if cell is None:
         assumptions.append(
-            "ASE's zero cell with no periodic axes was preserved as absent native "
-            "periodic metadata."
+            "ASE's zero cell with no periodic axes was preserved as absent native periodic metadata."
         )
     report = AdapterReport(
         AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS,
@@ -190,7 +186,7 @@ def to_ase_atoms(
         raise TypeError("structure must be an AtomicStructure.")
     _require_ase_scale(structure.scale)
 
-    active = np.asarray(structure.active_mask, dtype=bool)
+    active = np.asarray(structure.active_mask, dtype=np.bool_)
     if not np.all(active):
         raise AdapterError(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
@@ -206,9 +202,9 @@ def to_ase_atoms(
         else np.array(structure.cell, copy=True)
     )
     periodic_axes = (
-        np.zeros((3,), dtype=bool)
+        np.zeros((3,), dtype=np.bool_)
         if structure.periodic_axes is None
-        else np.array(structure.periodic_axes, dtype=bool, copy=True)
+        else np.array(structure.periodic_axes, dtype=np.bool_, copy=True)
     )
     _validate_cell(cell, periodic_axes)
 
@@ -302,7 +298,7 @@ def _reject_required_semantics(
 
 def _validated_cell(atoms: Any, /) -> tuple[np.ndarray | None, np.ndarray | None]:
     cell = np.array(atoms.cell.array, copy=True)
-    periodic_axes = np.array(atoms.pbc, dtype=bool, copy=True)
+    periodic_axes = np.array(atoms.pbc, dtype=np.bool_, copy=True)
     _validate_cell(cell, periodic_axes)
     if not np.any(periodic_axes) and not np.any(cell):
         return None, None
@@ -344,8 +340,7 @@ def _validate_atoms_arrays(
     if not np.issubdtype(numbers.dtype, np.integer) or np.any(numbers <= 0):
         raise AdapterError(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
-            "AtomicStructure requires positive integer atomic numbers; ASE dummy "
-            "atoms are unsupported.",
+            "AtomicStructure requires positive integer atomic numbers; ASE dummy atoms are unsupported.",
         )
     if positions.shape != (numbers.size, 3) or np.any(~np.isfinite(positions)):
         raise AdapterError(
@@ -379,8 +374,7 @@ def _validate_particle_ids(particle_ids: np.ndarray, count: int, /) -> None:
     ):
         raise AdapterError(
             AdapterStatus.MALFORMED_SOURCE,
-            f"ASE {ASE_PARTICLE_ID_ARRAY!r} values must be unique signed 64-bit "
-            "integers.",
+            f"ASE {ASE_PARTICLE_ID_ARRAY!r} values must be unique signed 64-bit integers.",
         )
 
 
@@ -389,22 +383,13 @@ def _array_losses(array_names: frozenset[str], /) -> list[AdapterLoss]:
     for array_name in sorted(array_names - _STANDARD_ARRAYS - {ASE_PARTICLE_ID_ARRAY}):
         normalized = array_name.lower()
         if normalized in ("momenta", "velocities"):
-            rationale = (
-                "AtomicStructure has no velocity or momentum state; the ASE array "
-                "was not retained."
-            )
+            rationale = "AtomicStructure has no velocity or momentum state; the ASE array was not retained."
             changes_interpretation = False
         elif normalized in ("charge", "charges", "initial_charges"):
-            rationale = (
-                "AtomicStructure has no per-atom charge field; the ASE charge array "
-                "was not retained."
-            )
+            rationale = "AtomicStructure has no per-atom charge field; the ASE charge array was not retained."
             changes_interpretation = True
         else:
-            rationale = (
-                "AtomicStructure has no declared field for this ASE array; it was "
-                "not retained."
-            )
+            rationale = "AtomicStructure has no declared field for this ASE array; it was not retained."
             changes_interpretation = True
         losses.append(
             AdapterLoss(
@@ -424,8 +409,7 @@ def _info_losses(info_names: frozenset[str], /) -> list[AdapterLoss]:
             f"info.{name}",
             "import",
             "dropped",
-            "AtomicStructure has no field for arbitrary ASE info metadata; the "
-            "value was not inspected or retained.",
+            "AtomicStructure has no field for arbitrary ASE info metadata; the value was not inspected or retained.",
             changes_interpretation=True,
         )
         for name in sorted(info_names - {ASE_SOURCE_ID_INFO})

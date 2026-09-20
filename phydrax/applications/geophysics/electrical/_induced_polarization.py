@@ -180,7 +180,7 @@ class SpectralIPPlan(StrictModule, NonTrainableState):
                 for block in finite_patch.mesh.blocks
             ]
         )
-        coordinates = np.asarray(finite_patch.mesh.coordinates, dtype=float)
+        coordinates = np.asarray(finite_patch.mesh.coordinates, dtype=np.float64)
         simplex = AffineSimplexMap(jnp.asarray(coordinates[cells]))
         if not bool(jnp.all(simplex.evidence.successful)):
             raise ValueError("Induced-polarization mesh contains degenerate tetrahedra.")

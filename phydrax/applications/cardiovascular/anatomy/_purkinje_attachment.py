@@ -151,13 +151,12 @@ class PurkinjeAttachmentPlan(StrictModule, NonTrainableState):
             raise ValueError("At least one active myocardial support is required.")
         if candidate_indices.size > self.pmj_capacity:
             raise ValueError(
-                f"PMJ candidate count {candidate_indices.size} exceeds configured "
-                f"capacity {self.pmj_capacity}."
+                f"PMJ candidate count {candidate_indices.size} exceeds configured capacity {self.pmj_capacity}."
             )
 
         graph_routes = np.zeros((self.pmj_capacity,), dtype=np.int32)
         myocardial_routes = np.zeros((self.pmj_capacity,), dtype=np.int32)
-        route_active = np.zeros((self.pmj_capacity,), dtype=bool)
+        route_active = np.zeros((self.pmj_capacity,), dtype=np.bool_)
         for route_slot, graph_index in enumerate(candidate_indices):
             delta = myocardial[support_indices] - graph[graph_index]
             squared_distance = np.sum(delta * delta, axis=1)
@@ -172,7 +171,7 @@ class PurkinjeAttachmentPlan(StrictModule, NonTrainableState):
             raise ValueError("PMJ attachment geometry IDs must be non-empty.")
         graph_routes_array = jnp.asarray(graph_routes, dtype=jnp.int32)
         myocardial_routes_array = jnp.asarray(myocardial_routes, dtype=jnp.int32)
-        route_active_array = jnp.asarray(route_active, dtype=bool)
+        route_active_array = jnp.asarray(route_active, dtype=jnp.bool_)
         payload = {
             "kind": "prepared-purkinje-attachment",
             "plan": self.plan_id,
@@ -287,7 +286,7 @@ class PreparedPurkinjeAttachment(StrictModule, NonTrainableState):
         self.myocardial_support_indices = jnp.asarray(
             myocardial_indices_host, dtype=jnp.int32
         )
-        self.route_active = jnp.asarray(active_host, dtype=bool)
+        self.route_active = jnp.asarray(active_host, dtype=jnp.bool_)
         self.graph_point_capacity = graph_capacity
         self.myocardial_support_capacity = myocardial_capacity
         self.graph_geometry_id = graph_id
@@ -421,7 +420,7 @@ def _host_points(values: ArrayLike, name: str, /) -> np.ndarray:
     if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
         raise ValueError(f"{name} must have shape (positive_count, 3).")
     if not np.issubdtype(points.dtype, np.inexact):
-        points = points.astype(float)
+        points = points.astype("float64")
     if not np.all(np.isfinite(points)):
         raise ValueError(f"{name} must be finite.")
     return points
@@ -429,7 +428,7 @@ def _host_points(values: ArrayLike, name: str, /) -> np.ndarray:
 
 def _host_mask(values: ArrayLike | None, size: int, name: str, /) -> np.ndarray:
     if values is None:
-        return np.ones((size,), dtype=bool)
+        return np.ones((size,), dtype=np.bool_)
     mask = np.asarray(values)
     if mask.shape != (size,):
         raise ValueError(f"{name} must have shape {(size,)}.")

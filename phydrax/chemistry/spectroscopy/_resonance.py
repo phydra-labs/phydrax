@@ -62,7 +62,7 @@ class ResonanceRamanResult(StrictModule, NonTrainableState):
         self.anisotropy_invariants = anisotropy
         self.activities = activities
         self.relative_intensities = intensities
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
             {
@@ -118,8 +118,8 @@ class ResonanceRamanPlan(StrictModule, NonTrainableState):
         modes = jnp.asarray(mode_energies, dtype=excitation.real.dtype)
         damping_ = jnp.asarray(damping, dtype=excitation.real.dtype)
         laser = float(laser_energy)
-        roots = int(excitation.size)
-        mode_count = int(modes.size)
+        roots = excitation.size
+        mode_count = modes.size
         if (
             dipoles.shape != (roots, 3)
             or dipole_derivatives.shape != (roots, mode_count, 3)

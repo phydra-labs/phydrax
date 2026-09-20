@@ -40,8 +40,7 @@ class NestedSamplingCapacity(StrictModule):
         max_phantoms: int,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 max_live,
                 max_dead_points,
                 max_likelihood_evaluations,
@@ -126,7 +125,7 @@ class NestedPriorPlan(StrictModule):
         ).items():
             path_ = str(path)
             values = jnp.asarray(support)
-            probabilities = jnp.asarray(masses, dtype=float)
+            probabilities = jnp.asarray(masses, dtype=jnp.float64)
             if not path_ or values.ndim != 1 or values.size == 0:
                 raise ValueError(
                     "Finite counting supports must be named nonempty vectors."
@@ -356,7 +355,7 @@ class PhantomNestedState(StrictModule):
             birth_log_likelihood=jnp.full((capacity_,), -jnp.inf, dtype=dtype),
             proposal_epoch=jnp.zeros((capacity_,), dtype=jnp.int32),
             ancestry=-jnp.ones((capacity_,), dtype=jnp.int32),
-            mask=jnp.zeros((capacity_,), dtype=bool),
+            mask=jnp.zeros((capacity_,), dtype=jnp.bool_),
             cursor=jnp.asarray(0, dtype=jnp.int32),
         )
 

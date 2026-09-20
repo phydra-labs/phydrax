@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 
-EPOCH_ORDER_ALGORITHM = "feistel32-v1"
+EPOCH_ORDER_ALGORITHM = "feistel32"
 _MAX_POPULATION = 1 << 31
 _ROUNDS = 6
 _UINT32_MASK = (1 << 32) - 1

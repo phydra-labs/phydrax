@@ -30,7 +30,7 @@ class _ConstantCliffordMetricMap(StrictModule, NonTrainableState):
     diagonal: Array
 
     def __init__(self, diagonal: tuple[int, ...], /):
-        self.diagonal = jnp.asarray(diagonal, dtype=float)
+        self.diagonal = jnp.asarray(diagonal, dtype=jnp.float64)
 
     def __call__(self, coordinates: Array, /) -> Array:
         return jnp.diag(self.diagonal).astype(coordinates.dtype)
@@ -138,7 +138,7 @@ class CliffordMetricBridge(StrictModule, NonTrainableState):
         self.metric = metric
         self.bridge_id = canonical_fingerprint(
             {
-                "kind": "clifford-form-bridge-v1",
+                "kind": "clifford-form-bridge",
                 "algebra": algebra.algebra_id,
                 "orientation": algebra.orientation,
                 "chart": chart.name,

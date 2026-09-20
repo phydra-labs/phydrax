@@ -35,7 +35,7 @@ def test_compiled_link_topology_enforces_write_once_stages():
         sign,
         body,
         fraction,
-        np.ones(shape[:-1], dtype=bool),
+        np.ones(shape[:-1], dtype="bool"),
         topology_id="unit-topology",
     )
     state = topology.begin(jnp.zeros(shape))
@@ -114,7 +114,7 @@ def test_staged_boundary_executes_stream_then_wall_without_overwrite():
         sign,
         body,
         fraction,
-        np.ones(shape[:-1], dtype=bool),
+        np.ones(shape[:-1], dtype="bool"),
         topology_id="staged-wall-test",
     )
     boundary = phx.discretization.PreparedStagedLatticeBoltzmannBoundary(

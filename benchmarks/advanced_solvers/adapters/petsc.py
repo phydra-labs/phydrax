@@ -198,7 +198,7 @@ class PetscAdapter(BenchmarkAdapter):
                     "iterations": total_iterations,
                     "matvecs": None,
                     "preconditioner_applications": total_iterations,
-                    "linear_solves": int(rhs.shape[1]),
+                    "linear_solves": rhs.shape[1],
                     "nonlinear_evaluations": 0,
                     "jacobian_evaluations": 0,
                 },

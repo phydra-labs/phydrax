@@ -106,7 +106,7 @@ def lower_quantum_lattice_to_mpo(
     operator = summands[0]
     for summand in summands[1:]:
         operator = add_mpo(operator, summand)
-    actual_elements = sum(int(tensor.size) for tensor in operator.tensors)
+    actual_elements = sum(tensor.size for tensor in operator.tensors)
     if actual_elements > policy.maximum_tensor_elements:
         raise ValueError("Constructed MPO exceeds its predeclared tensor-element limit.")
     residual = mpo_hermiticity_residual(operator)

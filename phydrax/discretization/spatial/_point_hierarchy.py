@@ -95,8 +95,7 @@ class MortonPointHierarchyPlan(StrictModule):
         nodes = rectangular_capacity if node_capacity is None else int(node_capacity)
         if nodes < 1 or nodes > rectangular_capacity:
             raise ValueError(
-                "node_capacity must be positive and no larger than "
-                "(maximum_depth + 1) * point_capacity."
+                "node_capacity must be positive and no larger than (maximum_depth + 1) * point_capacity."
             )
         object.__setattr__(self, "address_plan", address_plan)
         object.__setattr__(self, "point_capacity", points)

@@ -43,7 +43,7 @@ class DEMInverseProblem(StrictModule, NonTrainableState):
         if not callable(forward_case):
             raise TypeError("forward_case must be callable.")
         observation = jnp.asarray(observations)
-        mask = jnp.asarray(observation_mask, dtype=bool)
+        mask = jnp.asarray(observation_mask, dtype=jnp.bool_)
         if observation.shape != mask.shape or observation.ndim < 1:
             raise ValueError("Observations and masks must have matching batched shape.")
         identifier = str(problem_id)

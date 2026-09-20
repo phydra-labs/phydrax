@@ -29,7 +29,7 @@ class PassiveVortexProbes(StrictModule, NonTrainableState):
     probes_id: str = eqx.field(static=True)
 
     def __init__(self, position: ArrayLike, /):
-        points = jnp.asarray(position, dtype=float)
+        points = jnp.asarray(position, dtype=jnp.float64)
         if (
             points.ndim != 2
             or points.shape[1] not in (2, 3)
@@ -40,8 +40,8 @@ class PassiveVortexProbes(StrictModule, NonTrainableState):
         self.probes_id = canonical_fingerprint(
             {
                 "kind": "passive-vortex-probes",
-                "count": int(points.shape[0]),
-                "dimension": int(points.shape[1]),
+                "count": points.shape[0],
+                "dimension": points.shape[1],
             }
         )
 
@@ -67,7 +67,7 @@ def actuator_line_sources(
     gamma = jnp.asarray(circulation, dtype=points.dtype)
     if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] < 2:
         raise ValueError("Actuator line positions require shape (vertices >= 2, 3).")
-    segment_count = int(points.shape[0] - 1)
+    segment_count = points.shape[0] - 1
     if gamma.shape == ():
         gamma = jnp.full((segment_count,), gamma, dtype=points.dtype)
     if gamma.shape != (segment_count,):
@@ -77,7 +77,7 @@ def actuator_line_sources(
         core = jnp.full((segment_count,), core, dtype=points.dtype)
     topology = VortexFilamentTopology.from_segments(
         tuple((index, index + 1) for index in range(segment_count)),
-        vertex_capacity=int(points.shape[0]),
+        vertex_capacity=points.shape[0],
     )
     return VortexFilamentState(topology, points, gamma, core)
 
@@ -97,14 +97,14 @@ def actuator_surface_sources(
     vertices = panels.reshape((-1, 3))
     segments = []
     strengths = []
-    for panel in range(int(panels.shape[0])):
+    for panel in range(panels.shape[0]):
         base = 4 * panel
         for local in range(4):
             segments.append((base + local, base + (local + 1) % 4))
             strengths.append(gamma[panel])
     topology = VortexFilamentTopology.from_segments(
         tuple(segments),
-        vertex_capacity=int(vertices.shape[0]),
+        vertex_capacity=vertices.shape[0],
     )
     core = jnp.asarray(core_radius, dtype=panels.dtype)
     if core.shape == ():

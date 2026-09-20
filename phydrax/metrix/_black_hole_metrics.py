@@ -665,8 +665,7 @@ def boyer_lindquist_to_ingoing_kerr_transition(
 
     if source.dimension != 4 or target.dimension != 4:
         raise ValueError(
-            "boyer_lindquist_to_ingoing_kerr_transition requires two "
-            "four-dimensional charts."
+            "boyer_lindquist_to_ingoing_kerr_transition requires two four-dimensional charts."
         )
     return ChartTransition(
         source,

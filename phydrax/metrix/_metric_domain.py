@@ -60,8 +60,8 @@ class MetricDomainEvidence(StrictModule, NonTrainableState):
             or domain_id.strip() != domain_id
         ):
             raise ValueError("domain_id must be a non-empty stripped string.")
-        valid_array = jnp.asarray(valid, dtype=bool)
-        near_array = jnp.asarray(near_boundary, dtype=bool)
+        valid_array = jnp.asarray(valid, dtype=jnp.bool_)
+        near_array = jnp.asarray(near_boundary, dtype=jnp.bool_)
         margin_array = jnp.asarray(margin)
         status_value = jnp.asarray(status)
         if not jnp.issubdtype(status_value.dtype, jnp.integer):
@@ -133,7 +133,7 @@ class MetricDomainEvidence(StrictModule, NonTrainableState):
         tolerance_valid = tolerance >= 0.0
         inside = margin_array >= 0.0
         provider_valid = jnp.broadcast_to(
-            jnp.asarray(extra_valid, dtype=bool),
+            jnp.asarray(extra_valid, dtype=jnp.bool_),
             margin_array.shape,
         )
         valid = finite & tolerance_valid & inside & provider_valid

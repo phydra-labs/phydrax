@@ -56,16 +56,14 @@ class SupervisedDatasetBatch(StrictModule):
         indices_array = jnp.asarray(indices, dtype=jnp.int32)
         if indices_array.ndim != 1:
             raise ValueError("Supervised dataset batch indices must be one-dimensional.")
-        if target_array.ndim == 0 or int(target_array.shape[0]) != int(
-            indices_array.shape[0]
-        ):
+        if target_array.ndim == 0 or target_array.shape[0] != indices_array.shape[0]:
             raise ValueError(
                 "Supervised dataset batch targets must retain the sampled case axis."
             )
         if sample_weight is None:
             weight_array = None
         else:
-            weight_array = jnp.asarray(sample_weight, dtype=float)
+            weight_array = jnp.asarray(sample_weight, dtype=jnp.float64)
             if weight_array.shape != indices_array.shape:
                 raise ValueError(
                     "Supervised dataset batch sample weights must match its indices."
@@ -74,8 +72,7 @@ class SupervisedDatasetBatch(StrictModule):
                 jnp.any(weight_array <= 0.0)
             ):
                 raise ValueError(
-                    "Supervised dataset batch sample weights must be finite and "
-                    "strictly positive."
+                    "Supervised dataset batch sample weights must be finite and strictly positive."
                 )
         if target_mask is None:
             target_mask_array = None
@@ -86,8 +83,7 @@ class SupervisedDatasetBatch(StrictModule):
                 or target_mask_array.shape != target_array.shape
             ):
                 raise ValueError(
-                    "Supervised dataset batch target_mask must be Boolean and "
-                    "match its targets."
+                    "Supervised dataset batch target_mask must be Boolean and match its targets."
                 )
         self.points = points
         self.target = target_array
@@ -159,10 +155,10 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         self.reduction = reduction_
         self.values = _validate_targets(domain, values)
         if isinstance(weight, DomainFunction):
-            self.weight = jnp.asarray(1.0, dtype=float)
+            self.weight = jnp.asarray(1.0, dtype=jnp.float64)
             self.pointwise_weight = weight
         else:
-            self.weight = jnp.asarray(weight, dtype=float)
+            self.weight = jnp.asarray(weight, dtype=jnp.float64)
             self.pointwise_weight = None
         self.indices = validate_case_indices(
             indices,
@@ -170,7 +166,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
             name="indices",
         )
         self.label = None if label is None else str(label)
-        self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=float)
+        self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=jnp.float64)
 
     @property
     def domain(self) -> DatasetDomain:
@@ -229,7 +225,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         return supervised_data_metrics(
-            jnp.asarray(prediction.data, dtype=float),
+            jnp.asarray(prediction.data, dtype=jnp.float64),
             batch_.target,
             eps=self.data_accuracy_eps,
         )
@@ -248,7 +244,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         per_sample = supervised_per_sample_squared_error(
-            jnp.asarray(prediction.data, dtype=float),
+            jnp.asarray(prediction.data, dtype=jnp.float64),
             batch_.target,
         )
 
@@ -256,14 +252,14 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
             w = self.pointwise_weight(batch_.points, key=key, **kwargs)
             if not isinstance(w, cx.AxisArray):
                 raise TypeError("pointwise weight must return a phydrax.axes.AxisArray.")
-            w_arr = jnp.asarray(w.data, dtype=float)
+            w_arr = jnp.asarray(w.data, dtype=jnp.float64)
             if w_arr.ndim == 0:
                 per_sample = per_sample * w_arr
             else:
                 per_sample = per_sample * jnp.squeeze(w_arr).reshape((-1,))
 
         reduced = reduce_supervised_loss(per_sample, reduction=self.reduction)
-        return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
+        return self.weight * jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
 
 __all__ = ["SupervisedDatasetBatch", "SupervisedDatasetTerm"]

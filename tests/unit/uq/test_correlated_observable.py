@@ -97,6 +97,6 @@ def test_correlated_observable_rejects_invalid_contracts():
     with pytest.raises(ValueError, match="chain and draw"):
         phx.uq.correlated_observable_diagnostics(jnp.ones((8,)))
     with pytest.raises(TypeError, match="real samples"):
-        phx.uq.correlated_observable_diagnostics(jnp.ones((2, 8), dtype=complex))
+        phx.uq.correlated_observable_diagnostics(jnp.ones((2, 8), dtype="complex128"))
     with pytest.raises(ValueError, match="max_lag"):
         phx.uq.CorrelatedObservablePolicy(max_lag=0)

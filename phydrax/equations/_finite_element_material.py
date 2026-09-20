@@ -65,7 +65,7 @@ class ConstitutiveResponse(StrictModule):
         )
         energy_ = _inexact_array(energy)
         dissipation_ = _inexact_array(dissipation)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         diagnostic_ = (
             Diagnostic(
                 "material.constitutive-response",
@@ -111,8 +111,8 @@ class ConstitutiveModel(StrictModule, NonTrainableState):
     ):
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
-        state = tuple(int(size) for size in state_shape)
-        response = tuple(int(size) for size in response_shape)
+        state = tuple(state_shape)
+        response = tuple(response_shape)
         if any(size <= 0 for size in state + response):
             raise ValueError("Constitutive state/response dimensions must be positive.")
         identifier = str(model_id).strip()
@@ -179,7 +179,9 @@ class ConstitutiveModel(StrictModule, NonTrainableState):
         dissipation = _broadcast_site_scalar(
             response.dissipation, state_batch, "dissipation"
         )
-        valid = _broadcast_site_scalar(response.valid, state_batch, "valid").astype(bool)
+        valid = _broadcast_site_scalar(response.valid, state_batch, "valid").astype(
+            "bool"
+        )
         finite = (
             jnp.all(jnp.isfinite(response.response))
             & jnp.all(jnp.isfinite(response.trial_state))
@@ -439,7 +441,7 @@ class MaterialIntegrationPlan(StrictModule, NonTrainableState):
         | None = None,
         /,
         *,
-        dtype: Any = float,
+        dtype: Any = jnp.float64,
     ) -> MaterialTransaction:
         if initial_values is None:
             values = tuple(
@@ -595,7 +597,7 @@ class MaterialIntegrationPlan(StrictModule, NonTrainableState):
 
 def _inexact_array(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _broadcast_site_scalar(

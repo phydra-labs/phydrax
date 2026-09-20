@@ -211,7 +211,7 @@ class TransformDiagonalLinearOperator(AbstractLinearOperator):
 
 
 def _normalize_axes(ndim: int, axes: tuple[int, ...] | None, /) -> tuple[int, ...]:
-    axes_ = tuple(range(ndim)) if axes is None else tuple(int(axis) for axis in axes)
+    axes_ = tuple(range(ndim)) if axes is None else tuple(axes)
     normalized = tuple(axis + ndim if axis < 0 else axis for axis in axes_)
     if not normalized or len(set(normalized)) != len(normalized):
         raise ValueError("axes must contain distinct transform axes.")

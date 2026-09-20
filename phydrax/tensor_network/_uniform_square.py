@@ -64,13 +64,13 @@ class UniformSquareTensor(StrictModule):
             "numeric_version must be non-negative.",
         )
         self.value = array
-        self.vertical_bond_dimension = int(array.shape[0])
-        self.horizontal_bond_dimension = int(array.shape[1])
+        self.vertical_bond_dimension = array.shape[0]
+        self.horizontal_bond_dimension = array.shape[1]
         self.precision = precision_
         self.tensor_id = canonical_fingerprint(
             {
                 "kind": "uniform-square-tensor",
-                "shape": tuple(int(dimension) for dimension in array.shape),
+                "shape": tuple(array.shape),
                 "dtype": str(array.dtype),
                 "precision": precision_.policy_id,
             }
@@ -147,10 +147,10 @@ def build_uniform_pair_partition_tensor(
         horizontal.dtype, jnp.complexfloating
     ):
         raise TypeError("Pair partition tensor construction requires real weights.")
-    states = int(vertical.shape[0])
+    states = vertical.shape[0]
     pair_dtype = jnp.result_type(vertical, horizontal)
     if not jnp.issubdtype(pair_dtype, jnp.inexact):
-        pair_dtype = jnp.dtype(float)
+        pair_dtype = jnp.dtype(jnp.float64)
     onsite = (
         jnp.ones((states,), dtype=pair_dtype)
         if site_weight is None
@@ -163,7 +163,7 @@ def build_uniform_pair_partition_tensor(
 
     dtype = jnp.result_type(vertical, horizontal, onsite)
     if not jnp.issubdtype(dtype, jnp.inexact):
-        dtype = jnp.dtype(float)
+        dtype = jnp.dtype(jnp.float64)
     vertical = vertical.astype(dtype)
     horizontal = horizontal.astype(dtype)
     onsite = onsite.astype(dtype)

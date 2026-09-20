@@ -32,7 +32,7 @@ def _interaction_table(
         raise TypeError(f"{name} must contain stable integer particle IDs.")
     result = array.astype(np.int64, copy=False)
     if result.size and np.any(
-        np.asarray([np.unique(row).size != width for row in result], dtype=bool)
+        np.asarray([np.unique(row).size != width for row in result], dtype=np.bool_)
     ):
         raise ValueError(f"Every {name} interaction requires distinct endpoints.")
     if result.size and np.unique(result, axis=0).shape[0] != result.shape[0]:
@@ -114,9 +114,9 @@ class MolecularTopologyPlan(StrictModule, NonTrainableState):
                 raise ValueError(
                     "constraint_distances are required when constraints are present."
                 )
-            distances = np.zeros((0,), dtype=float)
+            distances = np.zeros((0,), dtype=np.float64)
         else:
-            distances = np.asarray(constraint_distances, dtype=float)
+            distances = np.asarray(constraint_distances, dtype=np.float64)
             if distances.shape != (constraints_.shape[0],):
                 raise ValueError(
                     "constraint_distances must provide one target per constraint."
@@ -125,14 +125,14 @@ class MolecularTopologyPlan(StrictModule, NonTrainableState):
                 raise ValueError("Constraint distances must be finite and positive.")
         exception_count = exceptions_.shape[0]
         lj = (
-            np.ones((exception_count,), dtype=float)
+            np.ones((exception_count,), dtype=np.float64)
             if lennard_jones_scales is None
-            else np.asarray(lennard_jones_scales, dtype=float)
+            else np.asarray(lennard_jones_scales, dtype=np.float64)
         )
         electrostatic = (
-            np.ones((exception_count,), dtype=float)
+            np.ones((exception_count,), dtype=np.float64)
             if electrostatic_scales is None
-            else np.asarray(electrostatic_scales, dtype=float)
+            else np.asarray(electrostatic_scales, dtype=np.float64)
         )
         if lj.shape != (exception_count,) or electrostatic.shape != (exception_count,):
             raise ValueError("Exception scales must align with pair_exceptions.")
@@ -213,7 +213,7 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         particle_ids = np.asarray(particles.particle_ids, dtype=np.int64)
-        active = np.asarray(particles.active_mask, dtype=bool)
+        active = np.asarray(particles.active_mask, dtype=np.bool_)
         if np.unique(particle_ids).size != particle_ids.size:
             raise ValueError("Molecular topology requires unique stable particle IDs.")
         slot_by_id = {
@@ -241,7 +241,7 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
         constraints = resolve("constraints", plan.constraints)
         exception_slots = resolve("pair_exceptions", plan.pair_exceptions)
         sorted_ids = np.sort(particle_ids)
-        rank_by_id = {int(identifier): rank for rank, identifier in enumerate(sorted_ids)}
+        {int(identifier): rank for rank, identifier in enumerate(sorted_ids)}
         exception_pairs = np.asarray(plan.pair_exceptions, dtype=np.int64)
         exception_keys = np.zeros((exception_pairs.shape[0], 5), dtype=np.int64)
         if exception_pairs.size:
@@ -284,13 +284,13 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
 
     @property
     def constraint_count(self) -> int:
-        return int(self.constraint_indices.shape[0])
+        return self.constraint_indices.shape[0]
 
     def pair_scales(self, pair_keys: ArrayLike, /) -> tuple[Array, Array]:
         keys = jnp.asarray(pair_keys, dtype=jnp.int64)
         if keys.ndim != 2 or keys.shape[1] != 5:
             raise ValueError("Pair keys must have shape (routes, 5).")
-        count = int(self.exception_keys.shape[0])
+        count = self.exception_keys.shape[0]
         if count == 0:
             one = jnp.ones(keys.shape[:1], dtype=self.lennard_jones_scales.dtype)
             return one, one

@@ -47,8 +47,8 @@ class EnergyDepositionSourcePlan(StrictModule, NonTrainableState):
         end_time: float,
         source_id: str,
     ):
-        volumes = np.asarray(cell_volumes, dtype=float)
-        weights = np.asarray(spatial_weights, dtype=float)
+        volumes = np.asarray(cell_volumes, dtype=np.float64)
+        weights = np.asarray(spatial_weights, dtype=np.float64)
         energy, start, end = map(float, (total_energy, start_time, end_time))
         identifier = str(source_id).strip()
         if (
@@ -143,8 +143,8 @@ class FixedConnectivityReactingALERemapPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, old_cell_volumes: ArrayLike, new_cell_volumes: ArrayLike, /):
-        old = np.asarray(old_cell_volumes, dtype=float)
-        new = np.asarray(new_cell_volumes, dtype=float)
+        old = np.asarray(old_cell_volumes, dtype=np.float64)
+        new = np.asarray(new_cell_volumes, dtype=np.float64)
         if (
             old.shape != new.shape
             or old.size == 0
@@ -326,7 +326,7 @@ class ChemistryWorkSchedulePlan(StrictModule, NonTrainableState):
     ) -> ChemistryWorkScheduleState:
         if accepted.plan_id != self.plan_id or candidate.plan_id != self.plan_id:
             raise ValueError("Chemistry scheduling values belong to another plan.")
-        decision = jnp.asarray(commit, dtype=bool)
+        decision = jnp.asarray(commit, dtype=jnp.bool_)
         if decision.shape != ():
             raise ValueError("Chemistry schedule commit must be scalar.")
         return jax.tree.map(

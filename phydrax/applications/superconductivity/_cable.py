@@ -95,11 +95,11 @@ class SuperconductingCablePlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(material, SuperconductingMaterialLawPlan):
             raise TypeError("material must be SuperconductingMaterialLawPlan.")
-        lengths = np.asarray(cell_lengths, dtype=float)
-        field = np.asarray(magnetic_field, dtype=float)
-        angle = np.asarray(field_angle, dtype=float)
-        solid_capacity = np.asarray(solid_heat_capacity, dtype=float)
-        coolant_capacity = np.asarray(coolant_heat_capacity, dtype=float)
+        lengths = np.asarray(cell_lengths, dtype=np.float64)
+        field = np.asarray(magnetic_field, dtype=np.float64)
+        angle = np.asarray(field_angle, dtype=np.float64)
+        solid_capacity = np.asarray(solid_heat_capacity, dtype=np.float64)
+        coolant_capacity = np.asarray(coolant_heat_capacity, dtype=np.float64)
         scalars = tuple(
             float(value)
             for value in (
@@ -172,7 +172,7 @@ class SuperconductingCablePlan(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.cell_lengths.size)
+        return self.cell_lengths.size
 
     def _sharing(self, current: Array, temperature: Array, /):
         evaluated = self.material.evaluate(

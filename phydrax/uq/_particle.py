@@ -68,12 +68,16 @@ def normalize_log_weights(
     """Normalize the final axis and explicitly report all-invalid weight sets."""
     values = jnp.asarray(
         log_weights,
-        dtype=float if statistics_dtype is None else statistics_dtype,
+        dtype=(
+            jnp.result_type(log_weights, 0.0)
+            if statistics_dtype is None
+            else statistics_dtype
+        ),
     )
     if values.ndim < 1 or values.shape[-1] < 1:
         raise ValueError("log_weights must have a non-empty particle axis.")
     probabilities, log_normalizer, valid = log_normalize(values, axes=-1)
-    count = int(values.shape[-1])
+    count = values.shape[-1]
     uniform = jnp.full_like(values, -jnp.log(float(count)))
     normalized = jnp.where(
         valid[..., None],
@@ -134,13 +138,17 @@ def resample_indices(
     """Draw one fixed-size ancestry vector from a one-dimensional weight set."""
     values = jnp.asarray(
         log_weights,
-        dtype=float if decision_dtype is None else decision_dtype,
+        dtype=(
+            jnp.result_type(log_weights, 0.0)
+            if decision_dtype is None
+            else decision_dtype
+        ),
     )
     if values.ndim != 1 or values.shape[0] < 1:
         raise ValueError("log_weights must be a non-empty one-dimensional vector.")
     if method not in ("systematic", "stratified", "multinomial", "residual"):
         raise ValueError(f"Unknown resampling method {method!r}.")
-    count = int(values.shape[0])
+    count = values.shape[0]
     probabilities = _normalized_probabilities(
         values,
         decision_dtype=decision_dtype,
@@ -443,7 +451,7 @@ def initialize_particle_filter(
     process_local = False
     if execution_group is not None:
         mesh_axis = execution_group.mesh.axis_names[0]
-        mesh_size = int(execution_group.mesh.shape[mesh_axis])
+        mesh_size = execution_group.mesh.shape[mesh_axis]
         if count % mesh_size:
             raise ValueError(
                 "num_particles must divide exactly across the execution-group mesh"
@@ -964,7 +972,7 @@ def full_particle_smoother(
         smoothed = jnp.full_like(case_weights, -jnp.inf)
         lineages = jnp.broadcast_to(particle_ids, (num_steps, count))
         horizons = step_ids
-        valid = jnp.zeros((num_steps,), dtype=bool)
+        valid = jnp.zeros((num_steps,), dtype=jnp.bool_)
 
         def reverse_step(offset, carry):
             lineage, weights_, lineages_, horizons_, valid_ = carry
@@ -1116,7 +1124,7 @@ def particle_backward_smoother(
             dtype=case_weights.dtype,
         )
         pairs_ = jnp.full_like(backward_, -jnp.inf)
-        valid_ = jnp.zeros((num_steps,), dtype=bool).at[terminal].set(running_valid)
+        valid_ = jnp.zeros((num_steps,), dtype=jnp.bool_).at[terminal].set(running_valid)
         degenerate = jnp.asarray(False)
 
         def reverse_step(offset, carry):
@@ -1291,7 +1299,7 @@ def particle_backward_simulation(
 ) -> ParticleBackwardSimulationResult:
     """Draw FFBSi paths while retaining the sampled nondifferentiable indices."""
     smoother = particle_backward_smoother(result)
-    samples = tuple(int(size) for size in sample_shape)
+    samples = tuple(sample_shape)
     if any(size <= 0 for size in samples):
         raise ValueError("sample_shape dimensions must be positive.")
     sample_count = prod(samples) if samples else 1
@@ -1626,7 +1634,7 @@ def particle_fisher_score(
         case_scores=stacked.reshape(smoother.case_shape + (flat_score.shape[0],)),
         valid=valid.reshape(smoother.case_shape),
         smoother=smoother,
-        parameter_size=int(flat_score.shape[0]),
+        parameter_size=flat_score.shape[0],
         method_id="particle-fisher-transition-score",
         process_id=transition.process_id,
         approximation_id=transition.approximation_id,
@@ -1680,7 +1688,7 @@ def sample_particle_ancestry_paths(
     """Trace complete paths through the stored resampling genealogy."""
     if not isinstance(result, ParticleFilterResult):
         raise TypeError("result must be a ParticleFilterResult.")
-    samples = tuple(int(size) for size in sample_shape)
+    samples = tuple(sample_shape)
     if any(size <= 0 for size in samples):
         raise ValueError("sample_shape dimensions must be positive.")
     sample_count = prod(samples) if samples else 1
@@ -1900,7 +1908,7 @@ def write_particle_filter_checkpoint(
     )
     return write_checkpoint_archive(
         path,
-        kind="particle-filter-state-v2",
+        kind="particle-filter-state",
         compatibility=compatibility,
         state={"step_index": int(state.step_index)},
         arrays={
@@ -1948,7 +1956,7 @@ def read_particle_filter_checkpoint(
     )
     state_data, arrays = read_checkpoint_archive(
         path,
-        kind="particle-filter-state-v2",
+        kind="particle-filter-state",
         compatibility=compatibility,
     )
     if set(state_data) != {"step_index"}:
@@ -1972,8 +1980,7 @@ def read_particle_filter_checkpoint(
     for name, shape in expected_shapes.items():
         if arrays[name].shape != shape:
             raise ValueError(
-                f"Particle-filter checkpoint array {name!r} has shape "
-                f"{arrays[name].shape}; expected {shape}."
+                f"Particle-filter checkpoint array {name!r} has shape {arrays[name].shape}; expected {shape}."
             )
     expected_state_dtype = (
         arrays["particles"].dtype
@@ -1995,7 +2002,7 @@ def read_particle_filter_checkpoint(
         log_weights=arrays["log_weights"],
         time=arrays["time"],
         log_likelihood=arrays["log_likelihood"],
-        valid=arrays["valid"].astype(bool),
+        valid=arrays["valid"].astype("bool"),
         status=arrays["status"].astype(jnp.int32),
         root_key=jr.wrap_key_data(arrays["root_key_data"].astype(jnp.uint32)),
         step_index=step_index,

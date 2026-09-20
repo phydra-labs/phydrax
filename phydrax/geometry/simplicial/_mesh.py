@@ -40,10 +40,10 @@ class MeshQueryResult(StrictModule):
         face_index: Array,
         normal: Array,
     ):
-        self.closest_point = jnp.asarray(closest_point, dtype=float)
-        self.distance = jnp.asarray(distance, dtype=float)
+        self.closest_point = jnp.asarray(closest_point, dtype=jnp.float64)
+        self.distance = jnp.asarray(distance, dtype=jnp.float64)
         self.face_index = jnp.asarray(face_index, dtype=jnp.int32)
-        self.normal = jnp.asarray(normal, dtype=float)
+        self.normal = jnp.asarray(normal, dtype=jnp.float64)
 
 
 class TriangleMesh(StrictModule):
@@ -55,7 +55,7 @@ class TriangleMesh(StrictModule):
     source_id: str = eqx.field(static=True)
 
     def __init__(self, vertices: Array, faces: Array, *, source_id: str | None = None):
-        vertices_host = np.asarray(vertices, dtype=float)
+        vertices_host = np.asarray(vertices, dtype=np.float64)
         faces_host = np.asarray(faces, dtype=np.int32)
         if vertices_host.ndim != 2 or vertices_host.shape[1] != 3:
             raise ValueError("vertices must have shape (num_vertices, 3).")
@@ -97,12 +97,12 @@ class TriangleMesh(StrictModule):
             ),
             axis=1,
         )
-        tolerance = np.finfo(float).eps * edge_scale_squared * 64.0
+        tolerance = np.finfo(np.float64).eps * edge_scale_squared * 64.0
         if np.any(doubled_area <= tolerance):
             raise ValueError("TriangleMesh contains a degenerate face.")
         if source_id is not None and not source_id:
             raise ValueError("source_id must be non-empty.")
-        self.vertices = jnp.asarray(vertices_host, dtype=float)
+        self.vertices = jnp.asarray(vertices_host, dtype=jnp.float64)
         self.faces = jnp.asarray(faces_host, dtype=jnp.int32)
         self.topology = TriangleTopology(faces_host, num_vertices=vertices_host.shape[0])
         self.source_id = source_id or f"triangle-mesh-{uuid4().hex}"
@@ -220,12 +220,12 @@ class _TriangleCubatureMap(AbstractCubatureMap):
     faces: Array
 
     def __init__(self, vertices: Array, faces: Array):
-        self.vertices = jnp.asarray(vertices, dtype=float)
+        self.vertices = jnp.asarray(vertices, dtype=jnp.float64)
         self.faces = jnp.asarray(faces, dtype=jnp.int32)
 
     @property
     def num_charts(self) -> int:
-        return int(self.faces.shape[0])
+        return self.faces.shape[0]
 
     @property
     def reference_domain(self):
@@ -256,7 +256,7 @@ class _TriangleCubatureMap(AbstractCubatureMap):
 
     def reference_mask(self, chart_indices: Array, reference: Array, /) -> Array:
         del reference
-        return jnp.ones(jnp.asarray(chart_indices).shape, dtype=bool)
+        return jnp.ones(jnp.asarray(chart_indices).shape, dtype=jnp.bool_)
 
     def evaluate(
         self,

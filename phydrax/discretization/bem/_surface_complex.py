@@ -64,7 +64,7 @@ class OrientedTriangleSurfaceComplex3D(StrictModule, NonTrainableState):
                 "vertices must have shape (vertex_count, 3), with at least four vertices."
             )
         if not np.issubdtype(points.dtype, np.floating):
-            points = points.astype(float)
+            points = points.astype("float64")
         points = points.astype(
             np.dtype(jax.dtypes.canonicalize_dtype(points.dtype)), copy=False
         )
@@ -146,7 +146,7 @@ class OrientedTriangleSurfaceComplex3D(StrictModule, NonTrainableState):
         root_ids = {value: index for index, value in enumerate(sorted(set(roots)))}
         components = np.asarray([root_ids[value] for value in roots], dtype=np.int32)
         component_count = len(root_ids)
-        chi = int(points.shape[0] - edges.shape[0] + faces.shape[0])
+        chi = points.shape[0] - edges.shape[0] + faces.shape[0]
         genus_numerator = 2 * component_count - chi
         if genus_numerator < 0 or genus_numerator % 2:
             raise ValueError(
@@ -189,14 +189,14 @@ class OrientedTriangleSurfaceComplex3D(StrictModule, NonTrainableState):
         )
         complex_id = canonical_fingerprint(
             {
-                "kind": "oriented-triangle-surface-complex-3d-v1",
+                "kind": "oriented-triangle-surface-complex-3d",
                 "vertices": array_tree_fingerprint(points),
                 "triangles": array_tree_fingerprint(faces),
             }
         )
         report_id = canonical_fingerprint(
             {
-                "kind": "surface-topology-report-3d-v1",
+                "kind": "surface-topology-report-3d",
                 "complex": complex_id,
                 "components": component_count,
                 "euler_characteristic": chi,
@@ -242,12 +242,12 @@ class OrientedTriangleSurfaceComplex3D(StrictModule, NonTrainableState):
 
     @property
     def vertex_count(self) -> int:
-        return int(self.vertices.shape[0])
+        return self.vertices.shape[0]
 
     @property
     def edge_count(self) -> int:
-        return int(self.edge_vertices.shape[0])
+        return self.edge_vertices.shape[0]
 
     @property
     def face_count(self) -> int:
-        return int(self.triangles.shape[0])
+        return self.triangles.shape[0]

@@ -28,7 +28,7 @@ class InducingPointSelection(StrictModule):
     diagnostics: Any
 
     def __init__(self, points: Array, indices: Array, diagnostics: Any, /):
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         if points_.ndim < 2:
             raise ValueError(
@@ -55,15 +55,14 @@ def select_inducing_points(
         if isinstance(observation_points, cx.AxisArray)
         else observation_points
     )
-    points = jnp.asarray(raw, dtype=float)
+    points = jnp.asarray(raw, dtype=jnp.float64)
     method = RandomizedPivotedCholesky(num_points, kernel=kernel)
     if method.kernel.input_ndim == 1 and points.ndim == 1:
         points = points[:, None]
     expected_rank = method.kernel.input_ndim + 1
     if points.ndim != expected_rank:
         raise ValueError(
-            "observation_points must have one design axis followed by "
-            f"{method.kernel.input_ndim} kernel input axes."
+            f"observation_points must have one design axis followed by {method.kernel.input_ndim} kernel input axes."
         )
     if bool(jnp.any(~jnp.isfinite(points))):
         raise ValueError("observation_points must be finite.")

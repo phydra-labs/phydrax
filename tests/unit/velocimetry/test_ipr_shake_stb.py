@@ -258,7 +258,7 @@ def test_stb_promotes_distinct_identity_and_terminates_through_tracking_core():
         prepared,
         jnp.zeros((capacity, 3)),
         jnp.zeros((capacity,)),
-        jnp.zeros((capacity,), dtype=bool),
+        jnp.zeros((capacity,), dtype="bool"),
         first_track_id=40,
     )
     truth_position = jnp.asarray([[0.1, 0.0, 6.0], [0.0, 0.0, 0.0]])

@@ -57,10 +57,7 @@ def _structured_quad_mesh(nx: int, ny: int):
 
 
 def _boundary_set(discretization, boundary):
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     return phx.discretization.fem.FiniteElementBoundarySet(
         discretization, {"boundary": (exterior, boundary)}
     )

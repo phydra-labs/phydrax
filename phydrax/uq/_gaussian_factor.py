@@ -57,8 +57,7 @@ class GaussianFactor(StrictModule):
             raise TypeError("Gaussian factors must have an inexact dtype.")
         if value.ndim < 2 or value.shape[-2] <= 0:
             raise ValueError(
-                "Gaussian factors must have shape (..., event_size, rank) with "
-                "a positive event_size."
+                "Gaussian factors must have shape (..., event_size, rank) with a positive event_size."
             )
         if not isinstance(factor_id, str) or not factor_id:
             raise ValueError("factor_id must be a non-empty string.")

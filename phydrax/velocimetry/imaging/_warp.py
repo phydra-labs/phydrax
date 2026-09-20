@@ -25,16 +25,16 @@ def sample_rectilinear_field(
         raise TypeError("field must be a DenseDisplacementField2D.")
     if field.positions_rc.ndim != 3:
         raise ValueError("field must have a two-dimensional grid.")
-    coordinates = jnp.asarray(coordinates_rc, dtype=float)
+    coordinates = jnp.asarray(coordinates_rc, dtype=jnp.float64)
     if coordinates.shape[-1] != 2:
         raise ValueError("coordinates_rc must have shape (..., 2).")
     rows = field.positions_rc[:, 0, 0]
     columns = field.positions_rc[0, :, 1]
     row_indices = linear_interpolate(
-        rows, jnp.arange(rows.shape[0], dtype=float), coordinates[..., 0]
+        rows, jnp.arange(rows.shape[0], dtype=jnp.float64), coordinates[..., 0]
     ).values
     column_indices = linear_interpolate(
-        columns, jnp.arange(columns.shape[0], dtype=float), coordinates[..., 1]
+        columns, jnp.arange(columns.shape[0], dtype=jnp.float64), coordinates[..., 1]
     ).values
     grid_coordinates = jnp.stack((row_indices, column_indices), axis=-1)
     sampled = bilinear_sample(

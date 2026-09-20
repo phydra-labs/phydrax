@@ -160,7 +160,7 @@ class PeriodicProjectorGroups(StrictModule, NonTrainableState):
             )
         membership = np.equal(
             np.arange(len(names_))[:, None], indices.astype(np.int64)[None, :]
-        ).astype(float)
+        ).astype("float64")
         self.membership = jnp.asarray(membership)
         self.names = names_
         self.basis_id = basis
@@ -470,7 +470,7 @@ def fermi_surface_evidence(
     if not isfinite(fermi) or not isfinite(tolerance) or tolerance < 0.0:
         raise ValueError("Fermi energy and unresolved tolerance are invalid.")
     index_rows = np.asarray(mesh.mesh_indices)
-    lookup = {tuple(int(v) for v in row): i for i, row in enumerate(index_rows)}
+    lookup = {tuple(row): i for i, row in enumerate(index_rows)}
     energies = np.asarray(spectrum.energies)
     cell_rows: list[np.ndarray] = []
     bands: list[int] = []
@@ -512,8 +512,8 @@ def fermi_surface_evidence(
     cell_array = np.asarray(cell_rows, dtype=np.int32).reshape((-1, mesh.rank))
     corner_array = np.asarray(corners_out, dtype=np.int32).reshape((-1, 2**mesh.rank))
     value_array = np.asarray(values_out, dtype=energies.dtype).reshape((-1, 2**mesh.rank))
-    unresolved_array = np.asarray(unresolved, dtype=bool)
-    lifshitz_array = np.asarray(lifshitz, dtype=bool)
+    unresolved_array = np.asarray(unresolved, dtype=np.bool_)
+    lifshitz_array = np.asarray(lifshitz, dtype=np.bool_)
     complete = not np.any(unresolved_array)
     return FermiSurfaceEvidence(
         jnp.asarray(cell_array),

@@ -7,6 +7,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
+from phydrax._strict import StrictModule
+
 from ._ir import GraphIR
 
 
@@ -45,7 +47,7 @@ def _tree_axpy(
         y = x + scale * d
         if mask is None:
             return y
-        m = _expand_mask(mask, y).astype(bool)
+        m = _expand_mask(mask, y).astype("bool")
         return jnp.where(m, y, x)
 
     return jtu.tree_map(_leaf, base, tangent)
@@ -101,7 +103,7 @@ def euler_step(
 ) -> GraphIR:
     """Advance a graph state by one explicit Euler step."""
     rate = _require_graph_rate(vector_field(graph))
-    return _add_scaled_graph(graph, rate, jnp.asarray(dt, dtype=float))
+    return _add_scaled_graph(graph, rate, jnp.asarray(dt, dtype=jnp.float64))
 
 
 def rk4_step(
@@ -112,9 +114,9 @@ def rk4_step(
     dt: float | jnp.ndarray,
 ) -> GraphIR:
     """Advance a graph state by one classical RK4 step."""
-    dt_arr = jnp.asarray(dt, dtype=float)
-    half = jnp.asarray(0.5, dtype=float)
-    sixth = jnp.asarray(1.0 / 6.0, dtype=float)
+    dt_arr = jnp.asarray(dt, dtype=jnp.float64)
+    half = jnp.asarray(0.5, dtype=jnp.float64)
+    sixth = jnp.asarray(1.0 / 6.0, dtype=jnp.float64)
 
     k1 = _require_graph_rate(vector_field(graph))
     k2 = _require_graph_rate(vector_field(_add_scaled_graph(graph, k1, half * dt_arr)))
@@ -131,7 +133,7 @@ def rk4_step(
     )
 
 
-class EulerGraphStepper(eqx.Module):
+class EulerGraphStepper(StrictModule):
     """`GraphIR -> GraphIR` explicit Euler process wrapper."""
 
     vector_field: Callable[[GraphIR], GraphIR]
@@ -145,7 +147,7 @@ class EulerGraphStepper(eqx.Module):
         return euler_step(graph, self.vector_field, dt=self.dt)
 
 
-class RK4GraphStepper(eqx.Module):
+class RK4GraphStepper(StrictModule):
     """`GraphIR -> GraphIR` classical RK4 process wrapper."""
 
     vector_field: Callable[[GraphIR], GraphIR]
@@ -203,7 +205,7 @@ def rollout_features(
 def _tree_squared_error(prediction: Any, target: Any, /) -> Any:
     return jtu.tree_map(
         lambda pred, tgt: jnp.square(
-            jnp.asarray(pred, dtype=float) - jnp.asarray(tgt, dtype=float)
+            jnp.asarray(pred, dtype=jnp.float64) - jnp.asarray(tgt, dtype=jnp.float64)
         ),
         prediction,
         target,
@@ -219,12 +221,12 @@ def _tree_reduce_squared_error(
     leaves = jtu.tree_leaves(squared)
     if not leaves:
         raise ValueError("rollout target must contain at least one array leaf.")
-    total = jnp.asarray(0.0, dtype=float)
+    total = jnp.asarray(0.0, dtype=jnp.float64)
     count = 0
     for leaf in leaves:
-        arr = jnp.asarray(leaf, dtype=float)
+        arr = jnp.asarray(leaf, dtype=jnp.float64)
         total = total + jnp.sum(arr)
-        count += int(arr.size)
+        count += arr.size
     if reduction == "sum":
         return total.reshape(())
     if reduction == "mean":
@@ -248,7 +250,7 @@ def rollout_feature_loss(
         leaves = jtu.tree_leaves(target)
         if not leaves:
             raise ValueError("target must contain at least one array leaf.")
-        length = int(jnp.asarray(leaves[0]).shape[0])
+        length = jnp.asarray(leaves[0]).shape[0]
         steps = length - 1 if include_initial else length
     prediction = rollout_features(
         stepper,
@@ -261,7 +263,7 @@ def rollout_feature_loss(
     return _tree_reduce_squared_error(squared, reduction=reduction)
 
 
-class AutoregressiveGraphRollout(eqx.Module):
+class AutoregressiveGraphRollout(StrictModule):
     """Callable wrapper around autoregressive graph rollouts."""
 
     stepper: Callable[[GraphIR], GraphIR]

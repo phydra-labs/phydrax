@@ -84,13 +84,13 @@ def test_lle_preserves_case_sample_feature_and_target_axes_and_statistical_weigh
     targets = jnp.stack(
         (jnp.arange(16.0).reshape(2, 8), -jnp.arange(16.0).reshape(2, 8)), axis=-1
     )
-    feature_mask = jnp.ones_like(features, dtype=bool).at[:, 3, 2].set(False)
+    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 3, 2].set(False)
     sample_mask = jnp.array([True, True, True, True, True, True, True, False])
     sample_weight = jnp.array([1.0, 2.0, 1.0, 3.0, 1.0, 2.0, 1.0, 7.0])
     recipe = LocallyLinearEmbeddingRecipe(1, n_neighbors=2)
     common = dict(
         feature_mask=feature_mask,
-        target_mask=jnp.ones_like(targets, dtype=bool).at[:, 0, 1].set(False),
+        target_mask=jnp.ones_like(targets, dtype="bool").at[:, 0, 1].set(False),
         sample_mask=sample_mask,
         sample_weight=sample_weight,
     )
@@ -226,7 +226,7 @@ def test_complex_manifold_coordinates_use_hermitian_geometry():
     real = _features()
     complex_features = real + 0.2j * jnp.flip(real, axis=-1)
     graph = build_neighbor_graph(
-        complex_features, jnp.ones((8,), dtype=bool), n_neighbors=3
+        complex_features, jnp.ones((8,), dtype="bool"), n_neighbors=3
     )
     result = LocallyLinearEmbeddingRecipe(1, n_neighbors=3).fit_batch(
         MLBatch(complex_features)

@@ -45,8 +45,8 @@ def _geometry(shape, token, topology):
         identity,
         jnp.ones(shape),
         jnp.zeros(shape + (3, 3)),
-        jnp.ones(shape, dtype=bool),
-        jnp.ones(shape, dtype=bool),
+        jnp.ones(shape, dtype="bool"),
+        jnp.ones(shape, dtype="bool"),
         snapshot_token=token,
         chart_id="cartesian",
         convention_id="mostly-plus",
@@ -98,7 +98,7 @@ def _distribution():
 
 def _particles():
     ids = jnp.asarray((8, 2, 6, 4), dtype=jnp.int64)
-    active = jnp.ones((4,), dtype=bool)
+    active = jnp.ones((4,), dtype="bool")
     return RelativisticParticleState(
         ids,
         jnp.ones((4,)),

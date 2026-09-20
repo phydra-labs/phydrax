@@ -48,7 +48,7 @@ class AbstractProbabilityLaw(StrictModule):
 
 
 def _positive_shape(value, /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner} must contain positive dimensions.")
     return shape
@@ -75,7 +75,7 @@ class DiagonalNormalLaw(AbstractProbabilityLaw):
         raw_scale = jnp.asarray(scale)
         if jnp.iscomplexobj(raw_location) or jnp.iscomplexobj(raw_scale):
             raise TypeError("Diagonal Normal parameters must be real-valued.")
-        dtype = jnp.result_type(raw_location, raw_scale, float)
+        dtype = jnp.result_type(raw_location, raw_scale, jnp.float64)
         location_array = raw_location.astype(dtype)
         if (
             location_array.ndim < len(events)
@@ -134,7 +134,7 @@ class DiagonalNormalLaw(AbstractProbabilityLaw):
         return array
 
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
         noise = jr.normal(

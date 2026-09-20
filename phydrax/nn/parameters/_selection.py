@@ -48,7 +48,7 @@ class ParameterSubspace(StrictModule):
                     "ParameterSubspace may select only inexact JAX array leaves."
                 )
             selected_paths.append(jax.tree_util.keystr(path))
-            selected_shapes.append(tuple(int(size) for size in leaf.shape))
+            selected_shapes.append(tuple(leaf.shape))
         if not selected_paths:
             raise ValueError("ParameterSubspace must select at least one array leaf.")
         self.initial = selected
@@ -59,7 +59,7 @@ class ParameterSubspace(StrictModule):
         )
         self.leaf_shapes = tuple(selected_shapes)
         self.total_dimension = sum(
-            int(jnp.size(leaf)) for leaf in jax.tree_util.tree_leaves(selected)
+            jnp.size(leaf) for leaf in jax.tree_util.tree_leaves(selected)
         )
         groups = tuple(tuple(str(path) for path in group) for group in alias_groups)
         available = self.array_leaf_paths(tree)
@@ -233,7 +233,7 @@ class ParameterSubspace(StrictModule):
     def unpack(self, vector: Array, /) -> PyTree[Any]:
         """Restore a flat vector to the selected parameter PyTree."""
         values = jnp.asarray(vector)
-        if values.ndim != 1 or int(values.shape[0]) != self.total_dimension:
+        if values.ndim != 1 or values.shape[0] != self.total_dimension:
             raise ValueError(
                 f"vector must have shape ({self.total_dimension},); got {values.shape}."
             )
@@ -241,7 +241,7 @@ class ParameterSubspace(StrictModule):
         restored = []
         start = 0
         for leaf, shape in zip(initial_leaves, self.leaf_shapes, strict=True):
-            size = int(jnp.size(leaf))
+            size = jnp.size(leaf)
             restored.append(
                 values[start : start + size].astype(leaf.dtype).reshape(shape)
             )

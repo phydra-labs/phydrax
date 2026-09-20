@@ -145,7 +145,7 @@ def _event_dataset(
 
 def _parameter_count(model: Any, /) -> int:
     trainable, _ = partition_trainable(model)
-    return sum(int(leaf.size) for leaf in jax.tree.leaves(trainable))
+    return sum(leaf.size for leaf in jax.tree.leaves(trainable))
 
 
 def _build_model(

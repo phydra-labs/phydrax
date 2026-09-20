@@ -86,8 +86,8 @@ def test_ols_ridge_tikhonov_dense_case_multioutput_masks_weights_and_gradients()
         ),
         axis=0,
     )
-    feature_mask = jnp.ones_like(cases, dtype=bool).at[1, 2, 1].set(False)
-    target_mask = jnp.ones_like(case_targets, dtype=bool).at[0, 4, 1].set(False)
+    feature_mask = jnp.ones_like(cases, dtype="bool").at[1, 2, 1].set(False)
+    target_mask = jnp.ones_like(case_targets, dtype="bool").at[0, 4, 1].set(False)
     weights = jnp.linspace(0.5, 2.0, features.shape[0])
 
     recipes_and_types = (
@@ -258,7 +258,7 @@ def test_direct_solvers_operator_sparse_complex_and_failure_diagnostics():
 
     empty = OLSRecipe().fit_batch(
         MLBatch(
-            features, targets, sample_mask=jnp.zeros((features.shape[0],), dtype=bool)
+            features, targets, sample_mask=jnp.zeros((features.shape[0],), dtype="bool")
         )
     )
     assert empty.status == ML_INSUFFICIENT_DATA

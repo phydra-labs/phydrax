@@ -106,14 +106,14 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
                 if int(right) in owned and owner[left] != part:
                     halo.add(int(left))
             ids = np.asarray((*sorted(owned), *sorted(halo)), dtype=np.int32)
-            flags = np.asarray([value in owned for value in ids], dtype=bool)
+            flags = np.asarray([value in owned for value in ids], dtype=np.bool_)
             local_ids.append(ids)
             local_owned.append(flags)
             maps.append({int(value): index for index, value in enumerate(ids)})
         capacity = max(values.size for values in local_ids)
         global_ids = np.zeros((parts, capacity), dtype=np.int32)
-        valid = np.zeros((parts, capacity), dtype=bool)
-        owned_mask = np.zeros((parts, capacity), dtype=bool)
+        valid = np.zeros((parts, capacity), dtype=np.bool_)
+        owned_mask = np.zeros((parts, capacity), dtype=np.bool_)
         for part, (ids, flags) in enumerate(zip(local_ids, local_owned, strict=True)):
             global_ids[part, : ids.size] = ids
             valid[part, : ids.size] = True
@@ -134,8 +134,8 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
         )
         send = np.zeros((len(phases), parts, message_capacity), dtype=np.int32)
         receive = np.zeros_like(send)
-        send_valid = np.zeros_like(send, dtype=bool)
-        receive_valid = np.zeros_like(send, dtype=bool)
+        send_valid = np.zeros_like(send, dtype=np.bool_)
+        receive_valid = np.zeros_like(send, dtype=np.bool_)
         permutations: list[tuple[tuple[int, int], ...]] = []
         for phase_index, phase in enumerate(phases):
             permutations.append(tuple(phase))
@@ -212,7 +212,9 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
             receive_indices = self.phase_receive_indices[phase, part]
             # Only destinations write; sources with no incoming permutation receive zeros.
             destination = jnp.any(
-                jnp.asarray([target == part for _, target in permutation], dtype=bool)
+                jnp.asarray(
+                    [target == part for _, target in permutation], dtype=jnp.bool_
+                )
             )
             values = jax.lax.cond(
                 destination,
@@ -235,7 +237,9 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
             received = jax.lax.ppermute(payload, axis_name=axis_name, perm=permutation)
             send_indices = self.phase_send_indices[phase, part]
             destination = jnp.any(
-                jnp.asarray([target == part for _, target in permutation], dtype=bool)
+                jnp.asarray(
+                    [target == part for _, target in permutation], dtype=jnp.bool_
+                )
             )
             values = jax.lax.cond(
                 destination,

@@ -110,7 +110,7 @@ def tabulated_ephemeris_from_spice(
     target_names = tuple(str(value) for value in targets)
     if len(target_names) != catalog.capacity:
         raise ValueError("SPICE targets must match catalog capacity.")
-    source_nodes = np.asarray(et_seconds, dtype=float)
+    source_nodes = np.asarray(et_seconds, dtype=np.float64)
     if (
         source_nodes.ndim != 1
         or source_nodes.size < 2
@@ -118,11 +118,11 @@ def tabulated_ephemeris_from_spice(
         or np.any(np.diff(source_nodes) <= 0.0)
     ):
         raise ValueError("SPICE ET nodes must be a strictly increasing vector.")
-    states = np.empty((source_nodes.size, catalog.capacity, 6), dtype=float)
+    states = np.empty((source_nodes.size, catalog.capacity, 6), dtype=np.float64)
     for time_index, et in enumerate(source_nodes):
         for body_index, target in enumerate(target_names):
             state_km, _ = spice.spkezr(target, float(et), frame, aberration, observer)
-            states[time_index, body_index] = np.asarray(state_km, dtype=float)
+            states[time_index, body_index] = np.asarray(state_km, dtype=np.float64)
     velocity_unit = _KILOMETER_PER_SECOND
     epoch = catalog.context.epoch.instant.julian_date
     epoch_et_seconds = ((epoch.high - 2451545.0) + epoch.low) * 86400.0
@@ -169,19 +169,20 @@ def trajectory_from_sgp4(
     ):
         raise ValueError("SGP4 context must retain its Earth-TEME UTC epoch semantics.")
     jd, fraction = np.broadcast_arrays(
-        np.asarray(julian_day, dtype=float), np.asarray(julian_fraction, dtype=float)
+        np.asarray(julian_day, dtype=np.float64),
+        np.asarray(julian_fraction, dtype=np.float64),
     )
     if jd.ndim != 1 or jd.size < 1:
         raise ValueError("SGP4 Julian dates must form a nonempty rank-one schedule.")
-    states = np.zeros((jd.size, 6), dtype=float)
+    states = np.zeros((jd.size, 6), dtype=np.float64)
     status = np.zeros((jd.size,), dtype=np.int32)
-    valid = np.ones((jd.size,), dtype=bool)
+    valid = np.ones((jd.size,), dtype=np.bool_)
     for index, (day, part) in enumerate(zip(jd, fraction, strict=True)):
         error, position_km, velocity_km_s = satrec.sgp4(float(day), float(part))
         status[index] = int(error)
         valid[index] = int(error) == 0
-        states[index, :3] = np.asarray(position_km, dtype=float)
-        states[index, 3:] = np.asarray(velocity_km_s, dtype=float)
+        states[index, :3] = np.asarray(position_km, dtype=np.float64)
+        states[index, 3:] = np.asarray(velocity_km_s, dtype=np.float64)
     velocity_unit = _KILOMETER_PER_SECOND
     positions = convert_value(
         states[:, :3],

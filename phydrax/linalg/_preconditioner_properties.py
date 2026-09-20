@@ -42,8 +42,7 @@ class PreconditionerProperties(StrictModule):
             claims[name] for name in ("linear", "stationary", "self_adjoint")
         ):
             raise ValueError(
-                "A positive-definite preconditioner must be linear, stationary, "
-                "and self-adjoint."
+                "A positive-definite preconditioner must be linear, stationary, and self-adjoint."
             )
         supplied = {} if evidence is None else dict(evidence)
         unknown = supplied.keys() - claims.keys()

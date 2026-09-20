@@ -94,12 +94,12 @@ def _fixed_numeric_dataset(
         or not np.issubdtype(dtype, np.number)
     ):
         raise TypeError("HDF5 score datasets require fixed-width scalar numeric storage.")
-    shape = tuple(int(size) for size in dataset.shape)
+    shape = tuple(dataset.shape)
     if shape != expected_shape:
         raise ValueError("HDF5 dataset shape differs from the exact profile.")
     if expected_dtype is not None and dtype.str != np.dtype(expected_dtype).str:
         raise ValueError("HDF5 dataset dtype differs from the exact profile.")
-    logical_bytes = math.prod(shape) * int(dtype.itemsize)
+    logical_bytes = math.prod(shape) * dtype.itemsize
     if logical_bytes > max_logical_bytes:
         raise ValueError("HDF5 logical dataset exceeds the admitted resource byte limit.")
     return np.asarray(dataset[()])

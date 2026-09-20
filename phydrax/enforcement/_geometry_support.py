@@ -135,11 +135,9 @@ class BoundaryPatch(StrictModule, NonTrainableState):
         else:
             if not isinstance(atlas, BoundaryAtlas):
                 raise TypeError("BoundaryPatch.atlas must be a BoundaryAtlas or None.")
-            entity_ids = tuple(
-                int(value) for value in np.asarray(atlas.source_entity_ids)
-            )
+            entity_ids = tuple(np.asarray(atlas.source_entity_ids))
             tags = tuple(atlas.physical_tags)
-            orientation = tuple(int(value) for value in np.asarray(atlas.orientation))
+            orientation = tuple(np.asarray(atlas.orientation))
             if not entity_ids:
                 raise ValueError(
                     "A boundary patch atlas must contain at least one chart."
@@ -149,7 +147,7 @@ class BoundaryPatch(StrictModule, NonTrainableState):
 
         support_id = canonical_fingerprint(
             {
-                "kind": "boundary-patch-v1",
+                "kind": "boundary-patch",
                 "variable": variable_,
                 "side": side_.value,
                 "represented_geometry": represented_id,
@@ -201,11 +199,10 @@ class BoundaryJunction(StrictModule, NonTrainableState):
         transition_ids: Sequence[str] = (),
         orientation_signs: Sequence[int] = (),
     ):
-        indices = tuple(int(value) for value in patch_indices)
+        indices = tuple(patch_indices)
         if len(indices) < 2 or len(set(indices)) != len(indices) or min(indices) < 0:
             raise ValueError(
-                "BoundaryJunction.patch_indices must contain at least two unique "
-                "non-negative indices."
+                "BoundaryJunction.patch_indices must contain at least two unique non-negative indices."
             )
         kind_ = JunctionKind(kind)
         topology_id = str(topology_certificate_id)
@@ -217,7 +214,7 @@ class BoundaryJunction(StrictModule, NonTrainableState):
             or any(not value for value in transitions)
         ):
             raise ValueError("Junction evidence IDs must be non-empty.")
-        signs = tuple(int(value) for value in orientation_signs)
+        signs = tuple(orientation_signs)
         if not signs:
             signs = tuple(1 for _ in indices)
         if len(signs) != len(indices) or any(value not in (-1, 1) for value in signs):
@@ -230,7 +227,7 @@ class BoundaryJunction(StrictModule, NonTrainableState):
         self.compatibility_operator_id = compatibility_id
         self.junction_id = canonical_fingerprint(
             {
-                "kind": "boundary-junction-v1",
+                "kind": "boundary-junction",
                 "patch_indices": indices,
                 "evidence_kind": kind_.value,
                 "topology": topology_id,
@@ -306,7 +303,7 @@ class BoundarySupportEvidence(StrictModule, NonTrainableState):
         self.physical_exact = bool(physical_exact)
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "boundary-support-evidence-v1",
+                "kind": "boundary-support-evidence",
                 "supports": supports,
                 "junctions": junctions,
                 "represented": represented,
@@ -421,7 +418,7 @@ class BoundaryCover(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.cover_id = canonical_fingerprint(
             {
-                "kind": "boundary-cover-v1",
+                "kind": "boundary-cover",
                 "patches": tuple(value.support_id for value in patches_),
                 "junctions": tuple(value.junction_id for value in junctions_),
                 "disjoint": disjoint,
@@ -461,7 +458,7 @@ def _factor_identity(factor: AbstractGeometry, /) -> tuple[str, BoundaryAtlas | 
     bounds = np.asarray(factor.bounds)
     identity = canonical_fingerprint(
         {
-            "kind": "domain-geometry-representation-v1",
+            "kind": "domain-geometry-representation",
             "type": f"{type(factor).__module__}.{type(factor).__qualname__}",
             "bounds": array_tree_fingerprint(bounds),
         }
@@ -536,14 +533,12 @@ def prepare_boundary_cover(
         if topology_id is None:
             topology_id = canonical_fingerprint(
                 {
-                    "kind": "authoritative-boundary-selection-v1",
+                    "kind": "authoritative-boundary-selection",
                     "represented_geometry": represented_id,
                     "entity_ids": (
                         ()
                         if atlas is None
-                        else tuple(
-                            int(value) for value in np.asarray(atlas.source_entity_ids)
-                        )
+                        else tuple(np.asarray(atlas.source_entity_ids))
                     ),
                     "tags": () if atlas is None else atlas.physical_tags,
                 }
@@ -599,7 +594,7 @@ def prepare_boundary_cover(
             )
         coverage_id = canonical_fingerprint(
             {
-                "kind": "structural-boundary-cover-v1",
+                "kind": "structural-boundary-cover",
                 "patches": tuple(patch.support_id for patch in patches),
                 "resolved_pairs": tuple(sorted(resolved_pairs)),
             }

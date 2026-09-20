@@ -21,7 +21,7 @@ from ..stochastic._path_dependent_bsde import ReflectedPathDependentBSDEProblem
 from ._regression_bsde import (
     _basis_matrix,
     _normal_equation_error,
-    _normalise_design,
+    _normalize_design,
     _regress,
     AbstractBSDERegressionBasis,
     BSDERegressionScheme,
@@ -214,7 +214,7 @@ def _obstacle_data(
     output_shape = (count,) + problem.output_shape
     if problem.lower_obstacle is None:
         lower = jnp.zeros(output_shape, dtype=histories.dtype)
-        lower_finite = jnp.ones((count,), dtype=bool)
+        lower_finite = jnp.ones((count,), dtype=jnp.bool_)
     else:
         lower = _path_values(
             problem.lower_obstacle,
@@ -227,7 +227,7 @@ def _obstacle_data(
         lower_finite = jnp.all(jnp.isfinite(lower), axis=tuple(range(1, lower.ndim)))
     if problem.upper_obstacle is None:
         upper = jnp.zeros(output_shape, dtype=histories.dtype)
-        upper_finite = jnp.ones((count,), dtype=bool)
+        upper_finite = jnp.ones((count,), dtype=jnp.bool_)
     else:
         upper = _path_values(
             problem.upper_obstacle,
@@ -241,7 +241,7 @@ def _obstacle_data(
     ordered = (
         jnp.all(lower <= upper, axis=tuple(range(1, lower.ndim)))
         if problem.has_lower_obstacle and problem.has_upper_obstacle
-        else jnp.ones((count,), dtype=bool)
+        else jnp.ones((count,), dtype=jnp.bool_)
     )
     return lower, upper, lower_finite & upper_finite & ordered
 
@@ -391,7 +391,7 @@ def solve_reflected_path_dependent_bsde(
         _terminal_design_count,
         terminal_rank,
         terminal_condition,
-    ) = _normalise_design(
+    ) = _normalize_design(
         designs[-1],
         eligible,
         standardize=standardize,
@@ -443,7 +443,7 @@ def solve_reflected_path_dependent_bsde(
             design_count,
             rank,
             condition,
-        ) = _normalise_design(
+        ) = _normalize_design(
             designs[step],
             eligible,
             standardize=standardize,

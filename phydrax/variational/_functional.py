@@ -50,8 +50,7 @@ class Functional(StrictModule):
         missing = tuple(name for name in variables if name not in used_fields)
         if missing:
             raise ValueError(
-                "Functional variable fields must occur in at least one term; "
-                f"missing={missing}."
+                f"Functional variable fields must occur in at least one term; missing={missing}."
             )
         self.identifier = identifier_
         self.terms = terms_

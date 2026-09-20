@@ -189,7 +189,7 @@ def _finish_online(
         & jnp.all(jnp.isfinite(bias), axis=1)
         & jnp.isfinite(objective)
     )
-    extra = jnp.broadcast_to(jnp.asarray(extra_valid, dtype=bool), finite.shape)
+    extra = jnp.broadcast_to(jnp.asarray(extra_valid, dtype=jnp.bool_), finite.shape)
     valid = prepared.data_valid & extra & finite
     status = jnp.where(
         ~prepared.data_valid,

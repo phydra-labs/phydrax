@@ -19,7 +19,6 @@ from ._relation import EdgeRelation
 
 
 SparsePatternOrigin: TypeAlias = Literal["declared", "structural", "asdex"]
-_PATTERN_SCHEMA_VERSION = 1
 
 
 class SparsePattern(StrictModule, NonTrainableState):
@@ -45,7 +44,7 @@ class SparsePattern(StrictModule, NonTrainableState):
 
         source = np.asarray(relation.source_indices, dtype=np.int64)
         target = np.asarray(relation.target_indices, dtype=np.int64)
-        valid = np.asarray(relation.valid, dtype=bool)
+        valid = np.asarray(relation.valid, dtype=np.bool_)
         source = source[valid]
         target = target[valid]
         if source.size:
@@ -159,10 +158,9 @@ class SparsePattern(StrictModule, NonTrainableState):
         return self.nnz / total if total else 0.0
 
     def to_dict(self, /) -> dict[str, Any]:
-        """Return a versioned JSON-compatible structural artifact."""
+        """Return the canonical JSON-compatible structural artifact."""
 
         return {
-            "schema_version": _PATTERN_SCHEMA_VERSION,
             "shape": list(self.shape),
             "rows": np.asarray(self.rows).tolist(),
             "cols": np.asarray(self.cols).tolist(),
@@ -178,7 +176,6 @@ class SparsePattern(StrictModule, NonTrainableState):
         if not isinstance(value, Mapping):
             raise TypeError("Serialized sparse pattern must be a mapping.")
         expected = {
-            "schema_version",
             "shape",
             "rows",
             "cols",
@@ -193,13 +190,6 @@ class SparsePattern(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Invalid sparse-pattern fields; missing={missing}, unknown={unknown}."
             )
-        schema_version = value["schema_version"]
-        if (
-            not isinstance(schema_version, int)
-            or isinstance(schema_version, bool)
-            or schema_version != _PATTERN_SCHEMA_VERSION
-        ):
-            raise ValueError(f"Unsupported sparse-pattern schema {schema_version!r}.")
         shape_value = value["shape"]
         if (
             not isinstance(shape_value, list)

@@ -56,7 +56,7 @@ class GaugeLoopTerm(StrictModule, NonTrainableState):
         name_ = str(name).strip()
         if not name_:
             raise ValueError("Gauge loop term name must be non-empty.")
-        values = np.asarray(coefficients, dtype=float)
+        values = np.asarray(coefficients, dtype=np.float64)
         if values.shape == ():
             values = np.full((paths.num_paths,), float(values))
         if values.shape != (paths.num_paths,):
@@ -134,7 +134,7 @@ class ImprovedGaugeAction(AbstractLatticeEuclideanAction):
         if capacity > resource_limit:
             raise ValueError("Loop incidence exceeds maximum_loops_per_link.")
         edge_loops = np.zeros((link_space.num_edges, capacity), dtype=np.int32)
-        edge_valid = np.zeros((link_space.num_edges, capacity), dtype=bool)
+        edge_valid = np.zeros((link_space.num_edges, capacity), dtype=np.bool_)
         for edge, indices in enumerate(affected):
             edge_loops[edge, : len(indices)] = indices
             edge_valid[edge, : len(indices)] = True
@@ -143,7 +143,7 @@ class ImprovedGaugeAction(AbstractLatticeEuclideanAction):
                 "kind": "composable-improved-gauge-action",
                 "link_space": link_space.link_space_id,
                 "terms": [term.term_id for term in terms_],
-                "loop_count": int(coefficients_host.size),
+                "loop_count": coefficients_host.size,
                 "maximum_loops_per_link": resource_limit,
                 "convention": "minus-coefficient-times-real-normalized-trace",
             }
@@ -165,7 +165,7 @@ class ImprovedGaugeAction(AbstractLatticeEuclideanAction):
                     "kind": "compact-loop-action-measure-evidence",
                     "action": action_id,
                     "compact_group": link_space.group.group_id,
-                    "finite_loop_count": int(coefficients_host.size),
+                    "finite_loop_count": coefficients_host.size,
                 }
             ),
         )
@@ -173,7 +173,7 @@ class ImprovedGaugeAction(AbstractLatticeEuclideanAction):
         self.field_space_id = link_space.field_space.field_space_id
         self.configuration_shape = link_space.configuration_shape
         self.local_coordinate_shape = link_space.local_coordinate_shape
-        self.loop_count = int(coefficients_host.size)
+        self.loop_count = coefficients_host.size
         self.action_id = action_id
 
     def _links(self, links: ArrayLike, /) -> Array:

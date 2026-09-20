@@ -76,12 +76,12 @@ class SpectralEmbeddingModel(AbstractArrayModel):
         self.eigenvalues = jnp.asarray(eigenvalues)
         self.degrees = jnp.asarray(degrees)
         self.training_weights = jnp.asarray(training_weights)
-        self.active = jnp.asarray(active, dtype=bool)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
         self.bandwidth = float(bandwidth)
         self.n_neighbors = int(n_neighbors)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(train.shape[-1])
-        self.out_size = int(vectors.shape[-1])
+        self.in_size = train.shape[-1]
+        self.out_size = vectors.shape[-1]
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -138,7 +138,7 @@ def _spectral_one(
     dimensions: int,
     bandwidth: float,
 ) -> tuple[Array, Array, Array]:
-    n = int(active.shape[0])
+    n = active.shape[0]
     affinities = jnp.exp(-0.5 * (distances / bandwidth) ** 2)
     affinities = jnp.where(route_valid, affinities, 0.0)
     rows = jnp.arange(n, dtype=jnp.int32)[:, None]
@@ -304,8 +304,8 @@ class MultidimensionalScalingModel(AbstractArrayModel):
         self.eigenvalues = jnp.asarray(eigenvalues)
         self.method = str(method)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(train.shape[-1])
-        self.out_size = int(embedding.shape[-1])
+        self.in_size = train.shape[-1]
+        self.out_size = embedding.shape[-1]
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -547,11 +547,11 @@ class IsomapModel(AbstractArrayModel):
         self.training_row_mean = jnp.asarray(training_row_mean)
         self.grand_mean = jnp.asarray(grand_mean)
         self.eigenvalues = jnp.asarray(eigenvalues)
-        self.active = jnp.asarray(active, dtype=bool)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
         self.n_neighbors = int(n_neighbors)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(train.shape[-1])
-        self.out_size = int(embedding.shape[-1])
+        self.in_size = train.shape[-1]
+        self.out_size = embedding.shape[-1]
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -619,7 +619,7 @@ def _geodesic_one(
     route_valid: Array,
     active: Array,
 ) -> Array:
-    n = int(active.shape[0])
+    n = active.shape[0]
     rows = jnp.arange(n, dtype=jnp.int32)[:, None]
     graph = jnp.full((n, n), jnp.inf, dtype=edge_distances.dtype)
     graph = graph.at[rows, indices].min(jnp.where(route_valid, edge_distances, jnp.inf))

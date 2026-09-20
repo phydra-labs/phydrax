@@ -12,7 +12,7 @@ from phydrax._data_plane import IndexEpochPlan
 
 def _problem(data, *, num_factors=None, full_shift=0.0):
     values = jnp.asarray(data)
-    count = int(values.shape[0]) if num_factors is None else int(num_factors)
+    count = values.shape[0] if num_factors is None else int(num_factors)
     space = phx.uq.ParameterSpace(
         jnp.log(jnp.asarray(1.5)),
         priors=phx.uq.LogNormal(0.0, 1.0),
@@ -96,7 +96,7 @@ def test_array_minibatch_source_fingerprint_covers_data_and_configuration():
         == 4
     )
     assert baseline.configuration()["data"]["sha256"]
-    assert baseline.configuration()["ordering"] == "feistel32-v1"
+    assert baseline.configuration()["ordering"] == "feistel32"
     assert (
         baseline.fingerprint
         == "5d8818b7363587c82a17a427ce6fe34590b45838611f64fdae8b2091f3e015ab"
@@ -120,7 +120,7 @@ def test_likelihood_batch_requires_a_nonempty_boolean_factor_mask():
     with pytest.raises(ValueError, match="one-dimensional"):
         phx.uq.LikelihoodBatch(
             jnp.ones((2,)),
-            jnp.ones((1, 2), dtype=bool),
+            jnp.ones((1, 2), dtype="bool"),
             factor_ids=jnp.zeros((2,), dtype=jnp.int32),
             sampling_probabilities=jnp.ones((2,)),
             estimator_weights=jnp.ones((2,)),
@@ -136,7 +136,7 @@ def test_likelihood_batch_requires_a_nonempty_boolean_factor_mask():
     with pytest.raises(ValueError, match="active factor"):
         phx.uq.LikelihoodBatch(
             jnp.ones((2,)),
-            jnp.zeros((2,), dtype=bool),
+            jnp.zeros((2,), dtype="bool"),
             factor_ids=jnp.arange(2),
             sampling_probabilities=jnp.ones((2,)),
             estimator_weights=jnp.ones((2,)),
@@ -176,7 +176,7 @@ def test_minibatch_posterior_rejects_wrong_factor_shapes():
     space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
     batch = phx.uq.LikelihoodBatch(
         jnp.ones((3,)),
-        jnp.ones((3,), dtype=bool),
+        jnp.ones((3,), dtype="bool"),
         factor_ids=jnp.arange(3),
         sampling_probabilities=jnp.full((3,), 1.0 / 3.0),
         estimator_weights=jnp.ones((3,)),

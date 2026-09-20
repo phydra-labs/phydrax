@@ -91,7 +91,7 @@ class CochainIncidence(StrictModule, NonTrainableState):
             raise ValueError("Cochain cell counts must be non-negative.")
         lower = np.asarray(lower_indices)
         upper = np.asarray(upper_indices)
-        coefficient = _host_array("incidence signs", signs, dtype=float)
+        coefficient = _host_array("incidence signs", signs, dtype=jnp.float64)
         if lower.ndim != 1 or upper.ndim != 1 or coefficient.ndim != 1:
             raise ValueError("Cochain incidence arrays must be rank-1.")
         if lower.shape != upper.shape or lower.shape != coefficient.shape:
@@ -121,7 +121,7 @@ class CochainIncidence(StrictModule, NonTrainableState):
     @classmethod
     def from_dense(cls, degree: int, matrix: Any, /) -> "CochainIncidence":
         """Construct one incidence from a dense lower-by-upper boundary matrix."""
-        dense = _host_array("boundary matrix", matrix, dtype=float)
+        dense = _host_array("boundary matrix", matrix, dtype=jnp.float64)
         if dense.ndim != 2:
             raise ValueError("Boundary matrices must be rank-2.")
         lower, upper = np.nonzero(dense)
@@ -188,7 +188,7 @@ class HarmonicSubspace(StrictModule, NonTrainableState):
     ):
         basis_tuple = tuple(jnp.asarray(value) for value in bases)
         eigenvalue_tuple = tuple(jnp.asarray(value) for value in eigenvalues)
-        rank_tuple = tuple(int(value) for value in ranks)
+        rank_tuple = tuple(ranks)
         if len(basis_tuple) != len(rank_tuple) or len(eigenvalue_tuple) != len(
             rank_tuple
         ):
@@ -200,7 +200,7 @@ class HarmonicSubspace(StrictModule, NonTrainableState):
         for basis, values, rank in zip(
             basis_tuple, eigenvalue_tuple, rank_tuple, strict=True
         ):
-            if basis.ndim != 2 or int(basis.shape[1]) != int(max_modes):
+            if basis.ndim != 2 or basis.shape[1] != int(max_modes):
                 raise ValueError("Harmonic bases must have shape (cells, max_modes).")
             if values.shape != (int(max_modes),):
                 raise ValueError("Harmonic eigenvalues must have shape (max_modes,).")
@@ -251,7 +251,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         harmonic_subspace: HarmonicSubspace | None = None,
         validate: bool = True,
     ):
-        counts = tuple(int(value) for value in cell_counts)
+        counts = tuple(cell_counts)
         if not counts or any(value <= 0 for value in counts):
             raise ValueError("Cochain complexes require positive cell counts by degree.")
         max_degree = len(counts) - 1
@@ -309,7 +309,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
             if len(harmonic_subspace.bases) != len(counts):
                 raise ValueError("Harmonic subspace must cover every cochain degree.")
             if any(
-                int(basis.shape[0]) != count
+                basis.shape[0] != count
                 for basis, count in zip(harmonic_subspace.bases, counts, strict=True)
             ):
                 raise ValueError("Harmonic basis cell counts do not match the complex.")
@@ -346,7 +346,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
             raise ValueError(f"{name} must provide one array per cochain degree.")
         arrays: list[Array] = []
         for degree, (value, count) in enumerate(zip(resolved, counts, strict=True)):
-            array = _host_array(f"{name}[{degree}]", value, dtype=float)
+            array = _host_array(f"{name}[{degree}]", value, dtype=jnp.float64)
             if array.shape != (count,):
                 raise ValueError(f"{name}[{degree}] must have shape ({count},).")
             if positive and np.any(array <= 0.0):
@@ -361,7 +361,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, ...]:
         resolved = (
-            tuple(np.zeros((count,), dtype=bool) for count in counts)
+            tuple(np.zeros((count,), dtype=np.bool_) for count in counts)
             if values is None
             else tuple(values)
         )
@@ -369,7 +369,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
             raise ValueError("boundary_masks must provide one mask per degree.")
         masks = []
         for degree, (value, count) in enumerate(zip(resolved, counts, strict=True)):
-            mask = np.asarray(value, dtype=bool)
+            mask = np.asarray(value, dtype=np.bool_)
             if mask.shape != (count,):
                 raise ValueError(f"boundary_masks[{degree}] must have shape ({count},).")
             masks.append(jnp.asarray(mask))
@@ -390,12 +390,12 @@ class CochainComplexIR(StrictModule, NonTrainableState):
             if value is None:
                 points.append(None)
                 continue
-            array = _host_array(f"coordinates[{degree}]", value, dtype=float)
-            if array.ndim != 2 or int(array.shape[0]) != count:
+            array = _host_array(f"coordinates[{degree}]", value, dtype=jnp.float64)
+            if array.ndim != 2 or array.shape[0] != count:
                 raise ValueError(
                     f"coordinates[{degree}] must have leading cell count {count}."
                 )
-            dimensions.add(int(array.shape[1]))
+            dimensions.add(array.shape[1])
             points.append(jnp.asarray(array))
         if len(dimensions) > 1 or (dimensions and any(value is None for value in points)):
             raise ValueError(
@@ -485,7 +485,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
             else CochainBoundaryPolicy(boundary_policy)
         )
         if policy.kind == "absolute":
-            return jnp.ones((self.cell_counts[int(degree)],), dtype=bool)
+            return jnp.ones((self.cell_counts[int(degree)],), dtype=jnp.bool_)
         return ~self.boundary_masks[int(degree)]
 
     def with_harmonic_subspace(self, subspace: HarmonicSubspace, /) -> "CochainComplexIR":
@@ -525,7 +525,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         if self.harmonic_subspace is not None:
             max_modes = self.harmonic_subspace.max_modes
             packed = np.zeros(
-                (self.num_cells, self.max_degree + 1, max_modes), dtype=float
+                (self.num_cells, self.max_degree + 1, max_modes), dtype=np.float64
             )
             for degree, basis in enumerate(self.harmonic_subspace.bases):
                 start = self.cell_offsets[degree]
@@ -570,7 +570,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         receiver_array = (
             np.concatenate(receivers) if receivers else np.zeros((0,), dtype=np.int32)
         )
-        sign_array = np.concatenate(signs) if signs else np.zeros((0,), dtype=float)
+        sign_array = np.concatenate(signs) if signs else np.zeros((0,), dtype=np.float64)
         direction_array = (
             np.concatenate(directions) if directions else np.zeros((0,), dtype=np.int8)
         )
@@ -580,7 +580,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
             else np.zeros((0,), dtype=np.int32)
         )
         edges = {
-            "cochain_incidence": jnp.ones(sender_array.shape, dtype=bool),
+            "cochain_incidence": jnp.ones(sender_array.shape, dtype=jnp.bool_),
             "incidence_degree": jnp.asarray(incidence_degree_array),
             "incidence_direction": jnp.asarray(direction_array),
             "incidence_sign": jnp.asarray(sign_array),
@@ -644,10 +644,10 @@ def _graph_edge_weight(
     edge_weight_key: str | None,
     /,
 ) -> np.ndarray:
-    count = 0 if graph.senders is None else int(graph.senders.shape[0])
+    count = 0 if graph.senders is None else graph.senders.shape[0]
     if edge_weight_key is None:
         if graph.edges is None:
-            return np.ones((count,), dtype=float)
+            return np.ones((count,), dtype=np.float64)
         if isinstance(graph.edges, Mapping):
             raise ValueError(
                 "edge_weight_key is required when GraphIR.edges is a mapping."
@@ -659,7 +659,7 @@ def _graph_edge_weight(
         if not isinstance(graph.edges, Mapping) or edge_weight_key not in graph.edges:
             raise ValueError(f"GraphIR.edges has no {edge_weight_key!r} payload.")
         payload = graph.edges[edge_weight_key]
-    weight = _host_array("graph edge weights", payload, dtype=float)
+    weight = _host_array("graph edge weights", payload, dtype=jnp.float64)
     if weight.shape != (count,):
         raise ValueError(f"Graph edge weights must have shape ({count},).")
     return weight
@@ -675,15 +675,15 @@ def _graph_node_measure(
 ) -> np.ndarray:
     if isinstance(node_measure, str):
         if node_measure == "uniform":
-            measure = np.ones((node_count,), dtype=float)
+            measure = np.ones((node_count,), dtype=np.float64)
         elif node_measure == "degree":
-            measure = np.zeros((node_count,), dtype=float)
+            measure = np.zeros((node_count,), dtype=np.float64)
             np.add.at(measure, senders, conductances)
             np.add.at(measure, receivers, conductances)
         else:
             raise ValueError("node_measure must be 'uniform', 'degree', or an array.")
     else:
-        measure = _host_array("node_measure", node_measure, dtype=float)
+        measure = _host_array("node_measure", node_measure, dtype=jnp.float64)
     if measure.shape != (node_count,):
         raise ValueError(f"node_measure must have shape ({node_count},).")
     if np.any(measure <= 0.0):
@@ -724,7 +724,7 @@ def graph_to_cochain_complex(
         receivers = np.asarray(graph.receivers, dtype=np.int32)
     weights = _graph_edge_weight(graph, edge_weight_key)
     if graph.edge_mask is not None:
-        valid = np.asarray(graph.edge_mask, dtype=bool)
+        valid = np.asarray(graph.edge_mask, dtype=np.bool_)
         if valid.shape != senders.shape:
             raise ValueError("edge_mask must align with stored graph edges.")
         senders = senders[valid]
@@ -764,7 +764,7 @@ def graph_to_cochain_complex(
     edge_count = len(ordered)
     canonical_senders = np.asarray([pair[0] for pair in ordered], dtype=np.int32)
     canonical_receivers = np.asarray([pair[1] for pair in ordered], dtype=np.int32)
-    conductances = np.asarray([canonical[pair] for pair in ordered], dtype=float)
+    conductances = np.asarray([canonical[pair] for pair in ordered], dtype=np.float64)
     measure = _graph_node_measure(
         node_measure,
         node_count,
@@ -799,7 +799,7 @@ def cochain_complex_from_incidences(
 ) -> CochainComplexIR:
     """Build a metric cochain complex from sparse or dense boundary incidences."""
     resolved: list[CochainIncidence] = []
-    counts = tuple(int(value) for value in cell_counts)
+    counts = tuple(cell_counts)
     for degree, value in enumerate(incidences, start=1):
         resolved.append(
             value
@@ -830,8 +830,8 @@ def cochain_complex_from_simplicial(
     edge_ids = np.repeat(np.arange(edge_vertices.shape[0], dtype=np.int32), 2)
     b1 = CochainIncidence(
         1,
-        int(complex_graph.vertex_cells.size),
-        int(complex_graph.edge_cells.size),
+        complex_graph.vertex_cells.size,
+        complex_graph.edge_cells.size,
         edge_vertices.reshape((-1,)),
         edge_ids,
         np.tile(np.asarray((-1.0, 1.0)), edge_vertices.shape[0]),
@@ -839,17 +839,17 @@ def cochain_complex_from_simplicial(
     face_edges = np.asarray(complex_graph.face_edges, dtype=np.int32)
     b2 = CochainIncidence(
         2,
-        int(complex_graph.edge_cells.size),
-        int(complex_graph.face_cells.size),
+        complex_graph.edge_cells.size,
+        complex_graph.face_cells.size,
         face_edges.reshape((-1,)),
         np.repeat(np.arange(face_edges.shape[0], dtype=np.int32), face_edges.shape[1]),
         np.asarray(complex_graph.face_edge_signs).reshape((-1,)),
     )
     return CochainComplexIR(
         (
-            int(complex_graph.vertex_cells.size),
-            int(complex_graph.edge_cells.size),
-            int(complex_graph.face_cells.size),
+            complex_graph.vertex_cells.size,
+            complex_graph.edge_cells.size,
+            complex_graph.face_cells.size,
         ),
         (b1, b2),
         hodge_stars,
@@ -868,7 +868,7 @@ def triangle_mesh_to_cochain_complex(
     """Build a positive barycentric metric cochain complex from a triangle mesh."""
     from ._simplicial import triangle_mesh_to_simplicial_graph
 
-    vertices = _host_array("mesh_vertices", mesh_vertices, dtype=float)
+    vertices = _host_array("mesh_vertices", mesh_vertices, dtype=jnp.float64)
     faces = np.asarray(mesh_faces)
     if vertices.ndim != 2 or vertices.shape[1] < 2:
         raise ValueError("mesh_vertices must have shape (vertices, embedding_dim >= 2).")
@@ -883,7 +883,7 @@ def triangle_mesh_to_cochain_complex(
         raise ValueError("mesh_faces contain out-of-range vertex indices.")
     bundle = triangle_mesh_to_simplicial_graph(
         faces,
-        num_vertices=int(vertices.shape[0]),
+        num_vertices=vertices.shape[0],
     )
     edge_vertices = np.asarray(bundle.edge_vertices, dtype=np.int32)
     edge_points = 0.5 * (vertices[edge_vertices[:, 0]] + vertices[edge_vertices[:, 1]])
@@ -902,10 +902,10 @@ def triangle_mesh_to_cochain_complex(
     if np.any(edge_lengths <= 0.0):
         raise ValueError("Triangle meshes must not contain zero-length edges.")
 
-    vertex_dual = np.zeros((vertices.shape[0],), dtype=float)
+    vertex_dual = np.zeros((vertices.shape[0],), dtype=np.float64)
     for local in range(3):
         np.add.at(vertex_dual, faces[:, local], areas / 3.0)
-    edge_dual = np.zeros((edge_vertices.shape[0],), dtype=float)
+    edge_dual = np.zeros((edge_vertices.shape[0],), dtype=np.float64)
     face_edges = np.asarray(bundle.face_edges, dtype=np.int32)
     for local in range(3):
         ids = face_edges[:, local]
@@ -915,9 +915,9 @@ def triangle_mesh_to_cochain_complex(
         face_edges.reshape((-1,)), minlength=edge_vertices.shape[0]
     )
     boundary_edge = edge_face_count == 1
-    boundary_vertex = np.zeros((vertices.shape[0],), dtype=bool)
+    boundary_vertex = np.zeros((vertices.shape[0],), dtype=np.bool_)
     boundary_vertex[edge_vertices[boundary_edge].reshape((-1,))] = True
-    boundary_face = np.zeros((faces.shape[0],), dtype=bool)
+    boundary_face = np.zeros((faces.shape[0],), dtype=np.bool_)
     return cochain_complex_from_simplicial(
         bundle,
         (
@@ -926,14 +926,14 @@ def triangle_mesh_to_cochain_complex(
             1.0 / areas,
         ),
         primal_measures=(
-            np.ones((vertices.shape[0],), dtype=float),
+            np.ones((vertices.shape[0],), dtype=np.float64),
             edge_lengths,
             areas,
         ),
         dual_measures=(
             vertex_dual,
             edge_dual,
-            np.ones((faces.shape[0],), dtype=float),
+            np.ones((faces.shape[0],), dtype=np.float64),
         ),
         boundary_masks=(boundary_vertex, boundary_edge, boundary_face),
         coordinates=(vertices, edge_points, face_points),
@@ -954,7 +954,7 @@ def reorient_cochain(
         raise ValueError("Orientation signs must be a rank-1 array.")
     if cell_axis is None:
         candidates = tuple(
-            axis for axis, size in enumerate(array.shape) if int(size) == int(signs.size)
+            axis for axis, size in enumerate(array.shape) if int(size) == signs.size
         )
         if len(candidates) != 1:
             raise ValueError(
@@ -967,12 +967,12 @@ def reorient_cochain(
             axis += array.ndim
         if axis < 0 or axis >= array.ndim:
             raise ValueError("cell_axis is out of range.")
-    if int(array.shape[axis]) != int(signs.size):
+    if array.shape[axis] != signs.size:
         raise ValueError("Orientation signs must match the cochain cell axis.")
     if bool(jnp.any(jnp.abs(signs) != 1)):
         raise ValueError("Orientation signs must be ±1.")
     shape = [1] * array.ndim
-    shape[axis] = int(signs.size)
+    shape[axis] = signs.size
     return array * signs.reshape(shape)
 
 
@@ -982,7 +982,7 @@ def reorient_cochain_complex(
     /,
 ) -> CochainComplexIR:
     """Return an equivalent complex under independent cell-orientation changes."""
-    signs = tuple(np.asarray(value, dtype=float) for value in orientation_signs)
+    signs = tuple(np.asarray(value, dtype=np.float64) for value in orientation_signs)
     if len(signs) != len(complex_ir.cell_counts):
         raise ValueError("orientation_signs must provide one vector per degree.")
     for degree, (value, count) in enumerate(

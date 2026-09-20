@@ -38,8 +38,7 @@ def _exact_keys(
     extra = tuple(name for name in keys if name not in expected)
     if missing or extra:
         raise ValueError(
-            f"{kind} fields do not match the declaration; missing={missing!r}, "
-            f"extra={extra!r}."
+            f"{kind} fields do not match the declaration; missing={missing!r}, extra={extra!r}."
         )
 
 

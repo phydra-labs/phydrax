@@ -29,7 +29,7 @@ def _shape(value, name: str, /) -> tuple[int, ...]:
     shape = tuple(value)
     if any(isinstance(size, bool) or not isinstance(size, Integral) for size in shape):
         raise TypeError(f"{name} entries must be integers.")
-    shape = tuple(int(size) for size in shape)
+    shape = tuple(shape)
     if not shape or any(size < 1 for size in shape):
         raise ValueError(f"{name} must be non-empty and positive.")
     return shape
@@ -147,9 +147,9 @@ class PointSampleSupport:
         ):
             raise ValueError("sample_ids must uniquely identify every point.")
         active = (
-            np.ones((points.shape[0],), dtype=bool)
+            np.ones((points.shape[0],), dtype=np.bool_)
             if self.active_mask is None
-            else _readonly(self.active_mask, "active_mask", dtype=bool)
+            else _readonly(self.active_mask, "active_mask", dtype=jnp.bool_)
         )
         if active.shape != (points.shape[0],):
             raise ValueError("active_mask must have shape (sample_count,).")
@@ -224,9 +224,9 @@ class RaySampleSupport:
         ):
             raise ValueError("sample_ids must uniquely identify every ray.")
         active = (
-            np.ones((origins.shape[0],), dtype=bool)
+            np.ones((origins.shape[0],), dtype=np.bool_)
             if self.active_mask is None
-            else _readonly(self.active_mask, "active_mask", dtype=bool)
+            else _readonly(self.active_mask, "active_mask", dtype=jnp.bool_)
         )
         if active.shape != (origins.shape[0],):
             raise ValueError("active_mask must have shape (sample_count,).")

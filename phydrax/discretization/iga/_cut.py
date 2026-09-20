@@ -14,6 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -25,7 +27,7 @@ _OUTSIDE = -1
 
 
 def _finite_array(value: ArrayLike, shape_tail: tuple[int, ...], name: str) -> np.ndarray:
-    array = np.asarray(value, dtype=float)
+    array = np.asarray(value, dtype=np.float64)
     if array.ndim < len(shape_tail) or array.shape[-len(shape_tail) :] != shape_tail:
         raise ValueError(f"{name} must end in shape {shape_tail}.")
     if np.any(~np.isfinite(array)):
@@ -119,7 +121,7 @@ class UVTrimLoop(StrictModule, NonTrainableState):
             raise ValueError("A UV trim loop requires three distinct vertices.")
         edges = np.roll(vertices_, -1, axis=0) - vertices_
         scale = max(1.0, float(np.max(np.ptp(vertices_, axis=0))))
-        tolerance = 64.0 * np.finfo(float).eps * scale
+        tolerance = 64.0 * np.finfo(np.float64).eps * scale
         if np.any(np.linalg.norm(edges, axis=1) <= tolerance):
             raise ValueError("UV trim loops cannot contain zero-length edges.")
         count = vertices_.shape[0]
@@ -230,7 +232,7 @@ class UVTrimmedSurface(StrictModule, NonTrainableState):
         )
         scale = max(1.0, float(np.max(np.ptp(all_vertices, axis=0))))
         tolerance = (
-            64.0 * np.finfo(float).eps * scale
+            64.0 * np.finfo(np.float64).eps * scale
             if predicate_tolerance is None
             else float(predicate_tolerance)
         )
@@ -383,7 +385,7 @@ class ConvexTriangleBRepClassifier(AbstractImmersedBRepClassifier):
             raise ValueError("BRep triangle indices are out of bounds.")
         scale = max(1.0, float(np.max(np.ptp(vertices_, axis=0))))
         tolerance = (
-            128.0 * np.finfo(float).eps * scale
+            128.0 * np.finfo(np.float64).eps * scale
             if predicate_tolerance is None
             else float(predicate_tolerance)
         )
@@ -416,7 +418,7 @@ class ConvexTriangleBRepClassifier(AbstractImmersedBRepClassifier):
         offsets = np.sum(unit_normals * a, axis=1)
         halfspace = vertices_ @ unit_normals.T - offsets[None, :]
         maximum_residual = float(np.max(halfspace))
-        signed_volume = float(np.sum(np.einsum("ij,ij->i", a, np.cross(b, c))) / 6.0)
+        signed_volume = float(np.sum(ein.contract("ij,ij->i", a, np.cross(b, c))) / 6.0)
         topology = array_tree_fingerprint((vertices_, triangles_))
         certificate = ConvexBRepCertificate(
             signed_volume,
@@ -476,7 +478,7 @@ def _clip_polygon_axis(
             output.append(current)
         previous = current
         previous_inside = current_inside
-    return np.asarray(output, dtype=float).reshape((-1, 2))
+    return np.asarray(output, dtype=np.float64).reshape((-1, 2))
 
 
 def _clip_polygon_box(polygon: np.ndarray, bounds: np.ndarray) -> np.ndarray:
@@ -519,7 +521,7 @@ def _legendre_unit(order: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _surface_measure(jacobian: np.ndarray) -> np.ndarray:
-    gram = np.einsum("nai,naj->nij", jacobian, jacobian)
+    gram = ein.contract("nai,naj->nij", jacobian, jacobian)
     determinant = np.linalg.det(gram)
     if np.any(determinant <= 0.0) or np.any(~np.isfinite(determinant)):
         raise ValueError("The geometry Jacobian must have full surface rank.")
@@ -539,7 +541,7 @@ def _triangle_quadrature(
     a, b, c = triangle
     uv = a + r[:, None] * (b - a) + ((1.0 - r) * s)[:, None] * (c - a)
     determinant = float(np.linalg.det(np.stack((b - a, c - a), axis=1)))
-    jacobian = np.asarray(geometry_jacobian(uv), dtype=float)
+    jacobian = np.asarray(geometry_jacobian(uv), dtype=np.float64)
     if jacobian.ndim != 3 or jacobian.shape[0] != uv.shape[0] or jacobian.shape[2] != 2:
         raise ValueError("geometry_jacobian must return shape (points, ambient, 2).")
     weights = (
@@ -609,10 +611,10 @@ def _segment_quadrature(
     points_1d, weights_1d = _legendre_unit(order)
     direction = segment[1] - segment[0]
     uv = segment[0] + points_1d[:, None] * direction
-    jacobian = np.asarray(geometry_jacobian(uv), dtype=float)
+    jacobian = np.asarray(geometry_jacobian(uv), dtype=np.float64)
     if jacobian.ndim != 3 or jacobian.shape[0] != uv.shape[0] or jacobian.shape[2] != 2:
         raise ValueError("geometry_jacobian must return shape (points, ambient, 2).")
-    tangents = np.einsum("nai,i->na", jacobian, direction)
+    tangents = ein.contract("nai,i->na", jacobian, direction)
     physical_speed = np.linalg.norm(tangents, axis=1)
     if np.any(physical_speed <= 0.0) or np.any(~np.isfinite(physical_speed)):
         raise ValueError("Trim boundary images must have nonzero finite tangents.")
@@ -923,7 +925,7 @@ def build_trimmed_surface_quadrature(
         for edge_id, start in enumerate(vertices):
             end = vertices[(edge_id + 1) % vertices.shape[0]]
             direction = end - start
-            normal = np.asarray((direction[1], -direction[0]), dtype=float)
+            normal = np.asarray((direction[1], -direction[0]), dtype=np.float64)
             normal /= np.linalg.norm(normal)
             for cell_id, cell in enumerate(bounds):
                 clipped = _clip_segment_box(start, end, cell)
@@ -977,8 +979,8 @@ def build_trimmed_surface_quadrature(
     boundary_cells = np.concatenate(boundary_cell_blocks)
     boundary_normals = np.concatenate(boundary_normal_blocks, axis=0)
     boundary_loop_ids = np.concatenate(boundary_loop_blocks)
-    physical_volume = np.asarray(map_(volume_uv), dtype=float)
-    physical_boundary = np.asarray(map_(boundary_uv), dtype=float)
+    physical_volume = np.asarray(map_(volume_uv), dtype=np.float64)
+    physical_boundary = np.asarray(map_(boundary_uv), dtype=np.float64)
     if (
         physical_volume.ndim != 2
         or physical_volume.shape[0] != volume_uv.shape[0]
@@ -989,10 +991,10 @@ def build_trimmed_surface_quadrature(
         raise ValueError(
             "geometry_map must return finite shape (points, ambient) arrays."
         )
-    boundary_jacobian = np.asarray(jacobian_(boundary_uv), dtype=float)
-    gram = np.einsum("nai,naj->nij", boundary_jacobian, boundary_jacobian)
+    boundary_jacobian = np.asarray(jacobian_(boundary_uv), dtype=np.float64)
+    gram = ein.contract("nai,naj->nij", boundary_jacobian, boundary_jacobian)
     metric_normal = np.linalg.solve(gram, boundary_normals[..., None])[..., 0]
-    conormals = np.einsum("nai,ni->na", boundary_jacobian, metric_normal)
+    conormals = ein.contract("nai,ni->na", boundary_jacobian, metric_normal)
     conormal_norm = np.linalg.norm(conormals, axis=1)
     if np.any(conormal_norm <= 0.0):
         raise ValueError("Physical trim conormals are degenerate.")
@@ -1030,13 +1032,13 @@ def build_trimmed_surface_quadrature(
 
 
 class CutStabilizationPlan(StrictModule, NonTrainableState):
-    """Deterministic cell aggregation and cut-neighbour ghost-penalty routes."""
+    """Deterministic cell aggregation and cut-neighbor ghost-penalty routes."""
 
     volume_fractions: Array
     aggregate_root_cells: Array
     support_root_cells: Array
     ghost_owner_cells: Array
-    ghost_neighbour_cells: Array
+    ghost_neighbor_cells: Array
     ghost_penalty_weights: Array
     support_threshold: float = eqx.field(static=True)
     polynomial_degree: int = eqx.field(static=True)
@@ -1048,7 +1050,7 @@ class CutStabilizationPlan(StrictModule, NonTrainableState):
         aggregate_root_cells: np.ndarray,
         support_root_cells: np.ndarray,
         ghost_owner_cells: np.ndarray,
-        ghost_neighbour_cells: np.ndarray,
+        ghost_neighbor_cells: np.ndarray,
         ghost_penalty_weights: np.ndarray,
         support_threshold: float,
         polynomial_degree: int,
@@ -1063,7 +1065,7 @@ class CutStabilizationPlan(StrictModule, NonTrainableState):
             raise ValueError("support_root_cells must be rank-1.")
         if not (
             ghost_owner_cells.shape
-            == ghost_neighbour_cells.shape
+            == ghost_neighbor_cells.shape
             == ghost_penalty_weights.shape
         ):
             raise ValueError("Ghost-penalty facet routes are incompatible.")
@@ -1071,7 +1073,7 @@ class CutStabilizationPlan(StrictModule, NonTrainableState):
         self.aggregate_root_cells = jnp.asarray(aggregate_root_cells, dtype=jnp.int32)
         self.support_root_cells = jnp.asarray(support_root_cells, dtype=jnp.int32)
         self.ghost_owner_cells = jnp.asarray(ghost_owner_cells, dtype=jnp.int32)
-        self.ghost_neighbour_cells = jnp.asarray(ghost_neighbour_cells, dtype=jnp.int32)
+        self.ghost_neighbor_cells = jnp.asarray(ghost_neighbor_cells, dtype=jnp.int32)
         self.ghost_penalty_weights = jnp.asarray(ghost_penalty_weights)
         self.support_threshold = float(support_threshold)
         self.polynomial_degree = int(polynomial_degree)
@@ -1086,7 +1088,7 @@ class CutStabilizationPlan(StrictModule, NonTrainableState):
                         aggregate_root_cells,
                         support_root_cells,
                         ghost_owner_cells,
-                        ghost_neighbour_cells,
+                        ghost_neighbor_cells,
                         ghost_penalty_weights,
                     )
                 ),
@@ -1107,10 +1109,10 @@ def plan_cut_stabilization(
 ) -> CutStabilizationPlan:
     """Aggregate every small active cell into its nearest well-supported component cell."""
 
-    fractions = np.asarray(volume_fractions, dtype=float)
+    fractions = np.asarray(volume_fractions, dtype=np.float64)
     adjacency = np.asarray(cell_adjacency, dtype=np.int64)
-    support = np.asarray(basis_cell_support, dtype=bool)
-    diameters = np.asarray(cell_diameters, dtype=float)
+    support = np.asarray(basis_cell_support, dtype=np.bool_)
+    diameters = np.asarray(cell_diameters, dtype=np.float64)
     threshold = float(support_threshold)
     penalty = float(ghost_penalty)
     if (
@@ -1137,12 +1139,12 @@ def plan_cut_stabilization(
         raise ValueError("Cut stabilization parameters are invalid.")
     active = fractions > 0.0
     good = fractions >= threshold
-    neighbours: list[list[int]] = [[] for _ in range(fractions.size)]
-    for owner, neighbour in adjacency:
-        if owner == neighbour:
+    neighbors: list[list[int]] = [[] for _ in range(fractions.size)]
+    for owner, neighbor in adjacency:
+        if owner == neighbor:
             raise ValueError("Cell adjacency cannot contain self-facets.")
-        neighbours[int(owner)].append(int(neighbour))
-        neighbours[int(neighbour)].append(int(owner))
+        neighbors[int(owner)].append(int(neighbor))
+        neighbors[int(neighbor)].append(int(owner))
     roots = np.full(fractions.shape, -1, dtype=np.int64)
     roots[good] = np.flatnonzero(good)
     queue: deque[int] = deque(int(value) for value in np.flatnonzero(good))
@@ -1150,17 +1152,16 @@ def plan_cut_stabilization(
     distance[good] = 0
     while queue:
         cell = queue.popleft()
-        for neighbour in sorted(neighbours[cell]):
-            if not active[neighbour]:
+        for neighbor in sorted(neighbors[cell]):
+            if not active[neighbor]:
                 continue
             candidate_distance = distance[cell] + 1
-            if candidate_distance < distance[neighbour] or (
-                candidate_distance == distance[neighbour]
-                and roots[cell] < roots[neighbour]
+            if candidate_distance < distance[neighbor] or (
+                candidate_distance == distance[neighbor] and roots[cell] < roots[neighbor]
             ):
-                distance[neighbour] = candidate_distance
-                roots[neighbour] = roots[cell]
-                queue.append(neighbour)
+                distance[neighbor] = candidate_distance
+                roots[neighbor] = roots[cell]
+                queue.append(neighbor)
     if np.any(active & (roots < 0)):
         raise ValueError(
             "Every active cut-cell component must contain a cell above support_threshold."
@@ -1183,7 +1184,7 @@ def plan_cut_stabilization(
         * float((int(polynomial_degree) + 1) ** 2)
         / np.minimum(diameters[ghost[:, 0]], diameters[ghost[:, 1]])
         if ghost.size
-        else np.empty((0,), dtype=float)
+        else np.empty((0,), dtype=np.float64)
     )
     return CutStabilizationPlan(
         fractions,
@@ -1257,8 +1258,8 @@ def certify_cut_condition(
 
     if not isinstance(plan, CutStabilizationPlan):
         raise TypeError("plan must be a CutStabilizationPlan.")
-    unstabilized = np.asarray(unstabilized_matrix, dtype=float)
-    stabilized = np.asarray(stabilized_matrix, dtype=float)
+    unstabilized = np.asarray(unstabilized_matrix, dtype=np.float64)
+    stabilized = np.asarray(stabilized_matrix, dtype=np.float64)
     tolerance = float(eigenvalue_tolerance)
     if (
         unstabilized.ndim != 2

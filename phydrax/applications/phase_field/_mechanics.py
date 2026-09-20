@@ -70,7 +70,7 @@ class LinearElasticPhaseMaterial(StrictModule, NonTrainableState):
         gram = np.asarray(
             [
                 [
-                    np.einsum("ij,ijkl,kl", left, tensor, right)
+                    ein.contract("ij,ijkl,kl", left, tensor, right)
                     for right in symmetric_strains
                 ]
                 for left in symmetric_strains

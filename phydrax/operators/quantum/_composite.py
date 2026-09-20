@@ -34,13 +34,11 @@ def _subsystem_dimensions(subsystem_dims: Sequence[int], /) -> tuple[int, ...]:
             dimension = py_operator.index(value)
         except TypeError as exc:
             raise TypeError(
-                "subsystem_dims must contain positive integers; "
-                f"item {position} is {type(value).__name__}."
+                f"subsystem_dims must contain positive integers; item {position} is {type(value).__name__}."
             ) from exc
         if dimension <= 0:
             raise ValueError(
-                "subsystem_dims must contain positive integers; "
-                f"item {position} is {dimension}."
+                f"subsystem_dims must contain positive integers; item {position} is {dimension}."
             )
         dimensions.append(dimension)
     return tuple(dimensions)
@@ -103,8 +101,8 @@ class _TensorProductCallable(StrictModule):
                     "tensor_product factors must be vectors or square matrices; "
                     f"factor {index} has shape {value.shape}."
                 )
-            if int(value.shape[0]) == 0 or (
-                value.ndim == 2 and int(value.shape[1]) != int(value.shape[0])
+            if value.shape[0] == 0 or (
+                value.ndim == 2 and value.shape[1] != value.shape[0]
             ):
                 raise ValueError(
                     "tensor_product factors must be nonempty vectors or square "
@@ -147,7 +145,7 @@ class _PartialTraceCallable(StrictModule):
             self.density.func(*args, key=key, **kwargs),
             role="partial_trace density operator",
         )
-        if int(density.shape[0]) != self.total_dimension:
+        if density.shape[0] != self.total_dimension:
             raise ValueError(
                 "Density dimension must equal the product of subsystem_dims; "
                 f"got density shape {density.shape} and subsystem_dims "
@@ -195,7 +193,7 @@ class _EmbeddedOperatorCallable(StrictModule):
             role="embedded subsystem operator",
         )
         expected = self.subsystem_dims[self.subsystem]
-        if int(source.shape[0]) != expected:
+        if source.shape[0] != expected:
             raise ValueError(
                 "Operator dimension must match the selected subsystem; "
                 f"got operator shape {source.shape}, subsystem {self.subsystem} "
@@ -227,8 +225,7 @@ def tensor_product(*factors: DomainFunction) -> DomainFunction:
     for index, factor in enumerate(factors):
         if not isinstance(factor, DomainFunction):
             raise TypeError(
-                "tensor_product expects only DomainFunctions; "
-                f"factor {index} is {type(factor).__name__}."
+                f"tensor_product expects only DomainFunctions; factor {index} is {type(factor).__name__}."
             )
     domain, deps, promoted, positions = join_function_arguments(*factors)
     return DomainFunction(

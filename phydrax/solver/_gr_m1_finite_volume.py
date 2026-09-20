@@ -21,7 +21,7 @@ from .._trainable import NonTrainableState
 from ..equations._relativistic_hydrodynamics import (
     valencia_geometric_source_from_projection,
 )
-from ..equations._relativistic_radiation import GRGreyM1RadiationSystem
+from ..equations._relativistic_radiation import GRGrayM1RadiationSystem
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
 
@@ -42,7 +42,7 @@ class GRM1FiniteVolumeRunStatus(IntEnum):
 
 
 class GRM1BoundaryCondition(StrictModule, NonTrainableState):
-    """One metric-aware grey-M1 exterior moment policy."""
+    """One metric-aware gray-M1 exterior moment policy."""
 
     kind: GRM1BoundaryKind = eqx.field(static=True)
     prescribed_moments: Array
@@ -60,13 +60,13 @@ class GRM1BoundaryCondition(StrictModule, NonTrainableState):
         if kind == "prescribed":
             if prescribed_moments is None:
                 raise ValueError("A prescribed M1 boundary requires moments.")
-            moments = np.asarray(prescribed_moments, dtype=float)
+            moments = np.asarray(prescribed_moments, dtype=np.float64)
             if moments.shape != (4,) or np.any(~np.isfinite(moments)):
                 raise ValueError("Prescribed M1 moments must be one finite four-vector.")
         else:
             if prescribed_moments is not None:
                 raise ValueError("Only a prescribed M1 boundary accepts moments.")
-            moments = np.zeros((4,), dtype=float)
+            moments = np.zeros((4,), dtype=np.float64)
         self.kind = kind
         self.prescribed_moments = jnp.asarray(moments)
         self.boundary_id = canonical_fingerprint(
@@ -80,7 +80,7 @@ class GRM1BoundaryCondition(StrictModule, NonTrainableState):
 
     def exterior(
         self,
-        system: GRGreyM1RadiationSystem,
+        system: GRGrayM1RadiationSystem,
         interior: Array,
         face_geometry: ADMGridGeometry,
         axis: int,
@@ -227,9 +227,9 @@ def _take_adm_geometry(
 
 
 class FixedGridGRM1SSPRK3Plan(StrictModule, NonTrainableState):
-    """Atomic metric-aware grey-M1 finite volume with SSPRK(3,3)."""
+    """Atomic metric-aware gray-M1 finite volume with SSPRK(3,3)."""
 
-    system: GRGreyM1RadiationSystem
+    system: GRGrayM1RadiationSystem
     discretization: object
     boundaries: tuple[GRM1BoundaryPair | None, ...]
     reconstruction: GRM1ReconstructionKind = eqx.field(static=True)
@@ -240,7 +240,7 @@ class FixedGridGRM1SSPRK3Plan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        system: GRGreyM1RadiationSystem,
+        system: GRGrayM1RadiationSystem,
         discretization,
         /,
         *,
@@ -252,8 +252,8 @@ class FixedGridGRM1SSPRK3Plan(StrictModule, NonTrainableState):
     ) -> None:
         from ..discretization.finite_volume import FiniteVolumeDiscretization
 
-        if not isinstance(system, GRGreyM1RadiationSystem):
-            raise TypeError("system must be GRGreyM1RadiationSystem.")
+        if not isinstance(system, GRGrayM1RadiationSystem):
+            raise TypeError("system must be GRGrayM1RadiationSystem.")
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError("discretization must be FiniteVolumeDiscretization.")
         if reconstruction not in ("piecewise_constant", "plm"):
@@ -691,7 +691,7 @@ class FixedGridGRM1SSPRK3Plan(StrictModule, NonTrainableState):
             boundary_flux,
             volume_source,
             defect,
-            jnp.asarray(accepted, dtype=bool),
+            jnp.asarray(accepted, dtype=jnp.bool_),
             finite,
             qualified,
             self.plan_id,

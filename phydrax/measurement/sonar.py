@@ -42,8 +42,8 @@ class SonarAcquisition:
     acquisition_contract_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        source = np.array(self.source_position, dtype=float, copy=True)
-        receivers = np.array(self.receiver_positions, dtype=float, copy=True)
+        source = np.array(self.source_position, dtype=np.float64, copy=True)
+        receivers = np.array(self.receiver_positions, dtype=np.float64, copy=True)
         if (
             source.shape != (3,)
             or receivers.ndim != 2
@@ -108,7 +108,7 @@ class DelayAndSumBeamformingPlan(StrictModule, NonTrainableState):
     delays: Array
 
     def __init__(self, acquisition: SonarAcquisition, image_points: ArrayLike, /):
-        points = np.asarray(image_points, dtype=float)
+        points = np.asarray(image_points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 3:
             raise ValueError("image_points must have shape (point_count, 3).")
         source_distance = np.sqrt(
@@ -184,7 +184,7 @@ class XtfSideScanProvider:
             for packet in packet_group:
                 if packet.__class__.__name__ == "XTFPingHeader":
                     channels.extend(
-                        np.asarray(channel, dtype=float) for channel in packet.data
+                        np.asarray(channel, dtype=np.float64) for channel in packet.data
                     )
         if not channels:
             raise ValueError("XTF source contains no supported sonar channels.")
@@ -193,7 +193,7 @@ class XtfSideScanProvider:
             raise MemoryError("XTF source exceeds maximum_samples.")
         width = max(value.size for value in channels)
         values = np.zeros((len(channels), width))
-        valid = np.zeros_like(values, dtype=bool)
+        valid = np.zeros_like(values, dtype=np.bool_)
         for index, channel in enumerate(channels):
             values[index, : channel.size] = scale * channel
             valid[index, : channel.size] = True

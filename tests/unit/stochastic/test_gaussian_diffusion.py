@@ -112,9 +112,7 @@ def test_gaussian_diffusion_rejects_invalid_intervals_and_parameters():
     with pytest.raises((ValueError, RuntimeError), match="t1 > t0"):
         process.transition_scale(0.2, 0.2)
     with pytest.raises(ValueError, match="beta_maximum"):
-        phx.stochastic.VariancePreservingDiffusion(
-            1, beta_minimum=2.0, beta_maximum=1.0
-        )
+        phx.stochastic.VariancePreservingDiffusion(1, beta_minimum=2.0, beta_maximum=1.0)
     with pytest.raises(ValueError, match="terminal_scale"):
         phx.stochastic.VarianceExplodingDiffusion(
             1, initial_scale=1.0, terminal_scale=1.0

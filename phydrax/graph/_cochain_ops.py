@@ -46,7 +46,7 @@ def _cochain_payload(graph: GraphIR, /) -> tuple[Mapping[str, Any], Mapping[str,
 
 
 def _node_count(graph: GraphIR, nodes: Mapping[str, Any], /) -> int:
-    return int(jnp.asarray(nodes["cell_dim"]).shape[0])
+    return jnp.asarray(nodes["cell_dim"]).shape[0]
 
 
 def _reshape_coefficient(coefficient: Array, values: Array, /) -> Array:
@@ -62,7 +62,7 @@ def _active_nodes(
 ) -> Array:
     active = jnp.asarray(nodes["cell_dim"]) == int(degree)
     if boundary_policy.kind == "relative":
-        active = active & ~jnp.asarray(nodes["boundary"], dtype=bool)
+        active = active & ~jnp.asarray(nodes["boundary"], dtype=jnp.bool_)
     if graph.node_mask is not None:
         active = active & graph.node_mask
     return active
@@ -78,7 +78,7 @@ def _forward_incidence_mask(
     assert graph.senders is not None
     assert graph.receivers is not None
     mask = (
-        jnp.asarray(edges["cochain_incidence"], dtype=bool)
+        jnp.asarray(edges["cochain_incidence"], dtype=jnp.bool_)
         & (jnp.asarray(edges["incidence_direction"]) == 1)
         & (jnp.asarray(edges["incidence_degree"]) == int(incidence_degree))
         & active_nodes[graph.senders]
@@ -100,7 +100,7 @@ def _incidence_relation(
 
 def _validate_values(values: Any, node_count: int, /) -> Array:
     array = jnp.asarray(values)
-    if array.ndim == 0 or int(array.shape[0]) != node_count:
+    if array.ndim == 0 or array.shape[0] != node_count:
         raise ValueError(
             f"Cochain values require leading graph-node size {node_count}; got {array.shape}."
         )
@@ -247,7 +247,7 @@ def cochain_harmonic_projection(
     graph_ids = jnp.repeat(
         jnp.arange(graph.num_graphs, dtype=jnp.int32),
         graph.n_node,
-        total_repeat_length=int(array.shape[0]),
+        total_repeat_length=array.shape[0],
     )
     ranks = jnp.asarray(graph.globals["harmonic_rank"])[:, int(degree)]
     mode_ids = jnp.arange(basis.shape[1], dtype=jnp.int32)

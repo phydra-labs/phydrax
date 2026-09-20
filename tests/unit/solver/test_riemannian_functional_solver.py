@@ -169,9 +169,7 @@ def test_functional_solver_supports_frozen_objective_line_search(optimizer_name)
     assert diagnostics["optimizer/riemannian/pair_accepted"].dtype == jnp.bool_
 
 
-def test_riemannian_solver_logging_and_tensorboard_diagnostics(
-    tmp_path, phydrax_events
-):
+def test_riemannian_solver_logging_and_tensorboard_diagnostics(tmp_path, phydrax_events):
     solver = _geometric_solver()
     tensorboard_dir = tmp_path / "tensorboard"
     solver.solve(

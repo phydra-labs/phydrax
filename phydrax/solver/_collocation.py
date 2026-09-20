@@ -66,14 +66,12 @@ def _rules(
         )
         if selected not in ("clenshaw-curtis", "gauss-hermite"):
             raise ValueError(
-                "Collocation axis rules must be 'auto', 'clenshaw-curtis', or "
-                "'gauss-hermite'."
+                "Collocation axis rules must be 'auto', 'clenshaw-curtis', or 'gauss-hermite'."
             )
         expected = "standard-normal" if selected == "gauss-hermite" else "uniform"
         if transport.reference_measure != expected:
             raise ValueError(
-                f"Rule {selected!r} for {factor.label!r} requires reference measure "
-                f"{expected!r}."
+                f"Rule {selected!r} for {factor.label!r} requires reference measure {expected!r}."
             )
         resolved.append(selected)
     return tuple(resolved)
@@ -187,7 +185,7 @@ class StochasticCollocationNodeEvaluation(StrictModule):
         status: ArrayLike = COLLOCATION_SUCCESS,
         provenance: str = "conditional-solver",
     ):
-        valid_value = jnp.asarray(valid, dtype=bool)
+        valid_value = jnp.asarray(valid, dtype=jnp.bool_)
         status_value = jnp.asarray(status, dtype=jnp.int32)
         if valid_value.shape != () or status_value.shape != ():
             raise ValueError("valid and status must be scalar values.")
@@ -264,7 +262,7 @@ def _physical_coordinates(
     return jnp.stack(
         tuple(
             factor.reference_transport.from_reference(
-                jnp.asarray(reference[axis], dtype=float)
+                jnp.asarray(reference[axis], dtype=jnp.float64)
             ).reshape(())
             for axis, factor in enumerate(plan.factors)
         )
@@ -333,7 +331,7 @@ def materialize_stochastic_collocation(
             if identity not in index_by_identity:
                 index_by_identity[identity] = len(identities)
                 identities.append(identity)
-                references.append(np.asarray(row, dtype=float))
+                references.append(np.asarray(row, dtype=np.float64))
     nodes = tuple(
         StochasticCollocationNode(
             reference_coordinates=jnp.asarray(reference),
@@ -417,9 +415,9 @@ def _interpolant(
         axis_rules=resolved_rules,
         anisotropy=design.plan.anisotropy,
         level=level,
-        output_shape=tuple(int(size) for size in values.shape[1:]),
+        output_shape=tuple(values.shape[1:]),
         num_terms=len(topologies),
-        num_evaluations=int(indices.shape[0]),
+        num_evaluations=indices.shape[0],
         maximum_active_dimension=max(len(topology.axes) for topology in topologies),
     )
 
@@ -435,7 +433,7 @@ def _moments(
     selected_valid = valid[indices]
     output_shape = values.shape[1:]
     if not bool(jnp.all(selected_valid)) or bool(jnp.any(~jnp.isfinite(selected))):
-        dtype = jnp.result_type(values.dtype, float)
+        dtype = jnp.result_type(values.dtype, jnp.float64)
         invalid = jnp.full(output_shape, jnp.nan, dtype=dtype)
         return invalid, jnp.real(invalid), jnp.real(invalid)
     weight_shape = weights.shape + (1,) * len(output_shape)
@@ -528,7 +526,7 @@ def assemble_stochastic_collocation(
         mean_difference = mean - previous_mean
         variance_difference = variance - previous_variance
         previous_weight_sum = jnp.sum(design.previous_quadrature_weights)
-        num_previous = int(design.previous_indices.shape[0])
+        num_previous = design.previous_indices.shape[0]
     mean_difference_norm = (
         None if mean_difference is None else jnp.linalg.norm(jnp.ravel(mean_difference))
     )
@@ -545,7 +543,7 @@ def assemble_stochastic_collocation(
         mean_level_difference_norm=mean_difference_norm,
         variance_level_difference_norm=variance_difference_norm,
         num_nodes=design.num_nodes,
-        num_current_nodes=int(design.current_indices.shape[0]),
+        num_current_nodes=design.current_indices.shape[0],
         num_previous_nodes=num_previous,
         num_failed_nodes=int(jnp.sum(~valid)),
         input_axis_labels=design.plan.input_axis_labels,

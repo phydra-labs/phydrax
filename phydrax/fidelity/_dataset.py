@@ -254,7 +254,7 @@ class FidelityDataset(StrictModule, NonTrainableState):
         )
 
     def take_cases(self, indices: Sequence[int], /) -> FidelityDataset:
-        positions = tuple(int(index) for index in indices)
+        positions = tuple(indices)
         if not positions or len(set(positions)) != len(positions):
             raise ValueError("indices must select unique non-empty case positions.")
         if min(positions) < 0 or max(positions) >= self.size:
@@ -413,9 +413,9 @@ class FidelityDatasetSplit(StrictModule, NonTrainableState):
         self.validation = validation
         self.test = test
         self.partition = partition
-        self.train_indices = tuple(int(index) for index in train_indices)
-        self.validation_indices = tuple(int(index) for index in validation_indices)
-        self.test_indices = tuple(int(index) for index in test_indices)
+        self.train_indices = tuple(train_indices)
+        self.validation_indices = tuple(validation_indices)
+        self.test_indices = tuple(test_indices)
         self.seed = int(seed)
 
     @property
@@ -503,9 +503,7 @@ def split_fidelity_dataset(
         validation_indices=validation_indices,
         test_indices=test_indices,
         policy_id=(
-            "fidelity-grouped:"
-            f"{float(train_fraction):.17g}:{float(validation_fraction):.17g}:"
-            f"{selected_seed}"
+            f"fidelity-grouped:{float(train_fraction):.17g}:{float(validation_fraction):.17g}:{selected_seed}"
         ),
         source_id=dataset.dataset_id,
     )

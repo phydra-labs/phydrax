@@ -24,7 +24,7 @@ def _parameter(value: ArrayLike, name: str, /, *, positive: bool = False) -> Arr
     raw = jnp.asarray(value)
     if raw.ndim > 1 or jnp.iscomplexobj(raw):
         raise ValueError(f"{name} must be a real scalar or region vector.")
-    array = raw.astype(jnp.result_type(raw.dtype, float))
+    array = raw.astype(jnp.result_type(raw.dtype, jnp.float64))
     bad = ~jnp.all(jnp.isfinite(array))
     if positive:
         bad = bad | jnp.any(array <= 0.0)
@@ -90,10 +90,10 @@ class RegionalConnectivity(StrictModule):
             raise ValueError("Regional weights must be finite.")
         if not np.all(np.isfinite(raw_delays)) or np.any(raw_delays < 0.0):
             raise ValueError("Physical delays must be finite and nonnegative.")
-        delays_s = raw_delays.astype(float) * (0.001 if delay_unit == "ms" else 1.0)
+        delays_s = raw_delays.astype("float64") * (0.001 if delay_unit == "ms" else 1.0)
         target, source = np.nonzero(delays_s > 0.0)
         positive = delays_s[target, source]
-        weight_array = jnp.asarray(raw_weights, dtype=float)
+        weight_array = jnp.asarray(raw_weights, dtype=jnp.float64)
         if normalization == "incoming_abs":
             denominator = jnp.sum(jnp.abs(weight_array), axis=1, keepdims=True)
             weight_array = weight_array / jnp.where(denominator > 0.0, denominator, 1.0)
@@ -114,7 +114,7 @@ class RegionalConnectivity(StrictModule):
 
     @property
     def delayed_edge_count(self) -> int:
-        return int(self.positive_delays_s.size)
+        return self.positive_delays_s.size
 
 
 def _delayed_coupling(

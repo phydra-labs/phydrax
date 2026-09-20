@@ -245,7 +245,6 @@ def advance_mac_penalty_ib_cfd_dem_window(
     dem_dt = safe_macro_dt / schedule.dem_substeps
     indices = jnp.arange(schedule.dem_substeps, dtype=jnp.int32)
     fluid_velocity = coupling.fluid.unpack_velocity(fluid_state)
-    bodies = coupling.dynamics.bodies
     zero_face = tuple(jnp.zeros_like(value) for value in fluid_velocity)
     zero_body = jnp.zeros_like(state.dem_state.kinematics.position)
     zero_angular = jnp.zeros_like(state.dem_state.kinematics.angular_velocity)

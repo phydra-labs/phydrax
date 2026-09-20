@@ -28,6 +28,33 @@ from ._exponential_family import AbstractExponentialFamily, CategoricalFamily
 from ._strict import StrictModule
 
 
+def _align_observation_arrays(
+    location: ArrayLike,
+    target: ArrayLike,
+    /,
+) -> tuple[Array, Array]:
+    location_array = jnp.asarray(location)
+    target_array = jnp.asarray(target)
+    if location_array.shape == target_array.shape:
+        return location_array, target_array
+    if (
+        location_array.ndim == 2
+        and target_array.ndim == 1
+        and location_array.shape[1] == 1
+    ):
+        location_array = location_array[:, 0]
+    elif (
+        target_array.ndim == 2 and location_array.ndim == 1 and target_array.shape[1] == 1
+    ):
+        target_array = target_array[:, 0]
+    if location_array.shape != target_array.shape:
+        raise ValueError(
+            "Likelihood prediction and target shapes are incompatible: "
+            f"prediction={location_array.shape}, target={target_array.shape}."
+        )
+    return location_array, target_array
+
+
 class AbstractLikelihood(StrictModule):
     """Elementwise observation likelihood protocol."""
 
@@ -46,35 +73,14 @@ class AbstractLikelihood(StrictModule):
         self, location: ArrayLike, target: ArrayLike, /
     ) -> tuple[Array, Array]:
         """Align model outputs and observations under this likelihood's event contract."""
-        location_array = jnp.asarray(location)
-        target_array = jnp.asarray(target)
-        if location_array.shape == target_array.shape:
-            return location_array, target_array
-        if (
-            location_array.ndim == 2
-            and target_array.ndim == 1
-            and int(location_array.shape[1]) == 1
-        ):
-            location_array = location_array[:, 0]
-        elif (
-            target_array.ndim == 2
-            and location_array.ndim == 1
-            and int(target_array.shape[1]) == 1
-        ):
-            target_array = target_array[:, 0]
-        if location_array.shape != target_array.shape:
-            raise ValueError(
-                "Likelihood prediction and target shapes are incompatible: "
-                f"prediction={location_array.shape}, target={target_array.shape}."
-            )
-        return location_array, target_array
+        raise NotImplementedError
 
 
 class _AbstractElementwiseLikelihood(AbstractLikelihood):
     def align_observations(
         self, location: ArrayLike, target: ArrayLike, /
     ) -> tuple[Array, Array]:
-        return super().align_observations(location, target)
+        return _align_observation_arrays(location, target)
 
 
 class ScalarNaturalExponentialFamilyLikelihood(_AbstractElementwiseLikelihood):
@@ -88,8 +94,7 @@ class ScalarNaturalExponentialFamilyLikelihood(_AbstractElementwiseLikelihood):
         signature = family.signature
         if signature.dimension != 1 or signature.event_shape:
             raise ValueError(
-                "ScalarNaturalExponentialFamilyLikelihood requires a scalar-event "
-                "family with one natural coordinate."
+                "ScalarNaturalExponentialFamilyLikelihood requires a scalar-event family with one natural coordinate."
             )
         self.family = family
 
@@ -105,16 +110,14 @@ class ScalarNaturalExponentialFamilyLikelihood(_AbstractElementwiseLikelihood):
     ) -> Array:
         if parameters:
             raise TypeError(
-                "ScalarNaturalExponentialFamilyLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"ScalarNaturalExponentialFamilyLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         return self.family.log_prob(self._natural(location), target)
 
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
-                "ScalarNaturalExponentialFamilyLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"ScalarNaturalExponentialFamilyLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         return self.family.sample(key, self._natural(location))
 
@@ -151,7 +154,7 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
     ) -> tuple[Array, Array]:
         location_array = jnp.asarray(location)
         target_array = jnp.asarray(target)
-        if location_array.ndim == 0 or int(location_array.shape[-1]) != (
+        if location_array.ndim == 0 or location_array.shape[-1] != (
             self.prediction_dimension
         ):
             raise ValueError(
@@ -172,7 +175,7 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
         values = jnp.asarray(location)
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("Categorical predictions must be real-valued.")
-        if values.ndim == 0 or int(values.shape[-1]) != self.prediction_dimension:
+        if values.ndim == 0 or values.shape[-1] != self.prediction_dimension:
             raise ValueError(
                 "Categorical predictions must end in coordinate dimension "
                 f"{self.prediction_dimension}; got {values.shape}."
@@ -200,8 +203,7 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
     ) -> Array:
         if parameters:
             raise TypeError(
-                "CategoricalExponentialFamilyLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"CategoricalExponentialFamilyLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         aligned_location, aligned_target = self.align_observations(location, target)
         return self.family.log_prob_from_logits(
@@ -212,8 +214,7 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
-                "CategoricalExponentialFamilyLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"CategoricalExponentialFamilyLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         return self.family.sample(key, self._natural(location))
 
@@ -236,7 +237,7 @@ class IndependentBernoulliLikelihood(AbstractLikelihood):
         target_array = jnp.asarray(target)
         if (
             location_array.ndim == 0
-            or int(location_array.shape[-1]) != self.label_count
+            or location_array.shape[-1] != self.label_count
             or target_array.shape != location_array.shape
         ):
             raise ValueError(
@@ -248,7 +249,7 @@ class IndependentBernoulliLikelihood(AbstractLikelihood):
 
     def positive_probabilities(self, location: ArrayLike, /) -> Array:
         values = jnp.asarray(location)
-        if values.ndim == 0 or int(values.shape[-1]) != self.label_count:
+        if values.ndim == 0 or values.shape[-1] != self.label_count:
             raise ValueError(
                 f"Multilabel logits must end in label_count={self.label_count}."
             )
@@ -260,8 +261,7 @@ class IndependentBernoulliLikelihood(AbstractLikelihood):
         target_mask = parameters.pop("target_mask", None)
         if parameters:
             raise TypeError(
-                "IndependentBernoulliLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"IndependentBernoulliLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         location_array, target_array = self.align_observations(location, target)
         return independent_bernoulli_log_prob_from_logits(
@@ -273,8 +273,7 @@ class IndependentBernoulliLikelihood(AbstractLikelihood):
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
-                "IndependentBernoulliLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"IndependentBernoulliLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         return jr.bernoulli(key, self.positive_probabilities(location)).astype(jnp.int32)
 
@@ -298,8 +297,8 @@ class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
         if prediction_mode == "location":
             if thresholds is None:
                 raise ValueError("Location-mode ordinal likelihood requires thresholds.")
-            values = jnp.asarray(thresholds, dtype=float)
-            if values.ndim != 1 or int(values.shape[0]) < 2:
+            values = jnp.asarray(thresholds, dtype=jnp.float64)
+            if values.ndim != 1 or values.shape[0] < 2:
                 raise ValueError(
                     "Ordinal thresholds must contain at least two ordered values."
                 )
@@ -309,7 +308,7 @@ class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
                 raise ValueError(
                     "Ordinal thresholds must be finite and strictly increasing."
                 )
-            resolved_count = int(values.shape[0]) + 1
+            resolved_count = values.shape[0] + 1
             if class_count is not None and int(class_count) != resolved_count:
                 raise ValueError("class_count does not match the fixed thresholds.")
             self.thresholds = values
@@ -332,16 +331,15 @@ class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
         return self._class_count
 
     def _cumulative_logits(self, prediction: ArrayLike, /) -> Array:
-        values = jnp.asarray(prediction, dtype=float)
+        values = jnp.asarray(prediction, dtype=jnp.float64)
         if self.prediction_mode == "location":
-            if values.ndim >= 1 and int(values.shape[-1]) == 1:
+            if values.ndim >= 1 and values.shape[-1] == 1:
                 values = values[..., 0]
             assert self.thresholds is not None
             return self.thresholds - values[..., None]
-        if values.ndim < 1 or int(values.shape[-1]) != self.class_count - 1:
+        if values.ndim < 1 or values.shape[-1] != self.class_count - 1:
             raise ValueError(
-                "Learned ordinal predictions must end in class_count - 1 "
-                "cumulative logits."
+                "Learned ordinal predictions must end in class_count - 1 cumulative logits."
             )
         return values
 
@@ -356,7 +354,7 @@ class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
             else prediction.shape[:-1]
         )
         if self.prediction_mode == "location" and prediction.ndim >= 1:
-            if int(prediction.shape[-1]) == 1:
+            if prediction.shape[-1] == 1:
                 prediction = prediction[..., 0]
                 prefix = prediction.shape
         if target_array.shape == prefix + (1,):
@@ -384,8 +382,7 @@ class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
     ) -> Array:
         if parameters:
             raise TypeError(
-                "OrdinalCumulativeLinkLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"OrdinalCumulativeLinkLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         prediction, target_array = self.align_observations(location, target)
         cumulative_logits = self._cumulative_logits(prediction)
@@ -402,8 +399,7 @@ class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
-                "OrdinalCumulativeLinkLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"OrdinalCumulativeLinkLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         probabilities = self.class_probabilities(location)
         return jr.categorical(key, jnp.log(probabilities), axis=-1).astype(jnp.int32)
@@ -422,7 +418,7 @@ class GaussianLikelihood(_AbstractElementwiseLikelihood):
     scale: Array
 
     def __init__(self, scale: ArrayLike):
-        scale_array = jnp.asarray(scale, dtype=float)
+        scale_array = jnp.asarray(scale, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(scale_array))) or bool(jnp.any(scale_array <= 0.0)):
             raise ValueError("Gaussian scale must be finite and strictly positive.")
         self.scale = scale_array
@@ -461,7 +457,7 @@ class GaussianLocationScaleLikelihood(_AbstractElementwiseLikelihood):
         self.min_scale = minimum
 
     def scale_from_raw(self, raw_scale: ArrayLike, /) -> Array:
-        return jax_softplus(jnp.asarray(raw_scale, dtype=float)) + self.min_scale
+        return jax_softplus(jnp.asarray(raw_scale, dtype=jnp.float64)) + self.min_scale
 
     def log_prob(
         self,
@@ -474,8 +470,7 @@ class GaussianLocationScaleLikelihood(_AbstractElementwiseLikelihood):
     ) -> Array:
         if parameters:
             raise TypeError(
-                "GaussianLocationScaleLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"GaussianLocationScaleLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         if raw_scale is None:
             raise ValueError("raw_scale is required.")
@@ -495,8 +490,7 @@ class GaussianLocationScaleLikelihood(_AbstractElementwiseLikelihood):
     ) -> Array:
         if parameters:
             raise TypeError(
-                "GaussianLocationScaleLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"GaussianLocationScaleLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         if raw_scale is None:
             raise ValueError("raw_scale is required.")
@@ -515,8 +509,8 @@ class StudentTLikelihood(_AbstractElementwiseLikelihood):
     scale: Array
 
     def __init__(self, df: ArrayLike, scale: ArrayLike):
-        df_array = jnp.asarray(df, dtype=float)
-        scale_array = jnp.asarray(scale, dtype=float)
+        df_array = jnp.asarray(df, dtype=jnp.float64)
+        scale_array = jnp.asarray(scale, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(df_array))) or bool(jnp.any(df_array <= 0.0)):
             raise ValueError("Student-t degrees of freedom must be finite and positive.")
         if bool(jnp.any(~jnp.isfinite(scale_array))) or bool(jnp.any(scale_array <= 0.0)):
@@ -578,7 +572,7 @@ class CircularComplexGaussianLikelihood(AbstractLikelihood):
     def align_observations(
         self, location: ArrayLike, target: ArrayLike, /
     ) -> tuple[Array, Array]:
-        location_array, target_array = super().align_observations(location, target)
+        location_array, target_array = _align_observation_arrays(location, target)
         if not (
             jnp.issubdtype(location_array.dtype, jnp.complexfloating)
             or jnp.issubdtype(target_array.dtype, jnp.complexfloating)
@@ -594,8 +588,7 @@ class CircularComplexGaussianLikelihood(AbstractLikelihood):
     ) -> Array:
         if parameters:
             raise TypeError(
-                "CircularComplexGaussianLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"CircularComplexGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         location_array, target_array = self.align_observations(location, target)
         squared_residual = jnp.real(
@@ -607,8 +600,7 @@ class CircularComplexGaussianLikelihood(AbstractLikelihood):
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
-                "CircularComplexGaussianLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"CircularComplexGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         location_array = jnp.asarray(location)
         if not jnp.issubdtype(location_array.dtype, jnp.complexfloating):
@@ -663,7 +655,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
             raise ValueError("covariance must be a nonempty square matrix.")
         if not jnp.issubdtype(covariance_array.dtype, jnp.complexfloating):
             raise TypeError("Complex covariance must have complex floating dtype.")
-        event_size = int(covariance_array.shape[0])
+        event_size = covariance_array.shape[0]
         pseudo_array = (
             jnp.zeros_like(covariance_array)
             if pseudo_covariance is None
@@ -747,7 +739,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
     def align_observations(
         self, location: ArrayLike, target: ArrayLike, /
     ) -> tuple[Array, Array]:
-        location_array, target_array = super().align_observations(location, target)
+        location_array, target_array = _align_observation_arrays(location, target)
         if location_array.shape[-1:] != (self.event_size,):
             raise ValueError(
                 "Complex Gaussian observations must have the prepared trailing event."
@@ -765,8 +757,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
     ) -> Array:
         if parameters:
             raise TypeError(
-                "ComplexGaussianLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"ComplexGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         location_array, target_array = self.align_observations(location, target)
         residual = target_array - location_array
@@ -779,8 +770,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
-                "ComplexGaussianLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"ComplexGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         location_array = jnp.asarray(location)
         if location_array.shape[-1:] != (self.event_size,):
@@ -813,9 +803,9 @@ class ContaminatedGaussianLikelihood(_AbstractElementwiseLikelihood):
         outlier_scale_factor: ArrayLike = 10.0,
         outlier_probability: ArrayLike = 0.01,
     ):
-        scale = jnp.asarray(scale, dtype=float)
-        factor = jnp.asarray(outlier_scale_factor, dtype=float)
-        probability = jnp.asarray(outlier_probability, dtype=float)
+        scale = jnp.asarray(scale, dtype=jnp.float64)
+        factor = jnp.asarray(outlier_scale_factor, dtype=jnp.float64)
+        probability = jnp.asarray(outlier_probability, dtype=jnp.float64)
         if (
             bool(jnp.any(~jnp.isfinite(scale)))
             or bool(jnp.any(scale <= 0))
@@ -836,8 +826,7 @@ class ContaminatedGaussianLikelihood(_AbstractElementwiseLikelihood):
     ) -> Array:
         if parameters:
             raise TypeError(
-                "ContaminatedGaussianLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"ContaminatedGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         location_array, target_array = _real_location_target(location, target)
         residual = target_array - location_array
@@ -858,8 +847,7 @@ class ContaminatedGaussianLikelihood(_AbstractElementwiseLikelihood):
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
-                "ContaminatedGaussianLikelihood received unknown parameters "
-                f"{tuple(parameters)!r}."
+                f"ContaminatedGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         location_array = _real_location(location)
         mixture_key, noise_key = jr.split(key)
@@ -884,9 +872,9 @@ class CensoredGaussianLikelihood(_AbstractElementwiseLikelihood):
     upper: Array
 
     def __init__(self, scale: ArrayLike, lower: ArrayLike, upper: ArrayLike):
-        scale = jnp.asarray(scale, dtype=float)
-        lower = jnp.asarray(lower, dtype=float)
-        upper = jnp.asarray(upper, dtype=float)
+        scale = jnp.asarray(scale, dtype=jnp.float64)
+        lower = jnp.asarray(lower, dtype=jnp.float64)
+        upper = jnp.asarray(upper, dtype=jnp.float64)
         if (
             bool(jnp.any(~jnp.isfinite(scale)))
             or bool(jnp.any(scale <= 0))
@@ -950,7 +938,7 @@ class HuberObjective(StrictModule):
     transition: Array
 
     def __init__(self, transition: ArrayLike):
-        value = jnp.asarray(transition, dtype=float)
+        value = jnp.asarray(transition, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(value))) or bool(jnp.any(value <= 0)):
             raise ValueError("Huber transition must be finite and strictly positive.")
         self.transition = value
@@ -969,7 +957,7 @@ def _real_location(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError("Real observation likelihoods do not accept complex values.")
-    return array.astype(jnp.result_type(array.dtype, float))
+    return array.astype(jnp.result_type(array.dtype, jnp.float64))
 
 
 def _real_location_target(

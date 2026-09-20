@@ -1,7 +1,6 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-# ruff: noqa: I001
 
 from __future__ import annotations
 
@@ -237,7 +236,7 @@ class AtomisticRolloutPlan(StrictModule):
         image_counts = jnp.zeros((capacity, particle_capacity, 3), dtype=jnp.int32)
         cells = jnp.zeros((capacity,) + cell_shape, dtype=dtype)
         energies = jnp.zeros((capacity, 3), dtype=dtype)
-        valid = jnp.zeros((capacity,), dtype=bool)
+        valid = jnp.zeros((capacity,), dtype=jnp.bool_)
         initial_count = jnp.asarray(
             int(
                 self.trajectory.retention == "trajectory"

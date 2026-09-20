@@ -144,8 +144,7 @@ def _verify_arrays(manifest: ResultManifest, arrays: Mapping[str, Any], /) -> No
     field_payloads = {payload for _, payload, _ in manifest.fields}
     if names != set(payloads) or names != fields or names != field_payloads:
         raise ValueError(
-            "Finance result fields, payloads, physical arrays, and units "
-            "must align exactly."
+            "Finance result fields, payloads, physical arrays, and units must align exactly."
         )
     for name, value in values:
         if payload_digest(value) != payloads[name]:

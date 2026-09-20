@@ -33,7 +33,7 @@ _TILING_TOLERANCE = 1.0e-11
 
 def _array_bytes(tree: object, /) -> int:
     return sum(
-        int(leaf.size) * int(leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree_util.tree_leaves(tree)
         if isinstance(leaf, (np.ndarray, jax.Array))
     )
@@ -68,8 +68,8 @@ def _scale_windows(
     )[0]
     if not np.isfinite(normalization) or normalization <= 0.0:
         raise RuntimeError("wavelet generating-function normalization failed.")
-    cumulative = np.zeros((maximum_scale + 2, bandlimit), dtype=float)
-    modes = np.arange(bandlimit, dtype=float)
+    cumulative = np.zeros((maximum_scale + 2, bandlimit), dtype=np.float64)
+    modes = np.arange(bandlimit, dtype=np.float64)
     for scale in range(maximum_scale + 2):
         normalized_modes = modes / dilation**scale
         for mode, value in enumerate(normalized_modes):
@@ -109,7 +109,9 @@ def _scale_windows(
 def _directionality(bandlimit: int, directional_bandlimit: int, /) -> np.ndarray:
     phase = 1.0 if directional_bandlimit % 2 else 1.0j
     result = np.zeros((bandlimit, 2 * directional_bandlimit - 1), dtype=np.complex128)
-    n_values = np.arange(-(directional_bandlimit - 1), directional_bandlimit, dtype=int)
+    n_values = np.arange(
+        -(directional_bandlimit - 1), directional_bandlimit, dtype=np.int64
+    )
     for degree in range(1, bandlimit):
         if (directional_bandlimit + degree) % 2:
             gamma = min(directional_bandlimit - 1, degree)
@@ -285,8 +287,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         pair_count = len(angular_indices) * len(radial_indices)
         if pair_count > selected_scale_limit:
             raise ValueError(
-                f"wavelet configuration has {pair_count} scale pairs, exceeding "
-                "max_scale_pairs."
+                f"wavelet configuration has {pair_count} scale pairs, exceeding max_scale_pairs."
             )
         directionality = _directionality(
             angular_bandlimit,
@@ -309,7 +310,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
             raise RuntimeError("wavelet filters fail pointwise admissibility.")
 
         filter_bytes = sum(
-            int(array.size) * int(array.dtype.itemsize)
+            array.size * array.dtype.itemsize
             for array in (
                 angular_windows,
                 radial_windows,
@@ -322,8 +323,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         )
         if remaining <= 0:
             raise ValueError(
-                "base Fourier-Laguerre plan and wavelet filters exceed "
-                "max_precompute_bytes."
+                "base Fourier-Laguerre plan and wavelet filters exceed max_precompute_bytes."
             )
 
         radial_plans: list[RadialLaguerrePlan] = [fourier_laguerre.radial]
@@ -425,7 +425,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         self.admissibility_defect = admissibility_defect
         self.fingerprint = canonical_fingerprint(
             {
-                "kind": "directional-ball-wavelet-plan-v1",
+                "kind": "directional-ball-wavelet-plan",
                 "fourier_laguerre": fourier_laguerre.transform_id,
                 "directional_bandlimit": selected_directional,
                 "angular_dilation": selected_angular_dilation,
@@ -441,8 +441,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         )
         if self.persistent_bytes > selected_precompute_limit:
             raise ValueError(
-                "wavelet materialization exceeds max_precompute_bytes; "
-                f"materialized {self.persistent_bytes} bytes."
+                f"wavelet materialization exceeds max_precompute_bytes; materialized {self.persistent_bytes} bytes."
             )
 
     @property
@@ -455,7 +454,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         """Identity of the concrete multiresolution execution."""
         return canonical_fingerprint(
             {
-                "kind": "directional-ball-wavelet-execution-v1",
+                "kind": "directional-ball-wavelet-execution",
                 "transform": self.transform_id,
                 "fourier_laguerre": self.fourier_laguerre.execution_id,
                 "wigner_execution": self.wigner_execution,
@@ -557,7 +556,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
     def analysis(self, values: ArrayLike, /) -> BallWaveletCoefficients:
         """Analyze radial-spherical samples into scaling and directional details."""
         array = jnp.asarray(values)
-        shape = tuple(int(size) for size in array.shape)
+        shape = tuple(array.shape)
         leading, channels = self._input_context(
             shape,
             self.fourier_laguerre.sample_shape,
@@ -567,8 +566,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         estimate = self.estimated_peak_bytes(fields)
         if estimate > self.max_runtime_bytes:
             raise ValueError(
-                "directional ball wavelet analysis exceeds max_runtime_bytes; "
-                f"estimated {estimate} bytes."
+                f"directional ball wavelet analysis exceeds max_runtime_bytes; estimated {estimate} bytes."
             )
         coefficients = self.fourier_laguerre.analysis(array)
         if channels is None:
@@ -649,7 +647,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
             raise ValueError("ball wavelet coefficient scale ordering is incompatible.")
         if len(coefficients.details) != len(self._scales):
             raise ValueError("ball wavelet detail count is incompatible.")
-        scaling_shape = tuple(int(size) for size in coefficients.scaling.shape)
+        scaling_shape = tuple(coefficients.scaling.shape)
         leading, channels = self._input_context(
             scaling_shape,
             self.fourier_laguerre.sample_shape,
@@ -657,7 +655,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         )
         expected_context = (leading, channels)
         for detail, scale in zip(coefficients.details, self._scales, strict=True):
-            detail_shape = tuple(int(size) for size in detail.shape)
+            detail_shape = tuple(detail.shape)
             if (
                 self._input_context(
                     detail_shape,
@@ -673,8 +671,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         estimate = self.estimated_peak_bytes(fields)
         if estimate > self.max_runtime_bytes:
             raise ValueError(
-                "directional ball wavelet synthesis exceeds max_runtime_bytes; "
-                f"estimated {estimate} bytes."
+                f"directional ball wavelet synthesis exceeds max_runtime_bytes; estimated {estimate} bytes."
             )
 
         scaling_modes = self.fourier_laguerre.analysis(coefficients.scaling)

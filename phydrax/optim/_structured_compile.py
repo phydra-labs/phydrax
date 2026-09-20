@@ -90,8 +90,7 @@ def _constraint_bounds(
         lower_values.append(lower_flat)
         upper_values.append(upper_flat)
         sources.extend(
-            f"constraint:{constraint_index}:{index}"
-            for index in range(int(lower_flat.size))
+            f"constraint:{constraint_index}:{index}" for index in range(lower_flat.size)
         )
     flat_parameters, _ = ravel_pytree(parameters)
     if not lower_values:
@@ -118,14 +117,14 @@ def compile_structured_minimization(
     if not isinstance(problem, MinimizationProblem):
         raise TypeError("problem must be a MinimizationProblem.")
     coordinates, unflatten = ravel_pytree(initial_parameters)
-    source = ArraySpace((int(coordinates.size),), dtype=coordinates.dtype)
+    source = ArraySpace((coordinates.size,), dtype=coordinates.dtype)
     lower_constraints, upper_constraints, sources = _constraint_bounds(
         problem,
         initial_parameters,
         sample_args,
     )
     target = ArraySpace(
-        (int(lower_constraints.size),),
+        (lower_constraints.size,),
         dtype=coordinates.dtype,
     )
     if problem.bounds is None:
@@ -181,8 +180,8 @@ def compile_structured_minimization(
         {
             "kind": "structured-minimization-compilation",
             "problem": problem.problem_id,
-            "variables": int(coordinates.size),
-            "constraints": int(lower_constraints.size),
+            "variables": coordinates.size,
+            "constraints": lower_constraints.size,
             "jacobian": jacobian.plan_id,
             "hessian": None if hessian is None else hessian.plan_id,
         }

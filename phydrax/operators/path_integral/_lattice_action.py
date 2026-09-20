@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from ..._sampling import FullMarkovTarget, IncrementalMarkovTarget
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ...metrix import AbstractStateGeometry
 from ...sampling._compact_group_hamiltonian import CompactGeometricTarget
 
@@ -64,13 +64,13 @@ class LatticeActionEvidence(StrictModule):
 class AbstractLatticeEuclideanAction(StrictModule):
     """Real finite lattice action with an explicit coordinate reference measure."""
 
-    topology_id: AbstractAttribute[str]
-    field_space_id: AbstractAttribute[str]
-    configuration_shape: AbstractAttribute[tuple[int, ...]]
-    local_coordinate_shape: AbstractAttribute[tuple[int, ...]]
-    geometry: AbstractAttribute[AbstractStateGeometry]
-    evidence: AbstractAttribute[LatticeActionEvidence]
-    action_id: AbstractAttribute[str]
+    topology_id: eqx.AbstractVar[str]
+    field_space_id: eqx.AbstractVar[str]
+    configuration_shape: eqx.AbstractVar[tuple[int, ...]]
+    local_coordinate_shape: eqx.AbstractVar[tuple[int, ...]]
+    geometry: eqx.AbstractVar[AbstractStateGeometry]
+    evidence: eqx.AbstractVar[LatticeActionEvidence]
+    action_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def action(self, configuration: PyTree[Any], /) -> Array:
@@ -238,7 +238,7 @@ def lattice_action_local_gradient(
     """Differentiate the action through real local coordinates at zero."""
     if not isinstance(action, AbstractLatticeEuclideanAction):
         raise TypeError("action must implement AbstractLatticeEuclideanAction.")
-    local_zero = jnp.zeros(action.local_coordinate_shape, dtype=float)
+    local_zero = jnp.zeros(action.local_coordinate_shape, dtype=jnp.float64)
     return jax.grad(
         lambda local: action.action(action.geometry.retract(configuration, local))
     )(local_zero)

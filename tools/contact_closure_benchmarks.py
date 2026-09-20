@@ -55,7 +55,7 @@ def _closure_case(segment_count=128):
             2,
             body_ids=jnp.ones((2,), dtype=jnp.int64),
             material_ids=jnp.zeros((2,), dtype=jnp.int64),
-            static_mask=jnp.ones((2,), dtype=bool),
+            static_mask=jnp.ones((2,), dtype="bool"),
         ),
     )
     static = phx.discretization.PreparedCollisionSurface(

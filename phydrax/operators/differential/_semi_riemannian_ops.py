@@ -35,8 +35,7 @@ def _geometry_contract(
 ) -> tuple[str, int]:
     if not isinstance(metric, (SemiRiemannianMetric, LorentzianMetric)):
         raise TypeError(
-            "Signed differential operators require a SemiRiemannianMetric "
-            "or LorentzianMetric."
+            "Signed differential operators require a SemiRiemannianMetric or LorentzianMetric."
         )
     variable = _resolve_var(function, var)
     _, dimension = _factor_and_dim(function, variable)
@@ -307,8 +306,7 @@ def lorentzian_metric_from_field(
     )
     if field.deps != (variable,):
         raise ValueError(
-            "A Lorentzian metric field must depend only on its spacetime variable; "
-            f"got dependencies {field.deps!r}."
+            f"A Lorentzian metric field must depend only on its spacetime variable; got dependencies {field.deps!r}."
         )
     return LorentzianMetric(
         _FieldLorentzianMetricMap(field),

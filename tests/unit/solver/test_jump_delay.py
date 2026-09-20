@@ -15,7 +15,7 @@ def _events(times, marks, *, capacity=3):
     padded_times = jnp.full((capacity,), jnp.nan).at[:count].set(jnp.asarray(times))
     channels = jnp.full((capacity,), -1, dtype=jnp.int32).at[:count].set(0)
     padded_marks = jnp.zeros((capacity, 1)).at[:count, 0].set(jnp.asarray(marks))
-    valid = jnp.zeros((capacity,), dtype=bool).at[:count].set(True)
+    valid = jnp.zeros((capacity,), dtype="bool").at[:count].set(True)
     return phx.stochastic.JumpEventBatch(
         padded_times,
         channels,

@@ -20,6 +20,15 @@ from phydrax import ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...algebraic import SparsePolynomialSystem
+from ...linalg import (
+    DenseCholesky,
+    DenseLinearOperator,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    prepare,
+    solve,
+)
 
 
 class PolynomialDefectPotential(StrictModule):
@@ -119,9 +128,9 @@ class MappedInfiniteDefectPlan(StrictModule):
     ):
         if not isinstance(potential, PolynomialDefectPotential):
             raise TypeError("potential must be PolynomialDefectPotential.")
-        gradient = np.asarray(gradient_matrix, dtype=float)
-        left = np.asarray(left_vacuum, dtype=float)
-        right = np.asarray(right_vacuum, dtype=float)
+        gradient = np.asarray(gradient_matrix, dtype=np.float64)
+        left = np.asarray(left_vacuum, dtype=np.float64)
+        right = np.asarray(right_vacuum, dtype=np.float64)
         count = int(collocation_count)
         scale = float(map_scale)
         tolerance = float(residual_tolerance)
@@ -241,7 +250,7 @@ def solve_mapped_infinite_defect(
             np.asarray(plan.right_vacuum) - np.asarray(plan.left_vacuum)
         )
     else:
-        fields = np.asarray(initial_fields, dtype=float).copy()
+        fields = np.asarray(initial_fields, dtype=np.float64).copy()
     expected = (plan.collocation_count, plan.potential.field_count)
     if fields.shape != expected:
         raise ValueError("Initial defect fields have the wrong shape.")
@@ -553,8 +562,8 @@ class DefectScatteringPlan(StrictModule):
     ):
         if not isinstance(potential, PolynomialDefectPotential):
             raise TypeError("potential must be PolynomialDefectPotential.")
-        gradient = np.asarray(gradient_matrix, dtype=float)
-        points = np.asarray(spatial_points, dtype=float)
+        gradient = np.asarray(gradient_matrix, dtype=np.float64)
+        points = np.asarray(spatial_points, dtype=np.float64)
         step = float(time_step)
         count = int(steps)
         if points.ndim != 1 or points.size < 9 or np.any(np.diff(points) <= 0.0):
@@ -621,7 +630,21 @@ def run_defect_scattering(
     if fields.shape != expected or momenta.shape != expected:
         raise ValueError("Defect scattering fields have the wrong shape.")
     spacing = float(plan.spatial_points[1] - plan.spatial_points[0])
-    inverse_gradient = jnp.linalg.inv(plan.gradient_matrix)
+    gradient_operator = DenseLinearOperator(
+        plan.gradient_matrix,
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "defect field-space metric",
+                "positive_definite": "defect field-space metric",
+            },
+        ),
+    )
+    prepared_gradient = prepare(
+        LinearSystem(gradient_operator),
+        LinearSolvePolicy(DenseCholesky()),
+    )
 
     def acceleration(field: Array, momentum: Array) -> Array:
         laplacian = jnp.zeros_like(field)
@@ -629,9 +652,10 @@ def run_defect_scattering(
             (field[2:] - 2.0 * field[1:-1] + field[:-2]) / spacing**2
         )
         gradient = jax.vmap(plan.potential.gradient)(field)
-        return (
-            laplacian - gradient @ inverse_gradient.T - plan.damping[:, None] * momentum
+        metric_gradient = jax.vmap(lambda value: solve(prepared_gradient, value).value)(
+            gradient
         )
+        return laplacian - metric_gradient - plan.damping[:, None] * momentum
 
     def energy(field: Array, momentum: Array) -> Array:
         derivative = jnp.gradient(field, spacing, axis=0)

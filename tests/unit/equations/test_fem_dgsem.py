@@ -344,7 +344,7 @@ def test_periodic_quad_free_stream_is_real_fem_compiler_execution(curved):
     facet_domain = compiled.dynamics.compiled_finite_element_problem.form.actions[
         1
     ].domain
-    assert facet_domain.neighbour_trace_permutations.shape[0] == report.facet_route_count
+    assert facet_domain.neighbor_trace_permutations.shape[0] == report.facet_route_count
     assert jnp.all(facet_domain.periodic_face_mask)
     assert not isinstance(compiled.discretization, TensorSBPDiscretization)
     assert (
@@ -571,10 +571,7 @@ def test_finite_element_boundary_set_requires_exact_exterior_ownership():
 
 def test_physical_slip_wall_disables_sampled_periodic_evidence():
     system, discretization = _quad_discretization()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"walls": (exterior, SlipWallBoundary())},
@@ -604,7 +601,7 @@ def test_physical_slip_wall_disables_sampled_periodic_evidence():
     np.testing.assert_allclose(diagnostics.conservation_balance_defect, 0.0, atol=3.0e-6)
     np.testing.assert_allclose(diagnostics.boundary_flux_rate[0], 0.0, atol=3.0e-6)
     assert np.all(np.asarray(faces.is_boundary))
-    assert np.all(np.asarray(faces.neighbour_cells) == -1)
+    assert np.all(np.asarray(faces.neighbor_cells) == -1)
     assert not diagnostics.sampled_entropy_inequality
     assert compiled.dynamics.stable_step_evidence(state).positive
 
@@ -729,10 +726,7 @@ def test_tensor_ldg_constant_state_is_zero_and_has_positive_stability_step():
 def test_tensor_ldg_stationary_no_slip_wall_preserves_rest_state():
     _euler, discretization = _quad_discretization()
     system = CompressibleNavierStokesSystem(ConstantTransport(0.2, 0.1), 2)
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {

@@ -87,10 +87,10 @@ class SensitivitySVDPlan(StrictModule, NonTrainableState):
         if not callable(forward):
             raise TypeError("forward must be callable.")
         parameter = jax.lax.stop_gradient(
-            jnp.asarray(parameter_scale, dtype=float).reshape(-1)
+            jnp.asarray(parameter_scale, dtype=jnp.float64).reshape(-1)
         )
         observation = jax.lax.stop_gradient(
-            jnp.asarray(observation_scale, dtype=float).reshape(-1)
+            jnp.asarray(observation_scale, dtype=jnp.float64).reshape(-1)
         )
         tolerance = float(relative_rank_tolerance)
         if parameter.size == 0 or observation.size == 0:
@@ -266,7 +266,7 @@ def fisher_local_diagnostics(
     prior_information: ArrayLike | None = None,
     relative_rank_tolerance: float = 1.0e-8,
 ) -> FisherLocalResult:
-    sensitivity = jnp.asarray(jacobian, dtype=float)
+    sensitivity = jnp.asarray(jacobian, dtype=jnp.float64)
     if sensitivity.ndim != 2 or sensitivity.shape[0] == 0 or sensitivity.shape[1] == 0:
         raise ValueError("jacobian must be a non-empty matrix.")
     if bool(jnp.any(~jnp.isfinite(sensitivity))):
@@ -372,7 +372,7 @@ class ProfileLikelihoodPlan(StrictModule, NonTrainableState):
         index = int(parameter_index)
         if index < 0:
             raise ValueError("parameter_index must be non-negative.")
-        grid_ = jax.lax.stop_gradient(jnp.asarray(grid, dtype=float).reshape(-1))
+        grid_ = jax.lax.stop_gradient(jnp.asarray(grid, dtype=jnp.float64).reshape(-1))
         if grid_.size < 2 or bool(jnp.any(~jnp.isfinite(grid_))):
             raise ValueError("Profile grid must contain at least two finite values.")
         if bounds is not None and not isinstance(bounds, Bounds):
@@ -514,7 +514,7 @@ def check_directional_derivative(
 ) -> DirectionalDerivativeCheck:
     if not callable(function):
         raise TypeError("function must be callable.")
-    point_ = jnp.asarray(point, dtype=float)
+    point_ = jnp.asarray(point, dtype=jnp.float64)
     direction_ = jnp.asarray(direction, dtype=point_.dtype)
     if direction_.shape != point_.shape:
         raise ValueError("direction must match point shape.")
@@ -571,7 +571,7 @@ class ForwardAdjointEvidence(StrictModule):
         /,
     ):
         values = tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in (
                 forward_accepted,
                 adjoint_accepted,
@@ -634,7 +634,7 @@ class ExperimentDesignCandidate(StrictModule, NonTrainableState):
         identifier = str(candidate_id)
         if not identifier or identifier != identifier.strip():
             raise ValueError("candidate_id must be non-empty and canonical.")
-        sensitivity_ = jax.lax.stop_gradient(jnp.asarray(sensitivity, dtype=float))
+        sensitivity_ = jax.lax.stop_gradient(jnp.asarray(sensitivity, dtype=jnp.float64))
         if sensitivity_.ndim != 2 or min(sensitivity_.shape) < 1:
             raise ValueError("Candidate sensitivity must be a non-empty matrix.")
         precision = jax.lax.stop_gradient(
@@ -663,7 +663,7 @@ class ExperimentDesignCandidate(StrictModule, NonTrainableState):
 
     @property
     def parameter_count(self) -> int:
-        return int(self.sensitivity.shape[1])
+        return self.sensitivity.shape[1]
 
 
 class ExperimentDesignCriterion(Enum):
@@ -723,7 +723,7 @@ class ExperimentDesignPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "All experiment candidates must use one parameter dimension."
             )
-        prior = jax.lax.stop_gradient(jnp.asarray(prior_information, dtype=float))
+        prior = jax.lax.stop_gradient(jnp.asarray(prior_information, dtype=jnp.float64))
         if prior.shape != (parameter_count, parameter_count):
             raise ValueError("prior_information shape must match candidate parameters.")
         if bool(jnp.any(~jnp.isfinite(prior))) or bool(
@@ -748,12 +748,11 @@ class ExperimentDesignPlan(StrictModule, NonTrainableState):
             if not math.isinf(budget_):
                 costs = np.asarray(
                     [candidate.cost for candidate in resolved],
-                    dtype=float,
+                    dtype=np.float64,
                 )
                 if not np.all(costs == costs[0]):
                     raise ValueError(
-                        "Integer-hull experiment design requires infinite budget "
-                        "or exactly uniform candidate costs."
+                        "Integer-hull experiment design requires infinite budget or exactly uniform candidate costs."
                     )
             integer_policy = (
                 IntegerHullPolicy(StableCardinalityOracle())
@@ -922,9 +921,9 @@ class PreparedExperimentDesign(StrictModule, NonTrainableState):
         )
         optimizer = solve_integer_hull(hull_problem, policy)
         selected_mask = (
-            jnp.zeros((len(self.plan.candidates),), dtype=bool)
+            jnp.zeros((len(self.plan.candidates),), dtype=jnp.bool_)
             if optimizer.features is None
-            else jnp.asarray(optimizer.features, dtype=bool)
+            else jnp.asarray(optimizer.features, dtype=jnp.bool_)
         )
         selected_count = int(np.count_nonzero(np.asarray(selected_mask)))
         indices = np.full(
@@ -943,7 +942,7 @@ class PreparedExperimentDesign(StrictModule, NonTrainableState):
         scores = np.full(
             self.plan.maximum_experiments + 1,
             np.nan,
-            dtype=float,
+            dtype=np.float64,
         )
         scores[0] = float(self._score(self.plan.prior_information))
         scores[selected_count] = float(current_score)
@@ -1004,9 +1003,9 @@ class PreparedExperimentDesign(StrictModule, NonTrainableState):
         )
 
     def _select_greedy(self, /) -> ExperimentDesignResult:
-        selected = np.zeros(len(self.plan.candidates), dtype=bool)
+        selected = np.zeros(len(self.plan.candidates), dtype=np.bool_)
         indices = np.full(self.plan.maximum_experiments, -1, dtype=np.int32)
-        scores = np.full(self.plan.maximum_experiments + 1, np.nan, dtype=float)
+        scores = np.full(self.plan.maximum_experiments + 1, np.nan, dtype=np.float64)
         information = self.plan.prior_information
         current_score = self._score(information)
         scores[0] = float(current_score)

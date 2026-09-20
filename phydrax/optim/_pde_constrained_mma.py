@@ -7,7 +7,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,6 +14,7 @@ from jax import core
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
+from phydrax._strict import StrictModule
 from phydrax.ein import contract
 
 from ..linalg import LinearSolvePolicy
@@ -52,7 +52,7 @@ class _StateInequality:
         return self.sign * (raw - self.bound)
 
 
-class _ReducedMMAState(eqx.Module):
+class _ReducedMMAState(StrictModule):
     state_result: StateEquationResult
     mma: _MMAState
     adjoint: PyTree[Array]

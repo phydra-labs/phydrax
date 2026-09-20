@@ -21,7 +21,9 @@ def _calculation_and_provider():
         system,
         phx.chemistry.MolecularElectronicSectorPlan(0, 1),
         phx.chemistry.ElectronicModelChemistryPlan(
-            phx.chemistry.ExternalElectronicMethodPlan("harmonic-electronic", phx.chemistry.ElectronicReferenceKind.RESTRICTED)
+            phx.chemistry.ExternalElectronicMethodPlan(
+                "harmonic-electronic", phx.chemistry.ElectronicReferenceKind.RESTRICTED
+            )
         ),
         phx.chemistry.GroundStateTaskPlan.energy_and_forces(),
     )
@@ -38,8 +40,13 @@ def _calculation_and_provider():
             forces=-coordinate,
         )
 
-    capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state((phx.chemistry.ElectronicProperty.ENERGY, phx.chemistry.ElectronicProperty.FORCES),
-    (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),)
+    capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state(
+        (
+            phx.chemistry.ElectronicProperty.ENERGY,
+            phx.chemistry.ElectronicProperty.FORCES,
+        ),
+        (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),
+    )
     provider = phx.chemistry.CallableElectronicProvider(
         evaluate, "harmonic-electronic-provider", capabilities
     )
@@ -71,7 +78,9 @@ def test_result_archive_and_born_oppenheimer_adapter_roundtrip(tmp_path):
     dynamics = phx.atomistic.BornOppenheimerVelocityVerletPlan(
         system.prepare(), adapter, 1.0e-3
     )
-    state = dynamics.initialize(structure.positions, velocity=jnp.zeros_like(structure.positions))
+    state = dynamics.initialize(
+        structure.positions, velocity=jnp.zeros_like(structure.positions)
+    )
     step = dynamics.step(state)
 
     assert bool(step.successful)
@@ -98,7 +107,9 @@ def test_real_ase_calculator_executes_through_typed_provider():
         system,
         phx.chemistry.MolecularElectronicSectorPlan(0, 1),
         phx.chemistry.ElectronicModelChemistryPlan(
-            phx.chemistry.ExternalElectronicMethodPlan("emt", phx.chemistry.ElectronicReferenceKind.RESTRICTED)
+            phx.chemistry.ExternalElectronicMethodPlan(
+                "emt", phx.chemistry.ElectronicReferenceKind.RESTRICTED
+            )
         ),
         phx.chemistry.GroundStateTaskPlan.energy_and_forces(),
     )
@@ -132,16 +143,18 @@ def test_real_pyscf_rhf_preserves_native_force_order():
         system,
         phx.chemistry.MolecularElectronicSectorPlan(0, 1),
         phx.chemistry.ElectronicModelChemistryPlan(
-            phx.chemistry.HartreeFockMethodPlan(phx.chemistry.ElectronicReferenceKind.RESTRICTED),
-            basis=phx.chemistry.BasisSetReference(
-                "sto-3g", "pyscf-basis-library"
+            phx.chemistry.HartreeFockMethodPlan(
+                phx.chemistry.ElectronicReferenceKind.RESTRICTED
             ),
+            basis=phx.chemistry.BasisSetReference("sto-3g", "pyscf-basis-library"),
         ),
         phx.chemistry.GroundStateTaskPlan.energy_and_forces(),
     )
-    result = phx.chemistry.interchange.PySCFProvider(
-        convergence_tolerance=1.0e-11
-    ).prepare(calculation).evaluate(structure.positions)
+    result = (
+        phx.chemistry.interchange.PySCFProvider(convergence_tolerance=1.0e-11)
+        .prepare(calculation)
+        .evaluate(structure.positions)
+    )
 
     assert bool(result.successful)
     np.testing.assert_array_equal(result.header.stable_particle_ids, [31, 37])

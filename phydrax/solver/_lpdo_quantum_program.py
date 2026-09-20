@@ -220,8 +220,7 @@ def plan_lpdo_quantum_program(
             and abs(route.target_indices[1] - route.target_indices[0]) != 1
         ):
             raise ValueError(
-                "Non-nearest-neighbor LPDO operations require an explicit "
-                "caller-visible SWAP compilation."
+                "Non-nearest-neighbor LPDO operations require an explicit caller-visible SWAP compilation."
             )
         if (
             isinstance(operation, LocalKrausChannelOperation)
@@ -451,9 +450,9 @@ def _split_window(state, route, window, policy):
     current = window
     tensors = []
     records = []
-    left_dimension = int(current.shape[0])
+    left_dimension = current.shape[0]
     for dimension in dimensions[:-1]:
-        kraus_dimension = int(current.shape[2])
+        kraus_dimension = current.shape[2]
         matrix = current.reshape((left_dimension * dimension * kraus_dimension, -1))
         left, right, evidence = truncated_svd(
             matrix,

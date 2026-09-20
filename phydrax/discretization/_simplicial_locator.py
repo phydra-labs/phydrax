@@ -184,7 +184,7 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
             values.dtype
         )
         seed_pool = jnp.concatenate((centroid_seed[None], reference_nodes), axis=0)
-        seed_count = min(self.policy.maximum_seeds, int(seed_pool.shape[0]))
+        seed_count = min(self.policy.maximum_seeds, seed_pool.shape[0])
         seeds = seed_pool[:seed_count]
         reference = jnp.broadcast_to(
             seeds[None, None, :, :],
@@ -201,7 +201,7 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
             values[:, None, None, :],
             (point_count, candidate_capacity, seed_count, values.shape[1]),
         ).reshape((-1, values.shape[1]))
-        converged = jnp.zeros((flat_cells.size,), dtype=bool)
+        converged = jnp.zeros((flat_cells.size,), dtype=jnp.bool_)
         first_iteration = jnp.zeros((flat_cells.size,), dtype=jnp.int32)
         reference_flat = reference.reshape((-1, reference_dimension))
         ever_valid_geometry = jnp.zeros_like(converged)

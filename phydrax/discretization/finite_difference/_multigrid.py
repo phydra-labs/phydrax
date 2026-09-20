@@ -505,7 +505,7 @@ class StructuredMultigridResult(StrictModule, NonTrainableState):
         self.residual_norms = residual_norms
         scale = jnp.maximum(1.0, residual_norms[0])
         self.converged = residual_norms[-1] <= float(tolerance) * scale
-        self.cycles = int(residual_norms.size - 1)
+        self.cycles = residual_norms.size - 1
         self.precision_evidence = precision_evidence
 
 
@@ -640,14 +640,14 @@ def _line_coefficients(
             axis=axis,
         )
         distance_shape = [1] * len(grid.shape)
-        distance_shape[axis] = int(distances.size)
+        distance_shape[axis] = distances.size
         coupling = face_interior / distances.reshape(distance_shape)
         lower_widths = jnp.take(widths, jnp.arange(1, widths.size))
         upper_widths = jnp.take(widths, jnp.arange(widths.size - 1))
         lower_shape = [1] * len(grid.shape)
         upper_shape = [1] * len(grid.shape)
-        lower_shape[axis] = int(lower_widths.size)
-        upper_shape[axis] = int(upper_widths.size)
+        lower_shape[axis] = lower_widths.size
+        upper_shape[axis] = upper_widths.size
         lower_index: list[slice | int] = [slice(None)] * len(grid.shape)
         upper_index: list[slice | int] = [slice(None)] * len(grid.shape)
         lower_index[axis] = slice(1, grid.shape[axis])

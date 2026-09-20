@@ -209,7 +209,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
                     "affine-reference",
                 )
                 block_factorizations = (factor,)
-                factor_bytes += int(reference_physical.nbytes)
+                factor_bytes += reference_physical.nbytes
             elif block_strategy == "weight_adjusted":
                 reference_weights = np.asarray(rule_data.weights)
                 reference_mass = ein.contract(
@@ -234,7 +234,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
                 )
                 block_factorizations = (factor,)
                 weight_adjusted = jnp.asarray(reciprocal_mass)
-                factor_bytes += int(reference_mass.nbytes + reciprocal_mass.nbytes)
+                factor_bytes += reference_mass.nbytes + reciprocal_mass.nbytes
             else:
                 block_factorizations = tuple(
                     _factor_mass_matrix(
@@ -246,7 +246,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
                     )
                     for cell, matrix in enumerate(matrices)
                 )
-                factor_bytes += int(matrices_np.nbytes)
+                factor_bytes += matrices_np.nbytes
             strategies.append(block_strategy)
             all_routes.append(dof_map.cell_dofs[block_index])
             all_matrices.append(matrices)

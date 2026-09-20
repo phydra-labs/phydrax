@@ -40,7 +40,7 @@ def _measure(points, weights, *, provenance):
 
 
 def _problem(size: int, dimension: int):
-    coordinates = jnp.arange(size * dimension, dtype=float)
+    coordinates = jnp.arange(size * dimension, dtype="float64")
     source_points = jnp.sin(0.013 * coordinates).reshape((size, dimension))
     target_points = jnp.cos(0.017 * coordinates).reshape((size, dimension))
     source_weights = 0.5 + jnp.linspace(0.0, 1.0, size)
@@ -64,7 +64,7 @@ def _problem(size: int, dimension: int):
 
 def _bytes(tree) -> int:
     return sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
         if isinstance(leaf, jax.Array)
     )
@@ -92,7 +92,7 @@ def _record(size, dimension, block_size, iterations, repeats, *, blockwise):
         jax.block_until_ready(result.regularized_cost)
     steady_ms = 1e3 * (time.perf_counter() - started) / repeats
 
-    payload = jnp.ones((size, 4), dtype=float)
+    payload = jnp.ones((size, 4), dtype="float64")
     apply = eqx.filter_jit(lambda solved, values: solved.apply_source_to_target(values))
     applied = apply(result, payload)
     jax.block_until_ready(applied)
@@ -179,7 +179,7 @@ def main() -> None:
                 blockwise=True,
             )
         )
-    print(json.dumps({"schema_version": 1, "records": records}, indent=2, sort_keys=True))
+    print(json.dumps({"records": records}, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

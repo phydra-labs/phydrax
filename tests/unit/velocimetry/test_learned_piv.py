@@ -89,7 +89,7 @@ def test_cost_volume_channel_offsets_are_first_to_second_row_column_candidates()
 def test_all_invalid_multiscale_loss_is_zero_with_finite_zero_gradient():
     image = jnp.arange(36.0).reshape((6, 6, 1))
     displacement = jnp.zeros((6, 6, 2))
-    invalid = jnp.zeros((6, 6), dtype=bool)
+    invalid = jnp.zeros((6, 6), dtype="bool")
     loss = MultiScaleRobustPIVLoss(
         supervised_weight=1.0,
         photometric_weight=1.0,

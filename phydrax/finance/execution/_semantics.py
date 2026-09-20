@@ -39,7 +39,7 @@ class OrderStatus(IntEnum):
     ACTIVE = 0
     PARTIALLY_FILLED = 1
     FILLED = 2
-    CANCELLED = 3
+    CANCELED = 3
 
 
 class FillStatus(IntEnum):
@@ -81,7 +81,9 @@ def _positive_scalar(value: ArrayLike, owner: str, /) -> Array:
         and not jnp.issubdtype(scalar.dtype, jnp.complexfloating)
     ):
         raise TypeError(f"{owner} must be real-valued.")
-    scalar = scalar if jnp.issubdtype(scalar.dtype, jnp.inexact) else scalar.astype(float)
+    scalar = (
+        scalar if jnp.issubdtype(scalar.dtype, jnp.inexact) else scalar.astype("float64")
+    )
     if not bool(jnp.isfinite(scalar)) or not bool(scalar > 0.0):
         raise ValueError(f"{owner} must be finite and positive.")
     return scalar
@@ -96,7 +98,9 @@ def _nonnegative_scalar(value: ArrayLike, owner: str, /) -> Array:
         and not jnp.issubdtype(scalar.dtype, jnp.complexfloating)
     ):
         raise TypeError(f"{owner} must be real-valued.")
-    scalar = scalar if jnp.issubdtype(scalar.dtype, jnp.inexact) else scalar.astype(float)
+    scalar = (
+        scalar if jnp.issubdtype(scalar.dtype, jnp.inexact) else scalar.astype("float64")
+    )
     if not bool(jnp.isfinite(scalar)) or bool(scalar < 0.0):
         raise ValueError(f"{owner} must be finite and nonnegative.")
     return scalar
@@ -111,7 +115,9 @@ def _finite_scalar(value: ArrayLike, owner: str, /) -> Array:
         and not jnp.issubdtype(scalar.dtype, jnp.complexfloating)
     ):
         raise TypeError(f"{owner} must be real-valued.")
-    scalar = scalar if jnp.issubdtype(scalar.dtype, jnp.inexact) else scalar.astype(float)
+    scalar = (
+        scalar if jnp.issubdtype(scalar.dtype, jnp.inexact) else scalar.astype("float64")
+    )
     if not bool(jnp.isfinite(scalar)):
         raise ValueError(f"{owner} must be finite.")
     return scalar
@@ -274,7 +280,7 @@ class ExecutionAction(StrictModule):
         self.bid_offset = _nonnegative_scalar(bid_offset, "bid_offset")
         self.ask_offset = _nonnegative_scalar(ask_offset, "ask_offset")
         self.impulse_quantity = _finite_scalar(impulse_quantity, "impulse_quantity")
-        cancel = jnp.asarray(cancel_active, dtype=bool)
+        cancel = jnp.asarray(cancel_active, dtype=jnp.bool_)
         if cancel.shape != ():
             raise ValueError("cancel_active must be scalar.")
         self.cancel_active = cancel
@@ -340,10 +346,10 @@ class ExecutionState(StrictModule):
         self.mid_price = _positive_scalar(mid_price, "mid_price")
         self.permanent_impact = _finite_scalar(permanent_impact, "permanent_impact")
         self.transient_impact = _finite_scalar(transient_impact, "transient_impact")
-        self.queue_depth = queue.astype(float)
-        self.hawkes_excitation = excitation.astype(float)
-        self.num_queues = int(queue.size)
-        self.num_hawkes_channels = int(excitation.size)
+        self.queue_depth = queue.astype("float64")
+        self.hawkes_excitation = excitation.astype("float64")
+        self.num_queues = queue.size
+        self.num_hawkes_channels = excitation.size
 
     @property
     def vector(self) -> Array:
@@ -674,8 +680,8 @@ def apply_execution_event(
             raise ValueError("CANCEL event has no order identity.")
         index = _order_index(ledger, order_id)
         if statuses[index] not in (OrderStatus.ACTIVE, OrderStatus.PARTIALLY_FILLED):
-            raise ValueError("Only an active or partially filled order may be cancelled.")
-        statuses = _replace_tuple(statuses, index, OrderStatus.CANCELLED)
+            raise ValueError("Only an active or partially filled order may be canceled.")
+        statuses = _replace_tuple(statuses, index, OrderStatus.CANCELED)
 
     return _ledger_from_parts(
         ledger,

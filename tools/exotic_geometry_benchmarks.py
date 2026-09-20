@@ -27,7 +27,7 @@ def _benchmark(function, argument, *, repeats):
     return {
         "compile_and_first_seconds": first,
         "steady_seconds": steady,
-        "output_bytes": int(output.size * output.dtype.itemsize),
+        "output_bytes": output.size * output.dtype.itemsize,
     }
 
 
@@ -61,7 +61,7 @@ def run_benchmarks(*, dimension=2, repeats=10):
         g2_chart,
     )
     g2_point = jnp.linspace(-0.3, 0.4, 7)
-    g2_right = jnp.cos(jnp.arange(7, dtype=float))
+    g2_right = jnp.cos(jnp.arange(7, dtype="float64"))
 
     def g2_validation(value):
         report = phx.metrix.validate_local_g2_structure(

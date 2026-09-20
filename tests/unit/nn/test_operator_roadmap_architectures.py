@@ -23,7 +23,7 @@ def _axis(name, size, *, periodic=False):
 
 def _parameter_count(model):
     return sum(
-        int(leaf.size)
+        leaf.size
         for leaf in jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_inexact_array))
     )
 
@@ -248,7 +248,7 @@ def _koopman_batch():
     time = phx.nn.operator.OperatorAxis("time", jnp.array([0.0, 0.17, 0.61]))
     values = jnp.stack((jnp.sin(jnp.pi * x.nodes), jnp.cos(jnp.pi * x.nodes)))
     query_mask = (
-        jnp.ones((2, 4, 3), dtype=bool).at[0, 1, 1].set(False).at[1, 3, 2].set(False)
+        jnp.ones((2, 4, 3), dtype="bool").at[0, 1, 1].set(False).at[1, 3, 2].set(False)
     )
     return (
         phx.nn.operator.OperatorBatch(
@@ -352,7 +352,7 @@ def test_green_kernel_requires_physical_measures_and_uses_both_branches():
 def _poseidon_batch(values, time):
     axes = (_axis("x", 4), _axis("y", 4))
     query_mask = (
-        jnp.ones((2, 4, 4), dtype=bool).at[0, 1, 2].set(False).at[1, 3, 0].set(False)
+        jnp.ones((2, 4, 4), dtype="bool").at[0, 1, 2].set(False).at[1, 3, 0].set(False)
     )
     return phx.nn.operator.OperatorBatch(
         inputs={
@@ -404,14 +404,14 @@ def _dpot_batch(history):
     history_axis = phx.nn.operator.OperatorAxis("history_time", jnp.array([-1.0, 0.0]))
     forecast_axis = phx.nn.operator.OperatorAxis("forecast_time", jnp.array([0.4]))
     source_mask = (
-        jnp.ones((2, 4, 4, 2), dtype=bool)
+        jnp.ones((2, 4, 4, 2), dtype="bool")
         .at[0, 1, 2, 0]
         .set(False)
         .at[1, 3, 0, 1]
         .set(False)
     )
     query_mask = (
-        jnp.ones((2, 4, 4, 1), dtype=bool)
+        jnp.ones((2, 4, 4, 1), dtype="bool")
         .at[0, 0, 1, 0]
         .set(False)
         .at[1, 2, 3, 0]
@@ -534,7 +534,7 @@ def test_measure_attention_kernel_modes_are_finite_and_all_masked_is_zero(kernel
         source,
         query,
         weights,
-        source_mask=jnp.zeros((2, 4), dtype=bool),
+        source_mask=jnp.zeros((2, 4), dtype="bool"),
         query_mask=jnp.array([[True, False, True, True], [False, True, True, False]]),
     )
 

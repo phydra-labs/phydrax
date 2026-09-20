@@ -46,7 +46,7 @@ def test_public_quantum_instrument_probability_oracle():
     one = jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype=jnp.complex64)
     instrument = phx.solver.QuantumInstrument(
         jnp.stack((zero, one))[:, None, :, :],
-        jnp.ones((2, 1), dtype=bool),
+        jnp.ones((2, 1), dtype="bool"),
         tolerance=1e-5,
     )
     plus = jnp.asarray([1.0, 1.0], dtype=jnp.complex64) / jnp.sqrt(2.0)

@@ -6,6 +6,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 
+from phydrax._strict import StrictModule
+
 from .._model import register_artifact_value
 from ._geometry import QueryGraph
 from ._graph import ensure_graph
@@ -49,13 +51,12 @@ def query_graph_with_source_features(
     features = jnp.asarray(source_features)
     if features.ndim == 0:
         raise ValueError("source_features must have a leading source-node axis.")
-    n_source = int(query.source_nodes.shape[0])
-    if int(features.shape[0]) != n_source:
+    n_source = query.source_nodes.shape[0]
+    if features.shape[0] != n_source:
         raise ValueError(
-            f"source_features leading axis must match query source count {n_source}; "
-            f"got {features.shape[0]}."
+            f"source_features leading axis must match query source count {n_source}; got {features.shape[0]}."
         )
-    total_nodes = n_source + int(query.target_nodes.shape[0])
+    total_nodes = n_source + query.target_nodes.shape[0]
     values = jnp.zeros((total_nodes,) + features.shape[1:], dtype=features.dtype)
     values = values.at[query.source_nodes].set(features)
     nodes = _as_feature_mapping(query.graph.nodes)
@@ -77,7 +78,7 @@ def query_target_features(
     return jnp.asarray(graph.nodes[key])[query.target_nodes]
 
 
-class QueryGraphOperator(eqx.Module):
+class QueryGraphOperator(StrictModule):
     """Transfer source-graph node features through a fixed query graph.
 
     The operator copies a source graph node field onto the source side of a
@@ -149,7 +150,7 @@ class QueryGraphOperator(eqx.Module):
         return out
 
 
-class GraphFieldProcessor(eqx.Module):
+class GraphFieldProcessor(StrictModule):
     """Apply an array model to a structured latent field stored on graph nodes."""
 
     model: Callable
@@ -172,8 +173,10 @@ class GraphFieldProcessor(eqx.Module):
     ):
         self.model = model
         self.node_indices = jnp.asarray(node_indices, dtype=jnp.int32)
-        self.spatial_shape = tuple(int(size) for size in spatial_shape)
-        self.coordinates = tuple(jnp.asarray(axis, dtype=float) for axis in coordinates)
+        self.spatial_shape = tuple(spatial_shape)
+        self.coordinates = tuple(
+            jnp.asarray(axis, dtype=jnp.float64) for axis in coordinates
+        )
         self.input_key = str(input_key)
         self.output_key = str(output_key)
         if not self.spatial_shape or any(size <= 0 for size in self.spatial_shape):
@@ -181,7 +184,7 @@ class GraphFieldProcessor(eqx.Module):
         expected = 1
         for size in self.spatial_shape:
             expected *= size
-        if int(self.node_indices.shape[0]) != expected:
+        if self.node_indices.shape[0] != expected:
             raise ValueError(
                 "node_indices length must equal the latent spatial-shape product."
             )
@@ -192,7 +195,7 @@ class GraphFieldProcessor(eqx.Module):
         graph = ensure_graph(graph, validate=False)
         values = _node_field(graph, self.input_key)
         selected = values[self.node_indices]
-        trailing = tuple(int(size) for size in selected.shape[1:])
+        trailing = tuple(selected.shape[1:])
         field = selected.reshape(self.spatial_shape + trailing)
         output = (
             self.model((field, *self.coordinates))
@@ -200,10 +203,8 @@ class GraphFieldProcessor(eqx.Module):
             else self.model(field)
         )
         output_ = jnp.asarray(output)
-        output_trailing = tuple(
-            int(size) for size in output_.shape[len(self.spatial_shape) :]
-        )
-        flattened = output_.reshape((int(self.node_indices.shape[0]),) + output_trailing)
+        output_trailing = tuple(output_.shape[len(self.spatial_shape) :])
+        flattened = output_.reshape((self.node_indices.shape[0],) + output_trailing)
         total_nodes = int(jnp.asarray(graph.n_node).sum())
         installed = jnp.zeros(
             (total_nodes,) + output_trailing,
@@ -215,7 +216,7 @@ class GraphFieldProcessor(eqx.Module):
         return graph.replace(nodes=nodes, validate=False)
 
 
-class RegionalGraphProcessor(eqx.Module):
+class RegionalGraphProcessor(StrictModule):
     """Process encoder latents on a separate regional/slice graph."""
 
     regional_graph: GraphIR
@@ -243,7 +244,7 @@ class RegionalGraphProcessor(eqx.Module):
         self.input_key = str(input_key)
         self.output_key = str(output_key)
         regional_count = int(jnp.asarray(self.regional_graph.n_node).sum())
-        if regional_count != int(self.latent_indices.shape[0]):
+        if regional_count != self.latent_indices.shape[0]:
             raise ValueError(
                 "Regional graph node count must match the encoder latent-node count."
             )
@@ -273,12 +274,12 @@ class RegionalGraphProcessor(eqx.Module):
 
 
 register_artifact_value(
-    "phydrax.graph.model:RegionalGraphProcessor@1",
+    "phydrax.graph.model:RegionalGraphProcessor",
     RegionalGraphProcessor,
 )
 
 
-class GraphEncodeProcessDecode(eqx.Module):
+class GraphEncodeProcessDecode(StrictModule):
     """Compose source-to-latent transfer, latent processing, and latent-to-target transfer."""
 
     encoder: QueryGraphOperator

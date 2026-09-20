@@ -39,7 +39,7 @@ from ..stochastic._evaluation import PreparedControlledNoise
 from ._layout import PlayerControlPartition
 
 
-_METHOD_ID = "frozen-pathwise-policy-saa-pseudogradient-v1"
+_METHOD_ID = "frozen-pathwise-policy-saa-pseudogradient"
 _CERTIFICATE = "LOCAL_SAA_POLICY_STATIONARITY"
 _UNSET = object()
 
@@ -325,7 +325,7 @@ def _real_array(value: ArrayLike, owner: str, /) -> Array:
         array.dtype, jnp.complexfloating
     ):
         raise TypeError(f"{owner} must be a real numeric array.")
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _parameters(
@@ -408,13 +408,11 @@ def _validate_bundles(
     )
     if overlap:
         raise ValueError(
-            "Training and holdout realization_ids must be disjoint; shared IDs: "
-            f"{tuple(sorted(overlap))}."
+            f"Training and holdout realization_ids must be disjoint; shared IDs: {tuple(sorted(overlap))}."
         )
     if training_noise.coupling_id == holdout_noise.coupling_id:
         raise ValueError(
-            "Training and holdout bundles must have distinct coupling_id values "
-            "to identify an independent holdout."
+            "Training and holdout bundles must have distinct coupling_id values to identify an independent holdout."
         )
 
 
@@ -452,8 +450,7 @@ def _require_new_realizations(
     overlap = old_ids.intersection(candidate.realization_ids)
     if overlap:
         raise ValueError(
-            f"{owner} replacement must use new realization_ids; reused IDs: "
-            f"{tuple(sorted(overlap))}."
+            f"{owner} replacement must use new realization_ids; reused IDs: {tuple(sorted(overlap))}."
         )
 
 
@@ -493,8 +490,7 @@ def _path_costs(
     expected = problem.case_shape + (noise.num_paths, problem.num_players)
     if tuple(costs.shape) != expected:
         raise ValueError(
-            "path_cost_function must return raw case + (path, player) costs "
-            f"with shape {expected}; got {costs.shape}."
+            f"path_cost_function must return raw case + (path, player) costs with shape {expected}; got {costs.shape}."
         )
     return costs
 
@@ -734,7 +730,7 @@ def prepare_stochastic_policy_game(
             holdout_noise.num_paths,
             holdout_noise.num_steps,
             holdout_noise.noise_shape,
-            int(holdout_membership.shape[-1]),
+            holdout_membership.shape[-1],
         ),
     }
     return PreparedStochasticPolicyGame(

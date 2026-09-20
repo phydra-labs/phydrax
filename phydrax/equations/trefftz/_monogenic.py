@@ -44,7 +44,7 @@ def _monogenic_rank(dimension: int, degree: int, blade_count: int, /) -> int:
 def _rational_nullspace(matrix: np.ndarray, /) -> np.ndarray:
     rows, columns = matrix.shape
     if rows == 0:
-        return np.eye(columns, dtype=float)
+        return np.eye(columns, dtype=np.float64)
     values = [
         [Fraction(int(matrix[row, column])) for column in range(columns)]
         for row in range(rows)
@@ -77,7 +77,7 @@ def _rational_nullspace(matrix: np.ndarray, /) -> np.ndarray:
     free_columns = tuple(
         column for column in range(columns) if column not in set(pivot_columns)
     )
-    basis = np.zeros((columns, len(free_columns)), dtype=float)
+    basis = np.zeros((columns, len(free_columns)), dtype=np.float64)
     for basis_column, free_column in enumerate(free_columns):
         basis[free_column, basis_column] = 1.0
         for row, pivot_column in enumerate(pivot_columns):
@@ -218,12 +218,14 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
             _dirac_block(algebra, layout, value) for value in range(degree + 1)
         )
         exponent_blocks = tuple(jnp.asarray(value[0]) for value in blocks)
-        coefficient_blocks = tuple(jnp.asarray(value[1], dtype=float) for value in blocks)
+        coefficient_blocks = tuple(
+            jnp.asarray(value[1], dtype=jnp.float64) for value in blocks
+        )
         residual = max(value[2] for value in blocks)
         tolerance = max(value[3] for value in blocks)
         basis_id = canonical_fingerprint(
             {
-                "kind": "monogenic-polynomial-basis-v1",
+                "kind": "monogenic-polynomial-basis",
                 "algebra": algebra.algebra_id,
                 "layout": layout.layout_id,
                 "maximum_degree": degree,

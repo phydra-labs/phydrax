@@ -79,7 +79,7 @@ class PreparedCompactHomogeneousSpectrum(StrictModule):
         self.zonal_evaluator = zonal_evaluator
         self.tail_bound = bound
         self.space = space
-        self.frontier = int(eigenvalues.shape[0])
+        self.frontier = eigenvalues.shape[0]
         self.tail_certified = True
         self.spectrum_id = str(spectrum_id)
 
@@ -107,11 +107,11 @@ class KernelEvaluationEvidence(StrictModule):
         positive_definite_capability: ArrayLike,
     ):
         self.truncation_tail_bound = jnp.asarray(truncation_tail_bound)
-        self.membership_valid = jnp.asarray(membership_valid, dtype=bool)
-        self.branch_valid = jnp.asarray(branch_valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.membership_valid = jnp.asarray(membership_valid, dtype=jnp.bool_)
+        self.branch_valid = jnp.asarray(branch_valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.positive_definite_capability = jnp.asarray(
-            positive_definite_capability, dtype=bool
+            positive_definite_capability, dtype=jnp.bool_
         )
 
 
@@ -284,9 +284,9 @@ class GeodesicDistanceEvidence(StrictModule):
         self.distance = jnp.asarray(distance)
         self.branch_margin = jnp.asarray(branch_margin)
         self.log_residual = jnp.asarray(log_residual)
-        self.membership_valid = jnp.asarray(membership_valid, dtype=bool)
-        self.branch_valid = jnp.asarray(branch_valid, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.membership_valid = jnp.asarray(membership_valid, dtype=jnp.bool_)
+        self.branch_valid = jnp.asarray(branch_valid, dtype=jnp.bool_)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 class GeodesicRadialKernel(StrictModule):

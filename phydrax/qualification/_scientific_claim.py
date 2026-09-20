@@ -95,8 +95,7 @@ class ScientificMetricCriterion:
             raise ValueError("Metric direction must be at_most, at_least, or between.")
         if aggregation not in _AGGREGATIONS:
             raise ValueError(
-                "Metric aggregation must be pooled, independent_unit_macro, "
-                "or worst_stratum."
+                "Metric aggregation must be pooled, independent_unit_macro, or worst_stratum."
             )
         lower = _bound(self.lower, "metric lower bound")
         upper = _bound(self.upper, "metric upper bound")
@@ -377,8 +376,7 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
             )
             if effective_expires_at <= issued_at:
                 raise ValueError(
-                    "Matched prerequisite evidence must remain current after "
-                    "derived issuance."
+                    "Matched prerequisite evidence must remain current after derived issuance."
                 )
 
         failed_metrics: list[str] = []

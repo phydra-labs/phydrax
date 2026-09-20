@@ -144,8 +144,8 @@ def _lineage_valid(
     lineage: np.ndarray,
     /,
 ) -> bool:
-    identifiers = tuple(int(value) for value in stable_ids.tolist())
-    parents = tuple(int(value) for value in lineage[:, 0].tolist())
+    identifiers = tuple(stable_ids.tolist())
+    parents = tuple(lineage[:, 0].tolist())
     epochs = np.asarray(lineage[:, 1])
     if (
         np.any(incarnations < 0)
@@ -216,7 +216,9 @@ class SimulationProductStatusEvidence(StrictModule, NonTrainableState):
         )
         if not names or len(set(names)) != len(names):
             raise ValueError("Product evidence check names must be nonempty and unique.")
-        values = jax.lax.stop_gradient(jnp.asarray(checks, dtype=bool).reshape((-1,)))
+        values = jax.lax.stop_gradient(
+            jnp.asarray(checks, dtype=jnp.bool_).reshape((-1,))
+        )
         if values.size != len(names):
             raise ValueError("Product evidence checks and names must align.")
         successful = jnp.all(values)
@@ -336,7 +338,7 @@ class WaveSnapshotEvidence(StrictModule, NonTrainableState):
                     diagnostics.poisson_closed[-1],
                     final_accepted,
                 ),
-                dtype=bool,
+                dtype=jnp.bool_,
             ),
             failure_reason=(
                 "none" if accepted else "wave-production-result-unsuccessful"
@@ -436,7 +438,7 @@ class ParticleSnapshotEvidence(StrictModule, NonTrainableState):
             state.positions.shape == expected_shape
             and state.canonical_momenta.shape == expected_shape
         )
-        active = np.asarray(particles.active_mask, dtype=bool)
+        active = np.asarray(particles.active_mask, dtype=np.bool_)
         finite = (
             bool(np.all(np.isfinite(np.asarray(state.positions)[active])))
             and bool(np.all(np.isfinite(np.asarray(state.canonical_momenta)[active])))
@@ -464,7 +466,7 @@ class ParticleSnapshotEvidence(StrictModule, NonTrainableState):
                     support_matched,
                     accepted,
                 ),
-                dtype=bool,
+                dtype=jnp.bool_,
             ),
             failure_reason=(
                 "none" if accepted else "cosmological-particle-result-unsuccessful"
@@ -554,7 +556,7 @@ class GasSnapshotEvidence(StrictModule, NonTrainableState):
                     thermodynamic_valid,
                     accepted,
                 ),
-                dtype=bool,
+                dtype=jnp.bool_,
             ),
             failure_reason=(
                 "none" if accepted else "cosmological-gas-result-unsuccessful"
@@ -649,7 +651,7 @@ class CommonGravitySnapshotEvidence(StrictModule, NonTrainableState):
                     result.assembly.successful,
                     result.successful,
                 ),
-                dtype=bool,
+                dtype=jnp.bool_,
             ),
             failure_reason=("none" if accepted else "shared-gravity-result-unsuccessful"),
         )
@@ -901,7 +903,7 @@ class ParticleSimulationSnapshot(StrictModule, NonTrainableState):
         momentum = jax.lax.stop_gradient(
             jnp.asarray(canonical_momenta, dtype=position.dtype)
         )
-        active = jax.lax.stop_gradient(jnp.asarray(active_mask, dtype=bool))
+        active = jax.lax.stop_gradient(jnp.asarray(active_mask, dtype=jnp.bool_))
         mass = jax.lax.stop_gradient(jnp.asarray(macro_masses, dtype=position.dtype))
         weights = jax.lax.stop_gradient(jnp.asarray(packet_weights, dtype=position.dtype))
         incarnation = jax.lax.stop_gradient(jnp.asarray(incarnations))
@@ -974,7 +976,7 @@ class ParticleSimulationSnapshot(StrictModule, NonTrainableState):
         ):
             raise ValueError("Particle snapshot changed its typed result or support.")
         ids_host = np.asarray(ids)
-        active_host = np.asarray(active, dtype=bool)
+        active_host = np.asarray(active, dtype=np.bool_)
         incarnation_host = np.asarray(incarnation)
         lineage_host = np.asarray(lineage)
         stable_ids_unique = len(set(ids_host.tolist())) == count
@@ -1325,8 +1327,7 @@ class CommonGravitySimulationSnapshot(StrictModule, NonTrainableState):
         )
         if identities != expected_identities:
             raise ValueError(
-                "Common-gravity source, operator, geometry, physics, scale, "
-                "or time-level identity changed."
+                "Common-gravity source, operator, geometry, physics, scale, or time-level identity changed."
             )
         self.total_comoving_density = density
         self.potential = potential_
@@ -1515,7 +1516,7 @@ class CosmologyOutputBundle(StrictModule, NonTrainableState):
         all_children = all(bool(np.asarray(value)) for value in child_success)
         status = SimulationProductStatusEvidence(
             ("children-successful", "artifact-complete"),
-            jnp.asarray((all_children, artifact.status == "complete"), dtype=bool),
+            jnp.asarray((all_children, artifact.status == "complete"), dtype=jnp.bool_),
             failure_reason=(
                 "none"
                 if artifact.status == "complete" and all_children
@@ -1665,7 +1666,7 @@ class DarkMatterRestartSnapshot(StrictModule, NonTrainableState):
             if ids_input.size == 0
             else jnp.asarray(stable_ids)
         )
-        active = jax.lax.stop_gradient(jnp.asarray(active_mask, dtype=bool))
+        active = jax.lax.stop_gradient(jnp.asarray(active_mask, dtype=jnp.bool_))
         incarnation = jax.lax.stop_gradient(
             jnp.zeros((0,), dtype=jnp.int64)
             if incarnation_input.size == 0
@@ -1795,7 +1796,7 @@ class DarkMatterCheckpointRecoveryEvidence(StrictModule, NonTrainableState):
                     event_epoch_verified,
                     parent_chain_verified,
                 ),
-                dtype=bool,
+                dtype=jnp.bool_,
             ),
             failure_reason=failure_reason,
         )
@@ -1973,7 +1974,7 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
             {
                 "kind": "dark-matter-stable-id-layout",
                 "stable_ids": array_tree_fingerprint(restart_template.stable_ids),
-                "capacity": int(restart_template.stable_ids.size),
+                "capacity": restart_template.stable_ids.size,
             }
         )
         record = {
@@ -2040,7 +2041,7 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
             {
                 "kind": "dark-matter-stable-id-layout",
                 "stable_ids": array_tree_fingerprint(snapshot.stable_ids),
-                "capacity": int(snapshot.stable_ids.size),
+                "capacity": snapshot.stable_ids.size,
             }
         )
         if (
@@ -2145,7 +2146,7 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
             {
                 "kind": "dark-matter-stable-id-layout",
                 "stable_ids": array_tree_fingerprint(stable_ids),
-                "capacity": int(np.asarray(stable_ids).size),
+                "capacity": np.asarray(stable_ids).size,
             }
         )
         if stable_layout != self.stable_id_layout_id:

@@ -71,8 +71,7 @@ class SparseFactorizationPreconditioner(AbstractPreconditioner):
             or properties.positive_definite != expected_positive
         ):
             raise ValueError(
-                "Sparse factor preconditioner claims must match the factor kind "
-                "and setup-operator evidence."
+                "Sparse factor preconditioner claims must match the factor kind and setup-operator evidence."
             )
         self.space = operator.source
         self.properties = properties
@@ -187,7 +186,7 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
             )
         plan = prepare_sparse_factorization(setup_operator, self.policy())
         itemsize = setup_operator.sparse_storage().values.dtype.itemsize
-        factor_entries = int(plan.factor_indices.size)
+        factor_entries = plan.factor_indices.size
         return PreconditionerCostEstimate(
             component=self.builder_id,
             storage_bytes=_array_tree_storage_bytes(plan) + factor_entries * itemsize,

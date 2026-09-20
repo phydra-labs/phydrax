@@ -59,7 +59,7 @@ class MP2Result(StrictModule, NonTrainableState):
             ()
         )
         self.residual_bound = jnp.asarray(residual_bound, dtype=dtype).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.store_id = str(store_id)
         self.result_id = canonical_fingerprint(

@@ -136,7 +136,7 @@ def _json_safe(value: Any, /) -> Any:
 
 def _tree_bytes(tree: Any, /) -> int:
     return sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree_util.tree_leaves(tree)
         if isinstance(leaf, jax.Array)
     )
@@ -145,7 +145,7 @@ def _tree_bytes(tree: Any, /) -> int:
 def _parameter_count(potential, /) -> int:
     trainable, _ = partition_trainable(potential)
     return sum(
-        int(leaf.size)
+        leaf.size
         for leaf in jax.tree_util.tree_leaves(trainable)
         if isinstance(leaf, jax.Array)
     )
@@ -391,9 +391,9 @@ def _run_seed(dataset, arguments, seed):
         "seed": seed,
         "split_id": split.split_id,
         "split_sizes": {
-            "train": int(split.train_indices.size),
-            "validation": int(split.validation_indices.size),
-            "test": int(split.test_indices.size),
+            "train": split.train_indices.size,
+            "validation": split.validation_indices.size,
+            "test": split.test_indices.size,
         },
         "models": models,
         "paired_nequip_minus_painn": paired_delta,
@@ -401,7 +401,7 @@ def _run_seed(dataset, arguments, seed):
 
 
 def _aggregate(values):
-    array = np.asarray(tuple(values), dtype=float)
+    array = np.asarray(tuple(values), dtype="float64")
     return {
         "mean": float(np.mean(array)),
         "standard_deviation": float(np.std(array)),

@@ -61,11 +61,11 @@ class PermanentMultipoleSiteData(StrictModule, NonTrainableState):
         damping: ArrayLike,
         /,
     ):
-        charge = np.asarray(charges, dtype=float)
-        dipole = np.asarray(dipoles, dtype=float)
-        quadrupole = np.asarray(quadrupoles, dtype=float)
-        polar = np.asarray(polarizabilities, dtype=float)
-        damp = np.asarray(damping, dtype=float)
+        charge = np.asarray(charges, dtype=np.float64)
+        dipole = np.asarray(dipoles, dtype=np.float64)
+        quadrupole = np.asarray(quadrupoles, dtype=np.float64)
+        polar = np.asarray(polarizabilities, dtype=np.float64)
+        damp = np.asarray(damping, dtype=np.float64)
         count = charge.size
         if (
             count == 0
@@ -87,8 +87,7 @@ class PermanentMultipoleSiteData(StrictModule, NonTrainableState):
             or not np.allclose(quadrupole, np.swapaxes(quadrupole, -1, -2))
         ):
             raise ValueError(
-                "Multipoles must be finite, quadrupoles symmetric, "
-                "polarizabilities nonnegative, and damping positive."
+                "Multipoles must be finite, quadrupoles symmetric, polarizabilities nonnegative, and damping positive."
             )
         (
             self.charges,
@@ -138,7 +137,8 @@ class PolarizationScaleData(StrictModule, NonTrainableState):
         /,
     ):
         values = tuple(
-            np.asarray(value, dtype=float) for value in (direct, polarization, mutual)
+            np.asarray(value, dtype=np.float64)
+            for value in (direct, polarization, mutual)
         )
         shape = values[0].shape
         if (
@@ -157,8 +157,7 @@ class PolarizationScaleData(StrictModule, NonTrainableState):
             for value in values
         ):
             raise ValueError(
-                "Polarization scaling must be finite, symmetric, in [0,1], "
-                "and zero on the diagonal."
+                "Polarization scaling must be finite, symmetric, in [0,1], and zero on the diagonal."
             )
         self.direct, self.polarization, self.mutual = (
             jnp.asarray(value) for value in values
@@ -177,7 +176,7 @@ class PolarizationScaleData(StrictModule, NonTrainableState):
         capacity = int(site_capacity)
         if capacity <= 0:
             raise ValueError("site_capacity must be positive.")
-        off_diagonal = np.ones((capacity, capacity), dtype=float) - np.eye(capacity)
+        off_diagonal = np.ones((capacity, capacity), dtype=np.float64) - np.eye(capacity)
         return cls(off_diagonal, off_diagonal, off_diagonal)
 
 
@@ -238,7 +237,7 @@ class PolarizationOperatorPlan(StrictModule, NonTrainableState):
         if scale.direct.shape != (capacity, capacity):
             raise ValueError("Scaling and multipole capacities differ.")
         if active_mask is None:
-            active = jnp.ones((capacity,), dtype=bool)
+            active = jnp.ones((capacity,), dtype=jnp.bool_)
             active_id = "all-active"
         else:
             host_active = np.asarray(active_mask)
@@ -493,7 +492,7 @@ class PolarizationSolverPlan(StrictModule, NonTrainableState):
 
 
 class PolarizationPlan(StrictModule, NonTrainableState):
-    """Compatibility facade composing operator, preconditioner, and solver plans."""
+    """Canonical composition of operator, preconditioner, and solver plans."""
 
     maximum_iterations: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
@@ -802,7 +801,7 @@ def _pair_geometry(operator, positions, cell, /):
             & (jnp.abs(determinant) > operator.plan.minimum_distance**3)
             & orthogonal
         )
-    identity = jnp.eye(operator.site_capacity, dtype=bool)
+    identity = jnp.eye(operator.site_capacity, dtype=jnp.bool_)
     active_pair = (
         operator.active_mask[:, None] & operator.active_mask[None, :] & ~identity
     )
@@ -1558,7 +1557,7 @@ class MultipolePMEPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, grid_shape: tuple[int, int, int], alpha: float, /):
-        shape = tuple(int(value) for value in grid_shape)
+        shape = tuple(grid_shape)
         alpha_ = float(alpha)
         if (
             len(shape) != 3

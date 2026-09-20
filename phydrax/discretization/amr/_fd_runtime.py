@@ -48,7 +48,7 @@ def _validate_level_state_precision(
 
 
 class FDAMRHierarchyPlan(StrictModule, NonTrainableState):
-    """Cell-centred FD topology, transition, and FillPatch preparation policy."""
+    """Cell-centered FD topology, transition, and FillPatch preparation policy."""
 
     hierarchy: BlockHierarchyPlan
     transfers: tuple[AMREntityTransferPlan, ...]
@@ -91,7 +91,7 @@ class FDAMRHierarchyPlan(StrictModule, NonTrainableState):
             transfer.axis_entities != ("interval",) * dimension for transfer in transfers_
         ):
             raise NotImplementedError(
-                "Prepared FD AMR is cell-centred; AMREntityTransferPlan remains the explicit non-cell extension seam."
+                "Prepared FD AMR is cell-centered; AMREntityTransferPlan remains the explicit non-cell extension seam."
             )
         if any(
             transfer.refinement_ratio != hierarchy.levels[level].refinement_ratio

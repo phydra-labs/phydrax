@@ -19,14 +19,14 @@ from ..._strict import StrictModule
 
 
 def _scalar(value: ArrayLike, name: str, /) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape != ():
         raise ValueError(f"{name} must be scalar.")
     return eqx.error_if(array, ~jnp.isfinite(array), f"{name} must be finite.")
 
 
 def _ordered(value: ArrayLike, name: str, /, *, positive: bool = False) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim != 1 or array.size < 1:
         raise ValueError(f"{name} must be a non-empty vector.")
     invalid = jnp.any(~jnp.isfinite(array))
@@ -85,20 +85,20 @@ class SVIParameters(StrictModule):
         )
 
     def total_variance(self, log_moneyness: ArrayLike, /) -> Array:
-        k = jnp.asarray(log_moneyness, dtype=float)
+        k = jnp.asarray(log_moneyness, dtype=jnp.float64)
         shifted = k - self.center
         return self.level + self.slope * (
             self.correlation * shifted + jnp.sqrt(shifted**2 + self.width**2)
         )
 
     def first_derivative(self, log_moneyness: ArrayLike, /) -> Array:
-        shifted = jnp.asarray(log_moneyness, dtype=float) - self.center
+        shifted = jnp.asarray(log_moneyness, dtype=jnp.float64) - self.center
         return self.slope * (
             self.correlation + shifted / jnp.sqrt(shifted**2 + self.width**2)
         )
 
     def second_derivative(self, log_moneyness: ArrayLike, /) -> Array:
-        shifted = jnp.asarray(log_moneyness, dtype=float) - self.center
+        shifted = jnp.asarray(log_moneyness, dtype=jnp.float64) - self.center
         return self.slope * self.width**2 / (shifted**2 + self.width**2) ** 1.5
 
 
@@ -142,7 +142,8 @@ class SVISurface(StrictModule):
 
     def total_variance(self, expiry: ArrayLike, log_moneyness: ArrayLike, /) -> Array:
         expiry_, k = jnp.broadcast_arrays(
-            jnp.asarray(expiry, dtype=float), jnp.asarray(log_moneyness, dtype=float)
+            jnp.asarray(expiry, dtype=jnp.float64),
+            jnp.asarray(log_moneyness, dtype=jnp.float64),
         )
         stacked = jnp.stack(
             tuple(value.total_variance(k) for value in self.slices), axis=0
@@ -190,8 +191,8 @@ class ESSVISurface(StrictModule):
         /,
     ):
         expiries_ = _ordered(expiries, "expiries", positive=True)
-        theta = jnp.asarray(atm_total_variances, dtype=float)
-        rho = jnp.asarray(correlations, dtype=float)
+        theta = jnp.asarray(atm_total_variances, dtype=jnp.float64)
+        rho = jnp.asarray(correlations, dtype=jnp.float64)
         if theta.shape != expiries_.shape or rho.shape != expiries_.shape:
             raise ValueError(
                 "ATM total variance and correlations must align with expiries."
@@ -222,10 +223,10 @@ class ESSVISurface(StrictModule):
             "eSSVI parameters violate sufficient butterfly-arbitrage bounds.",
         )
         self.expiries, self.atm_total_variances, self.correlations = expiries_, theta, rho
-        self.eta, self.gamma, self.expiry_count = eta_, gamma_, int(expiries_.size)
+        self.eta, self.gamma, self.expiry_count = eta_, gamma_, expiries_.size
 
     def _theta_rho(self, expiry: ArrayLike) -> tuple[Array, Array]:
-        expiry_ = jnp.asarray(expiry, dtype=float)
+        expiry_ = jnp.asarray(expiry, dtype=jnp.float64)
         expiry_ = eqx.error_if(
             expiry_,
             jnp.any(~jnp.isfinite(expiry_)) | jnp.any(expiry_ <= 0.0),
@@ -238,7 +239,7 @@ class ESSVISurface(StrictModule):
 
     def total_variance(self, expiry: ArrayLike, log_moneyness: ArrayLike, /) -> Array:
         theta, rho = self._theta_rho(expiry)
-        k = jnp.asarray(log_moneyness, dtype=float)
+        k = jnp.asarray(log_moneyness, dtype=jnp.float64)
         theta, rho, k = jnp.broadcast_arrays(theta, rho, k)
         phi = self.eta / (theta**self.gamma * (1.0 + theta) ** (1.0 - self.gamma))
         return (
@@ -270,7 +271,7 @@ class VolatilityObservationSet(StrictModule):
         valid: ArrayLike | None = None,
     ):
         expiries_, k, volatility = tuple(
-            jnp.asarray(value, dtype=float)
+            jnp.asarray(value, dtype=jnp.float64)
             for value in (expiries, log_moneyness, implied_volatilities)
         )
         if (
@@ -283,14 +284,14 @@ class VolatilityObservationSet(StrictModule):
                 "volatility observations must be aligned vectors with at least five entries."
             )
         mask = (
-            jnp.ones_like(expiries_, dtype=bool)
+            jnp.ones_like(expiries_, dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         weight = (
             jnp.ones_like(expiries_)
             if weights is None
-            else jnp.asarray(weights, dtype=float)
+            else jnp.asarray(weights, dtype=jnp.float64)
         )
         if mask.shape != expiries_.shape or weight.shape != expiries_.shape:
             raise ValueError("weights and valid must align with observations.")
@@ -325,7 +326,7 @@ class VolatilityObservationSet(StrictModule):
         self.weights, self.valid, self.observation_count = (
             weight,
             mask,
-            int(expiries_.size),
+            expiries_.size,
         )
 
     @property

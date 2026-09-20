@@ -52,7 +52,7 @@ def particle_graph_view(
         raise ValueError("Pair geometry and neighborhood relation schemas differ.")
     valid = pairs.valid
     if edge_mask is not None:
-        mask = jnp.asarray(edge_mask, dtype=bool)
+        mask = jnp.asarray(edge_mask, dtype=jnp.bool_)
         if mask.shape != pairs.relation.route_shape:
             raise ValueError("edge_mask must have the pair-relation route shape.")
         valid = valid & mask
@@ -72,7 +72,7 @@ def particle_graph_view(
             jnp.concatenate((right_ids, left_ids), axis=0),
         )
         valid = jnp.concatenate((valid, valid), axis=0)
-    edge_capacity = int(senders.shape[0])
+    edge_capacity = senders.shape[0]
     return GraphIR(
         nodes={
             "position": value,

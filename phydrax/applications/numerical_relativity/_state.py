@@ -112,13 +112,11 @@ class Z4cState(StrictModule):
     @property
     def physical_extrinsic_curvature(self) -> Array:
         trace_term = (
-            self.conformal_metric
-            * self.trace_extrinsic_curvature[None, None, ...]
-            / 3.0
+            self.conformal_metric * self.trace_extrinsic_curvature[None, None, ...] / 3.0
         )
-        return (
-            self.conformal_extrinsic_curvature + trace_term
-        ) / self.chi[None, None, ...]
+        return (self.conformal_extrinsic_curvature + trace_term) / self.chi[
+            None, None, ...
+        ]
 
     def with_values(self, values: ArrayLike, /) -> Z4cState:
         return Z4cState(values, grid_id=self.grid_id)
@@ -154,9 +152,7 @@ def make_z4c_state(
             raise ValueError(f"{name} must have shape {shape}.")
     tensor_fields = {
         "conformal_metric": jnp.asarray(conformal_metric),
-        "conformal_extrinsic_curvature": jnp.asarray(
-            conformal_extrinsic_curvature
-        ),
+        "conformal_extrinsic_curvature": jnp.asarray(conformal_extrinsic_curvature),
     }
     for name, value in tensor_fields.items():
         if value.shape != (3, 3) + shape:
@@ -185,9 +181,7 @@ def make_z4c_state(
             chi_.astype(dtype)[None, ...],
             pack_symmetric(tensor_fields["conformal_metric"]).astype(dtype),
             scalar_fields["k_hat"].astype(dtype)[None, ...],
-            pack_symmetric(
-                tensor_fields["conformal_extrinsic_curvature"]
-            ).astype(dtype),
+            pack_symmetric(tensor_fields["conformal_extrinsic_curvature"]).astype(dtype),
             scalar_fields["theta"].astype(dtype)[None, ...],
             vector_fields["conformal_connection"].astype(dtype),
             scalar_fields["lapse"].astype(dtype)[None, ...],
@@ -208,7 +202,7 @@ def flat_z4c_state(
 ) -> Z4cState:
     """Return exact Cartesian Minkowski data in the packed Z4c representation."""
 
-    shape = tuple(int(value) for value in grid_shape)
+    shape = tuple(grid_shape)
     if len(shape) != 3 or any(value < 1 for value in shape):
         raise ValueError("grid_shape must contain three positive extents.")
     scalar = jnp.ones(shape, dtype=dtype)

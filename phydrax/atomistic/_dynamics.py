@@ -1178,7 +1178,7 @@ class PreparedAtomisticDynamics(StrictModule):
         success = (
             state.last_status == int(AtomisticDynamicsStatus.SUCCESS)
             if successful is None
-            else jnp.asarray(successful, dtype=bool)
+            else jnp.asarray(successful, dtype=jnp.bool_)
         )
         reasons = (
             state.last_rejection_reasons

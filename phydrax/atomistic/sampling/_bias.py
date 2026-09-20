@@ -21,7 +21,7 @@ from ..._array_archive import (
     write_array_archive,
 )
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
 from .._dynamics import (
@@ -50,13 +50,13 @@ _BIASED_CHECKPOINT_FORMAT = "phydrax-biased-atomistic-dynamics-checkpoint"
 
 
 class AbstractAtomisticBiasState(StrictModule):
-    successful: AbstractAttribute[Array]
-    bias_id: AbstractAttribute[str]
+    successful: eqx.AbstractVar[Array]
+    bias_id: eqx.AbstractVar[str]
 
 
 class AbstractAtomisticBiasPlan(StrictModule, NonTrainableState):
-    variables: AbstractAttribute[AbstractCollectiveVariableProgram]
-    bias_id: AbstractAttribute[str]
+    variables: eqx.AbstractVar[AbstractCollectiveVariableProgram]
+    bias_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def initialize(self, dtype=jnp.float64) -> AbstractAtomisticBiasState:
@@ -106,13 +106,13 @@ class AtomisticBiasPlan(AbstractAtomisticBiasPlan):
             raise ValueError("Bias grid, hill capacity, or CV dimensionality is invalid.")
         self.kind = kind
         self.variables = variables
-        self.center = jnp.asarray(center, dtype=float).reshape((-1,))
-        self.stiffness = jnp.asarray(stiffness, dtype=float).reshape((-1,))
-        self.width = jnp.asarray(width, dtype=float).reshape((-1,))
-        self.rate = jnp.asarray(rate, dtype=float).reshape((-1,))
+        self.center = jnp.asarray(center, dtype=jnp.float64).reshape((-1,))
+        self.stiffness = jnp.asarray(stiffness, dtype=jnp.float64).reshape((-1,))
+        self.width = jnp.asarray(width, dtype=jnp.float64).reshape((-1,))
+        self.rate = jnp.asarray(rate, dtype=jnp.float64).reshape((-1,))
         self.maximum_hills = hills
-        self.grid_minimum = jnp.asarray(grid_minimum, dtype=float).reshape((-1,))
-        self.grid_maximum = jnp.asarray(grid_maximum, dtype=float).reshape((-1,))
+        self.grid_minimum = jnp.asarray(grid_minimum, dtype=jnp.float64).reshape((-1,))
+        self.grid_maximum = jnp.asarray(grid_maximum, dtype=jnp.float64).reshape((-1,))
         self.grid_bins = bins
         arrays = (
             self.center,
@@ -155,7 +155,7 @@ class AtomisticBiasPlan(AbstractAtomisticBiasPlan):
             hill_centers=jnp.zeros((self.maximum_hills, dimension), dtype=dtype),
             hill_heights=jnp.zeros((self.maximum_hills,), dtype=dtype),
             hill_widths=jnp.zeros((self.maximum_hills, dimension), dtype=dtype),
-            hill_valid=jnp.zeros((self.maximum_hills,), dtype=bool),
+            hill_valid=jnp.zeros((self.maximum_hills,), dtype=jnp.bool_),
             hill_count=jnp.zeros((), dtype=jnp.int32),
             abf_counts=jnp.zeros((self.grid_bins,), dtype=jnp.int32),
             abf_force_sums=jnp.zeros((self.grid_bins,), dtype=dtype),
@@ -193,9 +193,9 @@ class AtomisticBiasEvaluation(StrictModule):
 
 
 class AbstractPreparedAtomisticBias(StrictModule):
-    plan: AbstractAttribute[AbstractAtomisticBiasPlan]
-    dynamics: AbstractAttribute[PreparedAtomisticDynamics]
-    prepared_id: AbstractAttribute[str]
+    plan: eqx.AbstractVar[AbstractAtomisticBiasPlan]
+    dynamics: eqx.AbstractVar[PreparedAtomisticDynamics]
+    prepared_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def energy(
@@ -518,7 +518,7 @@ class PreparedBiasedDynamics(StrictModule):
             accepted.append(next_state.base.step_index > current.base.step_index)
             current = next_state
         return BiasedDynamicsReplayResult(
-            current, jnp.asarray(accepted, dtype=bool), self.prepared_id
+            current, jnp.asarray(accepted, dtype=jnp.bool_), self.prepared_id
         )
 
     def step(self, state: BiasedDynamicsState, /) -> BiasedDynamicsState:

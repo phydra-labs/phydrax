@@ -52,13 +52,13 @@ class OrderedOrdinalCutpoints(StrictModule):
         cutpoint_count = count - 1
         if initial is None:
             if key is None:
-                gaps = jnp.ones((cutpoint_count - 1,), dtype=float)
+                gaps = jnp.ones((cutpoint_count - 1,), dtype=jnp.float64)
             else:
                 gaps = 0.75 + 0.5 * jax.random.uniform(
-                    key, (cutpoint_count - 1,), dtype=float
+                    key, (cutpoint_count - 1,), dtype=jnp.float64
                 )
         else:
-            values = jnp.asarray(initial, dtype=float)
+            values = jnp.asarray(initial, dtype=jnp.float64)
             if values.shape != (cutpoint_count,):
                 raise ValueError("initial must contain class_count - 1 cutpoints.")
             if bool(jnp.any(~jnp.isfinite(values))) or bool(

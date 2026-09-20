@@ -79,9 +79,9 @@ def route_calorimeter_hits(
         else jnp.asarray(leakage_energy, dtype=incident.dtype)
     )
     leakage_known_ = (
-        jnp.zeros(expected, dtype=bool)
+        jnp.zeros(expected, dtype=jnp.bool_)
         if leakage_known is None
-        else jnp.asarray(leakage_known, dtype=bool)
+        else jnp.asarray(leakage_known, dtype=jnp.bool_)
     )
     if any(
         value.shape != expected for value in (outside, rejected, leakage, leakage_known_)

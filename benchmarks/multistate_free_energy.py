@@ -135,7 +135,7 @@ def _runtime_benchmark(iterations: int, repeats: int) -> dict:
         "configuration": {
             "iterations": iterations,
             "states": len(result.state_ids),
-            "replicas": int(result.sample_active.shape[1]),
+            "replicas": result.sample_active.shape[1],
             "dtype": str(result.reduced_potentials.dtype),
             "unit_id": result.unit_id,
             "sampling_exact": result.sampling_exact,

@@ -121,7 +121,7 @@ def _manifest(index: int) -> CardiovascularCaseManifest:
 def _subject(index: int) -> DeidentifiedCohortIdentity:
     return DeidentifiedCohortIdentity(
         f"group-{index}",
-        "deidentification-policy-v1",
+        "deidentification-policy",
         f"deidentification-receipt-{index}",
     )
 
@@ -343,7 +343,7 @@ def _native_solver(current: FullNativeReanalysisRequest) -> NativeReanalysisCand
             1.06,
             reference_velocity_mm_per_ms=0.02,
         ),
-        FixedWallLumenRegion(jnp.ones((6, 4, 4), dtype=bool)),
+        FixedWallLumenRegion(jnp.ones((6, 4, 4), dtype="bool")),
         (
             FlowTerminalPort(
                 "inlet",

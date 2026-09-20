@@ -36,9 +36,7 @@ def test_compensated_chunks_match_accurate_signed_component_sums():
     right = jnp.asarray(((2.0, -4.0), (-2.0, 4.0)))
     chunks = (left, right)
 
-    actual = jax.jit(
-        lambda values: compensated_sum_chunks(values, output_ndim=1)
-    )(chunks)
+    actual = jax.jit(lambda values: compensated_sum_chunks(values, output_ndim=1))(chunks)
     combined = np.concatenate(tuple(np.asarray(value) for value in chunks), axis=0)
     expected = np.asarray(
         [math.fsum(combined[:, index].tolist()) for index in range(combined.shape[1])]
@@ -60,9 +58,7 @@ def test_compensated_sum_preserves_axes_shapes_and_empty_identity():
 
 
 def test_compensated_sum_preserves_complex_and_nonfinite_semantics():
-    complex_values = jnp.asarray(
-        (1.0e16 + 1.0e16j, 1.0 + 1.0j, -1.0e16 - 1.0e16j)
-    )
+    complex_values = jnp.asarray((1.0e16 + 1.0e16j, 1.0 + 1.0j, -1.0e16 - 1.0e16j))
     nonfinite = jnp.asarray(((jnp.inf, 1.0), (-jnp.inf, 2.0)))
 
     assert compensated_sum(complex_values) == jnp.asarray(1.0 + 1.0j)

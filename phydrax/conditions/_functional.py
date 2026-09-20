@@ -40,7 +40,7 @@ def _point_axis(batch: PointBatch, /) -> tuple[str | None, int]:
         raise ValueError("Finite point functionals require one coupled sampling axis.")
     axis = axes[0]
     counts = tuple(
-        int(field.data.shape[field.dims.index(axis)])
+        field.data.shape[field.dims.index(axis)]
         for field in batch.points.values()
         if isinstance(field, cx.AxisArray) and axis in field.dims
     )
@@ -72,7 +72,7 @@ class EventLinearMap(StrictModule):
         value = jnp.asarray(matrix)
         if value.ndim != 2 or not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("EventLinearMap.matrix must be a rank-two inexact array.")
-        if int(value.shape[0]) <= 0 or int(value.shape[1]) <= 0:
+        if value.shape[0] <= 0 or value.shape[1] <= 0:
             raise ValueError("EventLinearMap dimensions must be positive.")
         self.matrix = eqx.error_if(
             value, jnp.any(~jnp.isfinite(value)), "EventLinearMap must be finite."
@@ -89,7 +89,7 @@ class EventLinearMap(StrictModule):
 
     def __call__(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
-        if array.ndim == 0 or int(array.shape[-1]) != int(self.matrix.shape[1]):
+        if array.ndim == 0 or array.shape[-1] != self.matrix.shape[1]:
             raise ValueError("EventLinearMap input has the wrong trailing event size.")
         return ein.contract("oi,...i->...o", self.matrix, array)
 
@@ -120,10 +120,10 @@ class PointJetAction(AbstractConditionOperator):
             raise TypeError("PointJetAction requires a field name and PointBatch.")
         _, count = _point_axis(batch)
         rows = jnp.asarray(coefficients)
-        if rows.ndim != 2 or int(rows.shape[1]) != count:
+        if rows.ndim != 2 or rows.shape[1] != count:
             raise ValueError("Point-jet coefficients must have shape (rows, points).")
         if not jnp.issubdtype(rows.dtype, jnp.inexact):
-            rows = rows.astype(float)
+            rows = rows.astype("float64")
         if event_map is not None and not isinstance(event_map, EventLinearMap):
             raise TypeError("event_map must be EventLinearMap or None.")
         requests = _derivative_requests(derivatives)
@@ -166,7 +166,7 @@ class PointJetAction(AbstractConditionOperator):
             if sample_axis not in evaluated.dims:
                 raise ValueError("Point-jet output lost its sampling axis.")
             data = jnp.moveaxis(data, evaluated.dims.index(sample_axis), 0)
-        if int(data.shape[0]) != count:
+        if data.shape[0] != count:
             raise ValueError("Point-jet output row count changed.")
         if self.event_map is not None:
             data = self.event_map(data)
@@ -211,12 +211,12 @@ class LinearReductionAction(AbstractConditionOperator):
                 "LinearReductionAction requires a field and PreparedLinearReduction."
             )
         rows = jnp.asarray(coefficients)
-        if rows.ndim != 1 or int(rows.shape[0]) <= 0:
+        if rows.ndim != 1 or rows.shape[0] <= 0:
             raise ValueError(
                 "Reduction coefficients must contain one value per equation row."
             )
         if not jnp.issubdtype(rows.dtype, jnp.inexact):
-            rows = rows.astype(float)
+            rows = rows.astype("float64")
         self.field = name
         self.reduction = reduction
         self.coefficients = eqx.error_if(
@@ -282,7 +282,7 @@ class MatrixLinearFunctional(AbstractConditionOperator):
         output_shape: Sequence[int] | None = None,
     ):
         names = tuple(str(name) for name in field_names)
-        shapes = tuple(tuple(int(size) for size in shape) for shape in input_shapes)
+        shapes = tuple(tuple(shape) for shape in input_shapes)
         blocks = tuple(jnp.asarray(matrix) for matrix in matrices)
         if (
             not names
@@ -299,20 +299,20 @@ class MatrixLinearFunctional(AbstractConditionOperator):
         normalized = []
         for shape, block in zip(shapes, blocks, strict=True):
             value = (
-                block.astype(float)
+                block.astype("float64")
                 if not jnp.issubdtype(block.dtype, jnp.inexact)
                 else block
             )
             size = 1
             for dimension in shape:
                 size *= dimension
-            if value.ndim != 2 or int(value.shape[1]) != size:
+            if value.ndim != 2 or value.shape[1] != size:
                 raise ValueError(
                     "Each matrix block must have shape (output_size, flattened_input_size)."
                 )
             if row_count is None:
-                row_count = int(value.shape[0])
-            elif int(value.shape[0]) != row_count:
+                row_count = value.shape[0]
+            elif value.shape[0] != row_count:
                 raise ValueError("MatrixLinearFunctional blocks must share row count.")
             normalized.append(
                 eqx.error_if(
@@ -323,11 +323,7 @@ class MatrixLinearFunctional(AbstractConditionOperator):
             )
         if row_count is None or row_count <= 0:
             raise ValueError("MatrixLinearFunctional output size must be positive.")
-        output = (
-            (row_count,)
-            if output_shape is None
-            else tuple(int(size) for size in output_shape)
-        )
+        output = (row_count,) if output_shape is None else tuple(output_shape)
         output_size = 1
         for dimension in output:
             if dimension <= 0:

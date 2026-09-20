@@ -117,7 +117,7 @@ class PolymerReactionEvent(StrictModule, NonTrainableState):
         self.right_port_id = str(right_port_id)
         self.left_particle_id = int(left_particle_id)
         self.right_particle_id = int(right_particle_id)
-        self.image_shift = tuple(int(value) for value in image_shift)
+        self.image_shift = tuple(image_shift)
         self.status = PolymerReactionStatus(status)
         self.accepted = self.status is PolymerReactionStatus.ACCEPTED
         self.event_id = canonical_fingerprint(
@@ -157,7 +157,7 @@ class PolymerReactionState(StrictModule, NonTrainableState):
             raise TypeError("system must be AtomisticSystemPlan.")
         port_values = tuple(ports)
         event_values = tuple(ledger)
-        rank = 0 if system.cell is None else int(system.cell.vectors.shape[0])
+        rank = 0 if system.cell is None else system.cell.vectors.shape[0]
         images = np.asarray(image_counts, dtype=np.int32)
         if (
             any(
@@ -209,7 +209,7 @@ def initialize_polymer_reaction_state(
     if not isinstance(construction, PolymerConstructionResult):
         raise TypeError("construction must be PolymerConstructionResult.")
     system = construction.system
-    rank = 0 if system.cell is None else int(system.cell.vectors.shape[0])
+    rank = 0 if system.cell is None else system.cell.vectors.shape[0]
     images = (
         np.zeros((system.particle_ids.size, rank), dtype=np.int32)
         if image_counts is None
@@ -306,11 +306,11 @@ def apply_polymer_reaction(
         elif template.reaction_kind is PolymerReactionKind.REPAIR and not pair_exists:
             status = PolymerReactionStatus.MISSING_BOND
     if status is PolymerReactionStatus.ACCEPTED and system.cell is not None:
-        rank = int(system.cell.vectors.shape[0])
+        rank = system.cell.vectors.shape[0]
         if periodic_image_shift is None:
             status = PolymerReactionStatus.PERIODIC_WINDING_REQUIRED
         else:
-            shift = tuple(int(value) for value in periodic_image_shift)
+            shift = tuple(periodic_image_shift)
             if len(shift) != rank:
                 status = PolymerReactionStatus.INVALID_PERIODIC_WINDING
             else:
@@ -325,7 +325,7 @@ def apply_polymer_reaction(
         maximum = float(maximum_distance)
         if not math.isfinite(maximum) or maximum <= 0.0 or positions is None:
             raise ValueError("A positive distance gate requires positions.")
-        coordinates = np.asarray(positions, dtype=float)
+        coordinates = np.asarray(positions, dtype=np.float64)
         if coordinates.shape != (ids.size, 3):
             raise ValueError("positions must match the atomistic system capacity.")
         if system.cell is not None:

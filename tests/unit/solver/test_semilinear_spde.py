@@ -132,7 +132,7 @@ def test_spde_callable_drift_identities_are_explicit_and_transitive():
         t1=0.1,
         kappa=0.02,
         reaction=reaction,
-        reaction_id="unit-cubic-reaction-v1",
+        reaction_id="unit-cubic-reaction",
     )
     zero_first = phx.solver.semidiscretize_reaction_diffusion(
         initial,
@@ -150,7 +150,7 @@ def test_spde_callable_drift_identities_are_explicit_and_transitive():
     )
 
     assert identified.semilinear_drift is not None
-    assert identified.semilinear_drift.nonlinear_id == "unit-cubic-reaction-v1"
+    assert identified.semilinear_drift.nonlinear_id == "unit-cubic-reaction"
     assert zero_first.semilinear_drift is not None
     assert zero_second.semilinear_drift is not None
     assert (
@@ -178,7 +178,7 @@ def test_spde_callable_drift_identities_are_explicit_and_transitive():
         t0=0.0,
         t1=0.1,
         operator_id=operator.operator_id,
-        nonlinear_id="unit-cubic-semilinear-v1",
+        nonlinear_id="unit-cubic-semilinear",
     )
     zero_semilinear = phx.solver.semidiscretize_semilinear_spde(
         operator,
@@ -191,7 +191,7 @@ def test_spde_callable_drift_identities_are_explicit_and_transitive():
     )
 
     assert semilinear.semilinear_drift is not None
-    assert semilinear.semilinear_drift.nonlinear_id == "unit-cubic-semilinear-v1"
+    assert semilinear.semilinear_drift.nonlinear_id == "unit-cubic-semilinear"
     assert zero_semilinear.semilinear_drift is not None
     assert zero_semilinear.semilinear_drift.nonlinear_id
     assert semilinear.problem.problem_id != zero_semilinear.problem.problem_id

@@ -79,7 +79,7 @@ class FieldSlot(StrictModule, NonTrainableState):
     ):
         name_ = str(name)
         space = str(space_id)
-        shape = tuple(int(size) for size in value_shape)
+        shape = tuple(value_shape)
         if not name_ or not space or any(size <= 0 for size in shape):
             raise ValueError("Field slot name, space, or value shape is invalid.")
         if role not in (
@@ -298,7 +298,7 @@ class OperatorValue(StrictModule, NonTrainableState):
         layout_id: str,
     ):
         name_ = str(name)
-        shape = tuple(int(value) for value in value_shape)
+        shape = tuple(value_shape)
         dtype = str(dtype_name)
         layout = str(layout_id)
         if (

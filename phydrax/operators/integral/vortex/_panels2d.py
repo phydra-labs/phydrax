@@ -27,7 +27,7 @@ class FlowPanelGeometry2D(StrictModule):
 
     @classmethod
     def from_vertices(cls, vertices: ArrayLike, /, *, geometry_id: str | None = None):
-        points_host = np.asarray(vertices, dtype=float).copy()
+        points_host = np.asarray(vertices, dtype=np.float64).copy()
         if points_host.ndim != 2 or points_host.shape[1] != 2 or points_host.shape[0] < 4:
             raise ValueError("Closed flow-panel vertices require shape (count >= 4, 2).")
         if not np.allclose(points_host[0], points_host[-1], rtol=0.0, atol=1.0e-12):
@@ -37,7 +37,7 @@ class FlowPanelGeometry2D(StrictModule):
             canonical_fingerprint(
                 {
                     "kind": "flow-panel-geometry-2d",
-                    "panel_count": int(points_host.shape[0] - 1),
+                    "panel_count": points_host.shape[0] - 1,
                 }
             )
             if geometry_id is None

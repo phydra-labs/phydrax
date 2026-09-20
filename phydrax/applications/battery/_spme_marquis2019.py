@@ -45,7 +45,7 @@ def _scalar(value: ArrayLike, name: str, /) -> Array:
     if array.shape != () or jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise ValueError(f"{name} must be one real scalar.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -235,7 +235,7 @@ class Marquis2019SpmeState(StrictModule):
             particles.negative_amount_mol,
             particles.positive_amount_mol,
             electrolyte,
-            float,
+            jnp.float64,
         )
         self.negative_amount_mol = particles.negative_amount_mol.astype(dtype)
         self.positive_amount_mol = particles.positive_amount_mol.astype(dtype)
@@ -350,8 +350,7 @@ class Marquis2019SpmePlan(StrictModule, NonTrainableState):
             or np.any(tolerances[1:] < 0.0)
         ):
             raise ValueError(
-                "The asymptotic threshold must lie in (0, 1) and ledger "
-                "tolerances must be finite and nonnegative."
+                "The asymptotic threshold must lie in (0, 1) and ledger tolerances must be finite and nonnegative."
             )
         spm_plan = PrescribedCurrentSpmPlan(
             negative_shell_count,
@@ -587,7 +586,7 @@ def _eq49_ocp_error(
 
 
 def _finite_large_ratio(numerator: Array, denominator: Array, /) -> Array:
-    dtype = jnp.result_type(numerator, denominator, float)
+    dtype = jnp.result_type(numerator, denominator, jnp.float64)
     maximum = jnp.asarray(jnp.finfo(dtype).max, dtype=dtype)
     floor = jnp.maximum(jnp.abs(numerator) / maximum, jnp.finfo(dtype).tiny)
     return numerator / jnp.maximum(denominator, floor)
@@ -1437,7 +1436,7 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
         states = native_solution.states
         if not isinstance(states, Marquis2019SpmeState):
             raise TypeError("Marquis SPMe native solution states have the wrong type.")
-        valid = jnp.asarray(native_solution.valid, dtype=bool)
+        valid = jnp.asarray(native_solution.valid, dtype=jnp.bool_)
         valid_count = jnp.sum(valid.astype(jnp.int32))
         final_index = jnp.maximum(valid_count - 1, 0)
 
@@ -1646,7 +1645,7 @@ def validate_marquis2019_spme_execution(
         protocol_values, BatteryProtocolValues
     ):
         raise TypeError("SPMe preflight requires typed current/rest values.")
-    currents = np.asarray(protocol.interval_currents(protocol_values), dtype=float)
+    currents = np.asarray(protocol.interval_currents(protocol_values), dtype=np.float64)
     spm = parameters.spm_parameters
     if not np.all(np.isfinite(currents)) or np.any(
         np.abs(currents) > float(spm.maximum_absolute_current_a)
@@ -1669,7 +1668,9 @@ def validate_marquis2019_spme_execution(
             )
     charge_at_boundary = np.r_[
         0.0,
-        np.cumsum(currents * np.diff(np.asarray(protocol.boundary_times_s, dtype=float))),
+        np.cumsum(
+            currents * np.diff(np.asarray(protocol.boundary_times_s, dtype=np.float64))
+        ),
     ]
     negative_inventory = (
         float(jnp.sum(state.negative_amount_mol)) + charge_at_boundary / _FARADAY_C_MOL

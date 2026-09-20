@@ -40,7 +40,7 @@ class SemiclassicalEinsteinPlan(StrictModule):
         residual_tolerance: float = 1e-6,
         maximum_time_steps: int = 100_000,
     ):
-        times = np.asarray(cosmic_times, dtype=float)
+        times = np.asarray(cosmic_times, dtype=np.float64)
         scale = float(initial_scale_factor)
         hubble = float(initial_hubble)
         gravity = float(newton_constant)

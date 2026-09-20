@@ -232,7 +232,7 @@ class PLogRatePlan(AbstractChemicalRatePlan):
     rates: tuple[ArrheniusRatePlan, ...]
 
     def __init__(self, pressures: ArrayLike, rates, /):
-        pressure_values = np.asarray(pressures, dtype=float)
+        pressure_values = np.asarray(pressures, dtype=np.float64)
         rate_values = tuple(rates)
         if (
             pressure_values.ndim != 1
@@ -292,7 +292,7 @@ class ChebyshevRatePlan(AbstractChemicalRatePlan):
         maximum_pressure: float,
         /,
     ):
-        values = np.asarray(coefficients, dtype=float)
+        values = np.asarray(coefficients, dtype=np.float64)
         bounds = tuple(
             float(value)
             for value in (

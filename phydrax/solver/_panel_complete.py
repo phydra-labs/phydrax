@@ -84,7 +84,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
         )
         if not isinstance(compressibility_, PanelCompressibilityPolicy):
             raise TypeError("compressibility must be PanelCompressibilityPolicy.")
-        count = int(geometry.straight.length.size)
+        count = geometry.straight.length.size
         components = (
             jnp.zeros((count,), dtype=jnp.int32)
             if component_ids is None
@@ -92,11 +92,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
         )
         if components.shape != (count,):
             raise ValueError("Panel component_ids must have panel-count shape.")
-        trailing = (
-            None
-            if trailing_edge_panels is None
-            else tuple(int(value) for value in trailing_edge_panels)
-        )
+        trailing = None if trailing_edge_panels is None else tuple(trailing_edge_panels)
         if trailing is not None and (
             len(trailing) != 2
             or any(value < 0 or value >= count for value in trailing)
@@ -119,7 +115,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
                 "kind": "complete-panel-flow-2d",
                 "geometry": geometry.geometry_id,
                 "formulation": formulation,
-                "components": tuple(int(value) for value in components),
+                "components": tuple(components),
                 "trailing_edge_panels": trailing,
                 "density": self.density,
                 "compressibility": compressibility_.policy_id,
@@ -156,13 +152,13 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
             kind="vortex"
         )
         normal_rhs = -jnp.sum(relative * geometry.normal, axis=-1)
-        count = int(geometry.length.size)
+        count = geometry.length.size
         circulation_target = jnp.asarray(prescribed_circulation, dtype=incident.dtype)
         if circulation_target.shape == ():
             circulation_target = jnp.broadcast_to(
                 circulation_target, (int(jnp.max(self.component_ids)) + 1,)
             )
-        component_count = int(circulation_target.size)
+        component_count = circulation_target.size
         circulation_rows = jnp.stack(
             tuple(
                 jnp.where(self.component_ids == component, geometry.length, 0.0)

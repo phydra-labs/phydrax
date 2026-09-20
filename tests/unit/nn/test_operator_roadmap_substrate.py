@@ -81,10 +81,12 @@ def test_operator_training_substrate_has_explicit_namespace_ownership():
 
 def _point_samples(coordinates, *, values=None, weights=None, mask=None):
     return phx.nn.operator.FunctionSamples(
-        values=None if values is None else jnp.asarray(values, dtype=float),
-        coordinates=jnp.asarray(coordinates, dtype=float),
-        quadrature_weights=None if weights is None else jnp.asarray(weights, dtype=float),
-        mask=None if mask is None else jnp.asarray(mask, dtype=bool),
+        values=None if values is None else jnp.asarray(values, dtype="float64"),
+        coordinates=jnp.asarray(coordinates, dtype="float64"),
+        quadrature_weights=None
+        if weights is None
+        else jnp.asarray(weights, dtype="float64"),
+        mask=None if mask is None else jnp.asarray(mask, dtype="bool"),
     )
 
 
@@ -304,7 +306,7 @@ def test_lazy_case_sampling_reads_only_selected_cases_and_preserves_metadata():
         100,
         metadata_reader=metadata_reader,
         case_reader=case_reader,
-        content_fingerprint="test:lazy-cases-v1",
+        content_fingerprint="test:lazy-cases",
     )
     policy = AnchorQuerySamplingPolicy(
         anchor_counts={"u": 2},
@@ -338,7 +340,7 @@ def test_lazy_case_sampling_reads_only_selected_cases_and_preserves_metadata():
         jnp.array([[71.0, 73.0], [21.0, 23.0]]),
     )
     assert jnp.array_equal(
-        input_u.mask_array(case_shape=(2,)), jnp.ones((2, 2), dtype=bool)
+        input_u.mask_array(case_shape=(2,)), jnp.ones((2, 2), dtype="bool")
     )
     assert jnp.allclose(
         input_u.quadrature(case_shape=(2,)),
@@ -412,7 +414,7 @@ def test_streamed_encoded_query_decoding_matches_unchunked_eager_and_jit():
     source = ArrayOperatorQuerySource(
         batch.query("query"),
         case_shape=batch.case_shape,
-        fingerprint="scenario-query-v1",
+        fingerprint="scenario-query",
     )
     last = source.read_chunk(4, 2)
     assert last.valid_count == 1
@@ -440,7 +442,7 @@ def test_streamed_encoded_query_decoding_matches_unchunked_eager_and_jit():
     assert jnp.allclose(streamed, eager, rtol=1e-6, atol=1e-7)
     assert sink.metadata is not None
     assert sink.metadata.output_shape == (2, 5)
-    assert sink.metadata.query_fingerprint == "scenario-query-v1"
+    assert sink.metadata.query_fingerprint == "scenario-query"
     assert jnp.array_equal(eager[~batch.query("query").mask], jnp.zeros((2,)))
 
 

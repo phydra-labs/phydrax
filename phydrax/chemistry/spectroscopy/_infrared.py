@@ -78,7 +78,7 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
         sources = tuple(str(value).strip() for value in source_result_ids)
         if not sources or any(not value for value in sources):
             raise ValueError("IR source result IDs must be non-empty.")
-        successful_ = jnp.asarray(successful, dtype=bool).reshape(())
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.wavenumbers = waves
         self.line_strengths = strengths
         self.grid = grid_
@@ -202,7 +202,7 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
         positions = np.asarray(
             structure.positions, dtype=np.dtype(self.system.coordinate_dtype)
         )
-        active = np.asarray(self.system.active_mask, dtype=bool)
+        active = np.asarray(self.system.active_mask, dtype=np.bool_)
         coordinates = tuple(
             (int(atom), component)
             for atom in np.flatnonzero(active)

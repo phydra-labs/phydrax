@@ -68,9 +68,7 @@ def main() -> None:
             evidence.recovered_scale_newton_per_relative_force
         ),
         "relative_scale_error": float(evidence.relative_scale_error),
-        "identifiable_control_accepted": bool(
-            evidence.identifiable_control_accepted
-        ),
+        "identifiable_control_accepted": bool(evidence.identifiable_control_accepted),
         "confounded_control_rejected": bool(evidence.confounded_control_rejected),
         "confounded_scale_flagged": bool(evidence.confounded_scale_flagged),
         "valid": bool(evidence.valid),

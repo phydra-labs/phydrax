@@ -192,7 +192,7 @@ class RosenbrockAdaptivePolicy(StrictModule, NonTrainableState):
         )
 
 
-class _JacobianAction(eqx.Module):
+class _JacobianAction(StrictModule):
     drift: Any
     time: Array
     state: Array
@@ -206,7 +206,7 @@ class _JacobianAction(eqx.Module):
         )[1]
 
 
-class _ShiftedJacobianAction(eqx.Module):
+class _ShiftedJacobianAction(StrictModule):
     jacobian: _JacobianAction
     scale: Array
 
@@ -223,7 +223,7 @@ def _time_derivative(problem: DifferentialProblem, time: Array, state: Array, ar
 
 
 def _default_linear_policy(state: Array, /) -> LinearSolvePolicy:
-    restart = max(1, min(20, int(state.size) if state.shape else 1))
+    restart = max(1, min(20, state.size if state.shape else 1))
     return LinearSolvePolicy(
         FGMRES(restart=restart),
         tolerance=TolerancePolicy(relative=1e-8, absolute=1e-10, max_steps=64),
@@ -303,9 +303,11 @@ def _rosenbrock_step(
                 dtype=state.real.dtype,
             )
         )
-        finite_stages.append(jnp.asarray(linear_result.diagnostics.finite, dtype=bool))
+        finite_stages.append(
+            jnp.asarray(linear_result.diagnostics.finite, dtype=jnp.bool_)
+        )
         converged_stages.append(
-            jnp.asarray(linear_result.diagnostics.converged, dtype=bool)
+            jnp.asarray(linear_result.diagnostics.converged, dtype=jnp.bool_)
         )
         iteration_counts.append(
             jnp.asarray(linear_result.diagnostics.iterations, dtype=jnp.int32)
@@ -459,7 +461,7 @@ def _solve_rosenbrock_fixed(
     mesh = RealizedTemporalMesh(
         times[0],
         times[1:],
-        jnp.ones((time_grid.num_steps,), dtype=bool),
+        jnp.ones((time_grid.num_steps,), dtype=jnp.bool_),
         time_grid.num_steps,
         adaptive=False,
         source_plan_id=configuration,

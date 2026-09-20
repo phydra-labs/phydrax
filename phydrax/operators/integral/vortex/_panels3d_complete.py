@@ -137,7 +137,7 @@ class NativePanelFieldPlan3D(StrictModule):
                     "kind": "native-panel-field-evaluation-3d",
                     "field": self.field_id,
                     "field_kind": kind,
-                    "target_count": int(target.shape[0]),
+                    "target_count": target.shape[0],
                 }
             ),
         )

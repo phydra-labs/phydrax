@@ -140,7 +140,7 @@ class SparseMarkerTransferPlan(StrictModule, NonTrainableState):
         if not np.isfinite(coverage) or not 0.0 < coverage <= 1.0:
             raise ValueError("minimum_coverage must lie in (0, 1].")
         dimension = discretization.velocity_set.dimension
-        capacity = int(identifiers.size)
+        capacity = identifiers.size
         route_width = width**dimension
         itemsize = np.dtype(discretization.velocity_space.vector_space.dtype).itemsize
         relation_bytes = (
@@ -184,7 +184,7 @@ class SparseMarkerTransferPlan(StrictModule, NonTrainableState):
         *,
         active: ArrayLike | None = None,
     ) -> PreparedSparseMarkerTransfer:
-        position = np.asarray(marker_position, dtype=float)
+        position = np.asarray(marker_position, dtype=np.float64)
         dimension = self.discretization.velocity_set.dimension
         if position.shape != (self.capacity, dimension):
             raise ValueError(
@@ -193,14 +193,14 @@ class SparseMarkerTransferPlan(StrictModule, NonTrainableState):
         if np.any(~np.isfinite(position)):
             raise ValueError("Prepared marker positions must be finite.")
         active_mask = (
-            np.ones((self.capacity,), dtype=bool)
+            np.ones((self.capacity,), dtype=np.bool_)
             if active is None
-            else np.asarray(active, dtype=bool)
+            else np.asarray(active, dtype=np.bool_)
         )
         if active_mask.shape != (self.capacity,) or not np.any(active_mask):
             raise ValueError("active must select at least one marker within capacity.")
 
-        grid_shape = tuple(int(value) for value in self.discretization.grid.shape)
+        grid_shape = tuple(self.discretization.grid.shape)
         spacing = float(np.asarray(self.discretization.cell_size))
         axes = self.discretization.grid.structured_axes
         lower = np.asarray([float(axis.bounds[0]) for axis in axes])
@@ -216,14 +216,14 @@ class SparseMarkerTransferPlan(StrictModule, NonTrainableState):
         route_positions = np.zeros(
             (self.capacity, self.route_width, dimension), dtype=position.dtype
         )
-        valid = np.zeros((self.capacity, self.route_width), dtype=bool)
+        valid = np.zeros((self.capacity, self.route_width), dtype=np.bool_)
         host_coverage = np.zeros((self.capacity,), dtype=position.dtype)
         for marker in range(self.capacity):
             coordinate = (position[marker] - lower) / spacing - 0.5
             start = np.floor(coordinate).astype(np.int64) - self.stencil_width // 2 + 1
             raw = start[None, :] + offsets
             wrapped = raw.copy()
-            route_valid = np.ones((self.route_width,), dtype=bool)
+            route_valid = np.ones((self.route_width,), dtype=np.bool_)
             for axis, count in enumerate(grid_shape):
                 if periodic[axis]:
                     wrapped[:, axis] = np.mod(wrapped[:, axis], count)

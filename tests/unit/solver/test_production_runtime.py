@@ -158,7 +158,7 @@ def test_production_iteration_session_stops_and_restores_exact_cursor(tmp_path):
     initial = prepared.initial_state(jnp.asarray((0.0,)))
     result = prepared.run(initial)
 
-    assert result.state.status == "cancelled"
+    assert result.state.status == "canceled"
     assert int(result.state.step_index) == 1
     assert [phase(event) for event in events] == [
         int(phx.execution.IterationPhase.START),
@@ -744,17 +744,17 @@ def test_configuration_migration_commits_lineage_and_rollback_selects_parent(tmp
     )
     repository, _, _, _, _, _ = _artifact_bindings(tmp_path / "configuration", method)
     edge = MigrationEdge(
-        "configuration-v1",
-        "configuration-v2",
+        "configuration",
+        "configuration",
         lambda record: {"coefficient": record["coefficient"], "scheme": "current"},
-        migration_id="configuration-v1-to-v2",
+        migration_id="configuration-to",
     )
-    registry = CompatibilityRegistry("configuration-v2", (edge,))
+    registry = CompatibilityRegistry("configuration", (edge,))
     artifact = migrate_configuration(
         repository,
         registry,
         {"coefficient": 2},
-        source_format_id="configuration-v1",
+        source_format_id="configuration",
         writer_id="configuration-writer",
     )
     assert artifact.manifest.artifact_id == artifact.report.output_digest
@@ -770,15 +770,15 @@ def test_runtime_configuration_migration_requires_lineage_and_commits_child(tmp_
         lambda time, state, args: jnp.ones_like(state)
     )
     edge = MigrationEdge(
-        "runtime-configuration-v1",
-        "runtime-configuration-v2",
+        "runtime-configuration",
+        "runtime-configuration",
         lambda record: {"coefficient": record["coefficient"], "current": True},
         migration_id="runtime-configuration-upgrade",
     )
-    registry = CompatibilityRegistry("runtime-configuration-v2", (edge,))
+    registry = CompatibilityRegistry("runtime-configuration", (edge,))
     report = registry.resolve(
         {"coefficient": 3},
-        source_format_id="runtime-configuration-v1",
+        source_format_id="runtime-configuration",
     )
     repository, source_manifest, source_store, source_spec, _, repository_policy = (
         _artifact_bindings(
@@ -865,7 +865,7 @@ def test_checkpoint_commit_receipt_defeats_forged_last_checkpoint_id(tmp_path):
         state.moment_states,
         state.trigger_states,
         state.output_cursor,
-        "cancelled",
+        "canceled",
         envelope.checkpoint_id,
     )
     fake_receipt = CheckpointCommitReceipt(

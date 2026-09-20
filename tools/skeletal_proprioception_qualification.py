@@ -55,8 +55,7 @@ def qualify() -> dict[str, object]:
         "primary_afferent_pps": float(output.primary_afferent_pps),
         "secondary_afferent_pps": float(output.secondary_afferent_pps),
         "claim_scope": (
-            "feline soleus fit and feline medial-gastrocnemius validation; "
-            "no human or closed-loop reflex claim"
+            "feline soleus fit and feline medial-gastrocnemius validation; no human or closed-loop reflex claim"
         ),
         "gto_status": (
             "not implemented or qualified: Eq. 2 spring exponent 3 and Eq. 6 "

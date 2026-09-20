@@ -30,11 +30,11 @@ def _univariate(values: ArrayLike, mask: ArrayLike | None) -> tuple[Array, Array
     if data.ndim != 1 or data.shape[0] < 3:
         raise ValueError("values must be a vector with at least three entries.")
     if not jnp.issubdtype(data.dtype, jnp.inexact):
-        data = data.astype(float)
+        data = data.astype("float64")
     valid = (
-        jnp.ones(data.shape, dtype=bool)
+        jnp.ones(data.shape, dtype=jnp.bool_)
         if mask is None
-        else jnp.asarray(mask, dtype=bool)
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     if valid.shape != data.shape:
         raise ValueError("mask must have the same shape as values.")
@@ -69,7 +69,7 @@ class GARCHModel(StrictModule):
     ):
         if kind not in ("garch", "gjr-garch", "egarch"):
             raise ValueError("kind must be 'garch', 'gjr-garch', or 'egarch'.")
-        dtype = jnp.result_type(omega, alpha, beta, gamma, float)
+        dtype = jnp.result_type(omega, alpha, beta, gamma, jnp.float64)
         omega_ = jnp.asarray(omega, dtype=dtype)
         alpha_ = jnp.asarray(alpha, dtype=dtype)
         beta_ = jnp.asarray(beta, dtype=dtype)
@@ -357,7 +357,7 @@ def fit_har(
     """Fit HAR using only complete, strictly historical trailing windows."""
 
     values, valid = _univariate(realized_measure, mask)
-    windows_ = tuple(int(window) for window in windows)
+    windows_ = tuple(windows)
     if not windows_ or any(window < 1 for window in windows_):
         raise ValueError("windows must be a nonempty tuple of positive integers.")
     if len(set(windows_)) != len(windows_):

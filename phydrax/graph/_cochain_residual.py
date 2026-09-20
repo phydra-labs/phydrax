@@ -80,7 +80,7 @@ def _node_degrees(graph: GraphIR, /) -> Array:
 def _degree_mask(graph: GraphIR, degree: Array, target: int, /) -> Array:
     mask = degree == int(target)
     if graph.node_mask is not None:
-        node_mask = jnp.asarray(graph.node_mask, dtype=bool)
+        node_mask = jnp.asarray(graph.node_mask, dtype=jnp.bool_)
         if node_mask.shape != mask.shape:
             raise ValueError("Graph node_mask shape must match cell_dim shape.")
         mask = mask & node_mask
@@ -94,7 +94,7 @@ def _mask_field(
     /,
 ) -> Array:
     array = jnp.asarray(value)
-    if array.ndim == 0 or int(array.shape[0]) != int(mask.shape[0]):
+    if array.ndim == 0 or array.shape[0] != mask.shape[0]:
         raise ValueError(
             f"Cochain field {name!r} must have leading full-complex cell axis "
             f"of size {mask.shape[0]}, got shape {array.shape!r}."
@@ -190,8 +190,7 @@ class CochainResidualProgram(StrictModule):
             missing = tuple(sorted(expected_outputs - supplied_outputs))
             extra = tuple(sorted(supplied_outputs - expected_outputs))
             raise ValueError(
-                "Cochain residual output schema mismatch; "
-                f"missing={missing}, extra={extra}."
+                f"Cochain residual output schema mismatch; missing={missing}, extra={extra}."
             )
         return frozendict(
             {

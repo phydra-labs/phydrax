@@ -138,10 +138,10 @@ class OffShellTransportPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Quantum occupancy must have shape (species, cell, momentum)."
             )
-        energies = np.asarray(energy_nodes, dtype=float)
-        energy_measure = np.asarray(energy_weights, dtype=float)
-        momentum_measure = np.asarray(momentum_weights, dtype=float)
-        cells = np.asarray(cell_volumes, dtype=float)
+        energies = np.asarray(energy_nodes, dtype=np.float64)
+        energy_measure = np.asarray(energy_weights, dtype=np.float64)
+        momentum_measure = np.asarray(momentum_weights, dtype=np.float64)
+        cells = np.asarray(cell_volumes, dtype=np.float64)
         if (
             energies.ndim != 1
             or energies.size < 3
@@ -401,8 +401,10 @@ def off_shell_evidence(
         )
     omega = plan.energy_nodes[None, None, None, :]
     active = (
-        jnp.asarray(plan.quantum_support.spatial_active, dtype=bool)[:, None, None, None]
-        & jnp.asarray(plan.quantum_support.momentum_active, dtype=bool)[
+        jnp.asarray(plan.quantum_support.spatial_active, dtype=jnp.bool_)[
+            :, None, None, None
+        ]
+        & jnp.asarray(plan.quantum_support.momentum_active, dtype=jnp.bool_)[
             None, :, None, None
         ]
     )
@@ -584,8 +586,10 @@ def breit_wigner_off_shell_state(
     lesser = 2.0 * gamma * distribution
     greater = 2.0 * gamma * (1.0 + eta * distribution)
     active = (
-        jnp.asarray(plan.quantum_support.spatial_active, dtype=bool)[:, None, None, None]
-        & jnp.asarray(plan.quantum_support.momentum_active, dtype=bool)[
+        jnp.asarray(plan.quantum_support.spatial_active, dtype=jnp.bool_)[
+            :, None, None, None
+        ]
+        & jnp.asarray(plan.quantum_support.momentum_active, dtype=jnp.bool_)[
             None, :, None, None
         ]
     )

@@ -244,7 +244,7 @@ class MatsubaraTwoParticleGreenFunction(StrictModule):
                     "transfer": array_tree_fingerprint(transfer),
                     "left": array_tree_fingerprint(left),
                     "right": array_tree_fingerprint(right),
-                    "mode_count": int(payload.shape[3]),
+                    "mode_count": payload.shape[3],
                     "connected": bool(connected),
                     "fermion_bank": (minimum, count),
                 }
@@ -262,7 +262,7 @@ class MatsubaraTwoParticleGreenFunction(StrictModule):
         self.finite = finite
         self.valid = valid
         self.connected = bool(connected)
-        self.mode_count = int(payload.shape[3])
+        self.mode_count = payload.shape[3]
         self.maximum_elements = capacity
         self.representation_id = identifier
 
@@ -334,7 +334,7 @@ def _crossing_residual(
         if any(item is None for item in target):
             continue
         source_value = values[index]
-        target_value = values[tuple(int(item) for item in target)]
+        target_value = values[tuple(target)]
         target_value = jnp.transpose(
             target_value, tuple(value - 3 for value in orbital_axes)
         )
@@ -382,7 +382,7 @@ def _cyclic_axis_index(
     if not np.array_equal(ordered, np.arange(ordered[0], ordered[0] + ordered.size)):
         raise ValueError("Channel conversion requires a complete contiguous cyclic axis.")
     minimum = int(ordered[0])
-    count = int(ordered.size)
+    count = ordered.size
     wraps = np.floor_divide(values - minimum, count)
     wrapped = values - count * wraps
     positions = {int(value): index for index, value in enumerate(labels)}

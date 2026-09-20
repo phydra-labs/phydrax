@@ -47,8 +47,8 @@ class KANEdgeBlock(StrictModule):
         edge_basis: AbstractEdgeBasis,
         coeffs: Any,
     ):
-        outputs = tuple(int(index) for index in output_indices)
-        inputs = tuple(int(index) for index in input_indices)
+        outputs = tuple(output_indices)
+        inputs = tuple(input_indices)
         if not outputs or len(outputs) != len(inputs):
             raise ValueError(
                 "KAN edge blocks require equally sized nonempty index sequences."
@@ -62,8 +62,7 @@ class KANEdgeBlock(StrictModule):
                 leaf.ndim < 2 or leaf.shape[:2] != (len(outputs), 1)
             ):
                 raise ValueError(
-                    "Every KAN edge-block parameter array must begin with "
-                    "(edge_count, 1)."
+                    "Every KAN edge-block parameter array must begin with (edge_count, 1)."
                 )
         self.output_indices = outputs
         self.input_indices = inputs
@@ -126,13 +125,11 @@ class KANLayer(StrictModule):
         out_shape = _get_value_shape(out_size_c)
         if len(in_shape) > 1:
             raise ValueError(
-                "KANLayer expects scalar or 1D inputs; got "
-                f"in_size={in_size_c!r} (shape={in_shape!r})."
+                f"KANLayer expects scalar or 1D inputs; got in_size={in_size_c!r} (shape={in_shape!r})."
             )
         if len(out_shape) > 1:
             raise ValueError(
-                "KANLayer expects scalar or 1D outputs; got "
-                f"out_size={out_size_c!r} (shape={out_shape!r})."
+                f"KANLayer expects scalar or 1D outputs; got out_size={out_size_c!r} (shape={out_shape!r})."
             )
         if scale_mode not in ("edge", "input", "none"):
             raise ValueError(f"Unknown KAN scale_mode: {scale_mode!r}.")
@@ -189,7 +186,7 @@ class KANLayer(StrictModule):
             raise ValueError(
                 f"KANLayer expected scalar input shape () or (1,), got {x_arr.shape}."
             )
-        if x_arr.ndim != 1 or int(x_arr.shape[0]) != in_:
+        if x_arr.ndim != 1 or x_arr.shape[0] != in_:
             raise ValueError(
                 f"KANLayer expected input shape ({in_},); got {x_arr.shape}."
             )
@@ -311,8 +308,7 @@ class KAN(_AbstractBaseModel):
         hidden_sizes_defined = hidden_sizes is not None
         if not (width_and_depth_defined ^ hidden_sizes_defined):
             raise ValueError(
-                "Must provide either `width_size` and `depth` together, or "
-                "`hidden_sizes` only."
+                "Must provide either `width_size` and `depth` together, or `hidden_sizes` only."
             )
         if width_and_depth_defined:
             if width_size is None or depth is None:
@@ -335,8 +331,7 @@ class KAN(_AbstractBaseModel):
             edge_bases = list(edge_basis)
             if len(edge_bases) != num_layers:
                 raise ValueError(
-                    f"edge_basis must have {num_layers} entries for this architecture; "
-                    f"got {len(edge_bases)}."
+                    f"edge_basis must have {num_layers} entries for this architecture; got {len(edge_bases)}."
                 )
             if not all(
                 isinstance(layer_basis, AbstractEdgeBasis) for layer_basis in edge_bases

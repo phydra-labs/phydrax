@@ -130,7 +130,7 @@ def _problem(
     return NonlinearOpenLoopGameProblem(
         phx.control.DiscreteControlDynamics(system),
         phx.dynamics.TimeGrid(
-            jnp.arange(horizon + 1, dtype=float),
+            jnp.arange(horizon + 1, dtype="float64"),
             time_id=f"{problem_id}:time",
         ),
         jnp.asarray([initial_state]),

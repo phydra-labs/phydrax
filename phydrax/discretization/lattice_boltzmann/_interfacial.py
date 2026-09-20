@@ -71,7 +71,7 @@ def isotropic_gradient(
     weights = jnp.asarray(velocity_set.weights, dtype=values.dtype)
     velocities = jnp.asarray(velocity_set.velocities, dtype=values.dtype)
     axes = _spatial_axes(velocity_set)
-    neighbours = jnp.stack(
+    neighbors = jnp.stack(
         tuple(
             jnp.roll(
                 values, shift=tuple(-component for component in direction), axis=axes
@@ -81,7 +81,7 @@ def isotropic_gradient(
         axis=-1,
     )
     cs2 = jnp.asarray(velocity_set.sound_speed_squared, dtype=values.dtype)
-    return ein.contract("...q,q,qd->...d", neighbours, weights, velocities) / (cs2 * dx)
+    return ein.contract("...q,q,qd->...d", neighbors, weights, velocities) / (cs2 * dx)
 
 
 def isotropic_laplacian(
@@ -96,7 +96,7 @@ def isotropic_laplacian(
     dx = _cell_size(cell_size, values.dtype)
     weights = jnp.asarray(velocity_set.weights, dtype=values.dtype)
     axes = _spatial_axes(velocity_set)
-    neighbours = jnp.stack(
+    neighbors = jnp.stack(
         tuple(
             jnp.roll(
                 values, shift=tuple(-component for component in direction), axis=axes
@@ -107,7 +107,7 @@ def isotropic_laplacian(
     )
     cs2 = jnp.asarray(velocity_set.sound_speed_squared, dtype=values.dtype)
     return (
-        2.0 * jnp.sum(weights * (neighbours - values[..., None]), axis=-1) / (cs2 * dx**2)
+        2.0 * jnp.sum(weights * (neighbors - values[..., None]), axis=-1) / (cs2 * dx**2)
     )
 
 
@@ -133,7 +133,7 @@ def isotropic_divergence(
     weights = jnp.asarray(velocity_set.weights, dtype=values.dtype)
     velocities = jnp.asarray(velocity_set.velocities, dtype=values.dtype)
     axes = _spatial_axes(velocity_set)
-    neighbours = jnp.stack(
+    neighbors = jnp.stack(
         tuple(
             jnp.roll(
                 values, shift=tuple(-component for component in direction), axis=axes
@@ -143,7 +143,7 @@ def isotropic_divergence(
         axis=-2,
     )
     cs2 = jnp.asarray(velocity_set.sound_speed_squared, dtype=values.dtype)
-    return ein.contract("...qd,q,qd->...", neighbours, weights, velocities) / (cs2 * dx)
+    return ein.contract("...qd,q,qd->...", neighbors, weights, velocities) / (cs2 * dx)
 
 
 def normalized_gradient(
@@ -171,7 +171,7 @@ def normalized_gradient(
     return gradient, magnitude, normal
 
 
-def _normalise_vectors(vectors: Array, epsilon: Array, /) -> tuple[Array, Array]:
+def _normalize_vectors(vectors: Array, epsilon: Array, /) -> tuple[Array, Array]:
     magnitude = jnp.sqrt(ein.contract("...d,...d->...", vectors, vectors))
     unit = vectors / jnp.maximum(magnitude, epsilon)[..., None]
     return jnp.where((magnitude > epsilon)[..., None], unit, 0.0), magnitude
@@ -239,8 +239,7 @@ class ConstitutiveDynamicWettingPlan(StrictModule, NonTrainableState):
             or not (0.0 < receding <= equilibrium <= advancing < np.pi)
         ):
             raise ValueError(
-                "Dynamic contact angles must satisfy 0 < receding <= equilibrium "
-                "<= advancing < pi."
+                "Dynamic contact angles must satisfy 0 < receding <= equilibrium <= advancing < pi."
             )
         if (
             not np.isfinite(microscopic)
@@ -363,7 +362,7 @@ def static_contact_angle_normal(
 
     interface = jnp.asarray(interface_normal)
     wall = jnp.asarray(wall_normal, dtype=interface.dtype)
-    mask = jnp.asarray(wetting_mask, dtype=bool)
+    mask = jnp.asarray(wetting_mask, dtype=jnp.bool_)
     if interface.shape != wall.shape or interface.ndim < 1:
         raise ValueError("Interface and wall normals must have identical shapes.")
     if interface.shape[-1] not in (2, 3) or mask.shape != interface.shape[:-1]:
@@ -382,7 +381,7 @@ def static_contact_angle_normal(
         ~jnp.isfinite(threshold) | (threshold <= 0.0),
         "epsilon must be finite and positive.",
     )
-    wall_unit, wall_magnitude = _normalise_vectors(wall, threshold)
+    wall_unit, wall_magnitude = _normalize_vectors(wall, threshold)
     wall_unit = eqx.error_if(
         wall_unit,
         jnp.any(mask & (~jnp.isfinite(wall_magnitude) | (wall_magnitude <= threshold))),
@@ -392,8 +391,8 @@ def static_contact_angle_normal(
         interface
         - ein.contract("...d,...d->...", interface, wall_unit)[..., None] * wall_unit
     )
-    tangent_unit, tangent_magnitude = _normalise_vectors(tangent, threshold)
-    fallback, _ = _normalise_vectors(_fallback_tangent(wall_unit), threshold)
+    tangent_unit, tangent_magnitude = _normalize_vectors(tangent, threshold)
+    fallback, _ = _normalize_vectors(_fallback_tangent(wall_unit), threshold)
     tangent_unit = jnp.where(
         (tangent_magnitude > threshold)[..., None], tangent_unit, fallback
     )
@@ -402,7 +401,7 @@ def static_contact_angle_normal(
 
 
 def continuum_surface_force(
-    colour: ArrayLike,
+    color: ArrayLike,
     velocity_set: LatticeBoltzmannVelocitySet,
     surface_tension: ArrayLike,
     cell_size: ArrayLike = 1.0,
@@ -415,7 +414,7 @@ def continuum_surface_force(
 ) -> InterfacialFields:
     """Construct the CSF force ``sigma * curvature * delta_s * normal``."""
 
-    values = _validate_scalar_field(colour, velocity_set)
+    values = _validate_scalar_field(color, velocity_set)
     sigma = jnp.asarray(surface_tension, dtype=values.dtype)
     if sigma.shape != ():
         raise ValueError("surface_tension must be scalar.")
@@ -466,7 +465,7 @@ def natural_wetting_gradient(
     phi = jnp.asarray(phase)
     grad = jnp.asarray(gradient, dtype=phi.dtype)
     wall = jnp.asarray(wall_normal, dtype=phi.dtype)
-    mask = jnp.asarray(wetting_mask, dtype=bool)
+    mask = jnp.asarray(wetting_mask, dtype=jnp.bool_)
     if grad.shape != (*phi.shape, wall.shape[-1]) or wall.shape != grad.shape:
         raise ValueError("Phase, gradient, and wall-normal shapes are incompatible.")
     if mask.shape != phi.shape:
@@ -482,7 +481,7 @@ def natural_wetting_gradient(
         "gradient_coefficient must be finite and positive.",
     )
     h = eqx.error_if(h, ~jnp.isfinite(h), "wetting_strength must be finite.")
-    wall_unit, wall_magnitude = _normalise_vectors(wall, threshold)
+    wall_unit, wall_magnitude = _normalize_vectors(wall, threshold)
     wall_unit = eqx.error_if(
         wall_unit,
         jnp.any(mask & (~jnp.isfinite(wall_magnitude) | (wall_magnitude <= threshold))),

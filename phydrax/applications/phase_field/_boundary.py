@@ -13,15 +13,15 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import FiniteElementDiscretization, IntegrationDomain
 from ...discretization.fem import FiniteElementBoundarySet
 
 
 class AbstractPhaseFieldSurfaceEnergy(StrictModule, NonTrainableState):
-    surface_energy_id: AbstractAttribute[str]
-    time_dependent: AbstractAttribute[bool]
+    surface_energy_id: eqx.AbstractVar[str]
+    time_dependent: eqx.AbstractVar[bool]
 
     @abc.abstractmethod
     def density(
@@ -41,7 +41,7 @@ class PolynomialSurfaceEnergy(AbstractPhaseFieldSurfaceEnergy):
     time_dependent: bool = eqx.field(static=True)
 
     def __init__(self, coefficients: Sequence[float] | ArrayLike, /):
-        values = np.asarray(coefficients, dtype=float)
+        values = np.asarray(coefficients, dtype=np.float64)
         if values.ndim != 1 or values.size == 0 or np.any(~np.isfinite(values)):
             raise ValueError("Surface-energy coefficients must be finite and rank one.")
         self.coefficients = jnp.asarray(values)
@@ -254,7 +254,7 @@ class PhaseFieldBoundaryPlan(StrictModule, NonTrainableState):
             periodic = {
                 facet
                 for pair in boundary_set.periodic_pairs
-                for facet in (pair.owner_facet, pair.neighbour_facet)
+                for facet in (pair.owner_facet, pair.neighbor_facet)
             }
         names = tuple(sorted(str(name) for name in patches))
         if any(not name for name in names) or len(names) != len(set(names)):
@@ -268,7 +268,7 @@ class PhaseFieldBoundaryPlan(StrictModule, NonTrainableState):
                     "Boundary entries must be (facet_ids, surface_energy, mass_flux)."
                 )
             raw_facets, surface, flux = value
-            facets = tuple(int(facet) for facet in raw_facets)
+            facets = tuple(raw_facets)
             if (
                 not facets
                 or len(facets) != len(set(facets))
@@ -287,9 +287,9 @@ class PhaseFieldBoundaryPlan(StrictModule, NonTrainableState):
                 exterior.support_id,
                 exterior.entity_set_id,
                 owner_cells=np.asarray(exterior.owner_cells)[rows],
-                neighbour_cells=np.asarray(exterior.neighbour_cells)[rows],
+                neighbor_cells=np.asarray(exterior.neighbor_cells)[rows],
                 owner_local_entities=np.asarray(exterior.owner_local_entities)[rows],
-                neighbour_local_entities=np.asarray(exterior.neighbour_local_entities)[
+                neighbor_local_entities=np.asarray(exterior.neighbor_local_entities)[
                     rows
                 ],
                 selection_id=canonical_fingerprint(

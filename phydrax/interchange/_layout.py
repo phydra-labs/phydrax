@@ -441,24 +441,24 @@ class _LayoutDecoder:
         if repetition.columns is not None:
             return int(repetition.columns) * int(repetition.rows)
         if repetition.offsets is not None:
-            return int(np.asarray(repetition.offsets).shape[0]) + 1
+            return np.asarray(repetition.offsets).shape[0] + 1
         if repetition.x_offsets is not None:
-            return int(np.asarray(repetition.x_offsets).size) + 1
+            return np.asarray(repetition.x_offsets).size + 1
         if repetition.y_offsets is not None:
-            return int(np.asarray(repetition.y_offsets).size) + 1
+            return np.asarray(repetition.y_offsets).size + 1
         return 1
 
     def _offsets(self, repetition: Any, path: str) -> np.ndarray:
         if repetition is None:
-            return np.zeros((1, 2), dtype=float)
+            return np.zeros((1, 2), dtype=np.float64)
         count = self._repetition_count(repetition)
         if count == 1 and repetition.get_offsets().size == 0:
-            return np.zeros((1, 2), dtype=float)
+            return np.zeros((1, 2), dtype=np.float64)
         if count <= 0 or count > self.policy.limits.max_nodes - self.counter.nodes:
             raise ResourceReadError(
                 "limit", f"Layout repetition {path} exceeds its resource node limit."
             )
-        offsets = np.asarray(repetition.get_offsets(), dtype=float)
+        offsets = np.asarray(repetition.get_offsets(), dtype=np.float64)
         if offsets.shape != (count, 2) or not np.all(np.isfinite(offsets)):
             _fail(
                 AdapterStatus.MALFORMED_SOURCE,
@@ -555,7 +555,7 @@ class _LayoutDecoder:
     ) -> None:
         self._property_loss(polygon, path)
         offsets = self._offsets(polygon.repetition, path)
-        points = np.asarray(polygon.points, dtype=float)
+        points = np.asarray(polygon.points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 2 or not np.all(np.isfinite(points)):
             _fail(
                 AdapterStatus.MALFORMED_SOURCE,
@@ -622,7 +622,7 @@ class _LayoutDecoder:
             for polygon_index, polygon in enumerate(polygons):
                 self.counter.bump()
                 points = _transform_points(
-                    np.asarray(polygon.points, dtype=float), instance
+                    np.asarray(polygon.points, dtype=np.float64), instance
                 )
                 self._region(
                     points,
@@ -683,7 +683,7 @@ class _LayoutDecoder:
         top = self._top_cell()
         root_transform = np.asarray(
             ((self.scale, 0.0, 0.0), (0.0, self.scale, 0.0), (0.0, 0.0, 1.0)),
-            dtype=float,
+            dtype=np.float64,
         )
         self._visit(top, root_transform, (str(top.name),), 1)
         if not self.regions:
@@ -795,7 +795,7 @@ def _source_units(
 def _translation(offset: np.ndarray) -> np.ndarray:
     return np.asarray(
         ((1.0, 0.0, float(offset[0])), (0.0, 1.0, float(offset[1])), (0.0, 0.0, 1.0)),
-        dtype=float,
+        dtype=np.float64,
     )
 
 
@@ -804,7 +804,7 @@ def _reference_transform(
     path: str,
     manifest: ResourceManifest,
 ) -> np.ndarray:
-    origin = np.asarray(reference.origin, dtype=float)
+    origin = np.asarray(reference.origin, dtype=np.float64)
     rotation = reference.rotation
     magnification = reference.magnification
     if (
@@ -832,9 +832,9 @@ def _reference_transform(
     sine = math.sin(angle)
     reflection = -1.0 if reference.x_reflection else 1.0
     linear = scale * np.asarray(
-        ((cosine, -sine * reflection), (sine, cosine * reflection)), dtype=float
+        ((cosine, -sine * reflection), (sine, cosine * reflection)), dtype=np.float64
     )
-    result = np.eye(3, dtype=float)
+    result = np.eye(3, dtype=np.float64)
     result[:2, :2] = linear
     result[:2, 2] = origin
     return result
@@ -849,7 +849,7 @@ def _transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
 
 
 def _canonical_polygon(points: np.ndarray) -> np.ndarray:
-    values = np.asarray(points, dtype=float)
+    values = np.asarray(points, dtype=np.float64)
     if values.ndim != 2 or values.shape[1] != 2 or not np.all(np.isfinite(values)):
         _fail(AdapterStatus.MALFORMED_SOURCE, "Layout polygon coordinates are invalid.")
     if values.shape[0] > 1 and np.array_equal(values[0], values[-1]):
@@ -859,7 +859,7 @@ def _canonical_polygon(points: np.ndarray) -> np.ndarray:
             AdapterStatus.MALFORMED_SOURCE,
             "Layout polygons require at least three vertices.",
         )
-    keep = np.ones((values.shape[0],), dtype=bool)
+    keep = np.ones((values.shape[0],), dtype=np.bool_)
     keep[1:] = np.any(values[1:] != values[:-1], axis=1)
     values = values[keep]
     if values.shape[0] < 3 or len({tuple(row) for row in values}) < 3:
@@ -997,8 +997,7 @@ def decode_layout_resource(
         ),
         coordinate_mapping=(
             (
-                f"source user unit {user_unit:.17g} m -> target unit "
-                f"{policy.coordinate_contract.length_unit.symbol}"
+                f"source user unit {user_unit:.17g} m -> target unit {policy.coordinate_contract.length_unit.symbol}"
             ),
             "hierarchical affine occurrences -> explicit planar region occurrences",
         ),

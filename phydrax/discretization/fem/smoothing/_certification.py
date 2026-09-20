@@ -32,7 +32,7 @@ def certify_smoothing_operator(
     energy_evidence: SmoothingEnergyEvidence = "none",
 ) -> SmoothingEvidence:
     matrix = jnp.asarray(stiffness)
-    constrained = jnp.asarray(constrained_dofs, dtype=bool)
+    constrained = jnp.asarray(constrained_dofs, dtype=jnp.bool_)
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
         raise ValueError("Smoothing stiffness must be one square matrix.")
     if constrained.shape != (matrix.shape[0],):

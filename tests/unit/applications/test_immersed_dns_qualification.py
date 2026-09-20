@@ -226,7 +226,7 @@ def regimes():
         markers.plan.marker_ids,
         jnp.zeros((markers.capacity,), dtype=jnp.int32),
         jnp.zeros((markers.capacity, 1), dtype=jnp.int32),
-        jnp.ones((markers.capacity, 1), dtype=bool),
+        jnp.ones((markers.capacity, 1), dtype="bool"),
         rank_count=1,
     )
     distributed_transfer = DistributedMACMarkerTransfer(transfer, ownership, 0)
@@ -330,7 +330,7 @@ def test_profile_declares_separate_unsigned_candidate_support_and_campaigns():
 
 def test_load_provenance_distinguishes_unavailable_from_available_zero(regimes):
     regime = regimes["marker"]
-    plan = regime.load_plan(jnp.asarray((41,)), 2, reference_point_id="body-41-centre")
+    plan = regime.load_plan(jnp.asarray((41,)), 2, reference_point_id="body-41-center")
     velocity = jnp.asarray(((0.25, 0.0),))
     angular = jnp.zeros((1, 1))
     available_zero = plan.record(
@@ -362,7 +362,7 @@ def test_load_provenance_distinguishes_unavailable_from_available_zero(regimes):
     assert available_zero.geometry_id == regime.geometry_id
     assert available_zero.route_id == regime.route_id
     assert available_zero.topology_epoch_id == regime.topology_epoch_id
-    assert available_zero.reference_point_id == "body-41-centre"
+    assert available_zero.reference_point_id == "body-41-center"
     assert available_zero.interval_id == "load-window-7"
     assert available_zero.successful
     assert jnp.allclose(available_zero.force, jnp.asarray(((2.0, 0.0),)))

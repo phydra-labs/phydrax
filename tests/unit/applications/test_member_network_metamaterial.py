@@ -43,7 +43,7 @@ def _ligament_comparison_definition():
     reference = mn.MemberReferenceState(structure, positions)
     dofs = mn.MemberDOFLayout(
         structure,
-        rotation_constrained=jnp.ones((5, 3), dtype=bool),
+        rotation_constrained=jnp.ones((5, 3), dtype="bool"),
     )
     definition = mn.MemberNetworkDefinition(
         structure,

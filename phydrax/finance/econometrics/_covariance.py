@@ -228,7 +228,7 @@ def prepare_covariance(returns: ReturnResult, /) -> CovariancePlan:
         {
             "kind": "finance-covariance-plan",
             "returns": returns.result_id,
-            "shape": tuple(int(size) for size in values.shape),
+            "shape": tuple(values.shape),
         }
     )
     return CovariancePlan(
@@ -238,8 +238,8 @@ def prepare_covariance(returns: ReturnResult, /) -> CovariancePlan:
         effective_sample_count=effective,
         data_id=returns.result_id,
         plan_id=plan_id,
-        asset_count=int(values.shape[-1]),
-        observation_capacity=int(values.shape[0]),
+        asset_count=values.shape[-1],
+        observation_capacity=values.shape[0],
     )
 
 

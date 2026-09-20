@@ -29,7 +29,7 @@ def _map(
         equation_labels,
         equation_indices,
         exponents,
-        jnp.asarray(coefficients, dtype=float),
+        jnp.asarray(coefficients, dtype="float64"),
     )
     return SparsePolynomialMap(system)
 

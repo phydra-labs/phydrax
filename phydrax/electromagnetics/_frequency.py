@@ -41,9 +41,9 @@ class MaxwellFrequencySystem:
         *,
         tolerance: float = 1e-10,
     ) -> MaxwellFrequencySystem:
-        curl_curl = np.asarray(curl_curl_operator, dtype=float)
-        permittivity = np.asarray(permittivity_mass, dtype=float)
-        conductivity = np.asarray(conductivity_mass, dtype=float)
+        curl_curl = np.asarray(curl_curl_operator, dtype=np.float64)
+        permittivity = np.asarray(permittivity_mass, dtype=np.float64)
+        conductivity = np.asarray(conductivity_mass, dtype=np.float64)
         if curl_curl.ndim != 2 or curl_curl.shape[0] != curl_curl.shape[1]:
             raise ValueError("Maxwell operators must be square.")
         if permittivity.shape != curl_curl.shape or conductivity.shape != curl_curl.shape:
@@ -82,7 +82,7 @@ class MaxwellFrequencySystem:
             raise ValueError("Maxwell impressed current has incompatible shape.")
         omega = float(angular_frequency_rad_s)
         matrix = (
-            self.curl_curl_operator.astype(complex)
+            self.curl_curl_operator.astype("complex128")
             - omega**2 * self.permittivity_mass
             + 1j * omega * self.conductivity_mass
         )

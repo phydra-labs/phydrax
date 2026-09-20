@@ -39,7 +39,7 @@ class DoubleWellKinkPlan(StrictModule):
         residual_tolerance: float = 1e-10,
         maximum_matrix_elements: int = 10_000_000,
     ):
-        points = np.asarray(coordinates, dtype=float)
+        points = np.asarray(coordinates, dtype=np.float64)
         if not isinstance(free_energy, DoubleWellFreeEnergy):
             raise TypeError("free_energy must be DoubleWellFreeEnergy.")
         coefficient = float(gradient_coefficient)
@@ -263,7 +263,7 @@ def solve_double_well_kink(
     return DoubleWellKinkResult(
         field=field,
         residual_history=jnp.asarray(histories),
-        accepted_steps=jnp.asarray(accepted, dtype=bool),
+        accepted_steps=jnp.asarray(accepted, dtype=jnp.bool_),
         evidence=evidence,
         converged=jnp.asarray(converged),
         plan_id=plan.plan_id,

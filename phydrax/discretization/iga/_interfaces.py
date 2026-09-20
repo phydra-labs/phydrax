@@ -84,8 +84,8 @@ class InterfaceParameterMap(StrictModule, NonTrainableState):
         *,
         rank_tolerance: float = 1.0e-12,
     ):
-        matrix_host = np.asarray(matrix, dtype=float)
-        offset_host = np.asarray(offset, dtype=float)
+        matrix_host = np.asarray(matrix, dtype=np.float64)
+        offset_host = np.asarray(offset, dtype=np.float64)
         tolerance = _positive_finite("rank_tolerance", rank_tolerance)
         if matrix_host.ndim != 2 or min(matrix_host.shape) <= 0:
             raise ValueError("Interface parameter matrix must be nonempty and rank two.")
@@ -442,8 +442,8 @@ def certify_patch_interface(
     projective_residual = 0.0
     projective_scale = 1.0
     if left_projective_weights is not None and right_projective_weights is not None:
-        left_weights = np.asarray(left_projective_weights, dtype=float)
-        right_weights = np.asarray(right_projective_weights, dtype=float)
+        left_weights = np.asarray(left_projective_weights, dtype=np.float64)
+        right_weights = np.asarray(right_projective_weights, dtype=np.float64)
         if (
             left_weights.shape != common.shape[:-1]
             or right_weights.shape != left_weights.shape
@@ -484,7 +484,7 @@ def certify_patch_interface(
     minimum_alignment = float(np.min(signed_alignments))
     if not np.isfinite(minimum_alignment) or minimum_alignment < 1.0 - orientation_tol:
         raise ValueError("Patch interface orientation qualification failed.")
-    count = int(common.shape[0])
+    count = common.shape[0]
     left_indices = jnp.full((count,), interface.left_chart, dtype=jnp.int32)
     right_indices = jnp.full((count,), interface.right_chart, dtype=jnp.int32)
     left_normal = np.asarray(
@@ -558,8 +558,8 @@ def _lower_c0_constraint_map(
     right_dtype = _coordinate_dtype(right_space)
     if left_dtype != right_dtype:
         raise TypeError("C0 interface spaces must have equal coordinate dtype.")
-    left = tuple(int(value) for value in left_trace_dofs)
-    right = tuple(int(value) for value in right_trace_dofs)
+    left = tuple(left_trace_dofs)
+    right = tuple(right_trace_dofs)
     if not left or len(left) != len(right):
         raise ValueError("C0 trace routes must be nonempty and have equal length.")
     if len(set(left)) != len(left) or len(set(right)) != len(right):
@@ -848,8 +848,8 @@ class MortarCrosspointPlan(StrictModule, NonTrainableState):
     ):
         primal_size = int(primal_trace_size)
         multiplier_size_ = int(multiplier_size)
-        crosspoints = tuple(int(value) for value in crosspoint_trace_dofs)
-        excluded = tuple(int(value) for value in excluded_multiplier_dofs)
+        crosspoints = tuple(crosspoint_trace_dofs)
+        excluded = tuple(excluded_multiplier_dofs)
         owner = str(owner_patch_id)
         if primal_size <= 0 or multiplier_size_ <= 0 or not owner:
             raise ValueError("Mortar crosspoint dimensions and owner must be valid.")
@@ -914,7 +914,7 @@ def certify_mortar_inf_sup(
     if not isinstance(crosspoint_plan, MortarCrosspointPlan):
         raise TypeError("Mortar stability requires a MortarCrosspointPlan.")
     lower_bound = _positive_finite("required_lower_bound", required_lower_bound)
-    coupling = np.asarray(normalized_coupling, dtype=float)
+    coupling = np.asarray(normalized_coupling, dtype=np.float64)
     expected_shape = (
         crosspoint_plan.multiplier_size,
         crosspoint_plan.primal_trace_size,

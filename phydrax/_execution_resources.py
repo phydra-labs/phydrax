@@ -469,7 +469,7 @@ class ExecutionGroupSpec:
         process_host_ids: Mapping[int, str] | Sequence[tuple[int, str]] = (),
     ) -> None:
         group = _identifier(group_id, "group_id")
-        processes = tuple(int(value) for value in process_indices)
+        processes = tuple(process_indices)
         devices = tuple((int(process), int(device)) for process, device in device_keys)
         axes = tuple(
             (_identifier(name, "mesh axis"), int(size)) for name, size in mesh_axes

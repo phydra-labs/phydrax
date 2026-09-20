@@ -57,7 +57,7 @@ def _case():
         pair_policy=phx.discretization.ContactPairPolicy(
             2,
             body_ids=jnp.ones((2,), dtype=jnp.int64),
-            static_mask=jnp.ones((2,), dtype=bool),
+            static_mask=jnp.ones((2,), dtype="bool"),
         ),
     )
     static = phx.discretization.PreparedCollisionSurface(

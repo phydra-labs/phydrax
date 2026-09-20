@@ -257,9 +257,7 @@ class ScalarHierarchyLayout(StrictModule, NonTrainableState):
         polarization_order: int = 16,
         relic_order: int = 16,
     ):
-        orders = tuple(
-            int(value) for value in (photon_order, polarization_order, relic_order)
-        )
+        orders = tuple((photon_order, polarization_order, relic_order))
         if any(value < 2 for value in orders):
             raise ValueError("Scalar hierarchy orders must be at least two.")
         names = (
@@ -563,7 +561,7 @@ class ScalarEinsteinBoltzmannPlan(StrictModule, NonTrainableState):
         if float(np.asarray(background.curvature_density)) != 0.0:
             raise ValueError("Native scalar Einstein-Boltzmann execution is flat-FLRW.")
         k = jnp.asarray(wavenumbers, dtype=thermodynamics.scale_factors.dtype)
-        ell_host = np.asarray(multipoles, dtype=int).reshape((-1,))
+        ell_host = np.asarray(multipoles, dtype=np.int64).reshape((-1,))
         baryon = float(baryon_matter_fraction)
         constraint = float(constraint_tolerance)
         overlap = (
@@ -597,7 +595,7 @@ class ScalarEinsteinBoltzmannPlan(StrictModule, NonTrainableState):
         self.layout = layout
         self.transitions = transitions
         self.multipoles = jnp.asarray(ell_host, dtype=jnp.int32)
-        self.multipole_values = tuple(int(value) for value in ell_host)
+        self.multipole_values = tuple(ell_host)
         self.baryon_matter_fraction = baryon
         self.constraint_tolerance = constraint
         self.overlap_tolerance = overlap
@@ -1121,7 +1119,7 @@ class LineOfSightSpectraPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, radial: FlatRadialKernelPlan, multipoles: ArrayLike, /):
-        ell = np.asarray(multipoles, dtype=int).reshape((-1,))
+        ell = np.asarray(multipoles, dtype=np.int64).reshape((-1,))
         if ell.size < 1 or np.any(ell < 2) or np.any(ell > radial.maximum_multipole):
             raise ValueError("Line-of-sight multipoles are invalid.")
         self.radial = radial

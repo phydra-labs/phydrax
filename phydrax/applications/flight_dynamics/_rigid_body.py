@@ -74,8 +74,8 @@ class RigidBodyFlightSystem:
         gravity_inertial_m_s2: ArrayLike = (0.0, 0.0, -9.80665),
         tolerance: float = 1e-10,
     ) -> RigidBodyFlightSystem:
-        inertia = np.asarray(inertia_body_kg_m2, dtype=float)
-        gravity = np.asarray(gravity_inertial_m_s2, dtype=float)
+        inertia = np.asarray(inertia_body_kg_m2, dtype=np.float64)
+        gravity = np.asarray(gravity_inertial_m_s2, dtype=np.float64)
         if mass_kg <= 0 or inertia.shape != (3, 3) or gravity.shape != (3,):
             raise ValueError("Flight mass, inertia, or gravity has incompatible shape.")
         if not np.allclose(inertia, inertia.T, atol=tolerance, rtol=0):

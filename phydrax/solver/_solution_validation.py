@@ -38,16 +38,16 @@ def validate_solution_arrays(
     owner: str,
 ) -> ValidatedSolutionArrays:
     """Validate the common sample/time/state layout of a saved result."""
-    samples = tuple(int(size) for size in sample_shape)
+    samples = tuple(sample_shape)
     if any(size <= 0 for size in samples):
         raise ValueError(f"{owner} sample dimensions must be positive.")
-    time_values = jnp.asarray(times, dtype=float)
+    time_values = jnp.asarray(times, dtype=jnp.float64)
     state_values = jnp.asarray(states)
-    valid_values = jnp.asarray(valid, dtype=bool)
+    valid_values = jnp.asarray(valid, dtype=jnp.bool_)
     if time_layout == "shared":
-        if time_values.ndim != 1 or int(time_values.size) <= 0:
+        if time_values.ndim != 1 or time_values.size <= 0:
             raise ValueError(f"{owner} times must be a non-empty rank-1 array.")
-        trajectory_shape = samples + (int(time_values.size),)
+        trajectory_shape = samples + (time_values.size,)
     elif time_layout == "per_path":
         if time_values.ndim != len(samples) + 1:
             raise ValueError(
@@ -55,21 +55,16 @@ def validate_solution_arrays(
             )
         if tuple(time_values.shape[: len(samples)]) != samples:
             raise ValueError(f"{owner} times do not match sample_shape.")
-        trajectory_shape = samples + (int(time_values.shape[-1]),)
+        trajectory_shape = samples + (time_values.shape[-1],)
     else:
         raise ValueError(f"Unknown saved-solution time layout {time_layout!r}.")
     if tuple(state_values.shape[: len(trajectory_shape)]) != trajectory_shape:
         raise ValueError(f"{owner} states must begin with sample_shape + (num_times,).")
     inferred_state = tuple(state_values.shape[len(trajectory_shape) :])
-    declared_state = (
-        inferred_state
-        if state_shape is None
-        else tuple(int(size) for size in state_shape)
-    )
+    declared_state = inferred_state if state_shape is None else tuple(state_shape)
     if inferred_state != declared_state:
         raise ValueError(
-            f"{owner} states must end with state shape {declared_state}; "
-            f"got {inferred_state}."
+            f"{owner} states must end with state shape {declared_state}; got {inferred_state}."
         )
     if valid_values.shape != trajectory_shape:
         raise ValueError(

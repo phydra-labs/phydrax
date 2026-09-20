@@ -268,7 +268,7 @@ def _unloading_qualification():
         return ForwardContinuationResult(
             coordinates,
             jnp.zeros_like(factors),
-            jnp.ones_like(factors, dtype=bool),
+            jnp.ones_like(factors, dtype="bool"),
         )
 
     plan = UnloadedReferenceRecoveryPlan(
@@ -297,7 +297,7 @@ def _unloading_qualification():
     passed = result.successful & (recovery_error < 2.0e-6) & checkpoint_exact
     return {
         "passed": bool(passed),
-        "load_stations": int(plan.load_factors.size),
+        "load_stations": plan.load_factors.size,
         "recovery_error": float(recovery_error),
         "relative_loaded_residual": float(result.evidence.relative_residual),
         "zero_load_residual": float(result.evidence.zero_load_residual),

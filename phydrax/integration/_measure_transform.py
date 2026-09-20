@@ -50,8 +50,7 @@ def lower_finite_measure(realization: Any, /) -> FiniteMeasureRealization:
     if isinstance(realization.batch, WeightedSampleBatch):
         return _lower_weighted_measure(realization, realization.batch)
     raise TypeError(
-        "Finite-measure transformations require a one-axis PointIntegrationBatch "
-        "or WeightedSampleBatch."
+        "Finite-measure transformations require a one-axis PointIntegrationBatch or WeightedSampleBatch."
     )
 
 
@@ -151,10 +150,10 @@ def transformed_weighted_realization(
         )
         support_valid = measure.support_valid
     if selection_mask is not None:
-        selection_mask_ = jnp.asarray(selection_mask, dtype=bool)
+        selection_mask_ = jnp.asarray(selection_mask, dtype=jnp.bool_)
         if selection_mask_.shape != log_weights_.shape:
             raise ValueError("selection_mask must match the transformed output support.")
-        mask = jnp.asarray(mask, dtype=bool) & selection_mask_
+        mask = jnp.asarray(mask, dtype=jnp.bool_) & selection_mask_
     if ancestry is None:
         ancestry = jnp.arange(log_weights_.shape[0], dtype=jnp.int32)
     if isinstance(measure.axis, str):
@@ -223,7 +222,7 @@ def _single_named_axis(batch: PointIntegrationBatch, /) -> tuple[str, int]:
         raise ValueError("Stratified realizations must be transformed within strata.")
     if "antithetic" in batch.provenance:
         raise ValueError("Antithetic realizations must preserve their paired blocks.")
-    return axis, int(batch.weights.shape[0])
+    return axis, batch.weights.shape[0]
 
 
 def _single_weighted_axis(batch: WeightedSampleBatch, /) -> tuple[str | int, int]:
@@ -239,10 +238,10 @@ def _single_weighted_axis(batch: WeightedSampleBatch, /) -> tuple[str | int, int
     if isinstance(batch.log_weights, cx.AxisArray):
         if not isinstance(axis, str) or batch.log_weights.dims != (axis,):
             raise ValueError("Named transformations require one-dimensional log weights.")
-        return axis, int(batch.log_weights.shape[0])
+        return axis, batch.log_weights.shape[0]
     if not isinstance(axis, int) or batch.log_weights.ndim != 1 or axis != 0:
         raise ValueError("Raw transformations require a leading one-dimensional axis.")
-    return axis, int(batch.log_weights.shape[0])
+    return axis, batch.log_weights.shape[0]
 
 
 def _lower_point_measure(
@@ -253,15 +252,14 @@ def _lower_point_measure(
     target = realization.target
     if not isinstance(target, (DiscreteMeasureTarget, ProbabilityTarget)):
         raise TypeError(
-            "Point transformations currently support probability and external "
-            "discrete targets only."
+            "Point transformations currently support probability and external discrete targets only."
         )
     axis, count = _single_named_axis(batch)
-    values = jnp.asarray(batch.weights.data, dtype=float)
+    values = jnp.asarray(batch.weights.data, dtype=jnp.float64)
     mask = (
-        jnp.ones((count,), dtype=bool)
+        jnp.ones((count,), dtype=jnp.bool_)
         if batch.mask is None
-        else jnp.asarray(batch.mask.data, dtype=bool)
+        else jnp.asarray(batch.mask.data, dtype=jnp.bool_)
     )
     if bool(jnp.any(mask & (~jnp.isfinite(values) | (values < 0.0)))):
         raise ValueError("Finite measures require finite nonnegative weights.")
@@ -305,23 +303,22 @@ def _lower_weighted_measure(
     target = realization.target
     if not isinstance(target, WeightedSampleTarget):
         raise TypeError(
-            "Weighted transformations require an externally materialized "
-            "WeightedSampleTarget."
+            "Weighted transformations require an externally materialized WeightedSampleTarget."
         )
     axis, count = _single_weighted_axis(batch)
     if isinstance(batch.log_weights, cx.AxisArray):
-        values = jnp.asarray(batch.log_weights.data, dtype=float)
+        values = jnp.asarray(batch.log_weights.data, dtype=jnp.float64)
         mask = (
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype=jnp.bool_)
             if batch.mask is None
-            else jnp.asarray(cast(cx.AxisArray, batch.mask).data, dtype=bool)
+            else jnp.asarray(cast(cx.AxisArray, batch.mask).data, dtype=jnp.bool_)
         )
     else:
-        values = jnp.asarray(batch.log_weights, dtype=float)
+        values = jnp.asarray(batch.log_weights, dtype=jnp.float64)
         mask = (
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype=jnp.bool_)
             if batch.mask is None
-            else jnp.asarray(batch.mask, dtype=bool)
+            else jnp.asarray(batch.mask, dtype=jnp.bool_)
         )
     weights, active, valid, log_mass = normalized_weights(
         count,
@@ -330,8 +327,7 @@ def _lower_weighted_measure(
     )
     if not bool(valid):
         raise ValueError(
-            "Finite measures require finite or negative-infinite log weights and "
-            "positive source mass."
+            "Finite measures require finite or negative-infinite log weights and positive source mass."
         )
     normalized_log_weights = log_weights_from_normalized(weights, active)
     physical_mass = (

@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-import equinox as eqx
 import jax.numpy as jnp
+
+from phydrax._strict import StrictModule
 
 from ._ir import batch_graphs, GraphIR, unbatch_graph
 from ._kernels import segment_sum
 
 
-class Data(eqx.Module):
+class Data(StrictModule):
     """Ergonomic single-graph data container.
 
     This mirrors common `edge_index` workflows while preserving conversion into
@@ -46,10 +47,10 @@ class Data(eqx.Module):
     @property
     def num_nodes(self) -> int:
         if self.x is not None:
-            return int(self.x.shape[0])
+            return self.x.shape[0]
         if self.pos is not None:
-            return int(self.pos.shape[0])
-        if self.edge_index is not None and int(self.edge_index.size) > 0:
+            return self.pos.shape[0]
+        if self.edge_index is not None and self.edge_index.size > 0:
             return int(jnp.max(self.edge_index)) + 1
         return 0
 
@@ -57,19 +58,19 @@ class Data(eqx.Module):
     def num_edges(self) -> int:
         if self.edge_index is None:
             return 0
-        return int(self.edge_index.shape[1])
+        return self.edge_index.shape[1]
 
     @property
     def num_node_features(self) -> int:
         if self.x is None or self.x.ndim < 2:
             return 0
-        return int(self.x.shape[-1])
+        return self.x.shape[-1]
 
     @property
     def num_edge_features(self) -> int:
         if self.edge_attr is None or self.edge_attr.ndim < 2:
             return 0
-        return int(self.edge_attr.shape[-1])
+        return self.edge_attr.shape[-1]
 
     def to_graph_ir(self, *, validate: bool = True) -> GraphIR:
         if self.edge_index is None:
@@ -86,7 +87,7 @@ class Data(eqx.Module):
 
         nodes = self.x if self.x is not None else self.pos
         globals_ = None
-        if self.y is not None and self.y.ndim >= 1 and int(self.y.shape[0]) == 1:
+        if self.y is not None and self.y.ndim >= 1 and self.y.shape[0] == 1:
             globals_ = self.y
 
         return GraphIR(
@@ -116,26 +117,79 @@ class Data(eqx.Module):
         )
 
 
-class Batch(Data):
+class Batch(StrictModule):
     """Batch of graphs represented as one disconnected sparse graph."""
+
+    data: Data
+
+    def __init__(self, data: Data, /):
+        if not isinstance(data, Data):
+            raise TypeError("data must be Data.")
+        self.data = data
+
+    @property
+    def x(self):
+        return self.data.x
+
+    @property
+    def edge_index(self):
+        return self.data.edge_index
+
+    @property
+    def edge_attr(self):
+        return self.data.edge_attr
+
+    @property
+    def y(self):
+        return self.data.y
+
+    @property
+    def pos(self):
+        return self.data.pos
+
+    @property
+    def batch(self):
+        return self.data.batch
+
+    @property
+    def ptr(self):
+        return self.data.ptr
+
+    @property
+    def num_nodes(self) -> int:
+        return self.data.num_nodes
+
+    @property
+    def num_edges(self) -> int:
+        return self.data.num_edges
+
+    @property
+    def num_node_features(self) -> int:
+        return self.data.num_node_features
+
+    @property
+    def num_edge_features(self) -> int:
+        return self.data.num_edge_features
 
     @classmethod
     def from_data_list(cls, data_list: Sequence[Data], /) -> "Batch":
         if len(data_list) == 0:
             return cls(
-                x=None,
-                edge_index=None,
-                edge_attr=None,
-                y=None,
-                pos=None,
-                batch=None,
-                ptr=None,
+                Data(
+                    x=None,
+                    edge_index=None,
+                    edge_attr=None,
+                    y=None,
+                    pos=None,
+                    batch=None,
+                    ptr=None,
+                )
             )
 
         graphs = tuple(data.to_graph_ir(validate=True) for data in data_list)
         batched = batch_graphs(graphs, validate=True)
 
-        n_graphs = int(batched.n_node.shape[0])
+        n_graphs = batched.n_node.shape[0]
         batch = jnp.repeat(
             jnp.arange(n_graphs, dtype=jnp.int32),
             batched.n_node,
@@ -157,13 +211,15 @@ class Batch(Data):
             y = None
 
         return cls(
-            x=batched.nodes,
-            edge_index=batched.edge_index,
-            edge_attr=batched.edges,
-            y=y,
-            pos=None,
-            batch=batch,
-            ptr=ptr,
+            Data(
+                x=batched.nodes,
+                edge_index=batched.edge_index,
+                edge_attr=batched.edges,
+                y=y,
+                pos=None,
+                batch=batch,
+                ptr=ptr,
+            )
         )
 
     def to_data_list(self) -> list[Data]:
@@ -188,8 +244,8 @@ class Batch(Data):
     @property
     def num_graphs(self) -> int:
         if self.ptr is not None:
-            return int(self.ptr.shape[0]) - 1
-        if self.batch is not None and int(self.batch.size) > 0:
+            return self.ptr.shape[0] - 1
+        if self.batch is not None and self.batch.size > 0:
             return int(jnp.max(self.batch)) + 1
         return 1
 
@@ -206,13 +262,13 @@ class Batch(Data):
 
         if self.ptr is not None:
             ptr = jnp.asarray(self.ptr, dtype=jnp.int32)
-            if ptr.ndim != 1 or int(ptr.shape[0]) < 2:
+            if ptr.ndim != 1 or ptr.shape[0] < 2:
                 raise ValueError("`ptr` must be rank-1 with length >= 2.")
             n_node = ptr[1:] - ptr[:-1]
-            n_graph = int(n_node.shape[0])
+            n_graph = n_node.shape[0]
         elif self.batch is not None:
             batch = jnp.asarray(self.batch, dtype=jnp.int32)
-            n_graph = int(jnp.max(batch)) + 1 if int(batch.size) > 0 else 1
+            n_graph = int(jnp.max(batch)) + 1 if batch.size > 0 else 1
             n_node = segment_sum(
                 jnp.ones((batch.shape[0],), dtype=jnp.int32),
                 batch,
@@ -222,7 +278,7 @@ class Batch(Data):
             n_node = jnp.asarray([self.num_nodes], dtype=jnp.int32)
             n_graph = 1
 
-        if int(senders.shape[0]) == 0:
+        if senders.shape[0] == 0:
             n_edge = jnp.zeros((n_graph,), dtype=jnp.int32)
         elif self.batch is not None:
             sender_graph = jnp.asarray(self.batch, dtype=jnp.int32)[senders]
@@ -240,12 +296,10 @@ class Batch(Data):
                 n_graph,
             ).astype(jnp.int32)
         else:
-            n_edge = jnp.asarray([int(senders.shape[0])], dtype=jnp.int32)
+            n_edge = jnp.asarray([senders.shape[0]], dtype=jnp.int32)
 
         nodes = self.x if self.x is not None else self.pos
-        globals_ = (
-            self.y if (self.y is not None and int(self.y.shape[0]) == n_graph) else None
-        )
+        globals_ = self.y if (self.y is not None and self.y.shape[0] == n_graph) else None
 
         return GraphIR(
             nodes=nodes,

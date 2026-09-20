@@ -107,8 +107,7 @@ def solve_structured_nonlinear(
         prepared = program
     else:
         raise TypeError(
-            "program must be StructuredNonlinearProgram or "
-            "PreparedStructuredNonlinearProgram."
+            "program must be StructuredNonlinearProgram or PreparedStructuredNonlinearProgram."
         )
     if warm_start is not None:
         if not method.structured_capabilities.portable_warm_start:

@@ -154,7 +154,7 @@ def _assemble_graph(
         .at[edge_cases]
         .add(edge_mask.astype(jnp.int32))
     )
-    edge_capacity = int(senders.shape[0] // case_count) if case_count else 0
+    edge_capacity = senders.shape[0] // case_count if case_count else 0
     graph = GraphIR(
         nodes={
             "atomic_numbers": atomic_numbers,
@@ -179,7 +179,7 @@ def _assemble_graph(
         n_edge=jnp.full((case_count,), edge_capacity, dtype=jnp.int32),
         node_mask=atom_mask,
         edge_mask=edge_mask,
-        graph_mask=jnp.ones((case_count,), dtype=bool),
+        graph_mask=jnp.ones((case_count,), dtype=jnp.bool_),
     )
     edge_index = jnp.arange(edge_capacity, dtype=jnp.int32)
     safe_receivers = jnp.where(edge_mask, receivers, atom_capacity)

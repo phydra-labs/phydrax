@@ -62,8 +62,8 @@ class MetricCellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         singular_values = np.linalg.svd(np.asarray(cell.vectors), compute_uv=False)
         fractional_radius = radius / float(singular_values[-1])
         unit_box = ParticleBox(
-            np.zeros((cell.ambient_dimension,), dtype=float),
-            np.ones((cell.ambient_dimension,), dtype=float),
+            np.zeros((cell.ambient_dimension,), dtype=np.float64),
+            np.ones((cell.ambient_dimension,), dtype=np.float64),
             periodic_axes=cell.periodic_axes,
         )
         base = CellListParticleNeighborhoodPlan(

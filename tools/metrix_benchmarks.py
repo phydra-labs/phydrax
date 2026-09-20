@@ -32,7 +32,7 @@ def _metric(dimension: int) -> phx.metrix.RiemannianMetric:
 
 
 def _output_bytes(tree: Any) -> int:
-    return sum(int(leaf.size * leaf.dtype.itemsize) for leaf in jax.tree.leaves(tree))
+    return sum(leaf.size * leaf.dtype.itemsize for leaf in jax.tree.leaves(tree))
 
 
 def _benchmark(
@@ -113,15 +113,15 @@ def run_state_geometry_benchmarks(
         dimension_ = int(dimension)
         if dimension_ < 2:
             raise ValueError("state-geometry benchmark dimensions must be at least two.")
-        raw = jnp.arange(dimension_**2, dtype=float).reshape((dimension_, dimension_))
+        raw = jnp.arange(dimension_**2, dtype="float64").reshape((dimension_, dimension_))
         skew = 1e-2 * (raw - raw.T)
         symmetric = 5e-3 * (raw + raw.T)
         identity = jnp.eye(dimension_)
         so = phx.metrix.SpecialOrthogonalStateGeometry(dimension_)
         spd = phx.metrix.SymmetricPositiveDefiniteStateGeometry(dimension_)
-        complex_identity = jnp.eye(dimension_, dtype=complex)
-        skew_hermitian = skew.astype(complex) + 1j * symmetric
-        hermitian = symmetric.astype(complex) + 1j * skew
+        complex_identity = jnp.eye(dimension_, dtype="complex128")
+        skew_hermitian = skew.astype("complex128") + 1j * symmetric
+        hermitian = symmetric.astype("complex128") + 1j * skew
         unitary = phx.metrix.UnitaryManifold(dimension_)
         hpd = phx.metrix.AffineInvariantHPDManifold(dimension_)
         projective = phx.metrix.ComplexProjectiveManifold(dimension_)

@@ -80,8 +80,7 @@ def factor_nth_latents(
             return (
                 None,
                 None,
-                f"factor {name!r} expected {input_size} coord arrays, "
-                f"got {len(coordinates)}.",
+                f"factor {name!r} expected {input_size} coord arrays, got {len(coordinates)}.",
             )
         if not all(coordinate.ndim == 1 for coordinate in coordinates):
             return (
@@ -107,7 +106,7 @@ def factor_nth_latents(
             direction,
             order=order,
         )
-        return latents, tuple(int(value.shape[0]) for value in coordinates), None
+        return latents, tuple(value.shape[0] for value in coordinates), None
 
     array = jnp.asarray(points)
 
@@ -125,8 +124,7 @@ def factor_nth_latents(
             return (
                 None,
                 None,
-                f"factor {name!r} scalar input is incompatible with "
-                f"in_size={input_size}.",
+                f"factor {name!r} scalar input is incompatible with in_size={input_size}.",
             )
         latents = jet_nth(
             latents_from_input,
@@ -139,7 +137,7 @@ def factor_nth_latents(
     if array.ndim == 1:
         if int(input_size) == 1:
             direction = jnp.ones_like(array)
-        elif int(array.shape[0]) == int(input_size):
+        elif array.shape[0] == int(input_size):
             direction = jnp.zeros_like(array).at[axis].set(1.0)
         else:
             return (
@@ -161,7 +159,7 @@ def factor_nth_latents(
         )
         return latents, batch_shape, None
 
-    if array.ndim == 2 and int(array.shape[1]) == int(input_size):
+    if array.ndim == 2 and array.shape[1] == int(input_size):
 
         def nth_single(row):
             direction = (
@@ -171,13 +169,12 @@ def factor_nth_latents(
             )
             return jet_nth(latents_from_input, row, direction, order=order)
 
-        return jax.vmap(nth_single)(array), (int(array.shape[0]),), None
+        return jax.vmap(nth_single)(array), (array.shape[0],), None
 
     return (
         None,
         None,
-        f"factor {name!r} has unsupported input shape {array.shape} for optimized "
-        "derivative evaluation.",
+        f"factor {name!r} has unsupported input shape {array.shape} for optimized derivative evaluation.",
     )
 
 
@@ -198,8 +195,7 @@ def evaluate_latent_partial(
     if len(args) != len(model.factor_models):
         return (
             None,
-            "optimized latent derivative evaluation requires one dependency per "
-            "latent factor.",
+            "optimized latent derivative evaluation requires one dependency per latent factor.",
         )
     if var not in deps:
         return None, f"variable {var!r} is not in DomainFunction dependencies."
@@ -256,8 +252,7 @@ def evaluate_latent_partial(
                 + str(error),
             )
         model._auto_fallback(
-            "Latent derivative flat provider failed; falling back to grouped. "
-            f"Reason: {error}"
+            f"Latent derivative flat provider failed; falling back to grouped. Reason: {error}"
         )
         output = _contract_grouped(model, latents, batch_shapes)
     output = model._finalize(output)

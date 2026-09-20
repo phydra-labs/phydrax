@@ -30,7 +30,6 @@ from .adapters.base import (
 from .certificates import independent_certificate
 from .schema import (
     empty_distribution,
-    SCHEMA_VERSION,
     skip_certificate,
     TIMING_PHASES,
     validate_report,
@@ -202,7 +201,6 @@ def execute_case(
     status = "success" if converged else "nonconverged"
     row = {
         "case_id": spec.name,
-        "schema_version": SCHEMA_VERSION,
         "environment": dict(environment),
         "problem": spec.problem.identity(),
         "implementation": implementation.as_dict(),
@@ -264,7 +262,6 @@ def run_campaign(
         for adapter_name in selected_adapters
     ]
     report = {
-        "schema_version": SCHEMA_VERSION,
         "environment": environment,
         "campaign": {
             "seed": seed,
@@ -291,7 +288,6 @@ def _skip_row(
         raise ValueError("unavailable adapter must provide a precise skip reason")
     return {
         "case_id": spec.name,
-        "schema_version": SCHEMA_VERSION,
         "environment": dict(environment),
         "problem": spec.problem.identity(),
         "implementation": implementation,
@@ -391,7 +387,7 @@ def _device_array_bytes(value: Any, /) -> int:
             identifier = id(item)
             if identifier not in seen:
                 seen.add(identifier)
-                total += int(item.size * item.dtype.itemsize)
+                total += item.size * item.dtype.itemsize
             return
         if isinstance(item, Mapping):
             for nested in item.values():

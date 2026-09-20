@@ -578,13 +578,13 @@ def prepare_gaussian_pulse_envelope(
         np.asarray(plan.transverse_rms_width),
         strict=True,
     ):
-        resolved = np.asarray(axis_bounds, dtype=float)
+        resolved = np.asarray(axis_bounds, dtype=np.float64)
         fractions.append(
             _gaussian_interval_fraction(
                 float(resolved[0]), float(resolved[1]), float(center), float(width)
             )
         )
-    resolved_time_bounds = np.asarray(time_bounds, dtype=float)
+    resolved_time_bounds = np.asarray(time_bounds, dtype=np.float64)
     fractions.append(
         _gaussian_interval_fraction(
             float(resolved_time_bounds[0]),

@@ -120,9 +120,9 @@ class VortexPopulationPlan(StrictModule, NonTrainableState):
         if core.shape != (self.capacity,) or volume_.shape != (self.capacity,):
             raise ValueError("Vortex population core/volume shapes are invalid.")
         active = (
-            jnp.ones((self.capacity,), dtype=bool)
+            jnp.ones((self.capacity,), dtype=jnp.bool_)
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         ids = (
             jnp.arange(self.capacity, dtype=jnp.int64)
@@ -187,7 +187,7 @@ class VortexPopulationPlan(StrictModule, NonTrainableState):
                 (self.journal_capacity, self.dimension if self.dimension == 3 else 1),
                 dtype=position.dtype,
             ),
-            jnp.zeros((self.journal_capacity,), dtype=bool),
+            jnp.zeros((self.journal_capacity,), dtype=jnp.bool_),
             jnp.asarray(0, dtype=jnp.int32),
         )
         return state, journal
@@ -277,7 +277,7 @@ class VortexPopulationPlan(StrictModule, NonTrainableState):
             jnp.sum(
                 (active_ids[:, None] == active_ids[None, :])
                 & (active_ids[:, None] >= 0)
-                & ~jnp.eye(self.capacity, dtype=bool),
+                & ~jnp.eye(self.capacity, dtype=jnp.bool_),
                 dtype=jnp.int32,
             )
             // 2
@@ -577,7 +577,7 @@ def jax_tree_select(
     previous: VortexPopulationState,
     /,
 ) -> VortexPopulationState:
-    choose = jnp.asarray(condition, dtype=bool)
+    choose = jnp.asarray(condition, dtype=jnp.bool_)
     return VortexPopulationState(
         jnp.where(choose, candidate.positions, previous.positions),
         jnp.where(choose, candidate.strength, previous.strength),

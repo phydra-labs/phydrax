@@ -78,8 +78,7 @@ class GeneralizedEigenproblem(StrictModule):
         _validate_self_adjoint_endomorphism(metric_operator, "metric_operator")
         if not metric_operator.properties.certifies("positive_definite"):
             raise ValueError(
-                "GeneralizedEigenproblem requires a certified positive-definite "
-                "metric_operator."
+                "GeneralizedEigenproblem requires a certified positive-definite metric_operator."
             )
         if not metric_operator.source.compatible(
             operator.source

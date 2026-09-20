@@ -16,7 +16,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._core import (
     _fixed_step_time_grid_valid,
@@ -45,7 +45,7 @@ class ShootingSelection(StrictModule):
 
 
 class AbstractShootingSelector(StrictModule):
-    selector_id: AbstractAttribute[str]
+    selector_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def select(self, key: Key[Array, ""], path: PathBuffer, /) -> ShootingSelection:
@@ -72,7 +72,7 @@ class UniformShootingSelector(AbstractShootingSelector, NonTrainableState):
             raise ValueError("endpoint_margin must be non-negative.")
         self.endpoint_margin = margin
         self.selector_id = selector_id or canonical_fingerprint(
-            {"kind": "uniform-path-shooting-selector-v1", "endpoint_margin": margin}
+            {"kind": "uniform-path-shooting-selector", "endpoint_margin": margin}
         )
 
     def eligible_count(self, path: PathBuffer, /) -> Array:
@@ -168,7 +168,7 @@ class ShootingModification(StrictModule):
 
 
 class AbstractShootingModifier(StrictModule):
-    modifier_id: AbstractAttribute[str]
+    modifier_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def apply(self, key: Key[Array, ""], state: Array, /) -> ShootingModification:
@@ -200,7 +200,7 @@ class GaussianShootingModifier(AbstractShootingModifier, NonTrainableState):
             raise ValueError("scale must be finite and positive.")
         self.scale = scale_
         self.modifier_id = modifier_id or canonical_fingerprint(
-            {"kind": "gaussian-shooting-modifier-v1", "scale": scale_.hex()}
+            {"kind": "gaussian-shooting-modifier", "scale": scale_.hex()}
         )
 
     def apply(self, key: Key[Array, ""], state: Array, /) -> ShootingModification:

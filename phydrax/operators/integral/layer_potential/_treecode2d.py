@@ -65,7 +65,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
         angle = float(opening_angle)
         if order < 1 or leaf < 1 or not math.isfinite(angle) or not 0.0 < angle < 1.0:
             raise ValueError("Laplace treecode opening_angle must lie in (0, 1).")
-        points = np.asarray(potential.panelization.points, dtype=float)
+        points = np.asarray(potential.panelization.points, dtype=np.float64)
         centers: list[np.ndarray] = []
         radii: list[float] = []
         children: list[list[int]] = []
@@ -79,7 +79,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
             radius = float(np.max(np.linalg.norm(values - center, axis=1)))
             node = len(centers)
             centers.append(center)
-            radii.append(max(radius, np.finfo(float).eps))
+            radii.append(max(radius, np.finfo(np.float64).eps))
             children.append([-1, -1, -1, -1])
             index_sets.append(indices)
             if indices.size <= leaf:
@@ -101,8 +101,8 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
         build(np.arange(points.shape[0], dtype=np.int32))
         self.source_points = jnp.asarray(points)
         self.source_weights = potential.panelization.weights
-        self.node_centers = jnp.asarray(np.asarray(centers), dtype=float)
-        self.node_radii = jnp.asarray(np.asarray(radii), dtype=float)
+        self.node_centers = jnp.asarray(np.asarray(centers), dtype=jnp.float64)
+        self.node_radii = jnp.asarray(np.asarray(radii), dtype=jnp.float64)
         self.node_children = jnp.asarray(np.asarray(children), dtype=jnp.int32)
         self.node_indices = tuple(
             jnp.asarray(indices, dtype=jnp.int32) for indices in index_sets
@@ -113,7 +113,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
         self.source_panelization_id = potential.panelization.panelization_id
         self.backend_id = canonical_fingerprint(
             {
-                "kind": "laplace-treecode-2d-v1",
+                "kind": "laplace-treecode-2d",
                 "source_panelization_id": self.source_panelization_id,
                 "source_points": array_tree_fingerprint(self.source_points),
                 "expansion_order": order,
@@ -155,7 +155,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
             raise TypeError(
                 "LaplaceTreecodeBackend2D requires its bound single-layer source geometry."
             )
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("Treecode targets must have shape (target_count, 2).")
         tolerance = float(absolute_tolerance)
@@ -179,7 +179,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
                 is_leaf = bool(np.all(children < 0))
                 if is_leaf:
                     indices = self.node_indices[node]
-                    direct_count[0] += int(indices.size)
+                    direct_count[0] += indices.size
                     direct = jnp.sum(
                         potential.density[indices]
                         * self.source_weights[indices]
@@ -243,9 +243,9 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
             direct_evaluations=direct_count[0],
             evaluation_id=canonical_fingerprint(
                 {
-                    "kind": "laplace-treecode-evaluation-2d-v1",
+                    "kind": "laplace-treecode-evaluation-2d",
                     "backend_id": self.backend_id,
-                    "target_count": int(values.shape[0]),
+                    "target_count": values.shape[0],
                     "potential": potential.representation_id,
                     "targets": array_tree_fingerprint(values),
                     "density": array_tree_fingerprint(potential.density),

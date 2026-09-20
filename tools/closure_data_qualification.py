@@ -317,8 +317,7 @@ def build_closure_data_candidate(
     }
     if categorized_ids != {value.evidence_id for value in evidence_}:
         raise ValueError(
-            "Closure candidate evidence must use scientific/reference, performance, "
-            "operational, or security kinds."
+            "Closure candidate evidence must use scientific/reference, performance, operational, or security kinds."
         )
     subject_id = dataset.manifest_id if binding is None else binding.binding_id
     scientific_failures = (

@@ -45,12 +45,12 @@ class CenterOfMassPreservingBijector(AbstractBijector):
     ):
         if not isinstance(internal, AbstractBijector):
             raise TypeError("internal must implement AbstractBijector.")
-        mass = np.asarray(masses, dtype=float).reshape((-1,))
+        mass = np.asarray(masses, dtype=np.float64).reshape((-1,))
         if mass.size < 2 or np.any(~np.isfinite(mass)) or np.any(mass <= 0.0):
             raise ValueError(
                 "Center-of-mass chart requires at least two positive masses."
             )
-        atom_count = int(mass.size)
+        atom_count = mass.size
         internal_shape = (3 * atom_count - 3,)
         if (
             internal.forward_shape(internal_shape) != internal_shape
@@ -62,13 +62,13 @@ class CenterOfMassPreservingBijector(AbstractBijector):
         translation_atom = np.sqrt(mass) / np.sqrt(np.sum(mass))
         complement = []
         for index in range(atom_count):
-            vector = np.zeros((atom_count,), dtype=float)
+            vector = np.zeros((atom_count,), dtype=np.float64)
             vector[index] = 1.0
             vector = vector - np.dot(vector, translation_atom) * translation_atom
             for basis in complement:
                 vector = vector - np.dot(vector, basis) * basis
             norm = float(np.sqrt(np.dot(vector, vector)))
-            if norm > 128.0 * np.finfo(float).eps:
+            if norm > 128.0 * np.finfo(np.float64).eps:
                 complement.append(vector / norm)
             if len(complement) == atom_count - 1:
                 break
@@ -99,7 +99,7 @@ class CenterOfMassPreservingBijector(AbstractBijector):
         self.chart_id = identifier
 
     def forward_shape(self, raw_shape: tuple[int, ...], /) -> tuple[int, ...]:
-        shape = tuple(int(size) for size in raw_shape)
+        shape = tuple(raw_shape)
         if shape != self.event_shape:
             raise ValueError(
                 f"Expected Cartesian event shape {self.event_shape}; got {shape}."

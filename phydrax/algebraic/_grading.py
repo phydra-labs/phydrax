@@ -43,7 +43,7 @@ class PolynomialVariableGroup(StrictModule, NonTrainableState):
         label_ = str(label).strip()
         if not label_:
             raise ValueError("Polynomial variable-group labels must be non-empty.")
-        indices = tuple(int(index) for index in variable_indices)
+        indices = tuple(variable_indices)
         if not indices:
             raise ValueError("A polynomial variable group must contain variables.")
         if any(index < 0 for index in indices):
@@ -56,8 +56,7 @@ class PolynomialVariableGroup(StrictModule, NonTrainableState):
             raise ValueError("Variable-group geometry must be 'affine' or 'projective'.")
         if geometry == "projective" and len(indices) < 2:
             raise ValueError(
-                "A projective variable group requires at least two homogeneous "
-                "coordinates."
+                "A projective variable group requires at least two homogeneous coordinates."
             )
         dimension = len(indices) if geometry == "affine" else len(indices) - 1
         self.label = label_
@@ -66,7 +65,7 @@ class PolynomialVariableGroup(StrictModule, NonTrainableState):
         self.dimension = dimension
         self.group_id = canonical_fingerprint(
             {
-                "kind": "polynomial-variable-group-v1",
+                "kind": "polynomial-variable-group",
                 "label": label_,
                 "variable_indices": list(indices),
                 "geometry": geometry,
@@ -92,8 +91,8 @@ class PolynomialDegreeProfile(StrictModule, NonTrainableState):
         group_labels: Sequence[str],
     ):
         support_id_ = str(support_id)
-        totals = tuple(int(value) for value in total_degrees)
-        multidegrees_ = tuple(tuple(int(value) for value in row) for row in multidegrees)
+        totals = tuple(total_degrees)
+        multidegrees_ = tuple(tuple(row) for row in multidegrees)
         labels = tuple(str(value) for value in group_labels)
         if not support_id_:
             raise ValueError("Degree evidence requires a support identity.")
@@ -110,7 +109,7 @@ class PolynomialDegreeProfile(StrictModule, NonTrainableState):
         self.group_labels = labels
         self.profile_id = canonical_fingerprint(
             {
-                "kind": "polynomial-degree-profile-v1",
+                "kind": "polynomial-degree-profile",
                 "support": support_id_,
                 "total_degrees": list(totals),
                 "group_labels": list(labels),
@@ -149,7 +148,7 @@ class PolynomialBezoutForecast(StrictModule, NonTrainableState):
         if kind not in ("total_degree", "multihomogeneous"):
             raise ValueError("Unknown polynomial Bézout forecast kind.")
         labels = tuple(str(value) for value in group_labels)
-        dimensions = tuple(int(value) for value in group_dimensions)
+        dimensions = tuple(group_dimensions)
         count = int(path_count)
         if count < 0 or any(value < 0 for value in dimensions):
             raise ValueError(
@@ -168,7 +167,7 @@ class PolynomialBezoutForecast(StrictModule, NonTrainableState):
         self.status = "applicable"
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "polynomial-bezout-forecast-v1",
+                "kind": "polynomial-bezout-forecast",
                 "forecast_kind": kind,
                 "support": self.support_id,
                 "degree_profile": self.degree_profile_id,
@@ -242,8 +241,7 @@ def total_degree_bezout_forecast(
         raise ValueError("A total-degree Bézout forecast requires a square system.")
     if any(group.geometry != "affine" for group in support.groups):
         raise ValueError(
-            "Total-degree forecasting uses affine variables; use the grouped forecast "
-            "for projective geometry."
+            "Total-degree forecasting uses affine variables; use the grouped forecast for projective geometry."
         )
     profile = polynomial_degree_profile(support)
     return PolynomialBezoutForecast(
@@ -276,8 +274,7 @@ def multihomogeneous_bezout_forecast(
     ambient_dimension = sum(dimensions)
     if support.equation_count != ambient_dimension:
         raise ValueError(
-            "A multihomogeneous Bézout forecast requires one equation per ambient "
-            "dimension."
+            "A multihomogeneous Bézout forecast requires one equation per ambient dimension."
         )
     profile = polynomial_degree_profile(support)
     target = dimensions

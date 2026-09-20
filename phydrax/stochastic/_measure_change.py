@@ -33,7 +33,7 @@ def _broadcast_steps(
     *,
     name: str,
 ) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape == (shape[-1],):
         return jnp.broadcast_to(array, shape)
     try_shape = jnp.broadcast_shapes(array.shape, shape)
@@ -70,10 +70,10 @@ class DiffusionMeasureChange(StrictModule):
         proposal_model_id: str,
         target_model_id: str,
     ):
-        log_ratio = jnp.asarray(log_likelihood_ratio, dtype=float)
-        stochastic = jnp.asarray(stochastic_integral, dtype=float)
-        quadratic = jnp.asarray(quadratic_variation, dtype=float)
-        validity = jnp.asarray(valid, dtype=bool)
+        log_ratio = jnp.asarray(log_likelihood_ratio, dtype=jnp.float64)
+        stochastic = jnp.asarray(stochastic_integral, dtype=jnp.float64)
+        quadratic = jnp.asarray(quadratic_variation, dtype=jnp.float64)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         if any(
             value.shape != log_ratio.shape for value in (stochastic, quadratic, validity)
         ):
@@ -121,12 +121,12 @@ class JumpMeasureChange(StrictModule):
         proposal_model_id: str,
         target_model_id: str,
     ):
-        log_ratio = jnp.asarray(log_likelihood_ratio, dtype=float)
-        event_term = jnp.asarray(event_log_ratio, dtype=float)
-        mark_term = jnp.asarray(mark_log_ratio, dtype=float)
-        compensator_term = jnp.asarray(compensator, dtype=float)
-        validity = jnp.asarray(valid, dtype=bool)
-        support = jnp.asarray(support_valid, dtype=bool)
+        log_ratio = jnp.asarray(log_likelihood_ratio, dtype=jnp.float64)
+        event_term = jnp.asarray(event_log_ratio, dtype=jnp.float64)
+        mark_term = jnp.asarray(mark_log_ratio, dtype=jnp.float64)
+        compensator_term = jnp.asarray(compensator, dtype=jnp.float64)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
+        support = jnp.asarray(support_valid, dtype=jnp.bool_)
         if any(
             value.shape != log_ratio.shape
             for value in (
@@ -173,7 +173,7 @@ def diffusion_measure_change(
     path; partial likelihood ratios are never returned as valid samples.
     """
 
-    controls = jnp.asarray(control, dtype=float)
+    controls = jnp.asarray(control, dtype=jnp.float64)
     increments = jnp.asarray(driver_increments, dtype=controls.dtype)
     if controls.shape != increments.shape or controls.ndim < 2:
         raise ValueError(
@@ -185,9 +185,9 @@ def diffusion_measure_change(
     duration_shape = path_shape + (num_steps,)
     steps = _broadcast_steps(durations, duration_shape, name="durations")
     interval_valid = (
-        jnp.ones(duration_shape, dtype=bool)
+        jnp.ones(duration_shape, dtype=jnp.bool_)
         if valid is None
-        else jnp.broadcast_to(jnp.asarray(valid, dtype=bool), duration_shape)
+        else jnp.broadcast_to(jnp.asarray(valid, dtype=jnp.bool_), duration_shape)
     )
     finite_noise = jnp.all(
         jnp.isfinite(controls) & jnp.isfinite(increments),
@@ -225,7 +225,7 @@ def wiener_measure_change(
 
     if not isinstance(realization, WienerRealization):
         raise TypeError("realization must be a WienerRealization.")
-    nodes = jnp.asarray(times, dtype=float)
+    nodes = jnp.asarray(times, dtype=jnp.float64)
     if nodes.ndim != 1 or nodes.shape[0] < 2:
         raise ValueError("times must be a one-dimensional array with at least two nodes.")
     increments = realization.increments(nodes[:-1], nodes[1:])
@@ -259,7 +259,7 @@ def jump_measure_change(
 
     if not isinstance(events, JumpEventBatch):
         raise TypeError("events must be a JumpEventBatch.")
-    proposal = jnp.asarray(proposal_intensities, dtype=float)
+    proposal = jnp.asarray(proposal_intensities, dtype=jnp.float64)
     target = jnp.asarray(target_intensities, dtype=proposal.dtype)
     if proposal.shape != target.shape or proposal.ndim < 2:
         raise ValueError(
@@ -419,8 +419,7 @@ def measure_changed_target(
         mask=change.valid,
         sample_axes=sample_axes,
         provenance=(
-            f"measure-change:{change.kind}:"
-            f"{change.proposal_model_id}->{change.target_model_id}"
+            f"measure-change:{change.kind}:{change.proposal_model_id}->{change.target_model_id}"
         ),
     )
 

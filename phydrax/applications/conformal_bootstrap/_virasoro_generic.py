@@ -330,7 +330,7 @@ def prepare_virasoro_elliptic_block(
         )
         coefficients.append(complex(left @ np.linalg.solve(gram, right)))
     coefficient_table = np.asarray(coefficients, dtype=np.complex128)
-    condition_table = np.asarray(conditions, dtype=float)
+    condition_table = np.asarray(conditions, dtype=np.float64)
     prepared_id = canonical_fingerprint(
         {
             "kind": "prepared-virasoro-elliptic-block",
@@ -479,7 +479,7 @@ class LiouvilleFourPointPlan(StrictModule):
         b = float(coupling)
         mu = float(cosmological_constant)
         alphas = tuple(complex(value) for value in external_alphas)
-        points = np.asarray(cross_ratios, dtype=float)
+        points = np.asarray(cross_ratios, dtype=np.float64)
         maximum = float(maximum_momentum)
         nodes = int(momentum_nodes)
         level = int(block_level)

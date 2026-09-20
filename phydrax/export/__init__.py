@@ -1,8 +1,8 @@
+from importlib import import_module
+
 #
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-
-from ._array_archive import *  # noqa: F403
 from ._array_archive import __all__ as _array_archive_all
 from ._complex_parameters import (
     complex_coefficients_to_frame,
@@ -63,6 +63,23 @@ from ._neutral import (
     NeutralSchemaKind,
 )
 from ._onnx import OnnxExportResult, save_onnx
+
+
+_FACADE_EXPORT_MODULES = ("._array_archive",)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

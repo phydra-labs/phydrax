@@ -74,7 +74,7 @@ class MappedLatticeBoltzmannPlan(StrictModule, NonTrainableState):
         tolerance = 128.0 * np.finfo(lattice_points.dtype).eps
         if not np.allclose(mapped_points, lattice_points, rtol=tolerance, atol=tolerance):
             raise ValueError(
-                "Mapped metric nodes must coincide with the LBM cell centres."
+                "Mapped metric nodes must coincide with the LBM cell centers."
             )
         if not callable(metric_source):
             raise TypeError("metric_source must be callable.")

@@ -37,14 +37,13 @@ def _constraint_mask(
     if constrained_dofs is not None and fixed_nodes is not None:
         raise ValueError("Supply constrained_dofs or fixed_nodes, not both.")
     if constrained_dofs is not None:
-        mask = np.asarray(constrained_dofs, dtype=bool)
+        mask = np.asarray(constrained_dofs, dtype=np.bool_)
         if mask.shape != (node_count, dimension):
             raise ValueError(
-                "constrained_dofs must have shape "
-                f"({node_count}, {dimension}); got {mask.shape}."
+                f"constrained_dofs must have shape ({node_count}, {dimension}); got {mask.shape}."
             )
         return mask
-    mask = np.zeros((node_count, dimension), dtype=bool)
+    mask = np.zeros((node_count, dimension), dtype=np.bool_)
     if fixed_nodes is None:
         return mask
     indices = _host_integer_vector("fixed_nodes", fixed_nodes)
@@ -62,9 +61,9 @@ def _active_graph_masks(graph: GraphIR, /) -> tuple[np.ndarray, np.ndarray]:
     node_count = graph.num_nodes
     member_count = graph.num_edges
     graph_active = (
-        np.ones((graph.num_graphs,), dtype=bool)
+        np.ones((graph.num_graphs,), dtype=np.bool_)
         if graph.graph_mask is None
-        else np.asarray(graph.graph_mask, dtype=bool)
+        else np.asarray(graph.graph_mask, dtype=np.bool_)
     )
     node_graph = np.repeat(
         np.arange(graph.num_graphs, dtype=np.int32), np.asarray(graph.n_node)
@@ -75,9 +74,9 @@ def _active_graph_masks(graph: GraphIR, /) -> tuple[np.ndarray, np.ndarray]:
     node_valid = graph_active[node_graph]
     member_valid = graph_active[edge_graph]
     if graph.node_mask is not None:
-        node_valid &= np.asarray(graph.node_mask, dtype=bool)
+        node_valid &= np.asarray(graph.node_mask, dtype=np.bool_)
     if graph.edge_mask is not None:
-        member_valid &= np.asarray(graph.edge_mask, dtype=bool)
+        member_valid &= np.asarray(graph.edge_mask, dtype=np.bool_)
     if node_valid.shape != (node_count,) or member_valid.shape != (member_count,):
         raise ValueError("Graph masks do not match graph counts.")
     return node_valid, member_valid
@@ -159,7 +158,7 @@ def _equilibrium_routes(
         np.asarray(sources, dtype=np.int32),
         np.asarray(targets, dtype=np.int32),
         np.asarray(members, dtype=np.int32),
-        np.asarray(signs, dtype=float),
+        np.asarray(signs, dtype=np.float64),
     )
 
 
@@ -349,15 +348,14 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
                 )
             if np.any(~node_valid):
                 raise ValueError(
-                    "Surface-connected force-density structures do not support "
-                    "inactive padded nodes."
+                    "Surface-connected force-density structures do not support inactive padded nodes."
                 )
 
         if affine:
             source = np.empty((0,), dtype=np.int32)
             target = np.empty((0,), dtype=np.int32)
             route_members = np.empty((0,), dtype=np.int32)
-            route_signs = np.empty((0,), dtype=float)
+            route_signs = np.empty((0,), dtype=np.float64)
         else:
             source, target, route_members, route_signs = _equilibrium_routes(
                 senders,
@@ -369,8 +367,8 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
         relation = EdgeRelation(
             source,
             target,
-            source_size=int(free.size),
-            target_size=int(free.size),
+            source_size=free.size,
+            target_size=free.size,
         )
         identifier = canonical_fingerprint(
             {
@@ -599,8 +597,8 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
             raise TypeError("Force-density cell meshes must have polygonal connectivity.")
         return cls.from_edges(
             mesh.connectivity.edges,
-            int(mesh.coordinates.shape[0]),
-            int(mesh.coordinates.shape[1]),
+            mesh.coordinates.shape[0],
+            mesh.coordinates.shape[1],
             constrained_dofs=constrained_dofs,
             fixed_nodes=fixed_nodes,
             surface_connectivity=mesh.connectivity,
@@ -610,11 +608,11 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
 
     @property
     def node_count(self) -> int:
-        return int(self.node_valid.shape[0])
+        return self.node_valid.shape[0]
 
     @property
     def member_count(self) -> int:
-        return int(self.member_valid.shape[0])
+        return self.member_valid.shape[0]
 
     @property
     def full_dof_count(self) -> int:
@@ -622,18 +620,17 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
 
     @property
     def free_dof_count(self) -> int:
-        return int(self.free_dof_indices.shape[0])
+        return self.free_dof_indices.shape[0]
 
     @property
     def constrained_dof_count(self) -> int:
-        return int(self.constrained_dof_indices.shape[0])
+        return self.constrained_dof_indices.shape[0]
 
     def prescribed_values(self, positions: ArrayLike, /) -> Array:
         values = jnp.asarray(positions)
         if values.shape != (self.node_count, self.dimension):
             raise ValueError(
-                "positions must have shape "
-                f"({self.node_count}, {self.dimension}); got {values.shape}."
+                f"positions must have shape ({self.node_count}, {self.dimension}); got {values.shape}."
             )
         flat = values.reshape((-1,))
         if self.affine_constraints:
@@ -646,8 +643,7 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
         values = jnp.asarray(prescribed_values)
         if values.shape != (self.constrained_dof_count,):
             raise ValueError(
-                "prescribed_values must have shape "
-                f"({self.constrained_dof_count},); got {values.shape}."
+                f"prescribed_values must have shape ({self.constrained_dof_count},); got {values.shape}."
             )
         if self.affine_constraints:
             if self.affine_prescribed_map is None:
@@ -666,8 +662,7 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
         reduced_values = jnp.asarray(reduced)
         if reduced_values.shape != (self.free_dof_count,):
             raise ValueError(
-                f"reduced must have shape ({self.free_dof_count},); "
-                f"got {reduced_values.shape}."
+                f"reduced must have shape ({self.free_dof_count},); got {reduced_values.shape}."
             )
         lift = self.lift(prescribed_values).reshape((-1,))
         if self.affine_constraints:
@@ -686,8 +681,7 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
         values = jnp.asarray(full)
         if values.shape != (self.node_count, self.dimension):
             raise ValueError(
-                "full must have shape "
-                f"({self.node_count}, {self.dimension}); got {values.shape}."
+                f"full must have shape ({self.node_count}, {self.dimension}); got {values.shape}."
             )
         flat = values.reshape((-1,))
         if self.affine_constraints:

@@ -26,7 +26,7 @@ VolterraFreeTerm: TypeAlias = Callable[[Array, Any], ArrayLike]
 ConvolutionKernel: TypeAlias = Callable[[Array, Any], ArrayLike]
 
 
-class _ConstantFreeTerm(eqx.Module):
+class _ConstantFreeTerm(StrictModule):
     value: Array
 
     def __call__(self, time, args):
@@ -34,20 +34,20 @@ class _ConstantFreeTerm(eqx.Module):
         return self.value
 
 
-class _UnitVolterraKernel(eqx.Module):
+class _UnitVolterraKernel(StrictModule):
     def __call__(self, target, source, args):
         del target, source, args
         return jnp.asarray(1.0)
 
 
-class _ConvolutionKernelAdapter(eqx.Module):
+class _ConvolutionKernelAdapter(StrictModule):
     kernel: ConvolutionKernel
 
     def __call__(self, target, source, args):
         return self.kernel(target - source, args)
 
 
-class _UnitConvolutionKernel(eqx.Module):
+class _UnitConvolutionKernel(StrictModule):
     def __call__(self, lag, args):
         del lag, args
         return jnp.asarray(1.0)
@@ -104,11 +104,11 @@ class StochasticVolterraProblem(StrictModule):
             if value is not None and not callable(value):
                 raise TypeError(f"{name} must be callable or None.")
         state = jnp.asarray(initial_state)
-        state_shape = tuple(int(size) for size in state.shape)
+        state_shape = tuple(state.shape)
         if not state_shape or any(size <= 0 for size in state_shape):
             raise ValueError("initial_state must have a non-empty positive shape.")
-        start = jnp.asarray(t0, dtype=float)
-        end = jnp.asarray(t1, dtype=float)
+        start = jnp.asarray(t0, dtype=jnp.float64)
+        end = jnp.asarray(t1, dtype=jnp.float64)
         if start.shape != () or end.shape != ():
             raise ValueError("StochasticVolterraProblem requires scalar t0 and t1.")
         start = eqx.error_if(
@@ -125,7 +125,7 @@ class StochasticVolterraProblem(StrictModule):
         else:
             if noise_shape is None:
                 raise ValueError("noise_shape is required with diffusion.")
-            resolved_noise_shape = tuple(int(size) for size in noise_shape)
+            resolved_noise_shape = tuple(noise_shape)
             if not resolved_noise_shape or any(
                 size <= 0 for size in resolved_noise_shape
             ):
@@ -379,7 +379,7 @@ class MemoryEquationSolution(StrictModule):
 
     @property
     def num_times(self) -> int:
-        return int(self.times.size)
+        return self.times.size
 
     @property
     def has_dense_interpolation(self) -> bool:
@@ -396,8 +396,7 @@ class MemoryEquationSolution(StrictModule):
         """Evaluate dense output with shape query_shape + state_shape."""
         if self.interpolation is None:
             raise ValueError(
-                "MemoryEquationSolution has no dense interpolation; "
-                "use a solver with dense output enabled."
+                "MemoryEquationSolution has no dense interpolation; use a solver with dense output enabled."
             )
         return self.interpolation.evaluate(query_times, left=left)
 
@@ -463,8 +462,8 @@ def _weighted_kernel_value(
 
 
 def _time_grid(t0: Array, t1: Array, times: ArrayLike, /) -> Array:
-    grid = jnp.asarray(times, dtype=float)
-    if grid.ndim != 1 or int(grid.size) < 2:
+    grid = jnp.asarray(times, dtype=jnp.float64)
+    if grid.ndim != 1 or grid.size < 2:
         raise ValueError("times must be a rank-1 grid with at least two nodes.")
     grid = eqx.error_if(
         grid,
@@ -499,7 +498,7 @@ def _wiener_increments(
             raise ValueError(
                 "Deterministic memory equations do not accept a realization."
             )
-        return jnp.zeros((int(times.size) - 1, 0), dtype=dtype), ()
+        return jnp.zeros((times.size - 1, 0), dtype=dtype), ()
     if not isinstance(realization, WienerRealization):
         raise TypeError("Stochastic memory equations require a WienerRealization.")
     if realization.noise_shape != noise_shape:
@@ -542,7 +541,7 @@ def solve_stochastic_volterra(
         realization=realization,
         dtype=problem.initial_state.real.dtype,
     )
-    num_times = int(grid.size)
+    num_times = grid.size
     num_steps = num_times - 1
     step_sizes = jnp.diff(grid)
 
@@ -588,8 +587,7 @@ def solve_stochastic_volterra(
                         expected = problem.state_shape + problem.noise_shape
                         if diffusion.shape != expected:
                             raise ValueError(
-                                f"diffusion must return shape {expected}; "
-                                f"got {diffusion.shape}."
+                                f"diffusion must return shape {expected}; got {diffusion.shape}."
                             )
                         diffusion_kernel = _validate_kernel(
                             problem.diffusion_kernel(target, source, problem.args),
@@ -645,7 +643,7 @@ def solve_stochastic_volterra(
         realization=realization,
         state_shape=problem.state_shape,
         solver_name="StochasticVolterraEuler",
-        solver_id="solver:volterra:left-convolution-euler:v1",
+        solver_id="solver:volterra:left-convolution-euler",
         resolved_method="explicit-left-convolution",
         stats={
             "num_steps": num_steps,
@@ -686,7 +684,7 @@ def solve_convolution_volterra(
         realization=native.realization,
         state_shape=native.state_shape,
         solver_name="CausalConvolutionEuler",
-        solver_id="solver:volterra:causal-convolution-euler:v1",
+        solver_id="solver:volterra:causal-convolution-euler",
         resolved_method="explicit-left-causal-convolution",
         metadata={
             **dict(native.metadata),

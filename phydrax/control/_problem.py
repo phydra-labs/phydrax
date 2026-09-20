@@ -30,7 +30,7 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{name} dimensions must be positive.")
     return shape
@@ -72,8 +72,7 @@ class ControlProblem(StrictModule):
             dynamics, (DiscreteControlDynamics, DifferentialControlDynamics)
         ):
             raise TypeError(
-                "ControlProblem dynamics must be DiscreteControlDynamics or "
-                "DifferentialControlDynamics."
+                "ControlProblem dynamics must be DiscreteControlDynamics or DifferentialControlDynamics."
             )
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("ControlProblem time_grid must be a TimeGrid.")
@@ -83,16 +82,13 @@ class ControlProblem(StrictModule):
             state_shape and tuple(state.shape[-len(state_shape) :]) != state_shape
         ):
             raise ValueError(
-                "ControlProblem initial_state must end with dynamics state_shape "
-                f"{state_shape}; got {state.shape}."
+                f"ControlProblem initial_state must end with dynamics state_shape {state_shape}; got {state.shape}."
             )
-        case_shape = tuple(
-            int(size) for size in state.shape[: state.ndim - len(state_shape)]
-        )
+        case_shape = tuple(state.shape[: state.ndim - len(state_shape)])
         if any(size <= 0 for size in case_shape):
             raise ValueError("ControlProblem case dimensions must be positive.")
         if not jnp.issubdtype(state.dtype, jnp.inexact):
-            state = state.astype(float)
+            state = state.astype("float64")
         state = eqx.error_if(
             state,
             jnp.any(~jnp.isfinite(state)),

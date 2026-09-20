@@ -61,14 +61,14 @@ def fit_bath_exponentials(
     """Fit coefficients for caller-supplied stable rational/Padé poles."""
     if not callable(target):
         raise TypeError("target must be callable.")
-    times_ = jnp.asarray(times, dtype=float)
-    exponents_ = jnp.asarray(exponents, dtype=complex)
+    times_ = jnp.asarray(times, dtype=jnp.float64)
+    exponents_ = jnp.asarray(exponents, dtype=jnp.complex128)
     if times_.ndim != 1 or exponents_.ndim != 1:
         raise ValueError("Bath fit times and exponents must be vectors.")
     if jnp.any(jnp.real(exponents_) <= 0.0):
         raise ValueError("Bath fit exponents must have positive real part.")
     design = jnp.exp(-times_[:, None] * exponents_[None, :])
-    reference = jnp.asarray(target(times_), dtype=complex)
+    reference = jnp.asarray(target(times_), dtype=jnp.complex128)
     coefficients = jnp.linalg.lstsq(design, reference, rcond=None)[0]
     residual = jnp.sqrt(jnp.mean(jnp.abs(design @ coefficients - reference) ** 2))
     return BathCorrelationExpansion(
@@ -93,7 +93,7 @@ def underdamped_brownian_two_pole(
         raise ValueError("Underdamped Brownian parameters require 0 < gamma < 2 omega.")
     damped = jnp.sqrt(omega**2 - 0.25 * gamma**2)
     exponents = jnp.asarray([0.5 * gamma + 1j * damped, 0.5 * gamma - 1j * damped])
-    coefficients = jnp.asarray([0.5 * strength, 0.5 * strength], dtype=complex)
+    coefficients = jnp.asarray([0.5 * strength, 0.5 * strength], dtype=jnp.complex128)
     return BathCorrelationExpansion(
         coefficients,
         exponents,
@@ -118,7 +118,7 @@ def drude_lorentz_pade_from_poles(
         temperature,
         reference_matsubara_terms,
     )
-    poles = jnp.asarray(pade_poles, dtype=complex)
+    poles = jnp.asarray(pade_poles, dtype=jnp.complex128)
     if poles.ndim != 1 or jnp.any(jnp.real(poles) <= 0.0):
         raise ValueError("Padé poles must be a vector with positive real parts.")
     exponents = jnp.concatenate((jnp.asarray([cutoff_frequency + 0.0j]), poles))
@@ -214,7 +214,7 @@ def drude_lorentz_pade(
         ]
     )
     exponents = jnp.concatenate(
-        (jnp.asarray([cutoff + 0.0j]), frequencies.astype(complex))
+        (jnp.asarray([cutoff + 0.0j]), frequencies.astype("complex128"))
     )
     provisional = BathCorrelationExpansion(
         jnp.asarray(coefficients),

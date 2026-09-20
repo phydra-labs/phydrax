@@ -17,10 +17,10 @@ def compute_h0_persistence_union_find(
     """Compute exact H0 persistence by elder-rule union-find on vertices and edges."""
     if filtration.max_degree < 1:
         births = np.asarray(filtration.values[0])[
-            np.asarray(filtration.complex.masks[0], dtype=bool)
+            np.asarray(filtration.complex.masks[0], dtype=np.bool_)
         ]
         entity_ids = np.asarray(filtration.complex.topology.entity_sets[0].entity_ids)[
-            np.asarray(filtration.complex.masks[0], dtype=bool)
+            np.asarray(filtration.complex.masks[0], dtype=np.bool_)
         ]
         return PersistenceDiagram(
             np.zeros((births.size,), dtype=np.int32),
@@ -28,7 +28,7 @@ def compute_h0_persistence_union_find(
             np.zeros_like(births),
             entity_ids,
             np.zeros_like(entity_ids),
-            np.zeros((births.size,), dtype=bool),
+            np.zeros((births.size,), dtype=np.bool_),
             np.arange(births.size, dtype=np.int32),
             source_id=f"union-find:{filtration.filtration_id}",
         )
@@ -46,7 +46,7 @@ def compute_h0_persistence_union_find(
     parent = np.arange(vertex_slots.size, dtype=np.int32)
     birth = canonical_vertex.copy()
     birth_entity = vertex_entities.copy()
-    active = np.zeros((vertex_slots.size,), dtype=bool)
+    active = np.zeros((vertex_slots.size,), dtype=np.bool_)
 
     def root(index):
         current = int(index)
@@ -56,7 +56,7 @@ def compute_h0_persistence_union_find(
         return current
 
     incidence = filtration.complex.topology.incidences[0]
-    valid = np.asarray(incidence.relation.valid, dtype=bool)
+    valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
     lower = np.asarray(incidence.relation.source_indices)[valid]
     edges = np.asarray(incidence.relation.target_indices)[valid]
     endpoints: dict[int, list[int]] = {}
@@ -115,7 +115,7 @@ def compute_h0_persistence_union_find(
         np.asarray([value[1] for value in records]),
         np.asarray([value[2] for value in records], dtype=np.int64),
         np.asarray([value[3] for value in records], dtype=np.int64),
-        np.asarray([value[4] for value in records], dtype=bool),
+        np.asarray([value[4] for value in records], dtype=np.bool_),
         np.arange(len(records), dtype=np.int32),
         source_id=f"union-find:{filtration.filtration_id}",
     )

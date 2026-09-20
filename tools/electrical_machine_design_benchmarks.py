@@ -101,7 +101,7 @@ def main():
         reluctance_scale = max(
             abs(float(reluctance_positive.torque)),
             abs(float(reluctance_negative.torque)),
-            np.finfo(float).tiny,
+            np.finfo(np.float64).tiny,
         )
         reluctance_even_defect = (
             abs(float(reluctance_positive.torque - reluctance_negative.torque))
@@ -124,8 +124,8 @@ def main():
                 "kind": "rotating-linear-magnetic-h1-p1",
                 "sectors": sectors,
                 "angle_samples": options.samples,
-                "nodes_per_angle": int(machine.discretization.mesh.coordinates.shape[0]),
-                "cells_per_angle": int(machine.cell_regions.size),
+                "nodes_per_angle": machine.discretization.mesh.coordinates.shape[0],
+                "cells_per_angle": machine.cell_regions.size,
                 "prepare_seconds": prepare_seconds,
                 "first_scan_seconds": first_seconds,
                 "warm_scan_seconds": warm.median_seconds,

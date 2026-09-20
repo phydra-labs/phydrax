@@ -64,8 +64,8 @@ class _ChannelLastGroupNorm(StrictModule):
             raise ValueError("GroupNorm channels and groups must be positive.")
         if self.channels % self.groups != 0:
             raise ValueError("GroupNorm channels must be divisible by groups.")
-        self.scale = jnp.ones((self.channels,), dtype=float)
-        self.bias = jnp.zeros((self.channels,), dtype=float)
+        self.scale = jnp.ones((self.channels,), dtype=jnp.float64)
+        self.bias = jnp.zeros((self.channels,), dtype=jnp.float64)
 
     def __call__(
         self,
@@ -76,16 +76,14 @@ class _ChannelLastGroupNorm(StrictModule):
         mask: Array | None = None,
     ) -> Array:
         array = jnp.asarray(values)
-        if array.ndim < self.spatial_ndim + 1 or int(array.shape[-1]) != self.channels:
+        if array.ndim < self.spatial_ndim + 1 or array.shape[-1] != self.channels:
             raise ValueError(
                 "GroupNorm input must end in the configured spatial dimensions "
                 f"and {self.channels} channels; got {array.shape}."
             )
         case_ndim = array.ndim - self.spatial_ndim - 1
-        case_shape = tuple(int(size) for size in array.shape[:case_ndim])
-        spatial_shape = tuple(
-            int(size) for size in array.shape[case_ndim : case_ndim + self.spatial_ndim]
-        )
+        case_shape = tuple(array.shape[:case_ndim])
+        spatial_shape = tuple(array.shape[case_ndim : case_ndim + self.spatial_ndim])
         grouped = array.reshape(
             array.shape[:-1] + (self.groups, self.channels // self.groups)
         )
@@ -98,12 +96,11 @@ class _ChannelLastGroupNorm(StrictModule):
             centered = grouped - mean
             valid_mask = None
         else:
-            valid_mask = jnp.asarray(mask, dtype=bool)
+            valid_mask = jnp.asarray(mask, dtype=jnp.bool_)
             expected_mask = case_shape + spatial_shape
             if valid_mask.shape != expected_mask:
                 raise ValueError(
-                    f"GroupNorm mask must have shape {expected_mask}; "
-                    f"got {valid_mask.shape}."
+                    f"GroupNorm mask must have shape {expected_mask}; got {valid_mask.shape}."
                 )
             grouped_mask = valid_mask[..., None, None]
             count = jnp.sum(grouped_mask, axis=reduction_axes, keepdims=True) * (
@@ -315,19 +312,16 @@ class _StrideTwoConvND(StrictModule):
             key,
             kernel_shape + (self.in_channels, self.out_channels),
         )
-        self.bias = jnp.zeros((self.out_channels,), dtype=float)
+        self.bias = jnp.zeros((self.out_channels,), dtype=jnp.float64)
 
     def __call__(self, values: Array, /) -> Array:
         array = jnp.asarray(values)
-        if array.ndim < self.spatial_ndim + 1 or int(array.shape[-1]) != self.in_channels:
+        if array.ndim < self.spatial_ndim + 1 or array.shape[-1] != self.in_channels:
             raise ValueError(
-                "Stride-two convolution input does not match its configured rank "
-                f"and channels; got {array.shape}."
+                f"Stride-two convolution input does not match its configured rank and channels; got {array.shape}."
             )
-        spatial_shape = tuple(
-            int(size) for size in array.shape[-self.spatial_ndim - 1 : -1]
-        )
-        case_shape = tuple(int(size) for size in array.shape[: -self.spatial_ndim - 1])
+        spatial_shape = tuple(array.shape[-self.spatial_ndim - 1 : -1])
+        case_shape = tuple(array.shape[: -self.spatial_ndim - 1])
         batch_count = prod(case_shape) if case_shape else 1
         batched = array.reshape((batch_count,) + spatial_shape + (self.in_channels,))
         spatial = {1: "W", 2: "HW", 3: "DHW"}[self.spatial_ndim]
@@ -402,7 +396,7 @@ class _ResolutionConsistentTransitionND(StrictModule):
         /,
     ) -> tuple[Array, tuple[Array, ...], tuple[Array, ...], Array]:
         output = jnp.asarray(values)
-        mask = jnp.asarray(source_mask, dtype=bool)
+        mask = jnp.asarray(source_mask, dtype=jnp.bool_)
         case_ndim = output.ndim - self.spatial_ndim - 1
         coarse_nodes = list(axis_nodes)
         coarse_weights = list(axis_weights)
@@ -414,7 +408,7 @@ class _ResolutionConsistentTransitionND(StrictModule):
             )
         for local_axis in range(self.spatial_ndim):
             absolute_axis = case_ndim + local_axis
-            size = int(output.shape[absolute_axis])
+            size = output.shape[absolute_axis]
             if size % 2:
                 raise ValueError("Resolution-consistent restriction requires even axes.")
             left_index = jnp.arange(0, size, 2)
@@ -467,7 +461,7 @@ class _ResolutionConsistentTransitionND(StrictModule):
         target_mask: Array,
         /,
     ) -> tuple[Array, tuple[Array, ...], tuple[Array, ...], Array]:
-        case_shape = tuple(int(size) for size in values.shape[: -self.spatial_ndim - 1])
+        case_shape = tuple(values.shape[: -self.spatial_ndim - 1])
         query = normalized_lattice_from_nodes(target_nodes)
         query = jnp.broadcast_to(query, case_shape + query.shape)
         sampling_result = sample_rectilinear_grid(
@@ -538,9 +532,7 @@ class FlowerDiagnostics(StrictModule):
         transition_mode: FlowerTransitionMode,
     ):
         self.blocks = tuple(blocks)
-        self.level_shapes = tuple(
-            tuple(int(size) for size in shape) for shape in level_shapes
-        )
+        self.level_shapes = tuple(tuple(shape) for shape in level_shapes)
         self.transition_mode = transition_mode
 
 
@@ -850,8 +842,7 @@ class Flower(AbstractOperatorModel):
                 )
             if (mode == "periodic") != axis.periodic:
                 raise ValueError(
-                    f"Flower boundary mode {mode!r} disagrees with periodic={axis.periodic} "
-                    f"for axis {axis.name!r}."
+                    f"Flower boundary mode {mode!r} disagrees with periodic={axis.periodic} for axis {axis.name!r}."
                 )
             nodes = jnp.asarray(axis.nodes)
             spacing = jnp.diff(nodes)
@@ -891,8 +882,7 @@ class Flower(AbstractOperatorModel):
                 checked = eqx.error_if(
                     checked,
                     jnp.logical_not(jnp.all(jnp.isfinite(weights) & (weights > 0.0))),
-                    f"Flower axis {axis.name!r} quadrature weights must be "
-                    "finite and positive.",
+                    f"Flower axis {axis.name!r} quadrature weights must be finite and positive.",
                 )
         return checked
 
@@ -906,7 +896,7 @@ class Flower(AbstractOperatorModel):
         measure_weights = []
         checked = values
         for axis in axes:
-            nodes = jnp.asarray(axis.nodes, dtype=float)
+            nodes = jnp.asarray(axis.nodes, dtype=jnp.float64)
             spacing = jnp.diff(nodes)
             if axis.periodic:
                 if axis.quadrature_weights is None:
@@ -958,18 +948,16 @@ class Flower(AbstractOperatorModel):
             array.ndim >= self.spatial_ndim + 1
             and tuple(array.shape[-self.spatial_ndim - 1 : -1]) == spatial_shape
         )
-        explicit = explicit_spatial and int(array.shape[-1]) == expected_channels
+        explicit = explicit_spatial and array.shape[-1] == expected_channels
         implicit_scalar = (
             expected_channels == 1
             and array.ndim >= self.spatial_ndim
             and tuple(array.shape[-self.spatial_ndim :]) == spatial_shape
         )
         if explicit:
-            case_shape = tuple(
-                int(size) for size in array.shape[: -self.spatial_ndim - 1]
-            )
+            case_shape = tuple(array.shape[: -self.spatial_ndim - 1])
         elif implicit_scalar:
-            case_shape = tuple(int(size) for size in array.shape[: -self.spatial_ndim])
+            case_shape = tuple(array.shape[: -self.spatial_ndim])
             array = array[..., None]
         elif explicit_spatial:
             raise ValueError(
@@ -990,7 +978,7 @@ class Flower(AbstractOperatorModel):
         /,
     ) -> Array:
         coordinates = normalized_lattice_from_nodes(axis_nodes).astype(
-            jnp.result_type(dtype, float)
+            jnp.result_type(dtype, jnp.float64)
         )
         return jnp.broadcast_to(coordinates, case_shape + coordinates.shape)
 
@@ -1004,15 +992,14 @@ class Flower(AbstractOperatorModel):
     ) -> tuple[Array, Array]:
         expected = case_shape + spatial_shape
         if source_mask is None:
-            mask = jnp.ones(expected, dtype=bool)
+            mask = jnp.ones(expected, dtype=jnp.bool_)
         else:
-            mask = jnp.asarray(source_mask, dtype=bool)
+            mask = jnp.asarray(source_mask, dtype=jnp.bool_)
             if mask.shape == spatial_shape:
                 mask = jnp.broadcast_to(mask, expected)
             elif mask.shape != expected:
                 raise ValueError(
-                    f"Flower source mask must have shape {spatial_shape} or "
-                    f"{expected}; got {mask.shape}."
+                    f"Flower source mask must have shape {spatial_shape} or {expected}; got {mask.shape}."
                 )
         if self.source_mask_mode == "reject":
             values = eqx.error_if(
@@ -1110,8 +1097,7 @@ class Flower(AbstractOperatorModel):
         array, case_shape = self._prepare_values(values, axes)
         if condition is not None and tuple(condition.shape[:-1]) != case_shape:
             raise ValueError(
-                f"Flower condition case shape must be {case_shape}; "
-                f"got {condition.shape[:-1]}."
+                f"Flower condition case shape must be {case_shape}; got {condition.shape[:-1]}."
             )
         spatial_shape = tuple(axis.size for axis in axes)
         normalized_nodes, axis_weights, array = self._axis_geometry(axes, array)
@@ -1152,9 +1138,7 @@ class Flower(AbstractOperatorModel):
                 strict=True,
             ):
                 block_key = next(block_keys)
-                level_shapes.append(
-                    tuple(int(size) for size in hidden.shape[-self.spatial_ndim - 1 : -1])
-                )
+                level_shapes.append(tuple(hidden.shape[-self.spatial_ndim - 1 : -1]))
                 if return_diagnostics:
                     diagnostics.append(
                         block.diagnostics(
@@ -1177,9 +1161,7 @@ class Flower(AbstractOperatorModel):
                     raise RuntimeError("Flower learned encoder transition mismatch.")
                 hidden = jax.nn.relu(down(hidden))
             bottleneck_key = next(block_keys)
-            level_shapes.append(
-                tuple(int(size) for size in hidden.shape[-self.spatial_ndim - 1 : -1])
-            )
+            level_shapes.append(tuple(hidden.shape[-self.spatial_ndim - 1 : -1]))
             if return_diagnostics:
                 diagnostics.append(
                     self.bottleneck.diagnostics(
@@ -1213,8 +1195,7 @@ class Flower(AbstractOperatorModel):
                 hidden = jax.nn.relu(up(block(hidden, condition, key=block_key)))
                 if hidden.shape[:-1] != skip.shape[:-1]:
                     raise ValueError(
-                        "Flower decoder and skip shapes disagree: "
-                        f"{hidden.shape} versus {skip.shape}."
+                        f"Flower decoder and skip shapes disagree: {hidden.shape} versus {skip.shape}."
                     )
                 hidden = jnp.concatenate((hidden, skip), axis=-1)
         else:
@@ -1228,9 +1209,7 @@ class Flower(AbstractOperatorModel):
                 strict=True,
             ):
                 block_key = next(block_keys)
-                level_shapes.append(
-                    tuple(int(size) for size in current_mask.shape[-self.spatial_ndim :])
-                )
+                level_shapes.append(tuple(current_mask.shape[-self.spatial_ndim :]))
                 if return_diagnostics:
                     diagnostics.append(
                         block.diagnostics(
@@ -1261,9 +1240,7 @@ class Flower(AbstractOperatorModel):
                 )
                 hidden = jax.nn.relu(hidden)
             bottleneck_key = next(block_keys)
-            level_shapes.append(
-                tuple(int(size) for size in current_mask.shape[-self.spatial_ndim :])
-            )
+            level_shapes.append(tuple(current_mask.shape[-self.spatial_ndim :]))
             if return_diagnostics:
                 diagnostics.append(
                     self.bottleneck.diagnostics(
@@ -1322,15 +1299,16 @@ class Flower(AbstractOperatorModel):
                 hidden = jax.nn.relu(hidden)
                 if hidden.shape[:-1] != skip.shape[:-1]:
                     raise ValueError(
-                        "Flower decoder and skip shapes disagree: "
-                        f"{hidden.shape} versus {skip.shape}."
+                        f"Flower decoder and skip shapes disagree: {hidden.shape} versus {skip.shape}."
                     )
                 hidden = jnp.concatenate((hidden, skip), axis=-1)
 
         output = self.projection(jax.nn.relu(self.projection_hidden(hidden)))
         if query_coordinates is None:
             final_mask = (
-                mask if query_mask is None else mask & jnp.asarray(query_mask, dtype=bool)
+                mask
+                if query_mask is None
+                else mask & jnp.asarray(query_mask, dtype=jnp.bool_)
             )
             target_weights = (
                 source_weights
@@ -1355,14 +1333,13 @@ class Flower(AbstractOperatorModel):
             sampled, support = sampling_result
             query_shape = sampled.shape[:-1]
             final_mask = (
-                jnp.ones(query_shape, dtype=bool)
+                jnp.ones(query_shape, dtype=jnp.bool_)
                 if query_mask is None
-                else jnp.asarray(query_mask, dtype=bool)
+                else jnp.asarray(query_mask, dtype=jnp.bool_)
             )
             if final_mask.shape != query_shape:
                 raise ValueError(
-                    f"Flower query mask must have shape {query_shape}; "
-                    f"got {final_mask.shape}."
+                    f"Flower query mask must have shape {query_shape}; got {final_mask.shape}."
                 )
             final_mask = final_mask & support
             output = sampled * final_mask[..., None].astype(sampled.dtype)
@@ -1375,8 +1352,7 @@ class Flower(AbstractOperatorModel):
                 )
                 if target_weights.shape != query_shape:
                     raise ValueError(
-                        f"Flower query weights must have shape {query_shape}; "
-                        f"got {target_weights.shape}."
+                        f"Flower query weights must have shape {query_shape}; got {target_weights.shape}."
                     )
         if self.conserve_mass:
             output = self._project_conservation(
@@ -1408,8 +1384,7 @@ class Flower(AbstractOperatorModel):
         )
         if len(candidates) != 1:
             raise ValueError(
-                "Flower requires source_key when OperatorBatch does not contain "
-                "exactly one nonconditioning source."
+                "Flower requires source_key when OperatorBatch does not contain exactly one nonconditioning source."
             )
         return candidates[0]
 
@@ -1423,12 +1398,11 @@ class Flower(AbstractOperatorModel):
             if samples.values is None:
                 raise ValueError(f"Flower condition {name!r} has no values.")
             array = samples.values
-            if tuple(int(size) for size in array.shape[:case_ndim]) != batch.case_shape:
+            if tuple(array.shape[:case_ndim]) != batch.case_shape:
                 raise ValueError(
-                    f"Flower condition {name!r} must begin with case shape "
-                    f"{batch.case_shape}; got {array.shape}."
+                    f"Flower condition {name!r} must begin with case shape {batch.case_shape}; got {array.shape}."
                 )
-            trailing = tuple(int(size) for size in array.shape[case_ndim:])
+            trailing = tuple(array.shape[case_ndim:])
             feature_count = prod(trailing) if trailing else 1
             if feature_count != channels:
                 raise ValueError(
@@ -1500,8 +1474,7 @@ class Flower(AbstractOperatorModel):
                     or source_axis.periodic != query_axis.periodic
                 ):
                     raise ValueError(
-                        "Interpolated Flower query axes must preserve source "
-                        "axis names and topology."
+                        "Interpolated Flower query axes must preserve source axis names and topology."
                     )
             physical = jnp.stack(
                 jnp.meshgrid(
@@ -1515,7 +1488,7 @@ class Flower(AbstractOperatorModel):
                 case_shape + physical.shape,
             )
         elif query.coordinates is not None:
-            if int(query.coordinates.shape[-1]) != self.spatial_ndim:
+            if query.coordinates.shape[-1] != self.spatial_ndim:
                 raise ValueError(
                     f"Flower query coordinates must have trailing dimension "
                     f"{self.spatial_ndim}; got {query.coordinates.shape}."
@@ -1604,8 +1577,7 @@ class Flower(AbstractOperatorModel):
                                 atol=1e-8,
                             )
                         ),
-                        "Conservative nonuniform periodic query axes require "
-                        "quadrature weights.",
+                        "Conservative nonuniform periodic query axes require quadrature weights.",
                     )
             _, query_axis_weights, source_values = self._axis_geometry(
                 batch.require_single_query().axes,
@@ -1617,8 +1589,7 @@ class Flower(AbstractOperatorModel):
             )
         else:
             raise ValueError(
-                "Conservative arbitrary-point Flower queries require explicit "
-                "quadrature_weights."
+                "Conservative arbitrary-point Flower queries require explicit quadrature_weights."
             )
         condition = self._conditions(batch)
         output, diagnostics = self._evaluate(

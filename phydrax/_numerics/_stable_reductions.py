@@ -28,7 +28,7 @@ def log_normalize(
             jnp.dtype(real_precision_dtype_name(accumulation_dtype))
         )
     elif not jnp.issubdtype(log_weights_.dtype, jnp.inexact):
-        log_weights_ = log_weights_.astype(float)
+        log_weights_ = log_weights_.astype("float64")
     raw_axes = (axes,) if isinstance(axes, int) else tuple(axes)
     if not raw_axes:
         raise ValueError("axes must contain at least one reduction axis.")
@@ -40,9 +40,9 @@ def log_normalize(
     if len(set(resolved_axes)) != len(resolved_axes):
         raise ValueError("axes must not contain duplicates.")
     included = (
-        jnp.ones(log_weights_.shape, dtype=bool)
+        jnp.ones(log_weights_.shape, dtype=jnp.bool_)
         if mask is None
-        else jnp.broadcast_to(jnp.asarray(mask, dtype=bool), log_weights_.shape)
+        else jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), log_weights_.shape)
     )
     finite = jnp.isfinite(log_weights_)
     admissible = finite | jnp.isneginf(log_weights_)

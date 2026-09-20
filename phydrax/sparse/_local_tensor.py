@@ -104,9 +104,9 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
         if accumulation_ not in ("fast", "deterministic", "compensated"):
             raise ValueError("Unknown local accumulation policy.")
         valid_ = (
-            jnp.ones((matrices.shape[0],), dtype=bool)
+            jnp.ones((matrices.shape[0],), dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if valid_.shape != (matrices.shape[0],):
             raise ValueError("Element tensor validity must have one entry per entity.")

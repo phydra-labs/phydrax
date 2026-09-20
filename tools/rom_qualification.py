@@ -237,7 +237,7 @@ def hyperreduction_qualification() -> dict[str, object]:
     return {
         "passed": error <= 1.0e-12,
         "reduced_error": error,
-        "sample_count": int(artifact.node_indices.size),
+        "sample_count": artifact.node_indices.size,
         "artifact_id": artifact.artifact_id,
     }
 

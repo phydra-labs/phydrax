@@ -118,20 +118,20 @@ BROSA_PLANELLA_TSPME_CANDIDATE = CapabilityProfile(
     released=False,
 )
 
-EMPIRICAL_AGEING_SUPPORT = SupportTuple(
-    "battery.ageing",
+EMPIRICAL_AGING_SUPPORT = SupportTuple(
+    "battery.aging",
     {
         "code_id": (
-            "phydrax.applications.battery._ageing_empirical.advance_empirical_ageing"
+            "phydrax.applications.battery._aging_empirical.advance_empirical_aging"
         ),
         "coupling": "one-way-macrostep",
     },
 )
-EMPIRICAL_AGEING_CANDIDATE = CapabilityProfile(
-    "battery.empirical-ageing.candidate",
+EMPIRICAL_AGING_CANDIDATE = CapabilityProfile(
+    "battery.empirical-aging.candidate",
     _PROVIDER,
     _CANDIDATE_VERSION,
-    (EMPIRICAL_AGEING_SUPPORT,),
+    (EMPIRICAL_AGING_SUPPORT,),
     released=False,
 )
 
@@ -282,7 +282,7 @@ BATTERY_CANDIDATE_PROFILES = (
     ISOTHERMAL_SPM_CANDIDATE,
     MARQUIS_2019_SPME_CANDIDATE,
     BROSA_PLANELLA_TSPME_CANDIDATE,
-    EMPIRICAL_AGEING_CANDIDATE,
+    EMPIRICAL_AGING_CANDIDATE,
     BROSA_PLANELLA_SPME_SEI_CANDIDATE,
     AFFINE_ECM_ESTIMATION_CANDIDATE,
     BATTERY_OED_CANDIDATE,
@@ -449,8 +449,8 @@ __all__ = [
     "CampaignStartRecord",
     "CapabilityProfile",
     "DFN_ENTRY_SUPPORT",
-    "EMPIRICAL_AGEING_CANDIDATE",
-    "EMPIRICAL_AGEING_SUPPORT",
+    "EMPIRICAL_AGING_CANDIDATE",
+    "EMPIRICAL_AGING_SUPPORT",
     "FIXED_HORIZON_CURRENT_CONTROL_CANDIDATE",
     "FIXED_HORIZON_CURRENT_CONTROL_SUPPORT",
     "ISOTHERMAL_SPM_CANDIDATE",

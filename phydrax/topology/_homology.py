@@ -128,7 +128,7 @@ class FiniteFieldBasis(StrictModule, NonTrainableState):
 
     @property
     def nonzero_count(self) -> int:
-        return int(self.coefficients.shape[0])
+        return self.coefficients.shape[0]
 
 
 class HomologyDegreeResult(StrictModule, NonTrainableState):
@@ -272,8 +272,8 @@ class BettiDimensionResult(StrictModule, NonTrainableState):
         *,
         reduced: bool,
     ):
-        degrees_ = tuple(int(value) for value in degrees)
-        dimensions_ = tuple(int(value) for value in dimensions)
+        degrees_ = tuple(degrees)
+        dimensions_ = tuple(dimensions)
         if len(degrees_) != len(dimensions_) or any(value < 0 for value in dimensions_):
             raise ValueError("Betti degrees and dimensions are inconsistent.")
         self.degrees = degrees_
@@ -313,8 +313,7 @@ def _resolved_complex(
     if isinstance(value, (CellSubcomplex, CellComplexPair)):
         return value
     raise TypeError(
-        "Topology analysis requires CellComplexTopology, CellSubcomplex, or "
-        "CellComplexPair."
+        "Topology analysis requires CellComplexTopology, CellSubcomplex, or CellComplexPair."
     )
 
 

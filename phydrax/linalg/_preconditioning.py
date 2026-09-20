@@ -82,14 +82,12 @@ def _dense_materialization_eligibility(
     if entries > policy.max_entries:
         return (
             False,
-            f"dense materialization requires {entries} entries, exceeding "
-            f"the policy limit {policy.max_entries}",
+            f"dense materialization requires {entries} entries, exceeding the policy limit {policy.max_entries}",
         )
     if required_bytes > policy.max_bytes:
         return (
             False,
-            f"dense materialization requires {required_bytes} bytes, exceeding "
-            f"the policy limit {policy.max_bytes}",
+            f"dense materialization requires {required_bytes} bytes, exceeding the policy limit {policy.max_bytes}",
         )
     return True, "dense materialization fits the active policy"
 
@@ -483,8 +481,7 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
                 component=self.builder_id,
                 accepted=False,
                 reason=(
-                    f"block size {self.block_size} does not divide operator "
-                    f"dimension {dimension}"
+                    f"block size {self.block_size} does not divide operator dimension {dimension}"
                 ),
             )
         itemsize = _coordinate_dtype(setup_operator.source).itemsize
@@ -498,7 +495,7 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
             block_bytes
             + dimension * jnp.dtype(jnp.int32).itemsize
             + dimension * real_itemsize
-            + num_blocks * jnp.dtype(bool).itemsize
+            + num_blocks * jnp.dtype(jnp.bool_).itemsize
         )
         try:
             assembly_plan = _block_jacobi_assembly_plan(
@@ -540,8 +537,7 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
             apply_workspace_bytes_per_rhs=3 * dimension * itemsize,
             setup_matvec_count=setup_matvec_count,
             reason=(
-                f"exact {self.block_size}-coordinate block extraction and "
-                "batched factorization"
+                f"exact {self.block_size}-coordinate block extraction and batched factorization"
             ),
         )
 
@@ -715,8 +711,7 @@ class PreconditioningPolicy(StrictModule):
                 )
         else:
             raise TypeError(
-                "source must be an AbstractPreconditioner or "
-                "AbstractPreconditionerBuilder."
+                "source must be an AbstractPreconditioner or AbstractPreconditionerBuilder."
             )
         self.side = side
 
@@ -843,8 +838,7 @@ class PreconditionerPlan(StrictModule):
                 setup_matvec_count=cost.setup_matvec_count,
                 accepted=cost.accepted,
                 reason=(
-                    f"{cost.reason}; stored/applied in {compute_dtype_} with "
-                    "explicit coordinate casts"
+                    f"{cost.reason}; stored/applied in {compute_dtype_} with explicit coordinate casts"
                 ),
             )
         if policy.preconditioner is not None:
@@ -928,14 +922,12 @@ class PreparedPreconditioner(StrictModule):
         version = eqx.error_if(
             version,
             invalid,
-            "Preconditioner numeric versions must satisfy "
-            "0 <= built_numeric_version <= numeric_version.",
+            "Preconditioner numeric versions must satisfy 0 <= built_numeric_version <= numeric_version.",
         )
         built_version = eqx.error_if(
             built_version,
             invalid,
-            "Preconditioner numeric versions must satisfy "
-            "0 <= built_numeric_version <= numeric_version.",
+            "Preconditioner numeric versions must satisfy 0 <= built_numeric_version <= numeric_version.",
         )
         if refresh_kind not in (
             "prepared",

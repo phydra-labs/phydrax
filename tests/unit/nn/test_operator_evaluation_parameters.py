@@ -50,9 +50,9 @@ def _schedule_free_fit(model, dataset, **kwargs):
         model,
         dataset,
         optimizer=_schedule_free(),
-        optimizer_id="tests.schedule_free_sgd.v1",
+        optimizer_id="tests.schedule_free_sgd",
         evaluation_parameters=optax.contrib.schedule_free_eval_params,
-        evaluation_parameters_id="optax.schedule_free_eval_params.v1",
+        evaluation_parameters_id="optax.schedule_free_eval_params",
         batch_size=2,
         seed=11,
         jit=False,
@@ -156,7 +156,7 @@ def test_schedule_free_resume_rejects_changed_or_missing_evaluator_id(
 
     kwargs: dict[str, Any] = {
         "optimizer": _schedule_free(),
-        "optimizer_id": "tests.schedule_free_sgd.v1",
+        "optimizer_id": "tests.schedule_free_sgd",
         "batch_size": 2,
         "seed": 11,
         "jit": False,
@@ -183,7 +183,7 @@ def test_checkpointed_evaluation_transform_requires_stable_id(tmp_path):
             checkpoint_path=tmp_path / "fit",
             evaluation_parameters=optax.contrib.schedule_free_eval_params,
             optimizer=_schedule_free(),
-            optimizer_id="tests.schedule_free_sgd.v1",
+            optimizer_id="tests.schedule_free_sgd",
             jit=False,
         )
 

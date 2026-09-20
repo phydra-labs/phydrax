@@ -51,7 +51,9 @@ def function_samples_from_cochain(
     weights = complex_ir.hodge_stars[resolved_degree][local_cells]
     policy = CochainBoundaryPolicy(boundary_policy)
     active = complex_ir.active_mask(resolved_degree, policy)[local_cells]
-    resolved_mask = active if mask is None else jnp.asarray(mask, dtype=bool) & active
+    resolved_mask = (
+        active if mask is None else jnp.asarray(mask, dtype=jnp.bool_) & active
+    )
     return FunctionSamples(
         values=None if values is None else jnp.asarray(values),
         coordinates=coordinates,

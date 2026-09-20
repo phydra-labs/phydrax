@@ -46,7 +46,7 @@ class DressedStateLabel(StrictModule):
             for level in raw_levels
         ):
             raise TypeError("levels must contain non-negative integers.")
-        levels_ = tuple(int(level) for level in raw_levels)
+        levels_ = tuple(raw_levels)
         if any(level < 0 for level in levels_):
             raise ValueError("levels must contain non-negative integers.")
         identifier = (
@@ -346,7 +346,7 @@ def prepare_dressed_spectrum(
     labels: Sequence[DressedStateLabel | Sequence[int]] | None = None,
     policy: DressedSpectrumPolicy | None = None,
 ) -> PreparedDressedSpectrum:
-    """Prepare a product-labelled dressed eigensystem."""
+    """Prepare a product-labeled dressed eigensystem."""
 
     if plan is None:
         if labels is None:

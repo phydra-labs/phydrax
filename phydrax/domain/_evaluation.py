@@ -278,7 +278,7 @@ def _mapped_axis_prefix(
     for axis in axes:
         if shape_index >= values.ndim:
             break
-        if int(values.shape[shape_index]) == _axis_size(points, axis):
+        if values.shape[shape_index] == _axis_size(points, axis):
             used.append(axis)
             shape_index += 1
             started = True
@@ -308,14 +308,14 @@ def complete_batch_axes(
                 for axis in coord_axes:
                     if axis not in out.named_dims:
                         out = out * cx.AxisArray(
-                            jnp.ones((_axis_size(points, axis),), dtype=float),
+                            jnp.ones((_axis_size(points, axis),), dtype=jnp.float64),
                             dims=(axis,),
                         )
                 continue
             axis = dense_structure.axis_for(label)
             if axis is not None and axis not in out.named_dims:
                 out = out * cx.AxisArray(
-                    jnp.ones((_axis_size(points, axis),), dtype=float),
+                    jnp.ones((_axis_size(points, axis),), dtype=jnp.float64),
                     dims=(axis,),
                 )
         return _reorder_named_axes(out, dense_structure.axis_names)
@@ -335,7 +335,7 @@ def complete_batch_axes(
                 f"Cannot infer size for sampling axis {axis!r} from points[{label!r}]."
             )
         out = out * cx.AxisArray(
-            jnp.ones((int(source.named_shape[axis]),), dtype=float),
+            jnp.ones((int(source.named_shape[axis]),), dtype=jnp.float64),
             dims=(axis,),
         )
     return _reorder_named_axes(out, structure.axis_names)

@@ -87,19 +87,16 @@ class Z4cAlgebraicEnforcement(StrictModule, NonTrainableState):
         extrinsic = state.conformal_extrinsic_curvature
         determinant = determinant_small_linear(_SMALL_3X3, metric_trailing)
         safe_determinant = jnp.where(determinant > 0.0, determinant, 1.0)
-        normalized_metric = state.conformal_metric / jnp.cbrt(safe_determinant)[
-            None, None, ...
-        ]
+        normalized_metric = (
+            state.conformal_metric / jnp.cbrt(safe_determinant)[None, None, ...]
+        )
         inverse_result = inverse_small_linear(
             _SMALL_3X3, _trailing_matrix(normalized_metric)
         )
         inverse = _component_matrix(inverse_result.value)
-        trace_before = ein.contract(
-            "ij...,ij...->...", inverse, extrinsic, backend="jax"
-        )
+        trace_before = ein.contract("ij...,ij...->...", inverse, extrinsic, backend="jax")
         normalized_extrinsic = (
-            extrinsic
-            - normalized_metric * trace_before[None, None, ...] / 3.0
+            extrinsic - normalized_metric * trace_before[None, None, ...] / 3.0
         )
         trace_after = ein.contract(
             "ij...,ij...->...", inverse, normalized_extrinsic, backend="jax"
@@ -107,12 +104,8 @@ class Z4cAlgebraicEnforcement(StrictModule, NonTrainableState):
         determinant_after = determinant_small_linear(
             _SMALL_3X3, _trailing_matrix(normalized_metric)
         )
-        metric_correction = jnp.max(
-            jnp.abs(normalized_metric - state.conformal_metric)
-        )
-        extrinsic_correction = jnp.max(
-            jnp.abs(normalized_extrinsic - extrinsic)
-        )
+        metric_correction = jnp.max(jnp.abs(normalized_metric - state.conformal_metric))
+        extrinsic_correction = jnp.max(jnp.abs(normalized_extrinsic - extrinsic))
         correction = jnp.maximum(metric_correction, extrinsic_correction)
         determinant_defect_before = jnp.max(jnp.abs(determinant - 1.0))
         determinant_defect_after = jnp.max(jnp.abs(determinant_after - 1.0))

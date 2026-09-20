@@ -87,8 +87,7 @@ class EinsteinWaldEntropyPlan(StrictModule, NonTrainableState):
             derivative_valid,
             status,
             _ENTROPY_THEORY,
-            "Einstein-Hilbert classical stationary bifurcate Killing horizons; "
-            "minimally coupled matter",
+            "Einstein-Hilbert classical stationary bifurcate Killing horizons; minimally coupled matter",
             False,
             False,
             self.plan_id,

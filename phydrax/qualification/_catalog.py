@@ -367,8 +367,7 @@ class CapabilityCatalog:
             for symbol in declaration.public_symbols:
                 if symbol in symbol_owner:
                     raise ValueError(
-                        f"Public symbol {symbol} is owned by both "
-                        f"{symbol_owner[symbol]} and {declaration.capability}."
+                        f"Public symbol {symbol} is owned by both {symbol_owner[symbol]} and {declaration.capability}."
                     )
                 symbol_owner[symbol] = declaration.capability
             for profile in declaration.profiles:

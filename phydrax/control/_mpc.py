@@ -201,8 +201,7 @@ class RecedingHorizonMPC(StrictModule):
         expected_initial = specification.case_shape + (specification.state_size,)
         if tuple(current_state.shape) != expected_initial:
             raise ValueError(
-                f"initial_state must have shape {expected_initial}; "
-                f"got {current_state.shape}."
+                f"initial_state must have shape {expected_initial}; got {current_state.shape}."
             )
 
         applied_controls: list[Array] = []
@@ -671,8 +670,7 @@ class RecedingHorizonMPC(StrictModule):
             terminal_inequality_rhs=terminal_inequality_rhs,
             time_grid=local_time_grid,
             problem_id=(
-                f"{specification.problem_id}:mpc-window:"
-                f"{local_horizon}:terminal-{int(apply_terminal)}"
+                f"{specification.problem_id}:mpc-window:{local_horizon}:terminal-{int(apply_terminal)}"
             ),
             dynamics_id=specification.dynamics_id,
         )

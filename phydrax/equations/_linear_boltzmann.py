@@ -49,12 +49,12 @@ class SlabTransportBoundaryPlan(StrictModule, NonTrainableState):
         left = (
             np.zeros(shape)
             if left_incident is None
-            else np.asarray(left_incident, dtype=float)
+            else np.asarray(left_incident, dtype=np.float64)
         )
         right = (
             np.zeros(shape)
             if right_incident is None
-            else np.asarray(right_incident, dtype=float)
+            else np.asarray(right_incident, dtype=np.float64)
         )
         if (
             groups < 1
@@ -113,10 +113,10 @@ class MultigroupSlabTransportProblem(StrictModule, NonTrainableState):
         *,
         group_sets: tuple[tuple[int, ...], ...] | None = None,
     ):
-        edges = np.asarray(cell_edges, dtype=float)
-        total = np.asarray(total_cross_section, dtype=float)
-        scattering = np.asarray(scattering_cross_section, dtype=float)
-        source = np.asarray(fixed_isotropic_source, dtype=float)
+        edges = np.asarray(cell_edges, dtype=np.float64)
+        total = np.asarray(total_cross_section, dtype=np.float64)
+        scattering = np.asarray(scattering_cross_section, dtype=np.float64)
+        source = np.asarray(fixed_isotropic_source, dtype=np.float64)
         if not isinstance(quadrature, CertifiedSlabAngularQuadrature):
             raise TypeError("quadrature must be CertifiedSlabAngularQuadrature.")
         if not isinstance(boundaries, SlabTransportBoundaryPlan):
@@ -145,7 +145,7 @@ class MultigroupSlabTransportProblem(StrictModule, NonTrainableState):
         sets = (
             (tuple(range(groups)),)
             if group_sets is None
-            else tuple(tuple(int(group) for group in value) for value in group_sets)
+            else tuple(tuple(value) for value in group_sets)
         )
         membership = tuple(group for value in sets for group in value)
         if (
@@ -180,11 +180,11 @@ class MultigroupSlabTransportProblem(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.total_cross_section.shape[0])
+        return self.total_cross_section.shape[0]
 
     @property
     def group_count(self) -> int:
-        return int(self.total_cross_section.shape[1])
+        return self.total_cross_section.shape[1]
 
     @property
     def absorption_cross_section(self) -> Array:

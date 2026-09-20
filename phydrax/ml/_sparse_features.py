@@ -34,16 +34,16 @@ class SparseFeatures(StrictModule):
     ):
         values_ = jnp.asarray(values)
         columns_ = jnp.asarray(column_indices)
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         if values_.shape != columns_.shape:
             raise ValueError("Sparse feature values and column indices must match.")
         if values_.ndim != len(cases) + 2:
             raise ValueError(
                 "Sparse features must have shape case_shape + (sample, row_width)."
             )
-        if tuple(int(size) for size in values_.shape[: len(cases)]) != cases:
+        if tuple(values_.shape[: len(cases)]) != cases:
             raise ValueError("Sparse feature values do not begin with case_shape.")
-        if int(values_.shape[-2]) <= 0 or int(values_.shape[-1]) <= 0:
+        if values_.shape[-2] <= 0 or values_.shape[-1] <= 0:
             raise ValueError(
                 "Sparse features require positive sample and row capacities."
             )
@@ -59,7 +59,7 @@ class SparseFeatures(StrictModule):
         self.values = values_
         self.columns = relation
         self.case_shape = cases
-        self.sample_count = int(values_.shape[-2])
+        self.sample_count = values_.shape[-2]
         self.feature_count = feature_count_
 
     @property
@@ -68,7 +68,7 @@ class SparseFeatures(StrictModule):
 
     @property
     def row_width(self) -> int:
-        return int(self.values.shape[-1])
+        return self.values.shape[-1]
 
     def to_dense(self, /) -> Array:
         """Materialize dense features explicitly."""
@@ -93,7 +93,7 @@ class SparseFeatures(StrictModule):
     def right_matmul(self, matrix: ArrayLike, /) -> Array:
         """Apply the sparse row matrix to a dense feature-leading matrix."""
         matrix_ = jnp.asarray(matrix)
-        if matrix_.ndim < 1 or int(matrix_.shape[0]) != self.feature_count:
+        if matrix_.ndim < 1 or matrix_.shape[0] != self.feature_count:
             raise ValueError(
                 f"matrix must begin with feature dimension {self.feature_count}."
             )

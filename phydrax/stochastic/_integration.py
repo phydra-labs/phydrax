@@ -89,7 +89,7 @@ def trajectory_measure(
         weight_dims = leading_dims + (trajectory.time_axis,)
         provenance = "stochastic-trajectory:marginal"
     else:
-        path_valid = jnp.all(jnp.asarray(marginal_valid.data, dtype=bool), axis=-1)
+        path_valid = jnp.all(jnp.asarray(marginal_valid.data, dtype=jnp.bool_), axis=-1)
         mask = cx.AxisArray(path_valid, dims=leading_dims)
         weight_dims = leading_dims
         provenance = "stochastic-trajectory:path"
@@ -117,11 +117,11 @@ def time_measure(
         raise TypeError("trajectory must be a StochasticTrajectory.")
     if rule not in ("left", "trapezoid"):
         raise ValueError("rule must be 'left' or 'trapezoid'.")
-    valid = jnp.asarray(trajectory.marginal_valid, dtype=bool)
+    valid = jnp.asarray(trajectory.marginal_valid, dtype=jnp.bool_)
     invalid_prefix = jnp.cumsum(~valid, axis=-1) > 0
     if bool(jnp.any(valid & invalid_prefix)):
         raise ValueError("Trajectory validity masks must be contiguous prefixes.")
-    times = jnp.asarray(trajectory.times, dtype=float)
+    times = jnp.asarray(trajectory.times, dtype=jnp.float64)
     weights = jnp.zeros_like(times)
     if trajectory.num_times > 1:
         intervals = jnp.diff(times, axis=-1)

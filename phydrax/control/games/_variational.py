@@ -137,12 +137,11 @@ class FiniteHorizonLQOpenLoopVEProblem(StrictModule):
         a = _real_array(dynamics_matrices, "dynamics_matrices")
         if a.ndim < 3 or a.shape[-1] != a.shape[-2]:
             raise ValueError(
-                "dynamics_matrices must have shape "
-                "case_shape + (horizon, state_size, state_size)."
+                "dynamics_matrices must have shape case_shape + (horizon, state_size, state_size)."
             )
-        case_shape = tuple(int(size) for size in a.shape[:-3])
-        horizon = int(a.shape[-3])
-        state_size = int(a.shape[-1])
+        case_shape = tuple(a.shape[:-3])
+        horizon = a.shape[-3]
+        state_size = a.shape[-1]
         if horizon < 1 or state_size < 1:
             raise ValueError("horizon and state_size must be positive.")
         b = _real_array(control_matrices, "control_matrices")
@@ -152,10 +151,9 @@ class FiniteHorizonLQOpenLoopVEProblem(StrictModule):
             or tuple(b.shape[-3:-1]) != (horizon, state_size)
         ):
             raise ValueError(
-                "control_matrices must have shape "
-                "case_shape + (horizon, state_size, control_size)."
+                "control_matrices must have shape case_shape + (horizon, state_size, control_size)."
             )
-        control_size = int(b.shape[-1])
+        control_size = b.shape[-1]
         if partition.joint_control_size != control_size:
             raise ValueError(
                 "partition joint control size must match control_matrices; "
@@ -560,8 +558,7 @@ def _multiplier_metadata(
             equalities.append(block.equality)
     if len(rows) != constraint_layout.num_residuals:
         raise ValueError(
-            "Variational multiplier allocation must contain every physical constraint "
-            "exactly once."
+            "Variational multiplier allocation must contain every physical constraint exactly once."
         )
     if len(set(rows)) != len(rows):
         raise ValueError("Variational multiplier allocation duplicated a physical row.")
@@ -1153,7 +1150,7 @@ def _numeric_preparation(
     lowered = _lower_constraints(plan, constraint_matrix, constraint_offset)
     equality_matrix, equality_rhs, inequality_matrix, inequality_rhs = lowered[:4]
     case_rank = len(problem.case_shape)
-    finite = jnp.ones(problem.case_shape, dtype=bool)
+    finite = jnp.ones(problem.case_shape, dtype=jnp.bool_)
     for value in (
         problem.dynamics_matrices,
         problem.control_matrices,
@@ -1667,7 +1664,7 @@ def solve_prepared_open_loop_ve(
         natural_residual <= prepared.plan.natural_residual_tolerance
     )
     case_rank = len(prepared.plan.case_shape)
-    output_finite = jnp.ones(prepared.plan.case_shape, dtype=bool)
+    output_finite = jnp.ones(prepared.plan.case_shape, dtype=jnp.bool_)
     for value in (
         flat_controls,
         states,

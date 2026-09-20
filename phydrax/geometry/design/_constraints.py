@@ -36,7 +36,7 @@ class AbstractDesignConstraint(StrictModule):
     def __init__(self, weight: float = 1.0):
         if not np.isfinite(weight) or weight <= 0.0:
             raise ValueError("constraint weight must be finite and positive.")
-        self.weight = jnp.asarray(weight, dtype=float).reshape(())
+        self.weight = jnp.asarray(weight, dtype=jnp.float64).reshape(())
 
     @abstractmethod
     def residual(
@@ -71,8 +71,8 @@ class ParameterTarget(AbstractDesignConstraint):
         if not np.isfinite(scale) or scale <= 0.0:
             raise ValueError("scale must be finite and positive.")
         self.parameter_id = parameter_id
-        self.target = jnp.asarray(target, dtype=float)
-        self.scale = jnp.asarray(scale, dtype=float).reshape(())
+        self.target = jnp.asarray(target, dtype=jnp.float64)
+        self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
     def residual(self, kernel, schema, state, /):
         del kernel
@@ -100,7 +100,7 @@ class ParameterEquality(AbstractDesignConstraint):
             raise ValueError("scale must be finite and positive.")
         self.first = first
         self.second = second
-        self.scale = jnp.asarray(scale, dtype=float).reshape(())
+        self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
     def residual(self, kernel, schema, state, /):
         del kernel
@@ -125,8 +125,8 @@ class MeasureTarget(AbstractDesignConstraint):
             raise ValueError("target must be finite.")
         if not np.isfinite(scale) or scale <= 0.0:
             raise ValueError("scale must be finite and positive.")
-        self.target = jnp.asarray(target, dtype=float).reshape(())
-        self.scale = jnp.asarray(scale, dtype=float).reshape(())
+        self.target = jnp.asarray(target, dtype=jnp.float64).reshape(())
+        self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
     def residual(self, kernel, schema, state, /):
         del schema
@@ -149,8 +149,8 @@ class BoundaryMeasureTarget(AbstractDesignConstraint):
             raise ValueError("target must be finite.")
         if not np.isfinite(scale) or scale <= 0.0:
             raise ValueError("scale must be finite and positive.")
-        self.target = jnp.asarray(target, dtype=float).reshape(())
-        self.scale = jnp.asarray(scale, dtype=float).reshape(())
+        self.target = jnp.asarray(target, dtype=jnp.float64).reshape(())
+        self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
     def residual(self, kernel, schema, state, /):
         del schema
@@ -169,13 +169,13 @@ class BoundaryPoints(AbstractDesignConstraint):
         weight: float = 1.0,
     ):
         super().__init__(weight)
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim != 2:
             raise ValueError("points must have shape (num_points, ambient_dimension).")
         if not np.isfinite(scale) or scale <= 0.0:
             raise ValueError("scale must be finite and positive.")
         self.points = points_
-        self.scale = jnp.asarray(scale, dtype=float).reshape(())
+        self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
     def residual(self, kernel, schema, state, /):
         del schema
@@ -196,7 +196,7 @@ class InteriorClearance(AbstractDesignConstraint):
         weight: float = 1.0,
     ):
         super().__init__(weight)
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim != 2:
             raise ValueError("points must have shape (num_points, ambient_dimension).")
         if not np.isfinite(clearance) or clearance < 0.0:
@@ -204,8 +204,8 @@ class InteriorClearance(AbstractDesignConstraint):
         if not np.isfinite(scale) or scale <= 0.0:
             raise ValueError("scale must be finite and positive.")
         self.points = points_
-        self.clearance = jnp.asarray(clearance, dtype=float).reshape(())
-        self.scale = jnp.asarray(scale, dtype=float).reshape(())
+        self.clearance = jnp.asarray(clearance, dtype=jnp.float64).reshape(())
+        self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
     def residual(self, kernel, schema, state, /):
         del schema
@@ -227,7 +227,7 @@ class ExteriorClearance(AbstractDesignConstraint):
         weight: float = 1.0,
     ):
         super().__init__(weight)
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim != 2:
             raise ValueError("points must have shape (num_points, ambient_dimension).")
         if not np.isfinite(clearance) or clearance < 0.0:
@@ -235,8 +235,8 @@ class ExteriorClearance(AbstractDesignConstraint):
         if not np.isfinite(scale) or scale <= 0.0:
             raise ValueError("scale must be finite and positive.")
         self.points = points_
-        self.clearance = jnp.asarray(clearance, dtype=float).reshape(())
-        self.scale = jnp.asarray(scale, dtype=float).reshape(())
+        self.clearance = jnp.asarray(clearance, dtype=jnp.float64).reshape(())
+        self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
     def residual(self, kernel, schema, state, /):
         del schema
@@ -251,7 +251,7 @@ class BRepSeamCompatibility(AbstractDesignConstraint):
         super().__init__(weight)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("tolerance must be finite and positive.")
-        self.tolerance = jnp.asarray(tolerance, dtype=float).reshape(())
+        self.tolerance = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
 
     def residual(self, kernel, schema, state, /):
         del schema
@@ -279,9 +279,9 @@ class ConstraintSolveResult(StrictModule):
         iterations,
     ):
         self.state = state
-        self.residual = jnp.asarray(residual, dtype=float)
-        self.residual_norm = jnp.asarray(residual_norm, dtype=float).reshape(())
-        self.converged = jnp.asarray(converged, dtype=bool).reshape(())
+        self.residual = jnp.asarray(residual, dtype=jnp.float64)
+        self.residual_norm = jnp.asarray(residual_norm, dtype=jnp.float64).reshape(())
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
 
 
@@ -319,19 +319,19 @@ class DesignConstraintSystem(StrictModule):
         offset = 0
         for index in indices:
             spec = geometry.schema.specs[index]
-            size = int(np.prod(spec.shape, dtype=int))
+            size = int(np.prod(spec.shape, dtype=np.int64))
             slices.append((offset, offset + size, spec.shape))
             low = -np.inf if spec.bounds[0] is None else spec.bounds[0]
             high = np.inf if spec.bounds[1] is None else spec.bounds[1]
-            lower.append(np.full((size,), low, dtype=float))
-            upper.append(np.full((size,), high, dtype=float))
+            lower.append(np.full((size,), low, dtype=np.float64))
+            upper.append(np.full((size,), high, dtype=np.float64))
             offset += size
         self.geometry = geometry
         self.constraints = constraints_
         self.trainable_indices = indices
         self.slices = tuple(slices)
-        self.lower_bounds = jnp.asarray(np.concatenate(lower), dtype=float)
-        self.upper_bounds = jnp.asarray(np.concatenate(upper), dtype=float)
+        self.lower_bounds = jnp.asarray(np.concatenate(lower), dtype=jnp.float64)
+        self.upper_bounds = jnp.asarray(np.concatenate(upper), dtype=jnp.float64)
 
     @staticmethod
     def _validate_constraints(geometry, constraints):
@@ -380,7 +380,7 @@ class DesignConstraintSystem(StrictModule):
         *,
         base_state: DesignState | None = None,
     ) -> DesignState:
-        vector_ = jnp.asarray(vector, dtype=float).reshape((-1,))
+        vector_ = jnp.asarray(vector, dtype=jnp.float64).reshape((-1,))
         if vector_.shape != self.lower_bounds.shape:
             raise ValueError(
                 "vector has the wrong number of trainable degrees of freedom."

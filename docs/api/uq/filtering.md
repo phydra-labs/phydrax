@@ -56,7 +56,7 @@ forcing = phx.stochastic.SampledStateSpaceInput(
     jnp.asarray([[0.0, 0.5, 1.0], [0.0, 0.5, 1.0]]),
     jnp.asarray([[[1.0], [2.0], [3.0]], [[2.0], [3.0], [4.0]]]),
     interpolation="linear",
-    input_id="forcing-v1",
+    input_id="forcing",
 )
 prior = phx.stochastic.GaussianStatePrior(
     jnp.zeros((2, 1)),
@@ -110,7 +110,7 @@ problem = phx.stochastic.StateSpaceProblem(
 filtered = phx.uq.kalman_filter(problem, method="sequential")
 
 assert filtered.filtered_means.shape == (2, 2, 1)
-assert filtered.input_id == "forcing-v1"
+assert filtered.input_id == "forcing"
 ```
 
 `knot_valid` only identifies the prefix of real input knots in padded input storage.
@@ -727,7 +727,7 @@ accumulation, resampling and ESS decisions, and optional output placement.
 Transition samples are stored in state precision; likelihood normalization,
 evidence, and cumulative log likelihood use statistics precision; ESS thresholds
 and resampling CDFs use decision precision. Results retain precision evidence.
-Particle checkpoint kind `particle-filter-state-v2` includes the policy identity
+Particle checkpoint kind `particle-filter-state` includes the policy identity
 and rejects state/statistic dtype mismatches on restore.
 
 ::: phydrax.uq.ParticlePrecisionPolicy

@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from types import SimpleNamespace
 
 import jax.numpy as jnp
 import numpy as np

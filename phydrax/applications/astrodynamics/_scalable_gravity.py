@@ -73,7 +73,7 @@ def detect_close_encounter(
     count = values.shape[0]
     displacement = values[:, None, :] - values[None, :, :]
     distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
-    distance = jnp.where(jnp.eye(count, dtype=bool), jnp.inf, distance)
+    distance = jnp.where(jnp.eye(count, dtype=jnp.bool_), jnp.inf, distance)
     flat = jnp.argmin(distance)
     pair = jnp.asarray((flat // count, flat % count), dtype=jnp.int32)
     minimum = jnp.min(distance)
@@ -82,7 +82,7 @@ def detect_close_encounter(
     regularized = (
         encountered
         & ~collided
-        & jnp.asarray(regularization_prepared, dtype=bool).reshape(())
+        & jnp.asarray(regularization_prepared, dtype=jnp.bool_).reshape(())
     )
     status = jnp.where(
         collided,
@@ -115,8 +115,8 @@ class PreparedOctree3D(StrictModule, NonTrainableState):
         leaf_capacity=8,
         maximum_depth=24,
     ):
-        positions = np.asarray(reference_positions, dtype=float)
-        mass_values = np.asarray(masses, dtype=float)
+        positions = np.asarray(reference_positions, dtype=np.float64)
+        mass_values = np.asarray(masses, dtype=np.float64)
         if (
             positions.ndim != 2
             or positions.shape[1] != 3
@@ -130,8 +130,8 @@ class PreparedOctree3D(StrictModule, NonTrainableState):
         depth = min(max(requested_depth, 1), min(int(maximum_depth), 10))
         minimum = np.min(positions, axis=0)
         maximum = np.max(positions, axis=0)
-        extent = max(float(np.max(maximum - minimum)), np.finfo(float).eps)
-        padding = 16.0 * np.finfo(float).eps * max(abs(extent), 1.0)
+        extent = max(float(np.max(maximum - minimum)), np.finfo(np.float64).eps)
+        padding = 16.0 * np.finfo(np.float64).eps * max(abs(extent), 1.0)
         origin = minimum - padding
         box = (float(extent + 2.0 * padding),) * 3
         local = positions - origin[None, :]

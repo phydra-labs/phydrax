@@ -46,7 +46,7 @@ class MetricResult(StrictModule):
         effective_weight: ArrayLike,
     ):
         self.value = jnp.asarray(value)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.effective_weight = jnp.asarray(effective_weight)
 
@@ -131,8 +131,7 @@ def _broadcast_full(
         expanded = array.reshape(array.shape + (1,) * (len(shape) - array.ndim))
         return jnp.broadcast_to(expanded, shape)
     raise ValueError(
-        f"{name} must broadcast to value shape {shape}, either directly "
-        "or across trailing value axes."
+        f"{name} must broadcast to value shape {shape}, either directly or across trailing value axes."
     )
 
 
@@ -143,11 +142,13 @@ def _broadcast_metric_mask(
     /,
 ) -> Array:
     if mask is None:
-        return jnp.ones(shape, dtype=bool)
-    array = jnp.asarray(mask, dtype=bool)
+        return jnp.ones(shape, dtype=jnp.bool_)
+    array = jnp.asarray(mask, dtype=jnp.bool_)
     if _broadcast_layout(array.shape, prefix_shape) is None:
-        return _broadcast_full(array, shape, dtype=bool, fill=True, name="mask")
-    prefix = _broadcast_prefix(array, prefix_shape, dtype=bool, fill=1.0, name="mask")
+        return _broadcast_full(array, shape, dtype=jnp.bool_, fill=True, name="mask")
+    prefix = _broadcast_prefix(
+        array, prefix_shape, dtype=jnp.bool_, fill=1.0, name="mask"
+    )
     return jnp.broadcast_to(
         prefix.reshape(prefix.shape + (1,) * (len(shape) - len(prefix.shape))),
         shape,
@@ -174,7 +175,7 @@ def _prepare_pair(
     if not allow_complex:
         _reject_complex(true, pred, metric=metric)
     axis = _normalize_axis(sample_axis, true.ndim)
-    prefix_shape = tuple(int(size) for size in true.shape[: axis + 1])
+    prefix_shape = tuple(true.shape[: axis + 1])
     dtype = _real_dtype(true, pred)
     weights = _broadcast_prefix(
         sample_weight,
@@ -184,9 +185,7 @@ def _prepare_pair(
         name="sample_weight",
     )
     expanded_weights = weights.reshape(weights.shape + (1,) * (true.ndim - weights.ndim))
-    included = _broadcast_metric_mask(
-        mask, tuple(int(size) for size in true.shape), prefix_shape
-    )
+    included = _broadcast_metric_mask(mask, tuple(true.shape), prefix_shape)
     finite_values = jnp.isfinite(true) & jnp.isfinite(pred)
     valid_weights = jnp.isfinite(expanded_weights) & (expanded_weights >= 0.0)
     invalid = jnp.any(included & ~(finite_values & valid_weights), axis=axis)
@@ -212,7 +211,7 @@ def _prepare_values(
     if not allow_complex:
         _reject_complex(value, metric=metric)
     axis = _normalize_axis(sample_axis, value.ndim)
-    prefix_shape = tuple(int(size) for size in value.shape[: axis + 1])
+    prefix_shape = tuple(value.shape[: axis + 1])
     dtype = _real_dtype(value)
     weights = _broadcast_prefix(
         sample_weight,
@@ -222,9 +221,7 @@ def _prepare_values(
         name="sample_weight",
     )
     expanded_weights = weights.reshape(weights.shape + (1,) * (value.ndim - weights.ndim))
-    included = _broadcast_metric_mask(
-        mask, tuple(int(size) for size in value.shape), prefix_shape
-    )
+    included = _broadcast_metric_mask(mask, tuple(value.shape), prefix_shape)
     valid_weights = jnp.isfinite(expanded_weights) & (expanded_weights >= 0.0)
     finite_values = jnp.isfinite(value)
     invalid = jnp.any(included & ~(finite_values & valid_weights), axis=axis)
@@ -253,7 +250,7 @@ def _status(
     undefined_status: int = METRIC_UNDEFINED,
 ) -> tuple[Array, Array]:
     if undefined is None:
-        undefined = jnp.zeros_like(empty, dtype=bool)
+        undefined = jnp.zeros_like(empty, dtype=jnp.bool_)
     status = jnp.where(
         invalid,
         METRIC_INVALID_INPUT,

@@ -61,7 +61,7 @@ class ConformalAdSScalarPlan(StrictModule):
             raise ValueError("time_step violates the conservative scalar CFL bound.")
         points = np.linspace(0.0, domain_length, count)
         physical_spacing = spacing * length
-        laplacian = np.zeros((count, count), dtype=float)
+        laplacian = np.zeros((count, count), dtype=np.float64)
         for index in range(1, count - 1):
             laplacian[index, index - 1] = 1.0 / physical_spacing**2
             laplacian[index, index] = -2.0 / physical_spacing**2
@@ -88,7 +88,7 @@ class ConformalAdSScalarPlan(StrictModule):
 
     @property
     def point_count(self) -> int:
-        return int(self.radial_points.shape[0])
+        return self.radial_points.shape[0]
 
     @property
     def spacing(self) -> float:
@@ -127,7 +127,7 @@ class ConformalAdSScalarState(StrictModule):
         self.momentum = momentum_value
         self.time = jnp.asarray(time, dtype=field_value.dtype).reshape(())
         self.step_index = jnp.asarray(step_index, dtype=jnp.int32).reshape(())
-        self.valid = jnp.asarray(valid, dtype=bool).reshape(())
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_).reshape(())
         self.plan_id = plan.plan_id
 
 
@@ -153,7 +153,7 @@ class ConformalAdSScalarHistory(StrictModule):
         momentum_value = jnp.asarray(momentum, dtype=field_value.dtype)
         time_value = jnp.asarray(time, dtype=field_value.dtype)
         steps = jnp.asarray(step_index, dtype=jnp.int32)
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         if (
             field_value.ndim != 2
             or field_value.shape[1] != plan.point_count

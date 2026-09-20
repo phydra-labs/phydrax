@@ -80,13 +80,13 @@ def test_transformed_random_field_is_explicit_and_preserves_latent_identity():
         role="initial_condition",
         source="initial-profile",
     )
-    lognormal = gaussian.transform(jnp.exp, transform_id="exp-lognormal-v1")
+    lognormal = gaussian.transform(jnp.exp, transform_id="exp-lognormal")
     realization = lognormal.realize(jr.key(1), sample_shape=(32,))
     base_sample = gaussian.sample(realization)
     transformed = lognormal.sample(realization)
 
     assert transformed.transformed
-    assert transformed.transform_id == "exp-lognormal-v1"
+    assert transformed.transform_id == "exp-lognormal"
     assert transformed.role == "initial_condition"
     assert (
         transformed.coefficient_realization_id == base_sample.coefficient_realization_id

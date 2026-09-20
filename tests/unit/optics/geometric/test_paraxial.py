@@ -41,7 +41,7 @@ def _single_plan(
         np.asarray((curvature,)),
         np.zeros((1,)),
         np.zeros((1, 0)),
-        np.zeros((1, 0), dtype=bool),
+        np.zeros((1, 0), dtype="bool"),
         np.asarray((aperture,)),
         np.asarray((True,)),
         np.asarray((20.0,)),

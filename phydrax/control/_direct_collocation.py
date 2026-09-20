@@ -88,7 +88,7 @@ def _inexact(value: ArrayLike, owner: str, /) -> Array:
     array = jnp.asarray(value)
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _positive(value: ArrayLike, owner: str, /) -> Array:
@@ -397,8 +397,8 @@ class DirectCollocationDecisionLayout(StrictModule):
                 "DirectCollocationDecisionLayout requires exact inverse-retraction "
                 "and retraction-differential geometry."
             )
-        states = tuple(int(size) for size in state_array_shape)
-        controls = tuple(int(size) for size in control_array_shape)
+        states = tuple(state_array_shape)
+        controls = tuple(control_array_shape)
         point_rank = len(state_layout.shape)
         if point_rank and states[-point_rank:] != state_layout.shape:
             raise ValueError("state_array_shape must end with state_layout.shape.")
@@ -880,7 +880,7 @@ def _constraint_layout(
     sources = []
     cursor = 0
 
-    dynamics_size = int(sample.dynamics.size)
+    dynamics_size = sample.dynamics.size
     dynamics_slice = (cursor, cursor + dynamics_size)
     cursor += dynamics_size
     lower_parts.append(jnp.zeros((dynamics_size,), dtype=sample.objective.dtype))
@@ -889,7 +889,7 @@ def _constraint_layout(
     scale_parts.append(full_dynamics_scale.reshape((-1,)))
     sources.extend(f"dynamics:{index}" for index in range(dynamics_size))
 
-    initial_size = int(sample.initial.size)
+    initial_size = sample.initial.size
     initial_slice = (cursor, cursor + initial_size)
     cursor += initial_size
     lower_parts.append(jnp.zeros((initial_size,), dtype=sample.objective.dtype))
@@ -904,7 +904,7 @@ def _constraint_layout(
 
     path_slices = []
     for constraint, value in zip(problem.path_constraints, sample.path, strict=True):
-        size = int(value.size)
+        size = value.size
         path_slices.append((cursor, cursor + size))
         cursor += size
         lower_parts.append(
@@ -926,7 +926,7 @@ def _constraint_layout(
     for constraint, value in zip(
         problem.trajectory_constraints, sample.trajectory, strict=True
     ):
-        size = int(value.size)
+        size = value.size
         trajectory_slices.append((cursor, cursor + size))
         cursor += size
         lower_parts.append(
@@ -963,8 +963,8 @@ def _constraint_layout(
                 "problem": problem.problem_id,
                 "plan": plan.plan_id,
                 "sizes": [dynamics_size, initial_size]
-                + [int(value.size) for value in sample.path]
-                + [int(value.size) for value in sample.trajectory],
+                + [value.size for value in sample.path]
+                + [value.size for value in sample.trajectory],
             }
         ),
     )
@@ -1241,8 +1241,7 @@ def compile_direct_collocation(
     geometry = trajectory_problem.state_layout.geometry
     if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
         raise ValueError(
-            "Direct collocation requires exact inverse-retraction and "
-            "retraction-differential geometry."
+            "Direct collocation requires exact inverse-retraction and retraction-differential geometry."
         )
     states = _inexact(initial_states, "initial_states")
     controls = _inexact(initial_controls, "initial_controls")

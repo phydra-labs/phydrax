@@ -127,7 +127,7 @@ def _manifest(index: int) -> CardiovascularCaseManifest:
 def _subject(index: int) -> DeidentifiedCohortIdentity:
     return DeidentifiedCohortIdentity(
         f"group-{index}",
-        "deidentification-policy-v1",
+        "deidentification-policy",
         f"deidentification-receipt-{index}",
     )
 
@@ -263,7 +263,7 @@ def test_fixed_topology_cohort_split_and_preprocessing_are_leakage_safe():
     with pytest.raises(ValueError, match="PHI or linkable"):
         DeidentifiedCohortIdentity(
             "patient-123",
-            "deidentification-policy-v1",
+            "deidentification-policy",
             "deidentification-receipt-phi",
         )
 
@@ -482,7 +482,7 @@ def test_calibrated_surrogate_refuses_ood_and_native_reanalysis_is_only_authorit
             1.06,
             reference_velocity_mm_per_ms=0.02,
         ),
-        FixedWallLumenRegion(jnp.ones((6, 4, 4), dtype=bool)),
+        FixedWallLumenRegion(jnp.ones((6, 4, 4), dtype="bool")),
         (
             FlowTerminalPort(
                 "inlet",

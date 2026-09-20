@@ -136,8 +136,7 @@ class ROMCostEstimate(StrictModule, NonTrainableState):
         communication_bytes: int = 0,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 truth_operations,
                 preparation_operations,
                 online_operations,
@@ -195,7 +194,7 @@ class ROMAdmissionEvidence(StrictModule, NonTrainableState):
             raise ValueError("Admission support and evidence IDs must be non-empty.")
         if len(set(evidence)) != len(evidence):
             raise ValueError("Admission evidence IDs must be unique.")
-        self.admitted = jnp.asarray(admitted, dtype=bool)
+        self.admitted = jnp.asarray(admitted, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.score = jnp.asarray(score)
         self.support_id = support

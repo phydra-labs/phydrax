@@ -64,13 +64,13 @@ def _face_components(
     records: dict[tuple[int, int], list[tuple[int, int]]],
     /,
 ) -> tuple[np.ndarray, int]:
-    neighbours: list[list[int]] = [[] for _ in range(face_count)]
+    neighbors: list[list[int]] = [[] for _ in range(face_count)]
     for incidents in records.values():
         incident_faces = tuple(entry[0] for entry in incidents)
         for index, first in enumerate(incident_faces):
             for second in incident_faces[index + 1 :]:
-                neighbours[first].append(second)
-                neighbours[second].append(first)
+                neighbors[first].append(second)
+                neighbors[second].append(first)
     components = np.full((face_count,), -1, dtype=np.int32)
     component_count = 0
     for first_face in range(face_count):
@@ -80,10 +80,10 @@ def _face_components(
         pending = [first_face]
         while pending:
             face = pending.pop()
-            for neighbour in neighbours[face]:
-                if components[neighbour] < 0:
-                    components[neighbour] = component_count
-                    pending.append(neighbour)
+            for neighbor in neighbors[face]:
+                if components[neighbor] < 0:
+                    components[neighbor] = component_count
+                    pending.append(neighbor)
         component_count += 1
     return components, component_count
 
@@ -98,14 +98,14 @@ def _orientation_solution(
             "A surface edge has more than two incident triangles.",
         )
     components, _ = _face_components(faces.shape[0], records)
-    neighbours: list[list[tuple[int, int]]] = [[] for _ in range(faces.shape[0])]
+    neighbors: list[list[tuple[int, int]]] = [[] for _ in range(faces.shape[0])]
     for incidents in records.values():
         if len(incidents) != 2:
             continue
         (first, first_direction), (second, second_direction) = incidents
         relation = -first_direction * second_direction
-        neighbours[first].append((second, relation))
-        neighbours[second].append((first, relation))
+        neighbors[first].append((second, relation))
+        neighbors[second].append((first, relation))
     signs = np.zeros((faces.shape[0],), dtype=np.int8)
     for first_face in range(faces.shape[0]):
         if signs[first_face] != 0:
@@ -114,12 +114,12 @@ def _orientation_solution(
         pending = [first_face]
         while pending:
             face = pending.pop()
-            for neighbour, relation in neighbours[face]:
+            for neighbor, relation in neighbors[face]:
                 required = int(signs[face]) * relation
-                if signs[neighbour] == 0:
-                    signs[neighbour] = required
-                    pending.append(neighbour)
-                elif signs[neighbour] != required:
+                if signs[neighbor] == 0:
+                    signs[neighbor] = required
+                    pending.append(neighbor)
+                elif signs[neighbor] != required:
                     raise SurfacePreparationError(
                         SurfacePreparationStatus.NONORIENTABLE_TOPOLOGY,
                         "Triangle adjacency constraints are not globally orientable.",
@@ -169,13 +169,13 @@ def _repair_orientations(
         component_ids=components,
         source_topology_id=canonical_fingerprint(
             {
-                "kind": "surface-orientation-source-v1",
+                "kind": "surface-orientation-source",
                 "faces": array_tree_fingerprint(faces),
             }
         ),
         repaired_topology_id=canonical_fingerprint(
             {
-                "kind": "surface-orientation-repaired-v1",
+                "kind": "surface-orientation-repaired",
                 "faces": array_tree_fingerprint(repaired),
             }
         ),
@@ -186,7 +186,7 @@ def _repair_orientations(
 def _validate_triangle_arrays(
     coordinates: ArrayLike, triangles: ArrayLike, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    points = np.asarray(coordinates, dtype=float)
+    points = np.asarray(coordinates, dtype=np.float64)
     faces = np.asarray(triangles)
     if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] != 3:
         raise SurfacePreparationError(
@@ -253,13 +253,13 @@ def _boundary_loop_count(
     boundary = tuple(edge for edge, incidents in records.items() if len(incidents) == 1)
     if not boundary:
         return 0, True
-    neighbours: dict[int, list[int]] = {}
+    neighbors: dict[int, list[int]] = {}
     for start, stop in boundary:
-        neighbours.setdefault(start, []).append(stop)
-        neighbours.setdefault(stop, []).append(start)
-    if any(len(values) != 2 for values in neighbours.values()):
+        neighbors.setdefault(start, []).append(stop)
+        neighbors.setdefault(stop, []).append(start)
+    if any(len(values) != 2 for values in neighbors.values()):
         return 0, False
-    remaining = set(neighbours)
+    remaining = set(neighbors)
     loop_count = 0
     while remaining:
         first = min(remaining)
@@ -267,10 +267,10 @@ def _boundary_loop_count(
         remaining.remove(first)
         while pending:
             vertex = pending.pop()
-            for neighbour in neighbours[vertex]:
-                if neighbour in remaining:
-                    remaining.remove(neighbour)
-                    pending.append(neighbour)
+            for neighbor in neighbors[vertex]:
+                if neighbor in remaining:
+                    remaining.remove(neighbor)
+                    pending.append(neighbor)
         loop_count += 1
     return loop_count, True
 
@@ -281,7 +281,7 @@ def _surface_audit(
     policy: SurfaceAuditPolicy,
     /,
 ) -> SurfaceAuditReport:
-    points = np.asarray(mesh.coordinates, dtype=float)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
     faces = _triangle_faces(mesh)
     records = _edge_records(faces)
     components, component_count = _face_components(faces.shape[0], records)
@@ -321,12 +321,12 @@ def _surface_audit(
         finite and np.all(np.isfinite(face_areas)) and np.all(face_areas > area_threshold)
     )
 
-    component_closed = np.ones((component_count,), dtype=bool)
+    component_closed = np.ones((component_count,), dtype=np.bool_)
     for incidents in records.values():
         if len(incidents) != 2:
             for face, _ in incidents:
                 component_closed[components[face]] = False
-    component_volumes = np.zeros((component_count,), dtype=float)
+    component_volumes = np.zeros((component_count,), dtype=np.float64)
     signed_face_volumes = (
         np.sum(
             triangles[:, 0] * np.cross(triangles[:, 1], triangles[:, 2]),
@@ -535,7 +535,7 @@ class SurfaceModel(StrictModule, NonTrainableState):
         self.orientation_repair = orientation_repair
         self.model_id = canonical_fingerprint(
             {
-                "kind": "surface-model-v1",
+                "kind": "surface-model",
                 "topology_id": mesh.topology_id,
                 "metadata_id": metadata.metadata_id,
                 "selection_ids": tuple(value.selection_id for value in selections_),
@@ -731,7 +731,7 @@ class SurfaceRealization(StrictModule, NonTrainableState):
         self.chart_mapping = chart_mapping
         self.realization_id = canonical_fingerprint(
             {
-                "kind": "surface-realization-v1",
+                "kind": "surface-realization",
                 "model_id": model.model_id,
                 "geometry_id": mesh.geometry_id,
                 "certificate_id": certificate.certificate_id,
@@ -839,7 +839,7 @@ class SurfaceRealization(StrictModule, NonTrainableState):
         numeric_version: str,
         policy: SurfaceAuditPolicy | None = None,
     ) -> SurfaceRealization:
-        points = np.asarray(coordinates, dtype=float)
+        points = np.asarray(coordinates, dtype=np.float64)
         if points.shape != self.mesh.coordinates.shape:
             raise SurfacePreparationError(
                 SurfacePreparationStatus.TOPOLOGY_CHANGED,

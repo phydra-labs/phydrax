@@ -50,7 +50,7 @@ class CompiledFrequencySystem:
 
     @property
     def size(self) -> int:
-        return int(self.mass.shape[0])
+        return self.mass.shape[0]
 
     def dynamic_stiffness(self, angular_frequency_rad_s: ArrayLike, /) -> Array:
         omega = jnp.asarray(angular_frequency_rad_s)

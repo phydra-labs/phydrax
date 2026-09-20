@@ -76,7 +76,7 @@ class JointDiscreteBlock(StrictModule):
     block_id: str = eqx.field(static=True)
 
     def __init__(self, variables, /, *, maximum_configurations: int = 4096):
-        selected = tuple(int(value) for value in variables)
+        selected = tuple(variables)
         if not selected or len(set(selected)) != len(selected) or min(selected) < 0:
             raise ValueError("Joint block variables must be unique and non-negative.")
         maximum = int(maximum_configurations)
@@ -109,7 +109,7 @@ class ParallelTempering(StrictModule):
     method_id: str = eqx.field(static=True)
 
     def __init__(self, inverse_temperatures: ArrayLike, /):
-        values = jnp.asarray(inverse_temperatures, dtype=float).reshape((-1,))
+        values = jnp.asarray(inverse_temperatures, dtype=jnp.float64).reshape((-1,))
         host = np.asarray(values)
         if values.size < 2 or np.any(~np.isfinite(host)) or np.any(host <= 0):
             raise ValueError(
@@ -161,13 +161,13 @@ class MomentReducer(AbstractChainReducer):
         shape = positions.shape[1:]
         return MomentReducerState(
             count=jnp.asarray(0, dtype=jnp.int32),
-            first_sum=jnp.zeros(shape, dtype=float),
-            second_sum=jnp.zeros(shape, dtype=float),
+            first_sum=jnp.zeros(shape, dtype=jnp.float64),
+            second_sum=jnp.zeros(shape, dtype=jnp.float64),
         )
 
     def update(self, carry, positions: Array, scores: Array, /):
         del scores
-        values = positions.astype(float)
+        values = positions.astype("float64")
         return MomentReducerState(
             count=carry.count + values.shape[0],
             first_sum=carry.first_sum + jnp.sum(values, axis=0),
@@ -215,7 +215,7 @@ def _sample_site(
     event_index,
     clamped,
 ):
-    chain_count = int(positions.shape[0])
+    chain_count = positions.shape[0]
     chain_indices = jnp.arange(chain_count, dtype=jnp.uint32)
     logits = jax.vmap(lambda position: _conditional_logits(prepared, position, variable))(
         positions
@@ -256,14 +256,16 @@ def gibbs_sweep_with_policy(
     ):
         return gibbs_sweep(prepared, state, key, clamped=clamped)
     masks = (
-        jnp.zeros_like(state.positions, dtype=bool)
+        jnp.zeros_like(state.positions, dtype=jnp.bool_)
         if clamped is None
-        else jnp.broadcast_to(jnp.asarray(clamped, dtype=bool), state.positions.shape)
+        else jnp.broadcast_to(
+            jnp.asarray(clamped, dtype=jnp.bool_), state.positions.shape
+        )
     )
     if masks.shape != state.positions.shape:
         raise ValueError("clamped must broadcast to (chain, variable).")
     positions = state.positions
-    valid = jnp.ones((state.num_chains,), dtype=bool)
+    valid = jnp.ones((state.num_chains,), dtype=jnp.bool_)
     changed = jnp.zeros((state.num_chains,), dtype=jnp.int32)
     if policy.kind == "random-scan":
         count = (
@@ -365,7 +367,7 @@ def gibbs_sweep_with_policy(
         ),
         valid=valid,
         invalid_conditional_count=(~valid).astype(jnp.int32),
-        state_change_fraction=changed.astype(float) / max(attempted_updates, 1),
+        state_change_fraction=changed.astype("float64") / max(attempted_updates, 1),
     )
 
 
@@ -421,7 +423,7 @@ def joint_block_sweep(
         ),
         valid=valid,
         invalid_conditional_count=(~valid).astype(jnp.int32),
-        state_change_fraction=changed.astype(float),
+        state_change_fraction=changed.astype("float64"),
     )
 
 
@@ -432,7 +434,7 @@ def initialize_parallel_tempering(
     /,
 ) -> ParallelTemperingState:
     states = jnp.asarray(positions, dtype=jnp.int32)
-    expected = (int(method.inverse_temperatures.shape[0]), prepared.graph.num_variables)
+    expected = (method.inverse_temperatures.shape[0], prepared.graph.num_variables)
     if states.shape != expected:
         raise ValueError(f"positions must have shape {expected}.")
     scores = prepared.precision.accumulation(
@@ -456,8 +458,8 @@ def parallel_tempering_step(
 ) -> tuple[ParallelTemperingState, ParallelTemperingInfo]:
     """Advance tempered replicas and apply alternating neighboring exchange moves."""
     positions = state.positions
-    changed = jnp.zeros((positions.shape[0],), dtype=float)
-    for replica in range(int(positions.shape[0])):
+    changed = jnp.zeros((positions.shape[0],), dtype=jnp.float64)
+    for replica in range(positions.shape[0]):
         single = GibbsState(
             positions[replica : replica + 1],
             state.base_log_score[replica : replica + 1],
@@ -477,7 +479,7 @@ def parallel_tempering_step(
                 )
                 selected = jr.categorical(subkey, logits).astype(jnp.int32)
                 changed = changed.at[replica].add(
-                    (selected != updated.positions[0, variable]).astype(float)
+                    (selected != updated.positions[0, variable]).astype("float64")
                 )
                 updated = GibbsState(
                     updated.positions.at[0, variable].set(selected),
@@ -490,7 +492,7 @@ def parallel_tempering_step(
     parity = state.step_index % 2
     accepted = []
     attempted = []
-    for left in range(int(positions.shape[0]) - 1):
+    for left in range(positions.shape[0] - 1):
         right = left + 1
         enabled = (left % 2) == parity
         log_ratio = (
@@ -516,10 +518,12 @@ def parallel_tempering_step(
         base_log_score=scores,
         step_index=state.step_index + 1,
     ), ParallelTemperingInfo(
-        accepted_swaps=jnp.stack(accepted) if accepted else jnp.zeros((0,), dtype=bool),
+        accepted_swaps=jnp.stack(accepted)
+        if accepted
+        else jnp.zeros((0,), dtype=jnp.bool_),
         attempted_swaps=jnp.stack(attempted)
         if attempted
-        else jnp.zeros((0,), dtype=bool),
+        else jnp.zeros((0,), dtype=jnp.bool_),
         state_change_fraction=changed / max(prepared.graph.num_variables, 1),
     )
 
@@ -593,7 +597,7 @@ def wolff_cluster_step(
     for group, scope in zip(graph.factor_groups, graph.factor_scopes):
         if not isinstance(group, IsingFactorGroup):
             raise TypeError("Wolff updates require IsingFactorGroup factors only.")
-        arity = int(scope.shape[1])
+        arity = scope.shape[1]
         if arity == 1:
             if np.any(np.asarray(group.weights) != 0.0):
                 raise ValueError("Wolff updates require zero unary fields.")

@@ -241,7 +241,7 @@ def fit_cross_fitted_nuisance(
     split_result = plan.split_plan.split(split_batch, key=key)
     n_samples = problem.dataset.n_samples
     outcome_active = jnp.full(
-        (n_samples,), jnp.nan, dtype=jnp.result_type(outcome, float)
+        (n_samples,), jnp.nan, dtype=jnp.result_type(outcome, jnp.float64)
     )
     outcome_reference = jnp.full_like(outcome_active, jnp.nan)
     propensity_active = jnp.full_like(outcome_active, jnp.nan)
@@ -262,7 +262,7 @@ def fit_cross_fitted_nuisance(
         train_active = problem.dataset.sample_mask[train]
         active_train = train[train_active & (treatment[train] == active_value)]
         reference_train = train[train_active & (treatment[train] == reference_value)]
-        if int(active_train.size) == 0 or int(reference_train.size) == 0:
+        if active_train.size == 0 or reference_train.size == 0:
             return _nuisance_failure(
                 problem,
                 certificate,
@@ -354,7 +354,7 @@ def fit_cross_fitted_nuisance(
                     )
                 probabilities = known[validation]
             methods.append("known-assignment-probability")
-        if probabilities.shape != (int(validation.size), classes):
+        if probabilities.shape != (validation.size, classes):
             return _nuisance_failure(
                 problem,
                 certificate,
@@ -861,7 +861,7 @@ def _cluster_standard_error(
         np.asarray(cluster_id)[np.asarray(target)],
         return_inverse=True,
     )
-    count = int(active_clusters.size)
+    count = active_clusters.size
     if count < 2:
         return jnp.asarray(jnp.nan)
     contribution = normalized_weight[target] * influence[target]

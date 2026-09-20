@@ -21,7 +21,7 @@ from ._core import MatrixProductOperator, MatrixProductState
 from ._precision import TensorNetworkPrecisionPolicy
 
 
-def _same_leg_catalogue(left: AbelianLeg, right: AbelianLeg, /) -> bool:
+def _same_leg_catalog(left: AbelianLeg, right: AbelianLeg, /) -> bool:
     return (
         left.group.group_id == right.group.group_id
         and left.charges == right.charges
@@ -203,8 +203,7 @@ def abelian_mps_inner(
         )
     ):
         raise ValueError(
-            "Abelian MPS site counts, total charge, physical bases, and precision "
-            "must match for inner products."
+            "Abelian MPS site counts, total charge, physical bases, and precision must match for inner products."
         )
     precision = left.precision
     environment = {(0, 0): jnp.ones((1, 1), dtype=left.tensors[0].blocks[0].dtype)}

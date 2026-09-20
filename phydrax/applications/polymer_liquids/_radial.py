@@ -35,7 +35,7 @@ class IsotropicRadialTransformPlan(StrictModule, NonTrainableState):
         /,
         *,
         length_unit_id: str = "dimensionless",
-        dtype: Any = float,
+        dtype: Any = jnp.float64,
     ):
         size = int(count)
         radius = float(maximum_radius)
@@ -87,8 +87,8 @@ class PreparedIsotropicRadialTransform(StrictModule, NonTrainableState):
         dtype = np.dtype(plan.dtype_name)
         spacing = plan.maximum_radius / (plan.count + 1)
         wave_spacing = math.pi / plan.maximum_radius
-        radii = spacing * np.arange(1, plan.count + 1, dtype=float)
-        wave = wave_spacing * np.arange(1, plan.count + 1, dtype=float)
+        radii = spacing * np.arange(1, plan.count + 1, dtype=np.float64)
+        wave = wave_spacing * np.arange(1, plan.count + 1, dtype=np.float64)
         normalization = math.sqrt((plan.count + 1) / 2.0)
         forward = 4.0 * math.pi * spacing * normalization / wave
         inverse = wave_spacing * normalization / (2.0 * math.pi**2 * radii)

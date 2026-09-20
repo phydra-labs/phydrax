@@ -67,8 +67,8 @@ class OrnsteinUhlenbeckRealization(StrictModule):
             raise ValueError(
                 "OrnsteinUhlenbeckRealization support must be finite and increasing."
             )
-        noise = tuple(int(size) for size in noise_shape)
-        samples = tuple(int(size) for size in sample_shape)
+        noise = tuple(noise_shape)
+        samples = tuple(sample_shape)
         if not noise or any(size <= 0 for size in noise):
             raise ValueError("OU noise_shape must contain positive dimensions.")
         if any(size <= 0 for size in samples):
@@ -221,7 +221,7 @@ class OrnsteinUhlenbeckRealization(StrictModule):
         correlation_time: Array,
         /,
         *,
-        dtype: jnp.dtype | type = float,
+        dtype: jnp.dtype | type = jnp.float64,
     ) -> Array:
         """Return exact unit-stationary OU transition innovations.
 

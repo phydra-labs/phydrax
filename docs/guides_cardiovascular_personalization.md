@@ -64,14 +64,18 @@ Do not mask a held-out channel while retaining it in the objective: `held_out` r
 
 ## Build a subsystem inverse
 
-Choose exactly one route adapter:
+Construct one `CardiovascularInverseProblem` with exactly one route:
 
-- `ElectrophysiologyInverseProblem` for electrophysiology parameters;
-- `MechanicsInverseProblem` for passive and active mechanics parameters;
-- `LoadingInverseProblem` for loading and circulation parameters; or
-- `UnloadedGeometryInverseProblem` for reference-configuration parameters.
+- `ElectrophysiologyInverseRoute` for electrophysiology parameters;
+- `MechanicsInverseRoute` for passive and active mechanics parameters;
+- `LoadingInverseRoute` for loading and circulation parameters; or
+- `UnloadedGeometryInverseRoute` for reference-configuration parameters.
 
-Each adapter requires a state residual, an observable projection, and a `fixed_topology` evidence function. The schema is rejected if it contains a subsystem not owned by that route. This is intentional: alternating or staged calibration should pass accepted outputs between route-specific problems rather than assemble one monolithic inverse.
+The problem requires a state residual, an observable projection, and a
+`fixed_topology` evidence function. The schema is rejected if it contains a
+subsystem not owned by the selected route. Alternating or staged calibration
+passes accepted outputs between route-specific problems rather than assembling
+one monolithic inverse.
 
 `as_state_design_problem` lowers the adapter to the existing `StateDesignProblem`. `solve` and `solve_multistart` retain the native state and adjoint acceptance evidence. A cardiovascular inverse result is successful only when all of the following are accepted:
 
@@ -119,7 +123,7 @@ The host-only validation records govern research evaluation; they do not run mod
 
 `ClinicalResearchContext` binds a research question, study context, investigational-use statement, protocol, exactly one IRB approval or waiver, de-identification identities, and data-rights identities. Construction refuses protected health information, clinical-decision use, and regulated claims.
 
-`ClinicalResearchValidationPlan` prospectively separates training, calibration, and validation cohorts and requires distinct site and temporal holdouts. It also binds the endpoint, comparator, subgroup analyses, out-of-distribution definition, failure-analysis plan, and prespecified acceptance criteria.
+`ClinicalResearchValidationPlan` prospectively separates training, calibration, and validation cohorts and requires distinct site and temporal holdouts. It also binds the endpoint, comparator, subgroup analyzes, out-of-distribution definition, failure-analysis plan, and prespecified acceptance criteria.
 
 `ClinicalResearchValidationRecord` stores immutable, finite, JSON-compatible results under the plan identity. `record.evaluate()` returns `ClinicalResearchValidationEvidence` describing whether every required research-analysis section is present. `record_complete` means only that the governed record is complete; it does not mean that a model is safe, effective, clinically valid, approved, or certified.
 

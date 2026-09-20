@@ -38,7 +38,7 @@ def main() -> None:
         jnp.zeros((2,)),
         jnp.ones((2,)),
         jnp.zeros((2,), dtype=jnp.int32),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         jnp.zeros((2,), dtype=jnp.int32),
     )
     required = (

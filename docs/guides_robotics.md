@@ -56,7 +56,7 @@ graph = adaptation.joints.prepare(bodies, adaptation.reference)
 articulation = adaptation.articulation.prepare(graph, adaptation.reference)
 ```
 
-`adaptation.reference` is the exact zero-configuration COM-centred
+`adaptation.reference` is the exact zero-configuration COM-centered
 `RigidBodyKinematics` used to prepare both the joint graph and articulation.
 Substituting a different reference is rejected. `articulation.prepared_id`,
 `state_layout`, and `input_layout` bind the resulting runtime contract. A tree
@@ -131,7 +131,7 @@ cumulative negotiation instead of concatenating prose.
 
 ## State, frame, and unit conventions
 
-The native adapter declares SI units. URDF lengths are metres, masses are
+The native adapter declares SI units. URDF lengths are meters, masses are
 kilograms, angles are radians, and inertia is kg·m² about the link COM. A
 successful adaptation has explicitly selected the `fixed_world` root policy.
 
@@ -185,11 +185,11 @@ Transpose actions are the covector pullbacks. For body loads,
 power and generalized power. This operator identity is the contract; forming a
 dense Jacobian is optional.
 
-## COM-centred inertial realization and reduced dynamics
+## COM-centered inertial realization and reduced dynamics
 
 `RigidBodyMassProperties` is the shared prepared contract for maximal and
 reduced rigid mechanics. Body position and linear velocity are evaluated at the
-centre of mass, `first_moments` is identically zero, and `inertia_com` is the
+center of mass, `first_moments` is identically zero, and `inertia_com` is the
 rotational block of spatial inertia. The convenience `inertia_body` property
 also means body-coordinate inertia *about the COM*; it is not inertia about an
 arbitrary body-frame origin.

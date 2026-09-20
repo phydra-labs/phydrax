@@ -110,7 +110,7 @@ def replay_energy_system(
         chronology.accounting_weight,
     )
     values = {
-        entry.name: np.asarray(entry.values, dtype=float) for entry in plan.dispatch
+        entry.name: np.asarray(entry.values, dtype=np.float64) for entry in plan.dispatch
     }
     if len(values) != len(plan.dispatch):
         raise ValueError("Decoded dispatch names must be unique.")

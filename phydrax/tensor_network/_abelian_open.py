@@ -163,7 +163,7 @@ class AbelianLPDO(StrictModule):
     ):
         if not isinstance(physical_leg, AbelianLeg) or physical_leg.orientation != 1:
             raise TypeError("LPDO physical_leg must be an outward AbelianLeg.")
-        capacities = tuple(int(value) for value in purification_capacities)
+        capacities = tuple(purification_capacities)
         values = tuple(jnp.asarray(value) for value in factors)
         if len(capacities) != len(physical_leg.charges) or len(values) != len(capacities):
             raise ValueError("LPDO requires one purification factor per charge sector.")
@@ -255,7 +255,7 @@ def apply_charge_covariant_kraus(
             else jnp.zeros((output_capacity, 1), dtype=dtype)
         )
         u, singular_values, _ = jnp.linalg.svd(combined, full_matrices=False)
-        retained = min(maximum, int(singular_values.shape[0]))
+        retained = min(maximum, singular_values.shape[0])
         factor = u[:, :retained] * singular_values[:retained]
         discarded = discarded + jnp.sum(jnp.abs(singular_values[retained:]) ** 2)
         output_factors.append(factor)

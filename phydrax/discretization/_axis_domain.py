@@ -39,8 +39,12 @@ class AxisDomain(StrictModule, NonTrainableState):
     ):
         if kind not in ("bounded", "periodic", "half_line", "real_line"):
             raise ValueError("Unknown axis domain kind.")
-        lower_ = None if lower is None else jnp.asarray(lower, dtype=float).reshape(())
-        upper_ = None if upper is None else jnp.asarray(upper, dtype=float).reshape(())
+        lower_ = (
+            None if lower is None else jnp.asarray(lower, dtype=jnp.float64).reshape(())
+        )
+        upper_ = (
+            None if upper is None else jnp.asarray(upper, dtype=jnp.float64).reshape(())
+        )
         direction_: HalfLineDirection | None = direction
         if kind in ("bounded", "periodic"):
             if lower_ is None or upper_ is None or direction_ is not None:

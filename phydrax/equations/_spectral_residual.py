@@ -66,7 +66,9 @@ class SpectralResidualDataLayout(StrictModule, NonTrainableState):
             raise ValueError(
                 "Supported-subdomain masks require explicit prepared case-plan identities."
             )
-        mask = None if measure_mask is None else jnp.asarray(measure_mask, dtype=bool)
+        mask = (
+            None if measure_mask is None else jnp.asarray(measure_mask, dtype=jnp.bool_)
+        )
         self.field_coordinates = tuple(
             (str(name), tuple(str(axis) for axis in axes))
             for name, axes in field_coordinates.items()
@@ -80,10 +82,8 @@ class SpectralResidualDataLayout(StrictModule, NonTrainableState):
         self.mask_semantics = mask_semantics
         self.measure_mask = mask
         self.case_plan_ids = plans
-        self.maximum_trial_shape = tuple(int(value) for value in maximum_trial_shape)
-        self.maximum_evaluation_shape = tuple(
-            int(value) for value in maximum_evaluation_shape
-        )
+        self.maximum_trial_shape = tuple(maximum_trial_shape)
+        self.maximum_evaluation_shape = tuple(maximum_evaluation_shape)
 
 
 class SpectralResidualCompilationReport(StrictModule, NonTrainableState):
@@ -113,8 +113,8 @@ class SpectralResidualCompilationReport(StrictModule, NonTrainableState):
         exact: bool,
         coefficient_itemsize: int,
     ):
-        trial = tuple(int(value) for value in trial_shape)
-        evaluation = tuple(int(value) for value in evaluation_shape)
+        trial = tuple(trial_shape)
+        evaluation = tuple(evaluation_shape)
         names = tuple(str(name) for name in equation_names)
         count = 1
         for size in evaluation:
@@ -180,7 +180,7 @@ class CompiledSpectralResidual(StrictModule):
         scope: SpectralResidualScope,
     ):
         names = tuple(str(name) for name in equation_names)
-        components = tuple(int(value) for value in equation_components)
+        components = tuple(equation_components)
         scales = jnp.asarray(
             equation_scales, dtype=discretization.quadrature_weights.dtype
         )
@@ -391,16 +391,14 @@ def _all_coordinate_axes(
             prepared = discretization.axes[axis]
             if coordinate.periodic != prepared.periodic:
                 raise ValueError(
-                    f"PDE coordinate {coordinate.name!r} periodicity does not match "
-                    f"spectral basis {prepared.family!r}."
+                    f"PDE coordinate {coordinate.name!r} periodicity does not match spectral basis {prepared.family!r}."
                 )
             if coordinate.bounds is not None and not jnp.allclose(
                 jnp.asarray(coordinate.bounds),
                 jnp.asarray((prepared.domain.lower, prepared.domain.upper)),
             ):
                 raise ValueError(
-                    f"PDE coordinate {coordinate.name!r} bounds do not match "
-                    "the prepared spectral domain."
+                    f"PDE coordinate {coordinate.name!r} bounds do not match the prepared spectral domain."
                 )
         output.append((coordinate.name, axes))
         offset += coordinate.size
@@ -453,8 +451,7 @@ class CaseGroupedSpectralResidual(StrictModule):
         values = jnp.asarray(states)
         if values.shape != (len(self.compiled), self.maximum_state_size):
             raise ValueError(
-                "Grouped residual states must have shape "
-                f"({len(self.compiled)}, {self.maximum_state_size})."
+                f"Grouped residual states must have shape ({len(self.compiled)}, {self.maximum_state_size})."
             )
         branches = tuple(
             (
@@ -626,8 +623,7 @@ def compile_spectral_residual(
         exact = exact and prepared_method.dealiasing.report.kind == "closure"
     if require_exact and not exact:
         raise ValueError(
-            "The selected spectral realization cannot certify the requested "
-            "full residual objective."
+            "The selected spectral realization cannot certify the requested full residual objective."
         )
     supplied = {} if parameter_values is None else dict(parameter_values)
     unknown_parameters = set(supplied) - {

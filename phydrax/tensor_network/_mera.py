@@ -8,8 +8,9 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+from phydrax.ein import contract, get_symbol
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import precision_itemsize
@@ -98,7 +99,7 @@ class BinaryMERA(StrictModule):
                 raise ValueError("Adjacent MERA coarse and fine dimensions must match.")
         self.isometries = isometries_
         self.disentanglers = disentanglers_
-        self.physical_dimension = int(isometries_[0].shape[0])
+        self.physical_dimension = isometries_[0].shape[0]
         self.layer_count = len(isometries_)
         self.dtype = dtype
         self.mera_id = canonical_fingerprint(
@@ -200,9 +201,9 @@ def _admit_state(mera: BinaryMERA, policy: MERAResourcePolicy, /) -> tuple[int, 
 
 
 def _expand_axis(state: Array, isometry: Array, axis: int, /) -> Array:
-    state_symbols = [oe.get_symbol(index) for index in range(state.ndim)]
-    first = oe.get_symbol(state.ndim)
-    second = oe.get_symbol(state.ndim + 1)
+    state_symbols = [get_symbol(index) for index in range(state.ndim)]
+    first = get_symbol(state.ndim)
+    second = get_symbol(state.ndim + 1)
     coarse = state_symbols[axis]
     output_symbols = state_symbols[:axis] + [first, second] + state_symbols[axis + 1 :]
     equation = (
@@ -214,13 +215,13 @@ def _expand_axis(state: Array, isometry: Array, axis: int, /) -> Array:
         + "->"
         + "".join(output_symbols)
     )
-    return oe.contract(equation, state, isometry, optimize="greedy")
+    return contract(equation, state, isometry, optimize="greedy")
 
 
 def _apply_disentangler(state: Array, disentangler: Array, first_axis: int, /) -> Array:
-    state_symbols = [oe.get_symbol(index) for index in range(state.ndim)]
-    output_first = oe.get_symbol(state.ndim)
-    output_second = oe.get_symbol(state.ndim + 1)
+    state_symbols = [get_symbol(index) for index in range(state.ndim)]
+    output_first = get_symbol(state.ndim)
+    output_second = get_symbol(state.ndim + 1)
     input_first = state_symbols[first_axis]
     input_second = state_symbols[first_axis + 1]
     output_symbols = list(state_symbols)
@@ -236,7 +237,7 @@ def _apply_disentangler(state: Array, disentangler: Array, first_axis: int, /) -
         + "->"
         + "".join(output_symbols)
     )
-    return oe.contract(equation, state, disentangler, optimize="greedy")
+    return contract(equation, state, disentangler, optimize="greedy")
 
 
 def mera_state_vector(
@@ -333,7 +334,7 @@ def contract_mera(
         value = jnp.vdot(vector, vector)
         route = "norm"
     else:
-        value = oe.contract(
+        value = contract(
             "i,ij,j->", jnp.conj(vector), operator_, vector, optimize="greedy"
         )
         route = "expectation"

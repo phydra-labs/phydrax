@@ -105,7 +105,7 @@ class LyapunovResult(StrictModule):
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _matrix_inputs(
@@ -122,13 +122,12 @@ def _matrix_inputs(
     source_array = _inexact(source)
     if matrix_array.ndim != 2 or matrix_array.shape[0] != matrix_array.shape[1]:
         raise ValueError(f"matrix must be square; got shape {matrix_array.shape}.")
-    dimension = int(matrix_array.shape[0])
+    dimension = matrix_array.shape[0]
     if dimension == 0:
         raise ValueError("matrix must have positive dimension.")
     if dimension > dimension_limit:
         raise ValueError(
-            f"Dense Lyapunov dimension {dimension} exceeds "
-            f"max_dimension={dimension_limit}."
+            f"Dense Lyapunov dimension {dimension} exceeds max_dimension={dimension_limit}."
         )
     if source_array.shape != (dimension, dimension):
         raise ValueError(

@@ -19,11 +19,11 @@ from phydrax.dynamics import TimeGrid
 
 
 def _paths(states, actions, noise, *, clusters=None, problem_id="smp-test"):
-    states = jnp.asarray(states, dtype=float)
-    actions = jnp.asarray(actions, dtype=float)
-    noise = jnp.asarray(noise, dtype=float)
+    states = jnp.asarray(states, dtype="float64")
+    actions = jnp.asarray(actions, dtype="float64")
+    noise = jnp.asarray(noise, dtype="float64")
     count, steps = actions.shape[:2]
-    grid = TimeGrid(jnp.arange(steps + 1, dtype=float), time_id="smp-grid")
+    grid = TimeGrid(jnp.arange(steps + 1, dtype="float64"), time_id="smp-grid")
     controlled = ControlledTransitionProblem(
         lambda context, state, action, increment, args: state,
         grid,
@@ -37,7 +37,7 @@ def _paths(states, actions, noise, *, clusters=None, problem_id="smp-test"):
     )
     prepared = PreparedControlledNoise(
         noise,
-        valid=jnp.ones((count,), dtype=bool),
+        valid=jnp.ones((count,), dtype="bool"),
         realization_ids=tuple(f"path:{index}" for index in range(count)),
         coupling_id="common-private-replay",
         independence_labels=(
@@ -52,7 +52,7 @@ def _paths(states, actions, noise, *, clusters=None, problem_id="smp-test"):
         prepared_noise=prepared,
         states=states,
         actions=actions,
-        valid=jnp.ones((count,), dtype=bool),
+        valid=jnp.ones((count,), dtype="bool"),
         status=jnp.zeros((count,), dtype=jnp.int32),
         stage_costs=jnp.zeros((count, steps)),
         terminal_costs=jnp.zeros((count,)),

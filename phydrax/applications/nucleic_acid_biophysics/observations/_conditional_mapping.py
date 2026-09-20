@@ -112,10 +112,7 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
         self.kind = kind
         self.source_case_ids = sources
         self.parent_case_ids = parents
-        self.independence_assumption = (
-            "conditionally independent Bernoulli sites; residual correlations require "
-            "a richer observation law"
-        )
+        self.independence_assumption = "conditionally independent Bernoulli sites; residual correlations require a richer observation law"
         self.model_id = canonical_fingerprint(
             {
                 "kind": f"conditional-mutation-{kind}",
@@ -212,7 +209,7 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
         mask = np.asarray(self.batch.observed_mask & selected[:, None])
         observed_design = np.asarray(self.design)[mask]
         if observed_design.shape[0] == 0:
-            singular = np.zeros((0,), dtype=float)
+            singular = np.zeros((0,), dtype=np.float64)
             rank = 0
         else:
             singular = np.linalg.svd(observed_design, compute_uv=False)
@@ -224,7 +221,7 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
             self.batch.mutation.astype(probability.dtype) - probability,
             self.batch.observed_mask & selected[:, None],
         )
-        off_diagonal = ~jnp.eye(self.batch.nucleotide_count, dtype=bool)
+        off_diagonal = ~jnp.eye(self.batch.nucleotide_count, dtype=jnp.bool_)
         finite_off_diagonal = off_diagonal & jnp.isfinite(correlation)
         maximum = jnp.where(
             jnp.any(finite_off_diagonal),
@@ -464,7 +461,7 @@ def _treatment_contrasts(indices, labels, site_count: int, prefix: str):
     rows = np.asarray(indices, dtype=np.int32)
     contrasts = np.stack(
         tuple(rows == index for index in range(1, count)), axis=-1
-    ).astype(float)
+    ).astype("float64")
     return (
         np.broadcast_to(contrasts[:, None, :], (rows.size, site_count, count - 1)),
         tuple(f"{prefix}:{label}" for label in labels[1:]),

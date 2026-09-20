@@ -4,7 +4,7 @@
 """Procedural reference geometry and spaces of the pinned 0698e3d executable.
 
 This is the idealized muscle and two aponeurosis sheets, not an anatomical mesh.
-Reference axes are fibre, aponeurosis length, width, respectively.
+Reference axes are fiber, aponeurosis length, width, respectively.
 """
 
 from __future__ import annotations
@@ -135,10 +135,10 @@ class Almonacid2024TraceGeometry(StrictModule, NonTrainableState):
     weights_m2: Array
     nearest_volume_qp: Array
     boundary_ids: Array
-    neighbour_cells: Array
-    neighbour_basis: Array
-    neighbour_gradients: Array
-    neighbour_scalar_basis: Array
+    neighbor_cells: Array
+    neighbor_basis: Array
+    neighbor_gradients: Array
+    neighbor_scalar_basis: Array
 
 
 class PreparedAlmonacid2024Geometry(StrictModule, NonTrainableState):
@@ -162,9 +162,9 @@ class PreparedAlmonacid2024Geometry(StrictModule, NonTrainableState):
 
 
 def prepare_geometry(spec: Almonacid2024Geometry, pulling_face_id: int):
-    fibre, apo, width, height = spec.edges()
+    fiber, apo, width, height = spec.edges()
     n = 1 << spec.refinement
-    regions = ((np.zeros(3), fibre, n, 1), (-height, height, 1, 2), (fibre, height, 1, 2))
+    regions = ((np.zeros(3), fiber, n, 1), (-height, height, 1, 2), (fiber, height, 1, 2))
     corners = np.array(
         (
             (0, 0, 0),
@@ -249,20 +249,20 @@ def prepare_geometry(spec: Almonacid2024Geometry, pulling_face_id: int):
     (
         face_cells,
         boundary_ids,
-        neighbours,
-        neighbour_basis,
-        neighbour_gradient,
-        neighbour_scalar,
+        neighbors,
+        neighbor_basis,
+        neighbor_gradient,
+        neighbor_scalar,
     ) = [], [], [], [], [], []
     fixed, pulling = set(), set()
     q2_nodes = np.asarray(q2.reference_nodes)
     for sides in faces.values():
         owner = sides[0]
         cell, axis, side, boundary = owner
-        neighbour = sides[1] if len(sides) == 2 else None
-        if neighbour is not None and tissues[cell] == tissues[neighbour[0]]:
+        neighbor = sides[1] if len(sides) == 2 else None
+        if neighbor is not None and tissues[cell] == tissues[neighbor[0]]:
             continue
-        if neighbour is None and boundary < 0:
+        if neighbor is None and boundary < 0:
             raise ValueError(
                 "Unmerged source interface; refusing a disconnected geometry."
             )
@@ -299,20 +299,20 @@ def prepare_geometry(spec: Almonacid2024Geometry, pulling_face_id: int):
         nearest.append(np.argmin(distance, axis=1))
         face_cells.append(cell)
         boundary_ids.append(boundary)
-        neighbours.append(-1 if neighbour is None else neighbour[0])
-        if neighbour is None:
-            neighbour_basis.append(shape)
-            neighbour_gradient.append(grad)
-            neighbour_scalar.append(face_scalar[-1])
+        neighbors.append(-1 if neighbor is None else neighbor[0])
+        if neighbor is None:
+            neighbor_basis.append(shape)
+            neighbor_gradient.append(grad)
+            neighbor_scalar.append(face_scalar[-1])
         else:
-            nc = neighbour[0]
+            nc = neighbor[0]
             nref = (points - np.asarray(vertices)[np.asarray(cells[nc])[0]]) @ inverse[
                 nc
             ].T
             nv, ng = q2.tabulate(nref)
-            neighbour_basis.append(np.asarray(nv))
-            neighbour_gradient.append(np.asarray(ng) @ inverse[nc])
-            neighbour_scalar.append(np.asarray(dgpm.tabulate(nref)[0]))
+            neighbor_basis.append(np.asarray(nv))
+            neighbor_gradient.append(np.asarray(ng) @ inverse[nc])
+            neighbor_scalar.append(np.asarray(dgpm.tabulate(nref)[0]))
         boundary_nodes = dofs[cell, np.isclose(q2_nodes[:, axis], side)]
         if boundary == 0:
             fixed.update(int(d) for d in boundary_nodes)
@@ -350,10 +350,10 @@ def prepare_geometry(spec: Almonacid2024Geometry, pulling_face_id: int):
                 face_weights,
                 nearest,
                 boundary_ids,
-                neighbours,
-                neighbour_basis,
-                neighbour_gradient,
-                neighbour_scalar,
+                neighbors,
+                neighbor_basis,
+                neighbor_gradient,
+                neighbor_scalar,
             ),
         )
     )

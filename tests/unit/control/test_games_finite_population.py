@@ -155,7 +155,7 @@ def _case(
     labels=None,
     reuse_mfg_law=False,
 ):
-    costs = jnp.asarray(costs, dtype=float)
+    costs = jnp.asarray(costs, dtype="float64")
     players, paths = costs.shape
     policy_ids = tuple(f"policy:{player}" for player in range(players))
     path_ids = tuple(f"finite-path:{path}" for path in range(paths))

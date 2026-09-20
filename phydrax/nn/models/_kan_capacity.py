@@ -355,7 +355,7 @@ def _rational_parameters(
     denominator: Array,
     /,
 ) -> RationalBSplineEdgeParameters | None:
-    denominator_host = np.asarray(denominator, dtype=float)
+    denominator_host = np.asarray(denominator, dtype=np.float64)
     if not np.all(np.isfinite(denominator_host)) or np.any(
         denominator_host <= basis.minimum_denominator
     ):
@@ -446,7 +446,7 @@ def refine_kan_edges(
     for raw_path, indicator in span_indicators.items():
         if not isinstance(raw_path, tuple) or len(raw_path) != 3:
             raise ValueError("Every refinement path must be (layer, output, input).")
-        path = tuple(int(value) for value in raw_path)
+        path = tuple(raw_path)
         layer_index, output_index, input_index = path
         if not 0 <= layer_index < len(model.layers):
             raise ValueError(f"Unknown KAN refinement layer: {layer_index}.")
@@ -457,7 +457,7 @@ def refine_kan_edges(
         edge = _edge_map(layer_edges[layer_index]).get((output_index, input_index))
         if edge is None:
             raise ValueError(f"Unknown KAN refinement edge: {path!r}.")
-        scores = np.asarray(indicator, dtype=float)
+        scores = np.asarray(indicator, dtype=np.float64)
         if scores.ndim != 1 or scores.size != edge.fixed_grid.num_intervals:
             raise ValueError(
                 f"Refinement scores for {path!r} must contain one value per span."
@@ -600,10 +600,7 @@ def coarsen_kan_edges(
     budget_ = _validate_budget(budget)
     source_id = _topology_id(model)
     if isinstance(tolerances, Mapping):
-        requested = {
-            tuple(int(value) for value in path): float(limit)
-            for path, limit in tolerances.items()
-        }
+        requested = {tuple(path): float(limit) for path, limit in tolerances.items()}
     else:
         limit = float(tolerances)
         requested = {

@@ -46,7 +46,7 @@ class DSMCSpeciesPlan(StrictModule, NonTrainableState):
         names_ = tuple(str(value) for value in names)
         elements = tuple(str(value) for value in element_names)
         arrays = tuple(
-            np.asarray(value, dtype=float)
+            np.asarray(value, dtype=np.float64)
             for value in (
                 molecular_masses,
                 reference_diameters,
@@ -145,7 +145,7 @@ class DSMCParticleState(StrictModule):
         vibrational = jnp.asarray(vibrational_energy, dtype=position_.dtype)
         weight = jnp.asarray(statistical_weight, dtype=position_.dtype)
         cell = jnp.asarray(cell_id, dtype=jnp.int32)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         incarnation_ = jnp.asarray(incarnation, dtype=jnp.int32)
         if position_.ndim != 2 or velocity_.shape != position_.shape:
             raise ValueError(
@@ -195,9 +195,9 @@ class DSMCStructuredCellPlan(StrictModule, NonTrainableState):
         cell_counts: Sequence[int],
         /,
     ):
-        lower_ = np.asarray(lower, dtype=float)
-        upper_ = np.asarray(upper, dtype=float)
-        counts = tuple(int(value) for value in cell_counts)
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
+        counts = tuple(cell_counts)
         if (
             lower_.ndim != 1
             or upper_.shape != lower_.shape
@@ -322,7 +322,7 @@ class DSMCStreamingPlan(StrictModule, NonTrainableState):
         position = state.position + displacement
         velocity = state.velocity
         active = state.active
-        crossed = jnp.zeros((state.capacity, self.cells.dimension), dtype=bool)
+        crossed = jnp.zeros((state.capacity, self.cells.dimension), dtype=jnp.bool_)
         domain_length = self.cells.upper - self.cells.lower
         maximum_cells = jnp.max(jnp.abs(displacement) / self.cells.cell_widths)
         reflective = {"specular", "surface"}

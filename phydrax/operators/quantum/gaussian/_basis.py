@@ -53,7 +53,7 @@ def _normalized_contraction(
     /,
 ) -> np.ndarray:
     primitive_norm = np.asarray(
-        cartesian_primitive_normalization(exponents, angular), dtype=float
+        cartesian_primitive_normalization(exponents, angular), dtype=np.float64
     )
     values = coefficients * primitive_norm * mask
     overlap = 0.0
@@ -136,9 +136,9 @@ class GaussianBasisPlan(StrictModule, NonTrainableState):
         maximum_basis_functions: int = 16,
         source_id: str,
     ) -> GaussianBasisPlan:
-        centers = tuple(int(value) for value in center_particle_ids)
-        exponent = np.asarray(exponents, dtype=float)
-        coefficient = np.asarray(coefficients, dtype=float)
+        centers = tuple(center_particle_ids)
+        exponent = np.asarray(exponents, dtype=np.float64)
+        coefficient = np.asarray(coefficients, dtype=np.float64)
         if (
             exponent.ndim != 2
             or coefficient.shape != exponent.shape
@@ -148,9 +148,9 @@ class GaussianBasisPlan(StrictModule, NonTrainableState):
                 "Contracted-s centers, exponents, and coefficients must align."
             )
         mask = (
-            np.ones(exponent.shape, dtype=bool)
+            np.ones(exponent.shape, dtype=np.bool_)
             if primitive_mask is None
-            else np.asarray(primitive_mask, dtype=bool)
+            else np.asarray(primitive_mask, dtype=np.bool_)
         )
         if mask.shape != exponent.shape:
             raise ValueError("primitive_mask must align with contracted-s exponents.")
@@ -183,8 +183,8 @@ class GaussianBasisPlan(StrictModule, NonTrainableState):
         source_artifact_id: str,
         role: str = "orbital",
     ) -> GaussianBasisPlan:
-        centers = tuple(int(value) for value in center_particle_ids)
-        numbers = tuple(int(value) for value in atomic_numbers)
+        centers = tuple(center_particle_ids)
+        numbers = tuple(atomic_numbers)
         if len(centers) != len(numbers) or not centers:
             raise ValueError("Basis-exchange centers and atomic numbers must align.")
         elements = record.get("elements")
@@ -201,11 +201,11 @@ class GaussianBasisPlan(StrictModule, NonTrainableState):
             for shell_record in electron_shells:
                 if not isinstance(shell_record, Mapping):
                     raise TypeError("Basis-exchange shell records must be mappings.")
-                angular_values = tuple(
-                    int(value) for value in shell_record["angular_momentum"]
+                angular_values = tuple(shell_record["angular_momentum"])
+                exponents_ = np.asarray(shell_record["exponents"], dtype=np.float64)
+                coefficient_rows = np.asarray(
+                    shell_record["coefficients"], dtype=np.float64
                 )
-                exponents_ = np.asarray(shell_record["exponents"], dtype=float)
-                coefficient_rows = np.asarray(shell_record["coefficients"], dtype=float)
                 if (
                     coefficient_rows.ndim != 2
                     or coefficient_rows.shape[1] != exponents_.size
@@ -309,7 +309,7 @@ class PreparedGaussianBasis(StrictModule, NonTrainableState):
                     padded_coefficients = np.zeros(
                         (maximum_primitives,), dtype=exponents_.dtype
                     )
-                    padded_mask = np.zeros((maximum_primitives,), dtype=bool)
+                    padded_mask = np.zeros((maximum_primitives,), dtype=np.bool_)
                     padded_exponents[: shell.primitive_count] = exponents_
                     padded_coefficients[: shell.primitive_count] = (
                         _normalized_contraction(
@@ -333,7 +333,7 @@ class PreparedGaussianBasis(StrictModule, NonTrainableState):
                 transform_blocks.append((block_start, output_offset, local))
                 output_centers.extend([center_index] * local.shape[1])
                 output_offset += local.shape[1]
-        transform = np.zeros((cartesian_offset, output_offset), dtype=float)
+        transform = np.zeros((cartesian_offset, output_offset), dtype=np.float64)
         for cartesian_start, output_start, local in transform_blocks:
             transform[
                 cartesian_start : cartesian_start + local.shape[0],
@@ -373,11 +373,11 @@ class PreparedGaussianBasis(StrictModule, NonTrainableState):
 
     @property
     def cartesian_basis_function_count(self) -> int:
-        return int(self.center_indices.size)
+        return self.center_indices.size
 
     @property
     def basis_function_count(self) -> int:
-        return int(self.transformation.shape[1])
+        return self.transformation.shape[1]
 
     @property
     def maximum_angular_momentum(self) -> int:

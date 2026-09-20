@@ -38,8 +38,7 @@ class DLDTopology(StrictModule, NonTrainableState):
         particle_capacity: int,
     ) -> None:
         values = tuple(
-            int(value)
-            for value in (
+            (
                 row_count,
                 column_count,
                 period_rows,
@@ -152,8 +151,8 @@ class DLDGeometryPlan(AbstractFiniteRadiusWallPlan, NonTrainableState):
         expected_shift = design.lateral_pitch / topology.period_rows
         if not np.isclose(design.row_shift, expected_shift, rtol=1.0e-10, atol=1.0e-14):
             raise ValueError("DLD row shift must close exactly over period_rows.")
-        rows = np.arange(topology.row_count, dtype=float)
-        columns = np.arange(topology.column_count, dtype=float)
+        rows = np.arange(topology.row_count, dtype=np.float64)
+        columns = np.arange(topology.column_count, dtype=np.float64)
         x = design.first_row_x + rows * design.axial_pitch
         offsets = (
             np.arange(topology.row_count) % topology.period_rows

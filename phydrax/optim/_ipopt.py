@@ -266,7 +266,7 @@ class _StructuredIpoptCallbacks:
 
     def _numpy(self, value: Any, owner: str, /) -> np.ndarray:
         self.counts.device_to_host += 1
-        array = np.asarray(value, dtype=float)
+        array = np.asarray(value, dtype=np.float64)
         if not np.all(np.isfinite(array)):
             raise FloatingPointError(
                 f"Structured Ipopt {owner} returned nonfinite values."
@@ -297,7 +297,7 @@ class _StructuredIpoptCallbacks:
 
     def hessian(self, value, multipliers, objective_factor):
         if self._hessian is None or self.hessian_positions is None:
-            return np.empty((0,), dtype=float)
+            return np.empty((0,), dtype=np.float64)
         self.counts.hessian += 1
         self.counts.host_to_device += 2
         coefficients = self._numpy(
@@ -479,8 +479,7 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
         conflicts = sorted(reserved.intersection(self.options))
         if conflicts:
             raise ValueError(
-                "Structured Ipopt options are owned by Phydrax termination/warm-start "
-                f"semantics: {conflicts}."
+                f"Structured Ipopt options are owned by Phydrax termination/warm-start semantics: {conflicts}."
             )
         options = dict(self.options)
         options["max_iter"] = termination.maximum_steps
@@ -489,14 +488,12 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
         if program.hessian_plan is None:
             if requested_hessian not in (None, "limited-memory"):
                 raise ValueError(
-                    "A structured program without an exact Hessian requires "
-                    "hessian_approximation='limited-memory'."
+                    "A structured program without an exact Hessian requires hessian_approximation='limited-memory'."
                 )
             options["hessian_approximation"] = "limited-memory"
         elif requested_hessian is not None:
             raise ValueError(
-                "An exact structured Hessian cannot be combined with an explicit "
-                "hessian_approximation option."
+                "An exact structured Hessian cannot be combined with an explicit hessian_approximation option."
             )
         return options
 
@@ -541,23 +538,25 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
             n=program.num_variables,
             m=program.num_constraints,
             problem_obj=callbacks,
-            lb=np.asarray(prepared.variable_lower, dtype=float),
-            ub=np.asarray(prepared.variable_upper, dtype=float),
-            cl=np.asarray(prepared.constraint_lower, dtype=float),
-            cu=np.asarray(prepared.constraint_upper, dtype=float),
+            lb=np.asarray(prepared.variable_lower, dtype=np.float64),
+            ub=np.asarray(prepared.variable_upper, dtype=np.float64),
+            cl=np.asarray(prepared.constraint_lower, dtype=np.float64),
+            cu=np.asarray(prepared.constraint_upper, dtype=np.float64),
         )
         if warm_start is not None:
             options["warm_start_init_point"] = "yes"
         for name, value in options.items():
             problem.add_option(name, value)
         if warm_start is None:
-            final_coordinates, info = problem.solve(np.asarray(coordinates, dtype=float))
+            final_coordinates, info = problem.solve(
+                np.asarray(coordinates, dtype=np.float64)
+            )
         else:
             final_coordinates, info = problem.solve(
-                np.asarray(coordinates, dtype=float),
-                lagrange=np.asarray(warm_start.constraint_multipliers, dtype=float),
-                zl=np.asarray(warm_start.lower_bound_multipliers, dtype=float),
-                zu=np.asarray(warm_start.upper_bound_multipliers, dtype=float),
+                np.asarray(coordinates, dtype=np.float64),
+                lagrange=np.asarray(warm_start.constraint_multipliers, dtype=np.float64),
+                zl=np.asarray(warm_start.lower_bound_multipliers, dtype=np.float64),
+                zu=np.asarray(warm_start.upper_bound_multipliers, dtype=np.float64),
             )
         final = jnp.asarray(final_coordinates, dtype=coordinates.dtype)
         constraint_multipliers = jnp.asarray(info["mult_g"], dtype=coordinates.dtype)
@@ -626,9 +625,9 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
             status_evidence,
             callbacks.counts.freeze(),
             final_warm_start,
-            jacobian_nonzeros=int(callbacks.jacobian_rows.size),
+            jacobian_nonzeros=callbacks.jacobian_rows.size,
             hessian_nonzeros=(
-                0 if callbacks.hessian_rows is None else int(callbacks.hessian_rows.size)
+                0 if callbacks.hessian_rows is None else callbacks.hessian_rows.size
             ),
             exact_hessian=program.hessian_plan is not None,
             warm_started=warm_start is not None,
@@ -638,7 +637,7 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
             hessian_plan_id=hessian_plan_id,
             options_id=canonical_fingerprint(options),
             coordinate_dtype=str(coordinates.dtype),
-            host_dtype=str(np.dtype(float)),
+            host_dtype=str(np.dtype(np.float64)),
         )
         counts = evidence.counts
         optimization = MinimizationResult(

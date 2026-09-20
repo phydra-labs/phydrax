@@ -62,7 +62,7 @@ def _finite_difference(points, repeats):
         "unique_coefficient_plans": len(
             prepared.stencil("dxx").stencil.coefficient_plans
         ),
-        "stencil_width": int(prepared.stencil("dxx").stencil.indices.shape[1]),
+        "stencil_width": prepared.stencil("dxx").stencil.indices.shape[1],
     }
 
 
@@ -228,7 +228,7 @@ def _patch_kernel(points, repeats):
     result, steady = _timed(lambda: action(values), repeats)
     return {
         "steady_action_seconds": steady,
-        "output_points": int(result.size),
+        "output_points": result.size,
     }
 
 

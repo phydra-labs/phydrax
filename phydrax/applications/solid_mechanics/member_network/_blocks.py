@@ -131,7 +131,7 @@ class LinearAxialLaw(AbstractAxialLaw):
             energy,
             force,
             tangent,
-            jnp.ones_like(force, dtype=bool),
+            jnp.ones_like(force, dtype=jnp.bool_),
             jnp.abs(extension),
             valid,
         )
@@ -381,7 +381,7 @@ class AxialMemberBlock(AbstractMemberBlock):
             jnp.full(
                 state.active.shape,
                 isinstance(self.law, TensionOnlyCableLaw),
-                dtype=bool,
+                dtype=jnp.bool_,
             ),
             state.switching_margin,
             jnp.all(state.valid),
@@ -499,7 +499,7 @@ class CorotationalFrameBlock(AbstractMemberBlock):
             bending_moment = 0.5 * (moment_first + moment_second)[:, None]
             shear = ((moment_first + moment_second) / lengths)[:, None]
             torsion = jnp.zeros_like(lengths)
-            frame_valid = jnp.ones_like(lengths, dtype=bool)
+            frame_valid = jnp.ones_like(lengths, dtype=jnp.bool_)
         else:
             current_rotations = rotation_vector_matrix(kinematics.rotation_vectors)
             reference_rotations = rotation_vector_matrix(reference.rotation_vectors)
@@ -582,7 +582,7 @@ class CorotationalFrameBlock(AbstractMemberBlock):
             jnp.full(
                 axial.active.shape,
                 isinstance(self.axial_law, TensionOnlyCableLaw),
-                dtype=bool,
+                dtype=jnp.bool_,
             ),
             axial.switching_margin,
             jnp.all(axial.valid & frame_valid),
@@ -717,7 +717,7 @@ class DiscreteRodBlock(AbstractMemberBlock):
             jnp.full(
                 axial.active.shape,
                 isinstance(self.axial_law, TensionOnlyCableLaw),
-                dtype=bool,
+                dtype=jnp.bool_,
             ),
             axial.switching_margin,
             jnp.all(axial.valid)
@@ -808,8 +808,8 @@ class HingeBendingBlock(AbstractMemberBlock):
             jnp.empty((0, 2), dtype=edge.dtype),
             jnp.empty((0, 2), dtype=edge.dtype),
             jnp.empty((0,), dtype=edge.dtype),
-            jnp.empty((0,), dtype=bool),
-            jnp.empty((0,), dtype=bool),
+            jnp.empty((0,), dtype=jnp.bool_),
+            jnp.empty((0,), dtype=jnp.bool_),
             jnp.empty((0,), dtype=edge.dtype),
             jnp.all(edge_length > 0.0)
             & jnp.all(left_norm > 0.0)
@@ -858,8 +858,8 @@ class MemberNetworkAssembly(StrictModule, NonTrainableState):
         )
         moment = jnp.zeros_like(shear)
         torsion = jnp.zeros((count,), dtype=dtype)
-        active = jnp.zeros((count,), dtype=bool)
-        unilateral = jnp.zeros((count,), dtype=bool)
+        active = jnp.zeros((count,), dtype=jnp.bool_)
+        unilateral = jnp.zeros((count,), dtype=jnp.bool_)
         margin = jnp.full((count,), jnp.inf, dtype=dtype)
         energy = jnp.asarray(0.0, dtype=dtype)
         valid = jnp.asarray(True)

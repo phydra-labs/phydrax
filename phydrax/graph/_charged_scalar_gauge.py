@@ -47,7 +47,7 @@ class ChargedScalarGaugePlan(StrictModule, NonTrainableState):
         *,
         coupling: float,
     ):
-        vertices_ = np.asarray(vertices, dtype=float)
+        vertices_ = np.asarray(vertices, dtype=np.float64)
         faces_ = np.asarray(faces, dtype=np.int32)
         edges_ = np.asarray(edges, dtype=np.int32)
         coupling_ = float(coupling)
@@ -63,7 +63,7 @@ class ChargedScalarGaugePlan(StrictModule, NonTrainableState):
             or coupling_ == 0.0
         ):
             raise ValueError("Charged gauge mesh or coupling is invalid.")
-        incidence = np.zeros((faces_.shape[0], edges_.shape[0]), dtype=float)
+        incidence = np.zeros((faces_.shape[0], edges_.shape[0]), dtype=np.float64)
         lookup = {tuple(edge): index for index, edge in enumerate(edges_)}
         for face_index, face in enumerate(faces_):
             for first, second in zip(face, np.roll(face, -1), strict=True):

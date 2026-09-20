@@ -238,7 +238,7 @@ def superquadric_triangle_contact_geometry(
             starts_flat,
             ends_flat,
             edge_direction,
-            jnp.zeros((center_repeated.shape[0],), dtype=bool),
+            jnp.zeros((center_repeated.shape[0],), dtype=jnp.bool_),
         )
     )
     edge_axis = edge_axis.reshape((-1, 3, 3))
@@ -277,7 +277,7 @@ def superquadric_triangle_contact_geometry(
             vertex_points,
             vertex_points + jnp.asarray([1.0, 0.0, 0.0]),
             vertex_direction,
-            jnp.ones((center_vertex.shape[0],), dtype=bool),
+            jnp.ones((center_vertex.shape[0],), dtype=jnp.bool_),
         )
     )
     vertex_axis = vertex_axis.reshape((-1, 3, 3))

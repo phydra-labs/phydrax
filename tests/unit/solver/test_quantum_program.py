@@ -105,7 +105,7 @@ def test_refresh_rejects_every_structural_program_change():
     changed_layout = Q.HilbertRegisterLayout(("other",), (2,))
     changed = Q.QuantumProgram(
         changed_layout,
-        (Q.LocalUnitaryOperation(jnp.eye(2, dtype=complex), ("other",)),),
+        (Q.LocalUnitaryOperation(jnp.eye(2, dtype="complex128"), ("other",)),),
         state_kind="state-vector",
     )
     with pytest.raises(ValueError, match="structure changed"):
@@ -120,7 +120,7 @@ def test_invalid_operations_and_initial_states_fail_closed_with_status():
     layout = Q.HilbertRegisterLayout(("q",), (2,))
     invalid_program = Q.QuantumProgram(
         layout,
-        (Q.LocalUnitaryOperation(jnp.zeros((2, 2), dtype=complex), ("q",)),),
+        (Q.LocalUnitaryOperation(jnp.zeros((2, 2), dtype="complex128"), ("q",)),),
         state_kind="state-vector",
     )
     prepared = phx.solver.prepare_dense_quantum_program(invalid_program)

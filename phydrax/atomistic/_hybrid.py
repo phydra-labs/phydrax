@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
 from ..discretization import ParticleNeighborhoodState
@@ -151,7 +151,7 @@ class PreparedRegionMaskedPotential(AbstractPreparedAtomisticEnergyTerm):
     ):
         self.plan = plan
         self.term = term
-        self.mask = jnp.asarray(mask, dtype=bool)
+        self.mask = jnp.asarray(mask, dtype=jnp.bool_)
         self.name = plan.name
         self.force_group = plan.force_group
         self.term_id = plan.term_id
@@ -447,9 +447,9 @@ class ExternalAtomisticEvaluation(StrictModule):
 
 
 class AbstractExternalAtomisticProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    conservative: AbstractAttribute[bool]
-    differentiable: AbstractAttribute[bool]
+    provider_id: eqx.AbstractVar[str]
+    conservative: eqx.AbstractVar[bool]
+    differentiable: eqx.AbstractVar[bool]
 
     @abc.abstractmethod
     def evaluate(

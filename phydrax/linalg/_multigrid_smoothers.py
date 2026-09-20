@@ -246,13 +246,11 @@ class GaussSeidelPreconditioner(AbstractPreconditioner):
             if factor is not None
         )
         storage = sum(
-            int(
-                factor.values.nbytes
-                + factor.analysis.indices.nbytes
-                + factor.analysis.indptr.nbytes
-                + factor.analysis.row_indices.nbytes
-                + factor.analysis.row_levels.nbytes
-            )
+            factor.values.nbytes
+            + factor.analysis.indices.nbytes
+            + factor.analysis.indptr.nbytes
+            + factor.analysis.row_indices.nbytes
+            + factor.analysis.row_levels.nbytes
             for factor in factors
         )
         itemsize = self.space.flatten(

@@ -15,7 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..atomistic import AtomisticUnitSystem
 from ._provider import AbstractPreparedElectronicCalculation
@@ -90,7 +90,7 @@ class PotentialEnergySurfaceEvaluation(StrictModule, NonTrainableState):
         expected_hessian = forces_.shape + forces_.shape
         if hessian_ is not None and hessian_.shape != expected_hessian:
             raise ValueError(f"Surface Hessian must have shape {expected_hessian}.")
-        successful_ = jnp.asarray(successful, dtype=bool).reshape(())
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         provider = str(provider_id).strip()
         source = str(source_result_id).strip()
         if not provider or not source:
@@ -125,11 +125,11 @@ class PotentialEnergySurfaceEvaluation(StrictModule, NonTrainableState):
 
 
 class AbstractPreparedPotentialEnergySurface(StrictModule, NonTrainableState):
-    system_id: AbstractAttribute[str]
-    units: AbstractAttribute[AtomisticUnitSystem]
-    provider_id: AbstractAttribute[str]
-    surface_id: AbstractAttribute[str]
-    capabilities: AbstractAttribute[PotentialEnergySurfaceCapabilities]
+    system_id: eqx.AbstractVar[str]
+    units: eqx.AbstractVar[AtomisticUnitSystem]
+    provider_id: eqx.AbstractVar[str]
+    surface_id: eqx.AbstractVar[str]
+    capabilities: eqx.AbstractVar[PotentialEnergySurfaceCapabilities]
 
     @abc.abstractmethod
     def evaluate(

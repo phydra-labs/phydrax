@@ -18,7 +18,7 @@ software and documentation:
   [doi:10.3847/1538-4365/ab06fc](https://doi.org/10.3847/1538-4365/ab06fc)
 - Romero-Shaw et al., “Bayesian inference for compact binary coalescences with
   Bilby: validation and application to the first LIGO–Virgo gravitational-wave
-  transient catalogue” (2020),
+  transient catalog” (2020),
   [doi:10.1093/mnras/staa2850](https://doi.org/10.1093/mnras/staa2850)
 
 Bilby is MIT-licensed, copyright 2018 Paul D. Lasky. Its license is reproduced at
@@ -81,7 +81,7 @@ derivative downgrade, not source authenticity.
 equatorial symmetry, uses the canonical spin-minus-two spherical discretization,
 and exposes geometric and SI observer-time evaluations. The physical route requires
 the redshifted detector-frame total mass in kilograms and luminosity distance in
-metres. Requested times outside the artifact interval are zero-filled with
+meters. Requested times outside the artifact interval are zero-filled with
 per-sample support/status; parameter extrapolation is refused. Separate intrinsic,
 extrinsic, detector-mass-scaling, and time derivative masks exclude physical/fit
 boundaries, interpolation knots, support edges, and polar-coordinate singularities;

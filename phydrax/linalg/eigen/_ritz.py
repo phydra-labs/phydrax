@@ -87,7 +87,7 @@ class BlockRayleighEvaluation(StrictModule):
 
     @property
     def dimension(self) -> int:
-        return int(self.mass.shape[0])
+        return self.mass.shape[0]
 
 
 class ReducedRitzResult(StrictModule):
@@ -186,7 +186,7 @@ def block_rayleigh_trace(
             differentiation=DifferentiationPolicy("mathematical"),
             failure=FailurePolicy("status"),
         ),
-        rhs_layout=RHSLayout((int(hermitian_stiffness.shape[1]),)),
+        rhs_layout=RHSLayout((hermitian_stiffness.shape[1],)),
     )
     solved = jnp.asarray(linear.value)
     trace = jnp.trace(solved)
@@ -197,7 +197,7 @@ def block_rayleigh_trace(
         tolerance=tolerance_,
     )
     positive = spectrum.minimum_eigenvalue > tolerance_
-    full_rank = spectrum.numerical_rank == int(hermitian_mass.shape[0])
+    full_rank = spectrum.numerical_rank == hermitian_mass.shape[0]
     valid = (
         finite
         & (stiffness_defect <= tolerance_)
@@ -412,9 +412,7 @@ def warm_started_eigensolve(
 ) -> WarmStartedEigenResult:
     """Certify a learned trial space and use its Ritz vectors to start refinement."""
     basis = jnp.asarray(trial_basis)
-    selected = (
-        EigenSolvePolicy(count=int(basis.shape[1])) if policy is None else policy
-    )
+    selected = EigenSolvePolicy(count=basis.shape[1]) if policy is None else policy
     if not isinstance(selected, EigenSolvePolicy):
         raise TypeError("policy must be an EigenSolvePolicy or None.")
     trial = rayleigh_ritz(

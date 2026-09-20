@@ -226,7 +226,7 @@ class StructuredLaplaceResult(StrictModule):
 
 
 def _native_eigh(matrix: Array, /) -> tuple[Array, Array, Array]:
-    dimension = int(matrix.shape[0])
+    dimension = matrix.shape[0]
     properties = la.OperatorProperties(
         self_adjoint=True,
         evidence={"self_adjoint": "construction"},
@@ -286,7 +286,7 @@ def fit_structured_laplace(
     problem.parameter_space.constrain(position)
     base_working = position if whitening is None else whitening.whiten(position)
     flat_position, unravel = ravel_pytree(base_working)
-    dimension = int(flat_position.size)
+    dimension = flat_position.size
     if dimension <= 0:
         raise ValueError("Structured Laplace position must be non-empty.")
     if curvature in ("lanczos", "lobpcg"):
@@ -465,9 +465,7 @@ def fit_structured_laplace(
 
 def _tree_nbytes(tree: PyTree[Any], /) -> int:
     return sum(
-        int(jnp.asarray(leaf).nbytes)
-        for leaf in jax.tree.leaves(tree)
-        if eqx.is_array(leaf)
+        jnp.asarray(leaf).nbytes for leaf in jax.tree.leaves(tree) if eqx.is_array(leaf)
     )
 
 

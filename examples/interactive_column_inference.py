@@ -2,7 +2,7 @@
 """Deterministic physical twin: this is NOT Earth-climate validation.
 
 Run: JAX_ENABLE_X64=1 PYTHONPATH=. python examples/interactive_column_inference.py
-All grey optical coefficients and synthetic instrument errors below are declared
+All gray optical coefficients and synthetic instrument errors below are declared
 experimental choices, not measurements or claimed Earth parameter estimates.
 """
 
@@ -48,7 +48,7 @@ from phydrax.units import derived_unit, JOULE, KELVIN, KILOGRAM, METER, ONE, SEC
 from phydrax.uq import DenseCovariance
 
 
-SYNTHETIC_PROVENANCE = "deterministic-interactive-column-physical-twin; synthetic-grey-optics; no-Earth-validation"
+SYNTHETIC_PROVENANCE = "deterministic-interactive-column-physical-twin; synthetic-gray-optics; no-Earth-validation"
 FLUX = derived_unit("W/m2", ((JOULE, 1), (SECOND, -1), (METER, -2)))
 WATER = derived_unit("kg/m2", ((KILOGRAM, 1), (METER, -2)))
 SIGNALS = {

@@ -113,7 +113,7 @@ def test_simple_pole_residues_assemble_causal_green_functions():
 def test_quadratic_ringdown_uses_regular_resonant_duhamel_limit():
     poles = jnp.asarray((1.0 - 0.1j, 2.0 - 0.2j))
     amplitudes = jnp.asarray((1.5 + 0.25j, 0.0j))
-    coupling = jnp.zeros((2, 2, 2), dtype=complex).at[1, 0, 0].set(0.3 - 0.1j)
+    coupling = jnp.zeros((2, 2, 2), dtype="complex128").at[1, 0, 0].set(0.3 - 0.1j)
     plan = QuadraticRingdownPlan(poles, amplitudes, coupling)
     times = jnp.asarray((0.0, 0.4, 1.0))
     result = eqx.filter_jit(plan.evaluate)(times)

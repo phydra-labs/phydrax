@@ -140,7 +140,7 @@ class PreparedElasticNetwork(StrictModule, NonTrainableState):
             )
         if reference.dtype.kind != "f":
             raise TypeError("Elastic-network reference positions must be floating point.")
-        active = np.asarray(system.active_mask, dtype=bool)
+        active = np.asarray(system.active_mask, dtype=np.bool_)
         if np.any(~np.isfinite(reference[active])):
             raise ValueError("Active elastic-network reference positions must be finite.")
         reference = np.where(active[:, None], reference, 0.0)
@@ -175,7 +175,7 @@ class PreparedElasticNetwork(StrictModule, NonTrainableState):
         indices = np.zeros((plan.edge_capacity, 2), dtype=np.int32)
         ids = np.zeros((plan.edge_capacity, 2), dtype=np.int64)
         distances = np.ones((plan.edge_capacity,), dtype=reference.dtype)
-        valid = np.zeros((plan.edge_capacity,), dtype=bool)
+        valid = np.zeros((plan.edge_capacity,), dtype=np.bool_)
         for slot, (left_id, right_id, left, right, distance) in enumerate(candidates):
             indices[slot] = (left, right)
             ids[slot] = (left_id, right_id)

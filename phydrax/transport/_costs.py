@@ -63,7 +63,7 @@ class WeightedSquaredEuclideanCost(AbstractGroundCost):
     scales: Array
 
     def __init__(self, scales: ArrayLike, /):
-        values = jnp.asarray(scales, dtype=float)
+        values = jnp.asarray(scales, dtype=jnp.float64)
         if values.ndim != 1 or values.shape[0] == 0:
             raise ValueError("scales must be a nonempty rank-one array.")
         self.scales = eqx.error_if(
@@ -92,7 +92,7 @@ class PeriodicSquaredEuclideanCost(AbstractGroundCost):
     periods: Array
 
     def __init__(self, periods: ArrayLike, /):
-        values = jnp.asarray(periods, dtype=float)
+        values = jnp.asarray(periods, dtype=jnp.float64)
         if values.ndim != 1 or values.shape[0] == 0:
             raise ValueError("periods must be a nonempty rank-one array.")
         self.periods = eqx.error_if(
@@ -134,7 +134,7 @@ class IntrinsicSquaredDistanceCost(AbstractGroundCost):
             raise ValueError(f"Intrinsic ground-cost points must have shape {expected}.")
         return jnp.asarray(
             self.geometry.squared_distance(left_point, right_point),
-            dtype=float,
+            dtype=jnp.float64,
         )
 
     @property
@@ -149,7 +149,7 @@ class PrecomputedCost(StrictModule):
     cost_id: str = eqx.field(static=True)
 
     def __init__(self, values: ArrayLike, /, *, cost_id: str = "precomputed"):
-        matrix = jnp.asarray(values, dtype=float)
+        matrix = jnp.asarray(values, dtype=jnp.float64)
         if matrix.ndim != 2 or matrix.shape[0] == 0 or matrix.shape[1] == 0:
             raise ValueError("Precomputed costs must be a nonempty rank-two matrix.")
         identifier = str(cost_id)
@@ -164,7 +164,7 @@ class PrecomputedCost(StrictModule):
 
     @property
     def shape(self) -> tuple[int, int]:
-        return int(self.values.shape[0]), int(self.values.shape[1])
+        return self.values.shape[0], self.values.shape[1]
 
     def block(
         self,
@@ -194,7 +194,7 @@ def _point_pair(left: ArrayLike, right: ArrayLike, /) -> tuple[Array, Array]:
 
 
 def _as_point(value: ArrayLike, /, *, name: str) -> Array:
-    point = jnp.asarray(value, dtype=float)
+    point = jnp.asarray(value, dtype=jnp.float64)
     if point.ndim == 0:
         point = point.reshape((1,))
     if point.ndim != 1 or point.shape[0] == 0:
@@ -207,7 +207,7 @@ def _as_point(value: ArrayLike, /, *, name: str) -> Array:
 
 
 def _as_points(value: ArrayLike, /, *, name: str) -> Array:
-    points = jnp.asarray(value, dtype=float)
+    points = jnp.asarray(value, dtype=jnp.float64)
     if points.ndim == 1:
         points = points[:, None]
     if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:

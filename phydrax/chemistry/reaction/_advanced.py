@@ -86,7 +86,7 @@ class InternalOptimizationResult(StrictModule, NonTrainableState):
         self.maximum_forces = forces
         self.internal_gradient_norms = gradients
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.kind = kind
         self.source_result_ids = tuple(source_result_ids)
         self.plan_id = str(plan_id)
@@ -146,7 +146,7 @@ class InternalCoordinateOptimizationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Internal optimization requires a force surface for the same system."
             )
-        if coordinates.atom_count != int(system.particle_ids.size):
+        if coordinates.atom_count != system.particle_ids.size:
             raise ValueError("Internal-coordinate atom capacity differs from the system.")
         if not isinstance(kind, InternalOptimizationKind):
             raise TypeError("kind must be InternalOptimizationKind.")
@@ -187,7 +187,7 @@ class InternalCoordinateOptimizationPlan(StrictModule, NonTrainableState):
         _require_structure_matches_system(structure, self.system)
         positions = jnp.asarray(structure.positions)
         cell = None if structure.cell is None else structure.cell
-        mobile = np.asarray(self.system.mobile_mask, dtype=bool)
+        mobile = np.asarray(self.system.mobile_mask, dtype=np.bool_)
         hessian = jnp.eye(self.coordinates.values(positions).size, dtype=positions.dtype)
         position_history = []
         internal_history = []
@@ -253,7 +253,7 @@ class InternalCoordinateOptimizationPlan(StrictModule, NonTrainableState):
                 ),
                 policy=EigenSolvePolicy(
                     DenseEigh(),
-                    count=int(hessian.shape[0]),
+                    count=hessian.shape[0],
                     which="smallest-algebraic",
                 ),
             )
@@ -383,7 +383,7 @@ class DimerSaddleRefinementPlan(StrictModule, NonTrainableState):
         _require_structure_matches_system(structure, self.system)
         positions = np.asarray(structure.positions).copy()
         mode = np.asarray(initial_mode, dtype=positions.dtype).copy()
-        mobile = np.asarray(self.system.mobile_mask, dtype=bool)
+        mobile = np.asarray(self.system.mobile_mask, dtype=np.bool_)
         mode[~mobile] = 0.0
         mode_norm = np.linalg.norm(mode)
         if (

@@ -111,7 +111,7 @@ class RegressionInfluenceDiagnostics(StrictModule):
         self.cooks_distance = jnp.asarray(cooks_distance)
         self.mean_squared_error = jnp.asarray(mean_squared_error)
         self.effective_parameters = jnp.asarray(effective_parameters, dtype=jnp.int32)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 class InfluenceFunctionResult(StrictModule):
@@ -137,7 +137,7 @@ class InfluenceFunctionResult(StrictModule):
         self.hessian = jnp.asarray(hessian)
         self.sample_gradients = jnp.asarray(sample_gradients)
         self.evaluation_gradients = jnp.asarray(evaluation_gradients)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 def _validated_weights(batch: MLBatch) -> Array:
@@ -160,7 +160,7 @@ def _batch_inputs(features: MLBatch | Any) -> tuple[Array, Array, tuple[int, ...
     array = jnp.asarray(features)
     if array.ndim < 2:
         raise ValueError("features must have shape case_shape + (sample, feature).")
-    case_shape = tuple(int(size) for size in array.shape[:-2])
+    case_shape = tuple(array.shape[:-2])
     weight_dtype = jnp.result_type(array.real.dtype, jnp.float32)
     return array, jnp.ones(array.shape[:-1], dtype=weight_dtype), case_shape
 
@@ -187,7 +187,7 @@ def individual_conditional_expectation(
     if not isinstance(model, AbstractArrayModel):
         raise TypeError("model must be an AbstractArrayModel.")
     x, weights, case_shape = _batch_inputs(features)
-    indices_tuple = tuple(int(index) for index in feature_indices)
+    indices_tuple = tuple(feature_indices)
     if not indices_tuple or len(set(indices_tuple)) != len(indices_tuple):
         raise ValueError("feature_indices must be nonempty and unique.")
     if any(index < 0 or index >= x.shape[-1] for index in indices_tuple):
@@ -245,7 +245,7 @@ def _weighted_mean_squared_error(batch: MLBatch, prediction: Array) -> Array:
         output_count = (
             jnp.sum(batch.target_mask, axis=tuple(range(sample_ndim, residual_loss.ndim)))
             if residual_loss.ndim > sample_ndim
-            else batch.target_mask.astype(int)
+            else batch.target_mask.astype("int64")
         )
     else:
         output_count = jnp.asarray(1 if residual_loss.ndim == sample_ndim else 1)
@@ -344,8 +344,7 @@ def _full_derivative(
         return derivative(argument)
     if input_complex:
         raise TypeError(
-            "Complex inputs require holomorphic=True; Wirtinger conventions are "
-            "not inferred."
+            "Complex inputs require holomorphic=True; Wirtinger conventions are not inferred."
         )
     if output_complex:
 
@@ -649,8 +648,7 @@ def influence_functions(
         raise ValueError("The fitted model has no inexact array parameters.")
     if jnp.issubdtype(parameters.dtype, jnp.complexfloating):
         raise TypeError(
-            "Influence functions require a real parameterization; no implicit "
-            "Wirtinger convention is selected."
+            "Influence functions require a real parameterization; no implicit Wirtinger convention is selected."
         )
     loss_function = _default_loss if loss is None else loss
     x, y, weights, sample_prefix = _influence_arrays(batch)

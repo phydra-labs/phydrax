@@ -35,7 +35,7 @@ def make_source(nodes: int = 33, fibers: int = 1):
         jnp.zeros((0,)),
         jnp.zeros((0,)),
         jnp.zeros((0,)),
-        jnp.zeros((0, fibers, nodes), dtype=bool),
+        jnp.zeros((0, fibers, nodes), dtype="bool"),
     )
     fiber = SkeletalFiberBundlePlan(
         ids, nodes, jnp.full((fibers,), 40.0), jnp.full((fibers,), 0.05), schedule

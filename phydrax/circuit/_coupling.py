@@ -77,8 +77,8 @@ class PreparedElectrothermalCircuit(StrictModule):
         temperature: ArrayLike,
         /,
     ) -> Array:
-        state = jnp.asarray(circuit_state, dtype=float)
-        kelvin = jnp.asarray(temperature, dtype=float)
+        state = jnp.asarray(circuit_state, dtype=jnp.float64)
+        kelvin = jnp.asarray(temperature, dtype=jnp.float64)
         if state.shape != (self.circuit.plan.layout.size,) or kelvin.shape != ():
             raise ValueError("Electrothermal initial values have wrong shapes.")
         if bool(jnp.any(~jnp.isfinite(state))) or bool(~jnp.isfinite(kelvin)):
@@ -188,9 +188,9 @@ def prepare_electrothermal_circuit(
 ) -> PreparedElectrothermalCircuit:
     if not isinstance(circuit, PreparedCircuitDAE):
         raise TypeError("circuit must be PreparedCircuitDAE.")
-    capacity = jnp.asarray(heat_capacity, dtype=float)
-    conductance = jnp.asarray(thermal_conductance, dtype=float)
-    ambient = jnp.asarray(ambient_temperature, dtype=float)
+    capacity = jnp.asarray(heat_capacity, dtype=jnp.float64)
+    conductance = jnp.asarray(thermal_conductance, dtype=jnp.float64)
+    ambient = jnp.asarray(ambient_temperature, dtype=jnp.float64)
     if (
         capacity.shape != ()
         or conductance.shape != ()

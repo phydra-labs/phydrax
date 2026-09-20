@@ -27,7 +27,7 @@ def _point_batch(domain, points):
     return phx.domain.PointBatch(
         {
             "x": cx.AxisArray(
-                jnp.asarray(points, dtype=float).reshape((-1, 2)),
+                jnp.asarray(points, dtype="float64").reshape((-1, 2)),
                 dims=(axis_names[0], None),
             )
         },

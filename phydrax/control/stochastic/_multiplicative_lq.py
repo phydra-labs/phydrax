@@ -202,18 +202,17 @@ def _finite_inputs(
             "dynamics_matrices must have shape case_shape + (horizon, n, n)."
         )
     case_shape = tuple(a.shape[:-3])
-    horizon = int(a.shape[-3])
-    n = int(a.shape[-1])
+    horizon = a.shape[-3]
+    n = a.shape[-1]
     if horizon < 1:
         raise ValueError("Finite-horizon multiplicative LQ requires at least one stage.")
 
     b = _real_array(control_matrices, "control_matrices")
     if b.ndim < 3 or tuple(b.shape[:-3]) != case_shape or b.shape[-3:-1] != (horizon, n):
         raise ValueError(
-            "control_matrices must have shape case_shape + (horizon, n, m); "
-            f"got {b.shape}."
+            f"control_matrices must have shape case_shape + (horizon, n, m); got {b.shape}."
         )
-    m = int(b.shape[-1])
+    m = b.shape[-1]
     state_noise = _real_array(state_noise_matrices, "state_noise_matrices")
     expected_rank = len(case_shape) + 4
     if (
@@ -223,10 +222,9 @@ def _finite_inputs(
         or state_noise.shape[-2:] != (n, n)
     ):
         raise ValueError(
-            "state_noise_matrices must have shape case_shape + "
-            f"(horizon, noise_size, n, n); got {state_noise.shape}."
+            f"state_noise_matrices must have shape case_shape + (horizon, noise_size, n, n); got {state_noise.shape}."
         )
-    noise_size = int(state_noise.shape[-3])
+    noise_size = state_noise.shape[-3]
     if noise_size < 1:
         raise ValueError("state_noise_matrices must have a positive noise_size.")
 
@@ -264,7 +262,7 @@ def _finite_inputs(
             "noise_covariances",
         ),
     ]
-    dtype = jnp.result_type(*values, float)
+    dtype = jnp.result_type(*values, jnp.float64)
     zeros = lambda shape: jnp.zeros(shape, dtype=dtype)
     c = (
         zeros(case_shape + (horizon, n))
@@ -827,7 +825,7 @@ def finite_horizon_multiplicative_lq_state_feedback(
         condition_reported = jnp.where(diagnostic_available, condition, jnp.nan)
         rank_valid = rank == m
         condition_valid = (
-            jnp.ones_like(condition, dtype=bool)
+            jnp.ones_like(condition, dtype=jnp.bool_)
             if condition_limit is None
             else condition <= condition_limit
         )

@@ -90,9 +90,7 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
         *,
         boundary_values=None,
     ) -> tuple[Array, Array]:
-        gx, gy = self.geometry.surface_gradient(
-            eta, boundary_values=boundary_values
-        )
+        gx, gy = self.geometry.surface_gradient(eta, boundary_values=boundary_values)
         return (
             jnp.sum(epoch.x_face_area, axis=-1) * gx,
             jnp.sum(epoch.y_face_area, axis=-1) * gy,
@@ -135,9 +133,10 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
             boundary_laplacian = _surface_net_flux(
                 self.geometry, boundary_flux[0], boundary_flux[1]
             )
-            rhs = rhs + (
-                self.gravity * dt**2 / self.geometry.cell_area
-            ) * boundary_laplacian
+            rhs = (
+                rhs
+                + (self.gravity * dt**2 / self.geometry.cell_area) * boundary_laplacian
+            )
         space = ArraySpace(self.geometry.horizontal_shape, dtype=eta_old.dtype)
 
         def action(eta_value):

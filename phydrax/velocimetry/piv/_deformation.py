@@ -56,7 +56,7 @@ def interpolate_displacement(
         raise TypeError("field must be a DenseDisplacementField2D.")
     if field.positions_rc.ndim != 3:
         raise ValueError("field must have a two-dimensional rectilinear grid.")
-    coordinates = jnp.asarray(coordinates_rc, dtype=float)
+    coordinates = jnp.asarray(coordinates_rc, dtype=jnp.float64)
     if coordinates.shape[-1] != 2:
         raise ValueError("coordinates_rc must have shape (..., 2).")
     rows = field.positions_rc[:, 0, 0]
@@ -67,10 +67,10 @@ def interpolate_displacement(
         row_coordinate = jnp.clip(row_coordinate, rows[0], rows[-1])
         column_coordinate = jnp.clip(column_coordinate, columns[0], columns[-1])
     row_index = linear_interpolate(
-        rows, jnp.arange(rows.shape[0], dtype=float), row_coordinate
+        rows, jnp.arange(rows.shape[0], dtype=jnp.float64), row_coordinate
     ).values
     column_index = linear_interpolate(
-        columns, jnp.arange(columns.shape[0], dtype=float), column_coordinate
+        columns, jnp.arange(columns.shape[0], dtype=jnp.float64), column_coordinate
     ).values
     index_coordinates = jnp.stack((row_index, column_index), axis=-1)
     sampled = bilinear_sample(
@@ -99,8 +99,8 @@ def predictor_at_grid(
     """Evaluate the previous-pass predictor on a new fixed interrogation grid."""
     if field is None:
         return ImageSample2D(
-            jnp.zeros(grid.grid_shape + (2,), dtype=float),
-            jnp.ones(grid.grid_shape, dtype=bool),
+            jnp.zeros(grid.grid_shape + (2,), dtype=jnp.float64),
+            jnp.ones(grid.grid_shape, dtype=jnp.bool_),
         )
     return interpolate_displacement(field, grid.centers_rc, extrapolate_nearest=True)
 
@@ -120,7 +120,7 @@ def deform_image_pair(
         raise ValueError("mode must be none, second, or symmetric.")
     coordinates = image_coordinates(pair.geometry)
     if predictor is None or mode_ == "none":
-        predictor_values = jnp.zeros(pair.geometry.image_shape + (2,), dtype=float)
+        predictor_values = jnp.zeros(pair.geometry.image_shape + (2,), dtype=jnp.float64)
         return DeformedImagePair2D(
             pair.first,
             pair.second,

@@ -292,7 +292,7 @@ def _single_scale(
         if isinstance(kernel.kernel, (ScaleKernel, AmplitudeKernel)):
             raise TypeError("Only one interval kernel scale wrapper is supported.")
         return kernel.kernel, kernel.variance_scale
-    return kernel, jnp.asarray(1.0, dtype=float)
+    return kernel, jnp.asarray(1.0, dtype=jnp.float64)
 
 
 def _matern_polynomial(

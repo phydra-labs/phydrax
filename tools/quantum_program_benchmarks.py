@@ -58,7 +58,7 @@ def _state_vector_rows():
                 "state_bytes": prepared.plan.cost.state_bytes_per_case,
                 "operation_bytes": prepared.plan.cost.operation_bytes,
                 "workspace_bytes": prepared.plan.cost.workspace_bytes_per_case,
-                "promoted_operator_bytes": int(global_operator.nbytes),
+                "promoted_operator_bytes": global_operator.nbytes,
                 "maximum_error": float(jnp.max(jnp.abs(result.final_state - expected))),
                 "successful": bool(result.diagnostics.successful),
             }
@@ -102,7 +102,7 @@ def _density_row():
     return {
         "wire_count": len(wire_ids),
         "dimension": layout.dimension,
-        "kraus_capacity": int(kraus.shape[0]),
+        "kraus_capacity": kraus.shape[0],
         "prepare_seconds": prepare_seconds,
         "first_seconds": first_seconds,
         "warm_seconds": warm.median_seconds,

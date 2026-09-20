@@ -143,7 +143,7 @@ def detect_free_surface(
 ) -> FreeSurfaceState:
     density_ = jnp.asarray(density)
     volume = particles.safe_masses / density_
-    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=bool)
+    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=jnp.bool_)
     weights = kernel.value(geometry.distance, smoothing_length)
     left = pairs.left_indices
     right = pairs.right_indices

@@ -54,6 +54,7 @@ class ParticleAllocationResult(StrictModule):
     status: Array
     successful: Array
     plan_id: str = eqx.field(static=True)
+
     @property
     def capacity_available(self) -> Array:
         return self.status != int(ParticlePopulationStatus.CAPACITY_EXCEEDED)
@@ -120,7 +121,9 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
     ) -> ParticlePopulationState:
         structural = self.particles.active_mask
         active = (
-            structural if active_mask is None else jnp.asarray(active_mask, dtype=bool)
+            structural
+            if active_mask is None
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         mass = self.particles.masses if masses is None else jnp.asarray(masses)
         if active.shape != structural.shape or mass.shape != structural.shape:
@@ -237,7 +240,7 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
     def deactivate(
         self, state: ParticlePopulationState, mask: ArrayLike, /
     ) -> ParticleDeactivationResult:
-        requested = jnp.asarray(mask, dtype=bool)
+        requested = jnp.asarray(mask, dtype=jnp.bool_)
         if requested.shape != state.active.shape:
             raise ValueError("Deactivation mask must have particle-capacity shape.")
         remove = state.active & requested
@@ -283,7 +286,7 @@ def update_particle_population(
 ) -> ParticlePopulationState:
     """Update runtime activity/mass while preserving incarnation identity."""
 
-    active = jnp.asarray(active_mask, dtype=bool)
+    active = jnp.asarray(active_mask, dtype=jnp.bool_)
     mass = jnp.asarray(masses)
     if active.shape != previous.active.shape or mass.shape != previous.mass.shape:
         raise ValueError("Updated population arrays must preserve capacity.")

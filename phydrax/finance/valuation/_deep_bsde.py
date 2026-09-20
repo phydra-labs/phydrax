@@ -115,7 +115,7 @@ class DeepBSDECausalityEvidence(StrictModule):
         evidence_id: str,
         tolerance: float,
     ):
-        dependency = jnp.asarray(maximum_future_dependency, dtype=float)
+        dependency = jnp.asarray(maximum_future_dependency, dtype=jnp.float64)
         nodes = int(checked_time_nodes)
         tolerance_ = float(tolerance)
         filtration = str(filtration_id)
@@ -158,7 +158,7 @@ class DeepBSDESupportEvidence(StrictModule):
         evidence_id: str,
         tolerance: float,
     ):
-        violation = jnp.asarray(maximum_support_violation, dtype=float)
+        violation = jnp.asarray(maximum_support_violation, dtype=jnp.float64)
         count = jnp.asarray(active_path_count, dtype=jnp.int32)
         tolerance_ = float(tolerance)
         identifiers = tuple(
@@ -240,8 +240,8 @@ def deep_bsde_independent_validation(
     baseline_identifier = str(baseline_id)
     if not validation_independence or not baseline_identifier:
         raise ValueError("Validation independence and baseline IDs must be nonempty.")
-    constraint = jnp.asarray(constraint_residual, dtype=float)
-    baseline = jnp.asarray(baseline_error, dtype=float)
+    constraint = jnp.asarray(constraint_residual, dtype=jnp.float64)
+    baseline = jnp.asarray(baseline_error, dtype=jnp.float64)
     if constraint.shape != () or baseline.shape != ():
         raise ValueError("Constraint residual and baseline error must be scalars.")
     paths = result.rollout.paths

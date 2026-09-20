@@ -21,7 +21,7 @@ from ._bsde import BSDEPathBatch, BSDEProblem
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner} must contain positive dimensions.")
     return shape
@@ -90,11 +90,11 @@ class EmpiricalMeanField(StrictModule):
         valid: ArrayLike | None = None,
         source_path_id: str | None = None,
     ):
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
         state_event = _shape(state_shape, owner="state_shape")
-        time_values = jnp.asarray(times, dtype=float)
+        time_values = jnp.asarray(times, dtype=jnp.float64)
         if time_values.ndim != 1 or time_values.shape[0] < 2:
             raise ValueError(
                 "times must be a one-dimensional grid with at least two nodes."
@@ -113,14 +113,14 @@ class EmpiricalMeanField(StrictModule):
         if valid is None:
             validity = _event_finite(particle_values, len(state_event))
         else:
-            validity = jnp.asarray(valid, dtype=bool)
+            validity = jnp.asarray(valid, dtype=jnp.bool_)
             if validity.shape != measure_shape:
                 raise ValueError("valid must have sample_shape + (num_nodes,) shape.")
             validity = validity & _event_finite(particle_values, len(state_event))
         if weights is None:
             weight_values = jnp.ones(measure_shape, dtype=particle_values.dtype)
         else:
-            weight_values = jnp.asarray(weights, dtype=float)
+            weight_values = jnp.asarray(weights, dtype=jnp.float64)
             if weight_values.shape != measure_shape:
                 raise ValueError("weights must have sample_shape + (num_nodes,) shape.")
             if bool(jnp.any(~jnp.isfinite(weight_values))) or bool(
@@ -188,7 +188,7 @@ class EmpiricalMeanField(StrictModule):
         left_time = self.times[lower]
         right_time = self.times[upper]
         alpha = jnp.clip((query - left_time) / (right_time - left_time), 0.0, 1.0)
-        time_count = int(self.times.shape[0])
+        time_count = self.times.shape[0]
         flat_particles = self.particles.reshape(
             (self.num_particles, time_count) + self.state_shape
         )

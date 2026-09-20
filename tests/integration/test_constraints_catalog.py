@@ -27,7 +27,7 @@ def _fixed_term(condition, points, structure):
     assert axis_names is not None
     axis = axis_names[0]
     batch = phx.domain.PointBatch(
-        {"x": cx.AxisArray(jnp.asarray(points["x"], dtype=float), dims=(axis, None))},
+        {"x": cx.AxisArray(jnp.asarray(points["x"], dtype="float64"), dims=(axis, None))},
         layout,
     )
     realization = phx.integration.from_samples(
@@ -121,7 +121,7 @@ def test_cfd_constraints_continuous_and_discrete():
     for condition in continuous_conditions:
         _assert_zero_loss(_continuous_term(condition, 8), functions)
 
-    points = {"x": jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype=float)}
+    points = {"x": jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype="float64")}
     discrete_conditions = [
         phx.conditions.cfd.NoPenetration(
             "u",
@@ -176,7 +176,7 @@ def test_solid_constraints_continuous_and_discrete():
     for condition in continuous_conditions:
         _assert_zero_loss(_continuous_term(condition, 8), functions)
 
-    points = {"x": jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype=float)}
+    points = {"x": jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype="float64")}
     discrete_conditions = [
         phx.conditions.Dirichlet("u", component, target=zeros_vec),
         phx.conditions.solids.Traction(
@@ -221,7 +221,7 @@ def test_thermal_constraints_continuous_and_discrete():
     for condition in continuous_conditions:
         _assert_zero_loss(_continuous_term(condition, 8), functions)
 
-    points = {"x": jnp.array([[0.0], [1.0]], dtype=float)}
+    points = {"x": jnp.array([[0.0], [1.0]], dtype="float64")}
     discrete_conditions = [
         phx.conditions.Robin(
             "T",
@@ -267,7 +267,7 @@ def test_thermal_constraints_use_physical_outward_flux_sign():
     def ambient_temperature(x):
         return x[0] ** 2 + 2.0 * conductivity * x[0] / convection
 
-    points = {"x": jnp.array([[0.0], [1.0]], dtype=float)}
+    points = {"x": jnp.array([[0.0], [1.0]], dtype="float64")}
     continuous_conditions = [
         phx.conditions.thermal.HeatFlux(
             "T",
@@ -394,7 +394,7 @@ def test_em_constraints_continuous_and_discrete():
     points = {
         "x": jnp.array(
             [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            dtype=float,
+            dtype="float64",
         )
     }
     discrete_conditions = [

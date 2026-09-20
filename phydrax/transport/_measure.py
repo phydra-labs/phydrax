@@ -58,10 +58,10 @@ class _FiniteTransportMeasure(StrictModule):
         normalized: bool,
         provenance: str,
     ):
-        points_ = jnp.asarray(points, dtype=float)
-        probabilities_ = jnp.asarray(probabilities, dtype=float)
-        active_ = jnp.asarray(active, dtype=bool)
-        mass_ = jnp.asarray(mass, dtype=float).reshape(())
+        points_ = jnp.asarray(points, dtype=jnp.float64)
+        probabilities_ = jnp.asarray(probabilities, dtype=jnp.float64)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
+        mass_ = jnp.asarray(mass, dtype=jnp.float64).reshape(())
         if points_.ndim != 2 or points_.shape[0] == 0 or points_.shape[1] == 0:
             raise ValueError("Transport points must have nonempty shape (atom, feature).")
         if probabilities_.shape != (points_.shape[0],):
@@ -89,7 +89,7 @@ class _FiniteTransportMeasure(StrictModule):
         self.probabilities = jnp.where(active_, probabilities_, 0.0)
         self.mass = mass_
         self.active = active_
-        self.event_shape = tuple(int(size) for size in event_shape)
+        self.event_shape = tuple(event_shape)
         self.normalized = bool(normalized)
         self.provenance = str(provenance)
 
@@ -100,11 +100,11 @@ class _FiniteTransportMeasure(StrictModule):
 
     @property
     def num_atoms(self) -> int:
-        return int(self.points.shape[0])
+        return self.points.shape[0]
 
     @property
     def feature_size(self) -> int:
-        return int(self.points.shape[1])
+        return self.points.shape[1]
 
 
 def lower_transport_measure(
@@ -240,8 +240,7 @@ def _lower_realization(
         ),
     ):
         raise TypeError(
-            f"{name} IntegrationRealization must contain one finite point, "
-            "separable, mapped, or weighted-sample batch."
+            f"{name} IntegrationRealization must contain one finite point, separable, mapped, or weighted-sample batch."
         )
     density = (
         realization.target if isinstance(realization.target, DensityTarget) else None
@@ -302,8 +301,7 @@ def _lower_realization(
         )
     else:
         raise TypeError(
-            f"{name} IntegrationRealization must contain one finite point, "
-            "separable, mapped, or weighted-sample batch."
+            f"{name} IntegrationRealization must contain one finite point, separable, mapped, or weighted-sample batch."
         )
     if density is not None:
         return _lower_density(
@@ -332,17 +330,16 @@ def _lower_discrete(
     axes = target.axes
     if any(dim is None for dim in weights.dims) or set(weights.dims) != set(axes):
         raise ValueError(
-            f"{name} discrete weights must contain exactly axes={axes!r} with no "
-            "retained case dimensions."
+            f"{name} discrete weights must contain exactly axes={axes!r} with no retained case dimensions."
         )
     positions = tuple(weights.dims.index(axis) for axis in axes)
-    atom_shape = tuple(int(weights.shape[position]) for position in positions)
-    weight_values = jnp.transpose(jnp.asarray(weights.data, dtype=float), positions)
+    atom_shape = tuple(weights.shape[position] for position in positions)
+    weight_values = jnp.transpose(jnp.asarray(weights.data, dtype=jnp.float64), positions)
     if target.mask is None:
-        included = jnp.ones(atom_shape, dtype=bool)
+        included = jnp.ones(atom_shape, dtype=jnp.bool_)
     else:
         mask_field = target.mask.broadcast_like(weights)
-        included = jnp.transpose(jnp.asarray(mask_field.data, dtype=bool), positions)
+        included = jnp.transpose(jnp.asarray(mask_field.data, dtype=jnp.bool_), positions)
     raw_points = encoder(target.points) if encoder is not None else target.points
     points, event_shape = _canonical_points_named_or_raw(
         raw_points,
@@ -381,17 +378,20 @@ def _lower_weighted(
         axes = cast(tuple[str, ...], target.sample_axes)
         if any(dim is None for dim in weights.dims) or set(weights.dims) != set(axes):
             raise ValueError(
-                f"{name} log weights must contain exactly sample_axes={axes!r} "
-                "with no retained case dimensions."
+                f"{name} log weights must contain exactly sample_axes={axes!r} with no retained case dimensions."
             )
         positions = tuple(weights.dims.index(axis) for axis in axes)
-        atom_shape = tuple(int(weights.shape[position]) for position in positions)
-        log_weights = jnp.transpose(jnp.asarray(weights.data, dtype=float), positions)
+        atom_shape = tuple(weights.shape[position] for position in positions)
+        log_weights = jnp.transpose(
+            jnp.asarray(weights.data, dtype=jnp.float64), positions
+        )
         if target.mask is None:
-            included = jnp.ones(atom_shape, dtype=bool)
+            included = jnp.ones(atom_shape, dtype=jnp.bool_)
         else:
             mask_field = cast(cx.AxisArray, target.mask).broadcast_like(weights)
-            included = jnp.transpose(jnp.asarray(mask_field.data, dtype=bool), positions)
+            included = jnp.transpose(
+                jnp.asarray(mask_field.data, dtype=jnp.bool_), positions
+            )
         raw_samples = encoder(target.samples) if encoder is not None else target.samples
         points, event_shape = _canonical_points_named_or_raw(
             raw_samples,
@@ -401,21 +401,20 @@ def _lower_weighted(
             name=f"{name} samples",
         )
     else:
-        weights_array = jnp.asarray(target.log_weights, dtype=float)
+        weights_array = jnp.asarray(target.log_weights, dtype=jnp.float64)
         axes = cast(tuple[int, ...], target.sample_axes)
         if set(axes) != set(range(weights_array.ndim)):
             raise ValueError(
-                f"{name} sample_axes must cover every log-weight dimension for an "
-                "unbatched transport measure."
+                f"{name} sample_axes must cover every log-weight dimension for an unbatched transport measure."
             )
-        atom_shape = tuple(int(weights_array.shape[axis]) for axis in axes)
+        atom_shape = tuple(weights_array.shape[axis] for axis in axes)
         log_weights = jnp.transpose(weights_array, axes)
         if target.mask is None:
-            included_raw = jnp.ones(weights_array.shape, dtype=bool)
+            included_raw = jnp.ones(weights_array.shape, dtype=jnp.bool_)
         elif isinstance(target.mask, cx.AxisArray):
-            included_raw = jnp.asarray(target.mask.data, dtype=bool)
+            included_raw = jnp.asarray(target.mask.data, dtype=jnp.bool_)
         else:
-            included_raw = jnp.asarray(target.mask, dtype=bool)
+            included_raw = jnp.asarray(target.mask, dtype=jnp.bool_)
         included_raw = jnp.broadcast_to(included_raw, weights_array.shape)
         included = jnp.transpose(included_raw, axes)
         raw_samples = encoder(target.samples) if encoder is not None else target.samples
@@ -477,14 +476,14 @@ def _canonical_points_named_or_raw(
             position for position in range(leaf.ndim) if position not in positions
         )
         canonical = jnp.transpose(jnp.asarray(leaf.data), positions + remaining)
-        observed = tuple(int(size) for size in canonical.shape[: len(axes)])
+        observed = tuple(canonical.shape[: len(axes)])
         if observed != atom_shape:
             raise ValueError(f"{name} atom shape must be {atom_shape}; got {observed}.")
         return _flatten_events(canonical, atom_shape=atom_shape)
     data = jnp.asarray(leaf)
     if data.ndim < len(raw_weight_dims) or tuple(
         data.shape[: len(raw_weight_dims)]
-    ) != tuple(int(size) for size in atom_shape):
+    ) != tuple(atom_shape):
         # Raw arrays paired with named weights follow the target axis order.
         if (
             data.ndim < len(atom_shape)
@@ -512,7 +511,7 @@ def _canonical_points_raw(
     leaf = _single_encoded_leaf(value, name=name)
     data = jnp.asarray(leaf.data if isinstance(leaf, cx.AxisArray) else leaf)
     if data.ndim < len(weight_shape) or tuple(data.shape[: len(weight_shape)]) != tuple(
-        int(size) for size in weight_shape
+        weight_shape
     ):
         raise ValueError(
             f"{name} raw arrays must begin with complete weight shape {weight_shape}."
@@ -530,7 +529,7 @@ def _flatten_events(
     atom_shape: tuple[int, ...],
 ) -> tuple[Array, tuple[int, ...]]:
     atom_count = prod(atom_shape)
-    event_shape = tuple(int(size) for size in canonical.shape[len(atom_shape) :])
+    event_shape = tuple(canonical.shape[len(atom_shape) :])
     if event_shape:
         return canonical.reshape((atom_count, prod(event_shape))), event_shape
     return canonical.reshape((atom_count, 1)), ()
@@ -542,8 +541,7 @@ def _single_encoded_leaf(value: Any, /, *, name: str) -> Array | cx.AxisArray:
     leaves = jtu.tree_leaves(value, is_leaf=lambda item: isinstance(item, cx.AxisArray))
     if len(leaves) != 1:
         raise ValueError(
-            f"{name} must be one array/field or use an explicit event encoder; "
-            f"found {len(leaves)} leaves."
+            f"{name} must be one array/field or use an explicit event encoder; found {len(leaves)} leaves."
         )
     leaf = leaves[0]
     if not isinstance(leaf, cx.AxisArray):
@@ -560,8 +558,8 @@ def _linear_probabilities_and_mass(
     target_mass: Array | None,
     name: str,
 ) -> tuple[Array, Array, Array]:
-    values = jnp.asarray(weights, dtype=float)
-    included_ = jnp.asarray(included, dtype=bool)
+    values = jnp.asarray(weights, dtype=jnp.float64)
+    included_ = jnp.asarray(included, dtype=jnp.bool_)
     values = eqx.error_if(
         values,
         jnp.any(included_ & (~jnp.isfinite(values) | (values < 0.0))),
@@ -594,8 +592,8 @@ def _log_probabilities_and_mass(
     target_mass: Array | None,
     name: str,
 ) -> tuple[Array, Array, Array]:
-    values = jnp.asarray(log_weights, dtype=float)
-    included_ = jnp.asarray(included, dtype=bool)
+    values = jnp.asarray(log_weights, dtype=jnp.float64)
+    included_ = jnp.asarray(included, dtype=jnp.bool_)
     admissible = jnp.isfinite(values) | jnp.isneginf(values)
     values = eqx.error_if(
         values,
@@ -632,7 +630,7 @@ def _resolved_mass(
     name: str,
 ) -> Array:
     if target_mass is not None:
-        mass = jnp.asarray(target_mass, dtype=float).reshape(())
+        mass = jnp.asarray(target_mass, dtype=jnp.float64).reshape(())
     elif normalized:
         mass = jnp.asarray(1.0, dtype=raw_mass.dtype)
     else:
@@ -654,7 +652,7 @@ def _combine_support_validity(
 ) -> Array:
     if support_valid is None:
         return included
-    valid = jnp.asarray(support_valid, dtype=bool)
+    valid = jnp.asarray(support_valid, dtype=jnp.bool_)
     atom_count = prod(atom_shape)
     if valid.shape == atom_shape:
         canonical = valid
@@ -662,8 +660,7 @@ def _combine_support_validity(
         canonical = valid.reshape(atom_shape)
     else:
         raise ValueError(
-            f"{name} support_valid must have atom shape {atom_shape} or "
-            f"{atom_count} entries."
+            f"{name} support_valid must have atom shape {atom_shape} or {atom_count} entries."
         )
     return included & canonical
 

@@ -19,7 +19,7 @@ def _delay_valid(data: TrajectoryData, delay: int, /):
     connected = []
     for target in range(data.capacity):
         source = max(0, target - delay)
-        value = jnp.ones(data.case_shape, dtype=bool)
+        value = jnp.ones(data.case_shape, dtype=jnp.bool_)
         for transition in range(source, target):
             value = value & data.transition_valid[..., transition]
         connected.append(value)
@@ -30,7 +30,7 @@ def delay_embed(data: TrajectoryData, delays: Sequence[int], /) -> TrajectoryDat
     """Delay-embed states without crossing padding, discontinuities, or resets."""
     if not isinstance(data, TrajectoryData):
         raise TypeError("data must be TrajectoryData.")
-    resolved = tuple(int(delay) for delay in delays)
+    resolved = tuple(delays)
     if not resolved or any(delay < 0 for delay in resolved):
         raise ValueError("delays must contain nonnegative integers.")
     if len(set(resolved)) != len(resolved):

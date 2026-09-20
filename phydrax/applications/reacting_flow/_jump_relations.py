@@ -223,7 +223,7 @@ class EquilibriumShockPlan(StrictModule, NonTrainableState):
             {
                 "kind": "equilibrium-shock-branch",
                 "plan": self.plan_id,
-                "upstream_species_count": int(amount.size),
+                "upstream_species_count": amount.size,
             }
         )
         evidence = EquilibriumJumpEvidence(

@@ -1330,8 +1330,7 @@ def qualification_report(
 def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Qualify periodic D2V17 oracle and optional frozen learned-energy "
-            "spatial runtime execution."
+            "Qualify periodic D2V17 oracle and optional frozen learned-energy spatial runtime execution."
         )
     )
     parser.add_argument(

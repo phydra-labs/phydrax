@@ -42,17 +42,17 @@ def _route_array(value: ArrayLike, name: str, /) -> tuple[Array, np.ndarray]:
 
 def _active_array(value: ArrayLike, face_count: int, /) -> tuple[Array, np.ndarray]:
     host = np.asarray(value)
-    if host.dtype != np.dtype(bool):
+    if host.dtype != np.dtype(np.bool_):
         raise TypeError("active_mask must have boolean dtype.")
     if host.shape != (face_count,):
         raise ValueError("active_mask must contain one value per routed face.")
-    normalized = np.asarray(host, dtype=bool)
+    normalized = np.asarray(host, dtype=np.bool_)
     return jnp.asarray(normalized), normalized
 
 
 def _active_cell_array(value: ArrayLike, cell_count: int, /) -> Array:
     array = jnp.asarray(value)
-    if array.dtype != jnp.dtype(bool):
+    if array.dtype != jnp.dtype(jnp.bool_):
         raise TypeError("active_cell_mask must have boolean dtype.")
     if array.shape != (cell_count,):
         raise ValueError("active_cell_mask must contain one value per cell.")
@@ -84,15 +84,15 @@ def _validate_inactive_values(
 
 def _validate_route_values(
     owner_cells: np.ndarray,
-    neighbour_cells: np.ndarray,
+    neighbor_cells: np.ndarray,
     active_mask: np.ndarray,
     /,
 ) -> None:
     if np.any(owner_cells < 0):
         raise ValueError("owner_cells cannot contain negative cell indices.")
-    if np.any(neighbour_cells < -1):
-        raise ValueError("neighbour_cells can use only -1 as a boundary sentinel.")
-    if np.any(active_mask & (neighbour_cells == owner_cells)):
+    if np.any(neighbor_cells < -1):
+        raise ValueError("neighbor_cells can use only -1 as a boundary sentinel.")
+    if np.any(active_mask & (neighbor_cells == owner_cells)):
         raise ValueError("An active flux route cannot connect a cell to itself.")
 
 
@@ -136,7 +136,7 @@ def _masked_face_values(values: Array, active_mask: Array, /) -> Array:
 
 def _route_fingerprint(
     owner_cells: np.ndarray,
-    neighbour_cells: np.ndarray,
+    neighbor_cells: np.ndarray,
     active_mask: np.ndarray,
     component_shape: tuple[int, ...],
     block_kind: str,
@@ -144,9 +144,9 @@ def _route_fingerprint(
 ) -> str:
     return canonical_fingerprint(
         {
-            "kind": "conservation-owner-neighbour-flux-route",
+            "kind": "conservation-owner-neighbor-flux-route",
             "owner_cells": array_tree_fingerprint(owner_cells),
-            "neighbour_cells": array_tree_fingerprint(neighbour_cells),
+            "neighbor_cells": array_tree_fingerprint(neighbor_cells),
             "active_mask": array_tree_fingerprint(active_mask),
             "component_shape": list(component_shape),
             "block_kind": block_kind,
@@ -157,7 +157,7 @@ def _route_fingerprint(
 def _validate_route_bounds(
     validation_token: Array,
     owner_cells: Array,
-    neighbour_cells: Array,
+    neighbor_cells: Array,
     active_mask: Array,
     active_cell_mask: Array,
     cell_count: int,
@@ -171,17 +171,17 @@ def _validate_route_bounds(
     )
     validation_token = eqx.error_if(
         validation_token,
-        jnp.any((neighbour_cells < -1) | (neighbour_cells >= cell_count)),
-        f"Flux block {block_id!r} has a neighbour outside the cell range.",
+        jnp.any((neighbor_cells < -1) | (neighbor_cells >= cell_count)),
+        f"Flux block {block_id!r} has a neighbor outside the cell range.",
     )
     validation_token = eqx.error_if(
         validation_token,
-        jnp.any(active_mask & (neighbour_cells == owner_cells)),
-        f"Flux block {block_id!r} has an active self-neighbour route.",
+        jnp.any(active_mask & (neighbor_cells == owner_cells)),
+        f"Flux block {block_id!r} has an active self-neighbor route.",
     )
-    safe_neighbour = jnp.maximum(neighbour_cells, 0)
+    safe_neighbor = jnp.maximum(neighbor_cells, 0)
     inactive_endpoint = (~active_cell_mask[owner_cells]) | (
-        (neighbour_cells >= 0) & (~active_cell_mask[safe_neighbour])
+        (neighbor_cells >= 0) & (~active_cell_mask[safe_neighbor])
     )
     return eqx.error_if(
         validation_token,
@@ -222,7 +222,7 @@ def _validate_blocks(
         validation_token = _validate_route_bounds(
             validation_token,
             block.owner_cells,
-            block.neighbour_cells,
+            block.neighbor_cells,
             block.active_mask,
             active_cell_mask,
             cell_count,
@@ -235,16 +235,16 @@ def _scatter_block(
     scattered: Array,
     values: Array,
     owner_cells: Array,
-    neighbour_cells: Array,
+    neighbor_cells: Array,
     /,
 ) -> Array:
-    safe_neighbour = jnp.maximum(neighbour_cells, 0)
+    safe_neighbor = jnp.maximum(neighbor_cells, 0)
     scattered = scattered.at[owner_cells].add(-values)
-    neighbour_mask = (neighbour_cells >= 0).reshape(
-        neighbour_cells.shape + (1,) * (values.ndim - 1)
+    neighbor_mask = (neighbor_cells >= 0).reshape(
+        neighbor_cells.shape + (1,) * (values.ndim - 1)
     )
-    return scattered.at[safe_neighbour].add(
-        jnp.where(neighbour_mask, values, jnp.zeros((), dtype=values.dtype))
+    return scattered.at[safe_neighbor].add(
+        jnp.where(neighbor_mask, values, jnp.zeros((), dtype=values.dtype))
     )
 
 
@@ -253,7 +253,7 @@ class ConservationStageFluxRateBlock(StrictModule):
 
     flux_rate: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     active_mask: Array
     block_id: str = eqx.field(static=True)
     block_kind: str = eqx.field(static=True)
@@ -266,7 +266,7 @@ class ConservationStageFluxRateBlock(StrictModule):
         self,
         flux_rate: ArrayLike,
         owner_cells: ArrayLike,
-        neighbour_cells: ArrayLike,
+        neighbor_cells: ArrayLike,
         active_mask: ArrayLike,
         block_id: str,
         block_kind: str,
@@ -275,13 +275,11 @@ class ConservationStageFluxRateBlock(StrictModule):
         block_id_ = _flux_identity(block_id, "block_id")
         block_kind_ = _flux_identity(block_kind, "block_kind")
         owner, owner_host = _route_array(owner_cells, "owner_cells")
-        neighbour, neighbour_host = _route_array(neighbour_cells, "neighbour_cells")
-        if neighbour.shape != owner.shape:
-            raise ValueError(
-                "owner_cells and neighbour_cells must have identical shapes."
-            )
+        neighbor, neighbor_host = _route_array(neighbor_cells, "neighbor_cells")
+        if neighbor.shape != owner.shape:
+            raise ValueError("owner_cells and neighbor_cells must have identical shapes.")
         active, active_host = _active_array(active_mask, owner.shape[0])
-        _validate_route_values(owner_host, neighbour_host, active_host)
+        _validate_route_values(owner_host, neighbor_host, active_host)
         rate = _finite_values(flux_rate, "flux_rate")
         if rate.ndim == 0 or rate.shape[0] != owner.shape[0]:
             raise ValueError("flux_rate must begin with the routed face count.")
@@ -289,14 +287,14 @@ class ConservationStageFluxRateBlock(StrictModule):
         rate = _masked_face_values(rate, active)
         route_id = _route_fingerprint(
             owner_host,
-            neighbour_host,
+            neighbor_host,
             active_host,
             component_shape,
             block_kind_,
         )
         self.flux_rate = rate
         self.owner_cells = owner
-        self.neighbour_cells = neighbour
+        self.neighbor_cells = neighbor
         self.active_mask = active
         self.block_id = block_id_
         self.block_kind = block_kind_
@@ -319,18 +317,7 @@ class ConservationStageFluxRateBlock(StrictModule):
         if rate.shape != self.flux_rate.shape:
             raise ValueError("flux_rate must have the exact route-template shape.")
         rate = _masked_face_values(rate, self.active_mask)
-        instance = object.__new__(type(self))
-        object.__setattr__(instance, "flux_rate", rate)
-        object.__setattr__(instance, "owner_cells", self.owner_cells)
-        object.__setattr__(instance, "neighbour_cells", self.neighbour_cells)
-        object.__setattr__(instance, "active_mask", self.active_mask)
-        object.__setattr__(instance, "block_id", self.block_id)
-        object.__setattr__(instance, "block_kind", self.block_kind)
-        object.__setattr__(instance, "component_shape", self.component_shape)
-        object.__setattr__(instance, "units", self.units)
-        object.__setattr__(instance, "route_id", self.route_id)
-        object.__setattr__(instance, "rate_block_id", self.rate_block_id)
-        return instance
+        return eqx.tree_at(lambda block: block.flux_rate, self, rate)
 
 
 class ConservationStageLedger(StrictModule):
@@ -389,7 +376,7 @@ class ConservationStageLedger(StrictModule):
         source = _finite_values(source_rate, "source_rate")
         if source.ndim == 0 or source.shape[0] == 0:
             raise ValueError("source_rate must begin with a nonempty cell axis.")
-        cell_count = int(source.shape[0])
+        cell_count = source.shape[0]
         component_shape = tuple(source.shape[1:])
         active_cells = _active_cell_array(active_cell_mask, cell_count)
         source = _validate_inactive_values(source, active_cells, "source_rate")
@@ -440,16 +427,16 @@ class ConservationStageLedger(StrictModule):
             else jnp.asarray(entropy_production, dtype=source.dtype)
         )
         troubled = (
-            jnp.zeros((cell_count,), dtype=bool)
+            jnp.zeros((cell_count,), dtype=jnp.bool_)
             if troubled_cell_mask is None
-            else jnp.asarray(troubled_cell_mask, dtype=bool)
+            else jnp.asarray(troubled_cell_mask, dtype=jnp.bool_)
         )
         levels = (
             jnp.zeros((cell_count,), dtype=jnp.int32)
             if correction_level is None
             else jnp.asarray(correction_level, dtype=jnp.int32)
         )
-        accepted_ = jnp.asarray(accepted, dtype=bool)
+        accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
         if (
             entropy.shape != (cell_count,)
             or troubled.shape != (cell_count,)
@@ -534,33 +521,54 @@ class ConservationStageLedger(StrictModule):
         factors = tuple(jnp.asarray(value) for value in blend_factors)
         if len(factors) != len(selected):
             raise ValueError("Selected ledger needs one factor block per route block.")
-        instance = object.__new__(type(self))
-        object.__setattr__(instance, "blocks", selected)
-        object.__setattr__(instance, "high_order_blocks", self.high_order_blocks)
-        object.__setattr__(instance, "low_order_blocks", self.low_order_blocks)
-        object.__setattr__(instance, "blend_factors", factors)
-        object.__setattr__(instance, "entropy_production", self.entropy_production)
-        object.__setattr__(
-            instance, "troubled_cell_mask", jnp.asarray(troubled_cell_mask)
+        differentiability = str(differentiability_policy_id)
+        ledger_id = canonical_fingerprint(
+            {
+                "kind": "conservation-stage-ledger",
+                "geometry_family_id": self.geometry_family_id,
+                "geometry_layout_id": self.geometry_layout_id,
+                "topology_epoch_id": self.topology_epoch_id,
+                "evidence_policy_id": self.evidence_policy_id,
+                "block_rate_ids": [block.rate_block_id for block in selected],
+                "high_order_rate_ids": [
+                    block.rate_block_id for block in self.high_order_blocks
+                ],
+                "low_order_rate_ids": [
+                    block.rate_block_id for block in self.low_order_blocks
+                ],
+                "blend_factor_shapes": [list(value.shape) for value in factors],
+                "differentiability_policy_id": differentiability,
+                "cell_count": self.cell_count,
+                "component_shape": list(self.component_shape),
+                "active_cell_policy": "exact-boolean-source-zero-active-routes",
+                "block_units": _STAGE_RATE_UNITS,
+                "source_units": _STAGE_RATE_UNITS,
+                "units": _STAGE_RATE_UNITS,
+            }
         )
-        object.__setattr__(instance, "correction_level", jnp.asarray(correction_level))
-        object.__setattr__(instance, "accepted", jnp.asarray(accepted))
-        object.__setattr__(instance, "source_rate", source)
-        object.__setattr__(instance, "active_cell_mask", self.active_cell_mask)
-        object.__setattr__(instance, "geometry_family_id", self.geometry_family_id)
-        object.__setattr__(instance, "geometry_layout_id", self.geometry_layout_id)
-        object.__setattr__(instance, "topology_epoch_id", self.topology_epoch_id)
-        object.__setattr__(instance, "evidence_policy_id", self.evidence_policy_id)
-        object.__setattr__(
-            instance,
-            "differentiability_policy_id",
-            str(differentiability_policy_id),
+        return eqx.tree_at(
+            lambda ledger: (
+                ledger.blocks,
+                ledger.blend_factors,
+                ledger.troubled_cell_mask,
+                ledger.correction_level,
+                ledger.accepted,
+                ledger.source_rate,
+                ledger.differentiability_policy_id,
+                ledger.ledger_id,
+            ),
+            self,
+            (
+                selected,
+                factors,
+                jnp.asarray(troubled_cell_mask),
+                jnp.asarray(correction_level),
+                jnp.asarray(accepted),
+                source,
+                differentiability,
+                ledger_id,
+            ),
         )
-        object.__setattr__(instance, "cell_count", self.cell_count)
-        object.__setattr__(instance, "component_shape", self.component_shape)
-        object.__setattr__(instance, "units", self.units)
-        object.__setattr__(instance, "ledger_id", self.ledger_id)
-        return instance
 
     def scatter_content_rate(self) -> Array:
         """Scatter owner-outward rates and sources without multiplying by a step."""
@@ -570,7 +578,7 @@ class ConservationStageLedger(StrictModule):
                 scattered,
                 block.flux_rate,
                 block.owner_cells,
-                block.neighbour_cells,
+                block.neighbor_cells,
             )
         return scattered
 
@@ -580,7 +588,7 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
 
     flux_integral: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     active_mask: Array
     block_id: str = eqx.field(static=True)
     block_kind: str = eqx.field(static=True)
@@ -593,37 +601,57 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
         self,
         flux_integral: ArrayLike,
         owner_cells: ArrayLike,
-        neighbour_cells: ArrayLike,
+        neighbor_cells: ArrayLike,
         active_mask: ArrayLike,
         block_id: str,
         block_kind: str,
         /,
+        *,
+        _validated_route_id: str | None = None,
     ):
         block_id_ = _flux_identity(block_id, "block_id")
         block_kind_ = _flux_identity(block_kind, "block_kind")
-        owner, owner_host = _route_array(owner_cells, "owner_cells")
-        neighbour, neighbour_host = _route_array(neighbour_cells, "neighbour_cells")
-        if neighbour.shape != owner.shape:
-            raise ValueError(
-                "owner_cells and neighbour_cells must have identical shapes."
+        owner = jnp.asarray(owner_cells)
+        neighbor = jnp.asarray(neighbor_cells)
+        active = jnp.asarray(active_mask)
+        if _validated_route_id is None:
+            owner, owner_host = _route_array(owner_cells, "owner_cells")
+            neighbor, neighbor_host = _route_array(
+                neighbor_cells,
+                "neighbor_cells",
             )
-        active, active_host = _active_array(active_mask, owner.shape[0])
-        _validate_route_values(owner_host, neighbour_host, active_host)
+            if neighbor.shape != owner.shape:
+                raise ValueError(
+                    "owner_cells and neighbor_cells must have identical shapes."
+                )
+            active, active_host = _active_array(active_mask, owner.shape[0])
+            _validate_route_values(owner_host, neighbor_host, active_host)
+        elif (
+            owner.ndim != 1
+            or neighbor.shape != owner.shape
+            or active.dtype != jnp.bool_
+            or active.shape != owner.shape
+        ):
+            raise ValueError("Prevalidated conservation route arrays changed shape.")
         integral = _finite_values(flux_integral, "flux_integral")
         if integral.ndim == 0 or integral.shape[0] != owner.shape[0]:
             raise ValueError("flux_integral must begin with the routed face count.")
         component_shape = tuple(integral.shape[1:])
         integral = _masked_face_values(integral, active)
-        route_id = _route_fingerprint(
-            owner_host,
-            neighbour_host,
-            active_host,
-            component_shape,
-            block_kind_,
+        route_id = (
+            _route_fingerprint(
+                owner_host,
+                neighbor_host,
+                active_host,
+                component_shape,
+                block_kind_,
+            )
+            if _validated_route_id is None
+            else _validated_route_id
         )
         self.flux_integral = integral
         self.owner_cells = owner
-        self.neighbour_cells = neighbour
+        self.neighbor_cells = neighbor
         self.active_mask = active
         self.block_id = block_id_
         self.block_kind = block_kind_
@@ -647,36 +675,15 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
         stage_block: ConservationStageFluxRateBlock,
         /,
     ) -> AcceptedConservationFluxIntegralBlock:
-        integral = _finite_values(flux_integral, "flux_integral")
-        if integral.shape != stage_block.flux_rate.shape:
-            raise ValueError(
-                "flux_integral must have the exact stage flux-rate block shape."
-            )
-        integral = _masked_face_values(integral, stage_block.active_mask)
-        instance = object.__new__(cls)
-        object.__setattr__(instance, "flux_integral", integral)
-        object.__setattr__(instance, "owner_cells", stage_block.owner_cells)
-        object.__setattr__(instance, "neighbour_cells", stage_block.neighbour_cells)
-        object.__setattr__(instance, "active_mask", stage_block.active_mask)
-        object.__setattr__(instance, "block_id", stage_block.block_id)
-        object.__setattr__(instance, "block_kind", stage_block.block_kind)
-        object.__setattr__(instance, "component_shape", stage_block.component_shape)
-        object.__setattr__(instance, "units", _ACCEPTED_INTEGRAL_UNITS)
-        object.__setattr__(instance, "route_id", stage_block.route_id)
-        object.__setattr__(
-            instance,
-            "integral_block_id",
-            canonical_fingerprint(
-                {
-                    "kind": "accepted-conservation-flux-integral-block",
-                    "block_id": stage_block.block_id,
-                    "block_kind": stage_block.block_kind,
-                    "route": stage_block.route_id,
-                    "units": _ACCEPTED_INTEGRAL_UNITS,
-                }
-            ),
+        return cls(
+            flux_integral,
+            stage_block.owner_cells,
+            stage_block.neighbor_cells,
+            stage_block.active_mask,
+            stage_block.block_id,
+            stage_block.block_kind,
+            _validated_route_id=stage_block.route_id,
         )
-        return instance
 
 
 class AcceptedConservationIntegralLedger(StrictModule):
@@ -781,7 +788,7 @@ class AcceptedConservationIntegralLedger(StrictModule):
         source = _finite_values(source_integral, "source_integral")
         if source.ndim == 0 or source.shape[0] == 0:
             raise ValueError("source_integral must begin with a nonempty cell axis.")
-        cell_count = int(source.shape[0])
+        cell_count = source.shape[0]
         component_shape = tuple(source.shape[1:])
         active_cells = _active_cell_array(active_cell_mask, cell_count)
         source = _validate_inactive_values(source, active_cells, "source_integral")
@@ -1003,7 +1010,7 @@ class AcceptedConservationIntegralLedger(StrictModule):
                 scattered,
                 block.flux_integral,
                 block.owner_cells,
-                block.neighbour_cells,
+                block.neighbor_cells,
             )
         return scattered
 
@@ -1012,8 +1019,8 @@ class AcceptedConservationIntegralLedger(StrictModule):
         source_sum = compensated_sum(self.source_integral, axis=0)
         boundary_chunks_list: list[Array] = []
         for block in self.blocks:
-            boundary = (block.neighbour_cells < 0).reshape(
-                block.neighbour_cells.shape + (1,) * (block.flux_integral.ndim - 1)
+            boundary = (block.neighbor_cells < 0).reshape(
+                block.neighbor_cells.shape + (1,) * (block.flux_integral.ndim - 1)
             )
             boundary_chunks_list.append(
                 jnp.where(

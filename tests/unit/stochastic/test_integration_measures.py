@@ -9,7 +9,7 @@ import phydrax as phx
 
 def _trajectory(*, valid=None, independent=True):
     times = jnp.asarray([0.0, 0.2, 0.5, 1.0])
-    states = jnp.arange(2 * 3 * 4, dtype=float).reshape((2, 3, 4, 1))
+    states = jnp.arange(2 * 3 * 4, dtype="float64").reshape((2, 3, 4, 1))
     realizations = (
         tuple(
             phx.stochastic.WienerRealization(
@@ -38,7 +38,7 @@ def _trajectory(*, valid=None, independent=True):
 
 
 def test_trajectory_marginal_measure_retains_case_time_and_state_axes():
-    valid = jnp.ones((2, 3, 4), dtype=bool).at[0, 0, 2].set(False)
+    valid = jnp.ones((2, 3, 4), dtype="bool").at[0, 0, 2].set(False)
     trajectory = _trajectory(valid=valid)
     target = phx.stochastic.trajectory_measure(trajectory, mode="marginal")
 
@@ -54,7 +54,7 @@ def test_trajectory_marginal_measure_retains_case_time_and_state_axes():
 
 
 def test_trajectory_path_measure_excludes_an_entire_failed_path():
-    valid = jnp.ones((2, 3, 4), dtype=bool).at[0, 0, 2].set(False)
+    valid = jnp.ones((2, 3, 4), dtype="bool").at[0, 0, 2].set(False)
     trajectory = _trajectory(valid=valid)
     target = phx.stochastic.trajectory_measure(trajectory, mode="path")
 

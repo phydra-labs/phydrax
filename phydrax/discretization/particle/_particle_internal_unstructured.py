@@ -29,7 +29,7 @@ class ParticleInternalMeshMetrics(StrictModule):
     face_normals: Array
     center_distances: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     boundary_faces: Array
     active_cells: Array
     active_faces: Array
@@ -107,13 +107,13 @@ class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalM
         self.discretization = discretization
         self.dimension = int(discretization.cell_dimension)
         self.cell_capacity = int(discretization.cell_count)
-        self.face_capacity = int(discretization.owner_cells.shape[0])
+        self.face_capacity = discretization.owner_cells.shape[0]
         owner = discretization.owner_cells
-        neighbour = jnp.maximum(discretization.neighbour_cells, 0)
+        neighbor = jnp.maximum(discretization.neighbor_cells, 0)
         cells = jnp.arange(self.cell_capacity, dtype=jnp.int32)
         self.transport_relation = EdgeRelation(
-            jnp.concatenate((cells, owner, neighbour, neighbour, owner)),
-            jnp.concatenate((cells, owner, neighbour, owner, neighbour)),
+            jnp.concatenate((cells, owner, neighbor, neighbor, owner)),
+            jnp.concatenate((cells, owner, neighbor, owner, neighbor)),
             source_size=self.cell_capacity,
             target_size=self.cell_capacity,
         )
@@ -138,9 +138,9 @@ class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalM
             raise ValueError("outer_scale must have particle-batch shape.")
         count = scale.shape[0]
         if active_cells is None:
-            cells_active = jnp.ones((count, self.cell_capacity), dtype=bool)
+            cells_active = jnp.ones((count, self.cell_capacity), dtype=jnp.bool_)
         else:
-            cells_active = jnp.asarray(active_cells, dtype=bool)
+            cells_active = jnp.asarray(active_cells, dtype=jnp.bool_)
             if cells_active.shape != (count, self.cell_capacity):
                 raise ValueError("active_cells must have particle-cell shape.")
         dimension = self.dimension
@@ -157,11 +157,11 @@ class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalM
             reference_normals[None, :, :], (count, self.face_capacity, dimension)
         )
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        boundary = neighbour < 0
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        boundary = neighbor < 0
+        safe_neighbor = jnp.maximum(neighbor, 0)
         interior_distance = jnp.linalg.norm(
-            cell_centers[:, safe_neighbour, :] - cell_centers[:, owner, :], axis=-1
+            cell_centers[:, safe_neighbor, :] - cell_centers[:, owner, :], axis=-1
         )
         boundary_distance = jnp.linalg.norm(
             face_centers - cell_centers[:, owner, :], axis=-1
@@ -170,7 +170,7 @@ class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalM
             boundary[None, :], boundary_distance, interior_distance
         )
         active_faces = cells_active[:, owner] & jnp.where(
-            boundary[None, :], True, cells_active[:, safe_neighbour]
+            boundary[None, :], True, cells_active[:, safe_neighbor]
         )
         surface_measure = jnp.sum(
             jnp.where(boundary[None, :] & active_faces, face_measures, 0.0), axis=1
@@ -193,7 +193,7 @@ class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalM
             face_normals,
             center_distances,
             owner,
-            neighbour,
+            neighbor,
             boundary,
             cells_active,
             active_faces,

@@ -158,11 +158,11 @@ def apply_photometry(
         raise TypeError("response must be PhotometricResponse.")
     values = jnp.asarray(irradiance)
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
     valid = (
-        jnp.ones(values.shape, dtype=bool)
+        jnp.ones(values.shape, dtype=jnp.bool_)
         if valid_mask is None
-        else jnp.asarray(valid_mask, dtype=bool)
+        else jnp.asarray(valid_mask, dtype=jnp.bool_)
     )
     if valid.shape != values.shape:
         valid = jnp.broadcast_to(valid, values.shape)
@@ -242,12 +242,12 @@ def render_camera_stack(
     if positions.ndim != 2 or positions.shape[1] != 3:
         raise ValueError("positions_xyz must have shape (particle_capacity, 3).")
     if not jnp.issubdtype(positions.dtype, jnp.inexact):
-        positions = positions.astype(float)
-    capacity = int(positions.shape[0])
+        positions = positions.astype("float64")
+    capacity = positions.shape[0]
     active_ = (
-        jnp.ones((capacity,), dtype=bool)
+        jnp.ones((capacity,), dtype=jnp.bool_)
         if active is None
-        else jnp.asarray(active, dtype=bool)
+        else jnp.asarray(active, dtype=jnp.bool_)
     )
     if active_.shape != (capacity,):
         raise ValueError("active must have shape (particle_capacity,).")

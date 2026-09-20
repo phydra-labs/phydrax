@@ -35,7 +35,7 @@ class LoweredBufferSpec(StrictModule, NonTrainableState):
         placement: str = "device",
     ):
         identifier = str(name)
-        shape_ = tuple(int(value) for value in shape)
+        shape_ = tuple(shape)
         dtype_ = str(np.dtype(dtype))
         placement_ = str(placement)
         if not identifier or any(value <= 0 for value in shape_):
@@ -85,7 +85,7 @@ class LoweredKernel(StrictModule):
         implementation = str(implementation_id)
         reads_ = tuple(str(value) for value in reads)
         writes_ = tuple(str(value) for value in writes)
-        halos = tuple(int(value) for value in halo_widths)
+        halos = tuple(halo_widths)
         if (
             not identifier
             or not implementation

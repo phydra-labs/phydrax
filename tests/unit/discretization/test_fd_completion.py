@@ -81,11 +81,12 @@ def test_multi_axis_collective_schedule_exposes_mesh_permutations_and_corner_rou
     assert any(route.codimension == 2 for route in schedule.exchanges)
 
 
-
 def test_variable_density_projection_and_extended_compatible_systems():
     bridge = phx.discretization.StructuredCochainBridge(_cell_grid(3, 3))
-    velocity = jnp.sin(jnp.arange(bridge.cochain.cell_counts[1], dtype=float))
-    density = 1.0 + 0.2 * jnp.cos(jnp.arange(bridge.cochain.cell_counts[0], dtype=float))
+    velocity = jnp.sin(jnp.arange(bridge.cochain.cell_counts[1], dtype="float64"))
+    density = 1.0 + 0.2 * jnp.cos(
+        jnp.arange(bridge.cochain.cell_counts[0], dtype="float64")
+    )
     projection = phx.solver.CompatibleVariableDensityProjection(bridge)
 
     projected = projection.project(velocity, density)
@@ -93,9 +94,9 @@ def test_variable_density_projection_and_extended_compatible_systems():
     assert jnp.linalg.norm(projected.divergence_after) < 1e-9
 
     state_size = bridge.cochain.cell_counts[0]
-    displacement = jnp.sin(jnp.arange(state_size, dtype=float) / 5.0)
-    rate = jnp.cos(jnp.arange(state_size, dtype=float) / 7.0)
-    scalar = jnp.sin(jnp.arange(state_size, dtype=float) / 9.0)
+    displacement = jnp.sin(jnp.arange(state_size, dtype="float64") / 5.0)
+    rate = jnp.cos(jnp.arange(state_size, dtype="float64") / 7.0)
+    scalar = jnp.sin(jnp.arange(state_size, dtype="float64") / 9.0)
     poro = phx.solver.CompatiblePoroelasticDynamics(bridge)
     thermo = phx.solver.CompatibleThermoelasticDynamics(bridge)
     poro_drift = poro.drift(
@@ -110,7 +111,7 @@ def test_variable_density_projection_and_extended_compatible_systems():
 
 def test_compatible_mhd_induction_preserves_discrete_magnetic_divergence():
     bridge = phx.discretization.StructuredCochainBridge(_cell_grid(3, 3))
-    electric = jnp.sin(jnp.arange(bridge.cochain.cell_counts[1], dtype=float))
+    electric = jnp.sin(jnp.arange(bridge.cochain.cell_counts[1], dtype="float64"))
     magnetic = bridge.exterior_derivative(1, electric)
     dynamics = phx.solver.CompatibleIdealMHDInductionDynamics(
         bridge,

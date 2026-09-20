@@ -21,7 +21,7 @@ def validate_conforming_polygon_segments(mesh: CellMesh, /) -> None:
     """Reject geometric T-junctions hidden from exact edge connectivity."""
     if not isinstance(mesh.connectivity, PolygonalConnectivity):
         raise TypeError("Conforming polygon validation requires polygon connectivity.")
-    points = np.asarray(mesh.coordinates, dtype=float)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
     edges = np.asarray(mesh.connectivity.edges, dtype=np.int32)
     extent = max(float(np.max(np.ptp(points, axis=0))), 1.0)
     tolerance = 512.0 * np.finfo(points.dtype).eps * extent
@@ -69,7 +69,7 @@ class ExplicitPolygonH1DofMap(StrictModule, NonTrainableState):
         if not isinstance(mesh.connectivity, PolygonalConnectivity):
             raise TypeError("Explicit polygon H1 requires polygon connectivity.")
         validate_conforming_polygon_segments(mesh)
-        vertex_count = int(mesh.coordinates.shape[0])
+        vertex_count = mesh.coordinates.shape[0]
         used = np.unique(
             np.concatenate(
                 tuple(
@@ -87,13 +87,13 @@ class ExplicitPolygonH1DofMap(StrictModule, NonTrainableState):
         for block in mesh.blocks:
             active = np.asarray(block.vertices, dtype=np.int32)
             padded = np.zeros((block.cell_count, width), dtype=np.int32)
-            valid = np.zeros((block.cell_count, width), dtype=bool)
+            valid = np.zeros((block.cell_count, width), dtype=np.bool_)
             padded[:, : block.arity] = active
             valid[:, : block.arity] = True
             routes.append(jnp.asarray(padded))
             validity.append(jnp.asarray(valid))
             relations.append(RowRelation(padded, source_size=vertex_count, valid=valid))
-        boundary = np.asarray(mesh.connectivity.boundary_vertices, dtype=bool)
+        boundary = np.asarray(mesh.connectivity.boundary_vertices, dtype=np.bool_)
         self.block_names = tuple(block.name for block in mesh.blocks)
         self.cell_dofs = tuple(routes)
         self.cell_dof_valid = tuple(validity)

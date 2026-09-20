@@ -191,11 +191,11 @@ class StochasticOperatorSamples(StrictModule):
         dependence_ids: ArrayLike | None = None,
     ):
         samples = jnp.asarray(values)
-        if samples.ndim < 1 or int(samples.shape[0]) < 2:
+        if samples.ndim < 1 or samples.shape[0] < 2:
             raise ValueError("values must contain at least two probe realizations.")
         if distribution not in ("rademacher", "normal"):
             raise ValueError("distribution must be 'rademacher' or 'normal'.")
-        count = int(samples.shape[0])
+        count = samples.shape[0]
         mean = jnp.mean(samples, axis=0)
         centered = samples - mean
         sample_variance = jnp.sum(jnp.abs(centered) ** 2, axis=0) / float(count - 1)
@@ -260,8 +260,7 @@ def stochastic_trace_samples(
         action = jnp.asarray(covariance_action(state_array, probe))
         if action.shape != state_array.shape:
             raise ValueError(
-                "covariance_action must preserve state shape; got "
-                f"{action.shape}, expected {state_array.shape}."
+                f"covariance_action must preserve state shape; got {action.shape}, expected {state_array.shape}."
             )
         return _directional_second_derivative(
             hessian_action,
@@ -286,7 +285,7 @@ def exact_state_divergence(
     if field_value.shape != state_array.shape:
         raise ValueError("vector_field must preserve the complete state shape.")
     linearization = la.prepare_linearization(vector_field, state_array)
-    size = int(state_array.size)
+    size = state_array.size
     total = jnp.asarray(0.0, dtype=field_value.dtype)
     for index in range(size):
         direction = jax.nn.one_hot(index, size, dtype=state_array.dtype).reshape(

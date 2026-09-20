@@ -78,7 +78,7 @@ class DiscreteVelocityAdvectionSystem(AbstractAdmissibleSystem):
         )
         self.system_id = canonical_fingerprint(
             {
-                "kind": "discrete-velocity-advection-system-v1",
+                "kind": "discrete-velocity-advection-system",
                 "quadrature": quadrature.quadrature_id,
                 "population_floor": floor,
                 "reflection_routes": [list(route) for route in routes],
@@ -277,7 +277,7 @@ class ConservativeRelaxationDVMSource(AbstractConservativeDVMSource):
         self.relaxation_rate = rate
         self.source_id = canonical_fingerprint(
             {
-                "kind": "conservative-relaxation-dvm-source-v1",
+                "kind": "conservative-relaxation-dvm-source",
                 "quadrature": quadrature.quadrature_id,
                 "moment_matrix": array_tree_fingerprint(matrix),
                 "moment_names": list(names),
@@ -331,7 +331,7 @@ class DiscreteVelocitySourceComposition(AbstractConservativeDVMSource):
         self.moment_names = reference.moment_names
         self.source_id = canonical_fingerprint(
             {
-                "kind": "discrete-velocity-source-composition-v1",
+                "kind": "discrete-velocity-source-composition",
                 "sources": [source.source_id for source in sources_],
                 "quadrature": reference.quadrature.quadrature_id,
                 "moments": list(reference.moment_names),

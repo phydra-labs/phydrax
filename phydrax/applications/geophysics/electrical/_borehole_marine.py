@@ -27,7 +27,7 @@ class BoreholeElectrodeArray(StrictModule, NonTrainableState):
     def __init__(self, trajectory: BoreholeTrajectory, measured_depth_m: ArrayLike, /):
         if not isinstance(trajectory, BoreholeTrajectory):
             raise TypeError("Borehole electrodes require BoreholeTrajectory.")
-        depths = np.asarray(measured_depth_m, dtype=float)
+        depths = np.asarray(measured_depth_m, dtype=np.float64)
         if depths.ndim != 1 or depths.size == 0 or np.any(~np.isfinite(depths)):
             raise ValueError("Borehole electrode depths must be a finite vector.")
         if np.unique(depths).size != depths.size:
@@ -133,9 +133,9 @@ class MixedDimensionalCasingPlan(StrictModule, NonTrainableState):
             formation_operator, la.AbstractLinearOperator
         ) or not formation_operator.source.compatible(formation_operator.target):
             raise TypeError("Casing formation operator must be a square native operator.")
-        matrix = np.asarray(coupling, dtype=float)
-        axial = np.asarray(axial_conductance_S, dtype=float)
-        leakage = np.asarray(leakage_conductance_S, dtype=float)
+        matrix = np.asarray(coupling, dtype=np.float64)
+        axial = np.asarray(axial_conductance_S, dtype=np.float64)
+        leakage = np.asarray(leakage_conductance_S, dtype=np.float64)
         stations = matrix.shape[0] if matrix.ndim == 2 else 0
         if (
             stations < 2

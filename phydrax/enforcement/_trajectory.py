@@ -68,7 +68,7 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
         components_ = _validate_components(components)
         action_id = canonical_fingerprint(
             {
-                "kind": "ragged-time-series-observation-action-v1",
+                "kind": "ragged-time-series-observation-action",
                 "field": field_,
                 "components": components_,
                 "lengths": array_tree_fingerprint(domain.lengths),
@@ -127,16 +127,15 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
             evaluated.dims.index(axis),
             0,
         )
-        if int(data.shape[0]) != self.observation_count:
+        if data.shape[0] != self.observation_count:
             raise ValueError(
-                f"Trajectory observation output has {data.shape[0]} rows; expected "
-                f"{self.observation_count}."
+                f"Trajectory observation output has {data.shape[0]} rows; expected {self.observation_count}."
             )
         if self.components is None:
             return data
         if data.ndim < 2:
             raise ValueError("Trajectory components require a trailing event axis.")
-        width = int(data.shape[-1])
+        width = data.shape[-1]
         if any(component >= width for component in self.components):
             raise ValueError(
                 f"Trajectory component indices {self.components!r} exceed width {width}."
@@ -173,8 +172,7 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
     ) -> Mapping[str, Any]:
         del value, key, kwargs
         raise TypeError(
-            "Trajectory observation adjoints require a declared correction or "
-            "coefficient representation."
+            "Trajectory observation adjoints require a declared correction or coefficient representation."
         )
 
     def linearize(
@@ -233,7 +231,7 @@ def _padded_residual_values(
 ) -> Array:
     values = jnp.asarray(residual)
     count = action.observation_count
-    if values.ndim == 0 or int(values.shape[0]) != count:
+    if values.ndim == 0 or values.shape[0] != count:
         raise ValueError(
             f"Trajectory residual must have leading size {count}, got {values.shape}."
         )
@@ -348,8 +346,7 @@ class RaggedTimeSeriesCorrectionAction(StrictModule):
                 raise ValueError("Partial component correction requires output_width.")
             if any(component >= width for component in observation.components):
                 raise ValueError(
-                    f"Trajectory components {observation.components!r} exceed "
-                    f"output width {width}."
+                    f"Trajectory components {observation.components!r} exceed output width {width}."
                 )
         names = tuple(str(name) for name in field_names)
         if names != (observation.field,):
@@ -402,7 +399,7 @@ class RaggedTimeSeriesCorrectionAction(StrictModule):
         residual_array = jnp.asarray(residual)
         if self.observation.components is not None and (
             residual_array.ndim < 2
-            or int(residual_array.shape[-1]) != len(self.observation.components)
+            or residual_array.shape[-1] != len(self.observation.components)
         ):
             raise ValueError(
                 "Partial trajectory residuals must have a trailing axis with "
@@ -479,7 +476,7 @@ class RaggedTimeSeriesCorrectionProvider(StrictModule):
             )
         provider_id = canonical_fingerprint(
             {
-                "kind": "ragged-time-series-correction-provider-v1",
+                "kind": "ragged-time-series-correction-provider",
                 "action": observation.action_id,
                 "interpolation": interpolation,
                 "gate": gate,
@@ -519,7 +516,7 @@ class RaggedTimeSeriesCorrectionProvider(StrictModule):
 def _validate_components(components: Sequence[int] | None, /) -> tuple[int, ...] | None:
     if components is None:
         return None
-    out = tuple(int(component) for component in components)
+    out = tuple(components)
     if not out:
         raise ValueError("components must be non-empty when provided.")
     if any(component < 0 for component in out):
@@ -535,20 +532,20 @@ def _blend_components(
     components: tuple[int, ...] | None,
     /,
 ) -> Array:
-    free_arr = jnp.asarray(free, dtype=float)
-    hard_arr = jnp.asarray(hard, dtype=float)
+    free_arr = jnp.asarray(free, dtype=jnp.float64)
+    hard_arr = jnp.asarray(hard, dtype=jnp.float64)
     if components is None:
         return hard_arr
     if free_arr.ndim < 2:
         raise ValueError("components require a vector-valued trailing output axis.")
-    width = int(free_arr.shape[-1])
+    width = free_arr.shape[-1]
     for component in components:
         if component >= width:
             raise ValueError(
                 f"component index {component} is out of bounds for output width {width}."
             )
     component_idx = jnp.asarray(components, dtype=jnp.int32)
-    mask = jnp.zeros((width,), dtype=float).at[component_idx].set(1.0)
+    mask = jnp.zeros((width,), dtype=jnp.float64).at[component_idx].set(1.0)
     mask = mask.reshape((1,) * (free_arr.ndim - 1) + (width,))
     return free_arr + mask * (hard_arr - free_arr)
 
@@ -589,7 +586,7 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator):
             )
         free = self.u_free(batch, key=key, **kwargs)
         targets, gates = self.table.evaluate(batch, max_order=0)
-        free_arr = jnp.asarray(free.data, dtype=float)
+        free_arr = jnp.asarray(free.data, dtype=jnp.float64)
         target = targets[0]
         gate_b = _broadcast_like(gates[0], free_arr)
         hard = target + gate_b * (free_arr - target)
@@ -638,7 +635,9 @@ class _RaggedTimeSeriesHardAnsatzDerivative(StrictModule, BatchEvaluator):
         free_fields = tuple(
             fn(batch, key=key, **kwargs) for fn in self.u_free_derivatives
         )
-        free_arrays = tuple(jnp.asarray(field.data, dtype=float) for field in free_fields)
+        free_arrays = tuple(
+            jnp.asarray(field.data, dtype=jnp.float64) for field in free_fields
+        )
 
         hard = targets[self.order]
         for gate_order in range(self.order + 1):
@@ -748,8 +747,7 @@ def enforce_ragged_time_series(
         limit = table.max_derivative_order()
         if n > limit:
             raise ValueError(
-                f"interpolation={table.interpolation!r} supports hard time "
-                f"derivatives only up to order {limit}."
+                f"interpolation={table.interpolation!r} supports hard time derivatives only up to order {limit}."
             )
 
         from ..operators.differential._domain_ops import partial_n

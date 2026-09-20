@@ -12,9 +12,11 @@ import jax.numpy as jnp
 from jaxtyping import PyTree
 
 from .._strict import StrictModule
+from .._tree_math import (
+    tree_norm as _tree_norm,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ._iterative._types import (
-    _tree_norm,
-    _validate_real_inexact_tree,
     Bounds,
     OptimizationDiagnostics,
     OptimizationStatus,

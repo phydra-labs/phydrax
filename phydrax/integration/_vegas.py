@@ -63,8 +63,8 @@ class VegasPlan(StrictModule, NonTrainableState):
         minimum_bin_fraction: float = 1.0e-6,
         max_evaluations: int = 1_000_000,
     ):
-        lower_ = np.asarray(lower, dtype=float)
-        upper_ = np.asarray(upper, dtype=float)
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
         if lower_.ndim != 1 or lower_.size == 0 or upper_.shape != lower_.shape:
             raise ValueError("VEGAS bounds must be nonempty aligned rank-one arrays.")
         if np.any(~np.isfinite(lower_)) or np.any(~np.isfinite(upper_)):
@@ -110,7 +110,7 @@ class VegasPlan(StrictModule, NonTrainableState):
         }
         self.lower = jnp.asarray(lower_)
         self.upper = jnp.asarray(upper_)
-        self.dimension = int(lower_.size)
+        self.dimension = lower_.size
         self.bins = bins_
         self.adaptation_iterations = adapt_iterations
         self.adaptation_samples = adapt_samples
@@ -150,7 +150,7 @@ class FrozenVegasGrid(StrictModule, NonTrainableState):
         *,
         plan_id: str,
     ):
-        edges_ = np.asarray(edges, dtype=float)
+        edges_ = np.asarray(edges, dtype=np.float64)
         if edges_.ndim != 2 or edges_.shape[1] < 3:
             raise ValueError("VEGAS edges must have shape (dimension, bins + 1).")
         if np.any(~np.isfinite(edges_)) or np.any(np.diff(edges_, axis=1) <= 0.0):
@@ -219,7 +219,7 @@ class PreparedVegas(StrictModule, NonTrainableState):
 def _stratified_unit_points(key: Key[Array, ""], count: int, dimension: int, /) -> Array:
     """Latin-stratified points: every one-dimensional stratum is occupied."""
     keys = jr.split(key, 2 * dimension)
-    base = jnp.arange(count, dtype=float)
+    base = jnp.arange(count, dtype=jnp.float64)
     coordinates = []
     for axis in range(dimension):
         jitter = jr.uniform(keys[2 * axis], (count,))
@@ -365,9 +365,9 @@ def prepare_vegas(
     estimate_array = (
         jnp.stack(estimates)
         if estimates
-        else jnp.zeros((0,), dtype=jnp.result_type(plan.lower, float))
+        else jnp.zeros((0,), dtype=jnp.result_type(plan.lower, jnp.float64))
     )
-    finite_array = jnp.stack(finite) if finite else jnp.ones((0,), dtype=bool)
+    finite_array = jnp.stack(finite) if finite else jnp.ones((0,), dtype=jnp.bool_)
     marginal_history = (
         jnp.stack(marginal_records)
         if marginal_records

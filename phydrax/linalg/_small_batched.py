@@ -189,7 +189,7 @@ def determinant_small_linear(
         raise TypeError("plan must be a SmallLinearSolvePlan.")
     value = jnp.asarray(matrix)
     if not jnp.issubdtype(value.dtype, jnp.inexact):
-        value = value.astype(float)
+        value = value.astype("float64")
     dimension = plan.dimension
     if value.shape[-2:] != (dimension, dimension):
         raise ValueError("Small matrix shape does not match the plan dimension.")
@@ -220,7 +220,7 @@ def solve_small_linear(
 ) -> SmallLinearSolveResult:
     matrix_ = jnp.asarray(matrix)
     if not jnp.issubdtype(matrix_.dtype, jnp.inexact):
-        matrix_ = matrix_.astype(float)
+        matrix_ = matrix_.astype("float64")
     right = jnp.asarray(right_hand_side)
     dimension = plan.dimension
     if matrix_.shape[-2:] != (dimension, dimension):

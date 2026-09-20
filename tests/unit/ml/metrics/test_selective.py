@@ -78,7 +78,7 @@ def test_selective_and_spearman_masks_follow_metric_status_semantics():
 
     masked = metrics.selective_risk_curve(loss, score, mask=mask)
     invalid = metrics.selective_risk_curve(loss, score)
-    empty = metrics.selective_risk_curve(loss, score, mask=jnp.zeros(3, dtype=bool))
+    empty = metrics.selective_risk_curve(loss, score, mask=jnp.zeros(3, dtype="bool"))
     bad_weight = metrics.selective_risk_curve(
         jnp.ones(3), jnp.arange(3.0), sample_weight=jnp.array([1.0, -1.0, 1.0])
     )
@@ -259,7 +259,7 @@ def test_paired_comparison_reports_independent_unit_insufficiency():
         jnp.ones(2),
         key=jax.random.key(0),
         plan=plan,
-        mask=jnp.zeros(2, dtype=bool),
+        mask=jnp.zeros(2, dtype="bool"),
     )
     invalid = metrics.compare_paired_losses(
         jnp.array([1.0, jnp.nan]),

@@ -26,14 +26,14 @@ from ...stochastic._process import (
 
 
 def _shape(values: Sequence[int], /, *, name: str) -> tuple[int, ...]:
-    result = tuple(int(size) for size in values)
+    result = tuple(values)
     if not result or any(size <= 0 for size in result):
         raise ValueError(f"{name} must contain positive dimensions.")
     return result
 
 
 def _sample_shape(values: Sequence[int], /) -> tuple[int, ...]:
-    result = tuple(int(size) for size in values)
+    result = tuple(values)
     if any(size <= 0 for size in result):
         raise ValueError("FlowJAX process sample dimensions must be positive.")
     return result
@@ -45,8 +45,7 @@ def _check_state_shape(array: Array, state_shape: tuple[int, ...], /) -> None:
         or tuple(array.shape[-len(state_shape) :]) != state_shape
     ):
         raise ValueError(
-            f"FlowJAX coefficient states must end in shape {state_shape}; "
-            f"got {array.shape}."
+            f"FlowJAX coefficient states must end in shape {state_shape}; got {array.shape}."
         )
 
 
@@ -157,8 +156,7 @@ class FlowJAXProcessDistribution(AbstractProcessDistribution):
         expected_condition = batches + tuple(flow.cond_shape)
         if condition_array.shape != expected_condition:
             raise ValueError(
-                f"FlowJAX process condition must have shape {expected_condition}; "
-                f"got {condition_array.shape}."
+                f"FlowJAX process condition must have shape {expected_condition}; got {condition_array.shape}."
             )
         if not isinstance(process_id, str) or not process_id:
             raise ValueError("process_id must be a non-empty string.")
@@ -192,8 +190,7 @@ class FlowJAXProcessDistribution(AbstractProcessDistribution):
         values = jnp.asarray(value, dtype=self.center.dtype)
         if values.shape != self.center.shape:
             raise ValueError(
-                f"FlowJAX process value must have shape {self.center.shape}; "
-                f"got {values.shape}."
+                f"FlowJAX process value must have shape {self.center.shape}; got {values.shape}."
             )
         residual = values.reshape(self.batch_shape + (prod(self.event_shape),))
         residual = residual - self.center.reshape(
@@ -316,8 +313,8 @@ def conditional_coupling_flow_process(
     conditioner = StateTimeProcessConditioner(states)
     location = IdentityCoefficientTransition(states)
     base = FlowJAXNormal(
-        loc=jnp.zeros((event_size,), dtype=float),
-        scale=jnp.ones((event_size,), dtype=float),
+        loc=jnp.zeros((event_size,), dtype=jnp.float64),
+        scale=jnp.ones((event_size,), dtype=jnp.float64),
     )
     flow = coupling_flow(
         key,

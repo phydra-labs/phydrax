@@ -63,7 +63,7 @@ class SecondCumulantLayout(StrictModule, NonTrainableState):
             raise ValueError("state_size must be positive.")
         mean = np.asarray(mean_indices, dtype=np.int64).reshape((-1,))
         if eddy_indices is None:
-            selected = np.zeros((size,), dtype=bool)
+            selected = np.zeros((size,), dtype=np.bool_)
             if np.any(mean < 0) or np.any(mean >= size):
                 raise ValueError("mean_indices must address the physical state.")
             selected[mean] = True
@@ -100,8 +100,8 @@ class SecondCumulantLayout(StrictModule, NonTrainableState):
         self.mean_indices = jnp.asarray(mean, dtype=jnp.int32)
         self.eddy_indices = jnp.asarray(eddy, dtype=jnp.int32)
         self.state_size = size
-        self.mean_dimension = int(mean.size)
-        self.eddy_dimension = int(eddy.size)
+        self.mean_dimension = mean.size
+        self.eddy_dimension = eddy.size
         self.layout_id = identifier
 
     @classmethod
@@ -273,7 +273,7 @@ class FactorCumulantState(StrictModule):
 
     @property
     def rank(self) -> int:
-        return int(self.factor.shape[1])
+        return self.factor.shape[1]
 
     @property
     def covariance(self) -> Array:
@@ -415,7 +415,7 @@ class ForcingCovariance(StrictModule, NonTrainableState):
         self.covariance = value
         self.hermitian_defect = defect
         self.minimum_eigenvalue = spectrum.minimum_eigenvalue
-        self.dimension = int(value.shape[0])
+        self.dimension = value.shape[0]
         self.covariance_id = identifier
 
     @classmethod
@@ -551,7 +551,6 @@ def factorize_cumulant(
         jnp.asarray(factor, dtype=state.covariance.dtype),
         layout_id=layout.layout_id,
     )
-    reconstructed = factor_state.covariance
     pre_error = jnp.max(jnp.abs(spectrum.reconstruct() - state.covariance), initial=0.0)
     discarded = jnp.asarray(np.sum(eigenvalues[retained:]), dtype=eigenvalues.dtype)
     old = positive_rank if previous_rank is None else int(previous_rank)
@@ -615,7 +614,7 @@ def cumulants_from_ensemble(
         )
     if not jnp.issubdtype(values.dtype, jnp.inexact):
         raise TypeError("Ensemble members must use an inexact dtype.")
-    count = int(values.shape[0])
+    count = values.shape[0]
     weights_ = (
         jnp.full((count,), 1.0 / count, dtype=values.real.dtype)
         if weights is None

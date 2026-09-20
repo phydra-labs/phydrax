@@ -35,12 +35,12 @@ def _coefficient_array(
             f"Control coefficients must have shape {expected}; got {values.shape}."
         )
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
     return values
 
 
 def _case_shape(value: Sequence[int], /) -> tuple[int, ...]:
-    cases = tuple(int(size) for size in value)
+    cases = tuple(value)
     if any(size <= 0 for size in cases):
         raise ValueError("Control coefficient case dimensions must be positive.")
     return cases
@@ -50,7 +50,7 @@ def _query(value: ArrayLike, /) -> Array:
     query = jnp.asarray(value)
     if jnp.issubdtype(query.dtype, jnp.complexfloating):
         raise TypeError("Control evaluation times must be real-valued.")
-    return query.astype(jnp.result_type(query, float))
+    return query.astype(jnp.result_type(query, jnp.float64))
 
 
 class AbstractControlParameterization(StrictModule):
@@ -237,7 +237,7 @@ class BSplineControlBoundCertificate(StrictModule):
         self.upper_bound = jnp.asarray(upper_bound)
         self.coefficient_minimum = jnp.asarray(coefficient_minimum)
         self.coefficient_maximum = jnp.asarray(coefficient_maximum)
-        self.certified = jnp.asarray(certified, dtype=bool)
+        self.certified = jnp.asarray(certified, dtype=jnp.bool_)
         self.parameterization_id = _identifier(
             parameterization_id, "certificate parameterization_id"
         )

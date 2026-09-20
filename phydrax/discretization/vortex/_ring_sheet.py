@@ -51,21 +51,21 @@ class VortexRingSheetTopology(StrictModule, NonTrainableState):
         ):
             raise ValueError("Ring-sheet topology arrays are incompatible.")
         edge_capacity, ring_capacity, per_ring = (
-            int(start.size),
-            int(rings.shape[0]),
-            int(rings.shape[1]),
+            start.size,
+            rings.shape[0],
+            rings.shape[1],
         )
         if edge_capacity <= 0 or ring_capacity <= 0 or per_ring < 3:
             raise ValueError("Ring-sheet topology requires edges and closed rings.")
         active_edge = (
-            np.ones((edge_capacity,), dtype=bool)
+            np.ones((edge_capacity,), dtype=np.bool_)
             if edge_active is None
-            else np.asarray(edge_active, dtype=bool)
+            else np.asarray(edge_active, dtype=np.bool_)
         )
         active_ring = (
-            np.ones((ring_capacity,), dtype=bool)
+            np.ones((ring_capacity,), dtype=np.bool_)
             if ring_active is None
-            else np.asarray(ring_active, dtype=bool)
+            else np.asarray(ring_active, dtype=np.bool_)
         )
         if active_edge.shape != start.shape or active_ring.shape != (ring_capacity,):
             raise ValueError("Ring-sheet active masks are incompatible.")

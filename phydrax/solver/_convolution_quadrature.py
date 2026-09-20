@@ -144,8 +144,7 @@ class ConvolutionQuadratureResourceEvidence(StrictModule):
         node_right_hand_sides_per_external_rhs: int,
     ):
         counts = tuple(
-            int(value)
-            for value in (
+            (
                 contour_node_count,
                 solved_node_count_per_action,
                 retained_prepared_solve_count,
@@ -203,9 +202,9 @@ class ConvolutionQuadratureErrorEvidence(StrictModule):
     ):
         self.node_statuses = jnp.asarray(node_statuses, dtype=jnp.int32)
         self.node_relative_residuals = jnp.asarray(node_relative_residuals)
-        self.input_finite = jnp.asarray(input_finite, dtype=bool)
-        self.node_solves_successful = jnp.asarray(node_solves_successful, dtype=bool)
-        self.output_finite = jnp.asarray(output_finite, dtype=bool)
+        self.input_finite = jnp.asarray(input_finite, dtype=jnp.bool_)
+        self.node_solves_successful = jnp.asarray(node_solves_successful, dtype=jnp.bool_)
+        self.output_finite = jnp.asarray(output_finite, dtype=jnp.bool_)
         self.contour_radius = jnp.asarray(contour_radius)
         self.contour_tolerance_target = jnp.asarray(contour_tolerance_target)
         self.history_truncated = False
@@ -343,7 +342,7 @@ class ConvolutionQuadratureResult(StrictModule):
 
 def _array_storage_bytes(value: object, /) -> int:
     arrays = {id(leaf): leaf for leaf in jax.tree.leaves(value) if eqx.is_array(leaf)}
-    return sum(int(array.size * array.dtype.itemsize) for array in arrays.values())
+    return sum(array.size * array.dtype.itemsize for array in arrays.values())
 
 
 def _validate_prepared_node(
@@ -575,7 +574,7 @@ def apply_convolution_quadrature(
     if values.shape[:2] != expected:
         raise ValueError(f"history must begin with shape {expected}; got {values.shape}.")
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
     if prepared.contour.conjugate_symmetric and jnp.issubdtype(
         values.dtype, jnp.complexfloating
     ):

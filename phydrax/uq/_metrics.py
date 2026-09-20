@@ -35,9 +35,9 @@ def negative_log_likelihood(
 
 def gaussian_crps(location: ArrayLike, scale: ArrayLike, target: ArrayLike, /) -> Array:
     """Closed-form CRPS for a Gaussian predictive distribution."""
-    location_array = jnp.asarray(location, dtype=float)
-    scale_array = jnp.asarray(scale, dtype=float)
-    target_array = jnp.asarray(target, dtype=float)
+    location_array = jnp.asarray(location, dtype=jnp.float64)
+    scale_array = jnp.asarray(scale, dtype=jnp.float64)
+    target_array = jnp.asarray(target, dtype=jnp.float64)
     z = (target_array - location_array) / scale_array
     phi = jnp.exp(-0.5 * z**2) / jnp.sqrt(2.0 * jnp.pi)
     cdf = jsp.special.ndtr(z)
@@ -53,10 +53,10 @@ def student_t_crps(
     /,
 ) -> Array:
     """Closed-form CRPS for Student-t predictions with ``df > 1``."""
-    location_array = jnp.asarray(location, dtype=float)
-    scale_array = jnp.asarray(scale, dtype=float)
-    df_array = jnp.asarray(df, dtype=float)
-    target_array = jnp.asarray(target, dtype=float)
+    location_array = jnp.asarray(location, dtype=jnp.float64)
+    scale_array = jnp.asarray(scale, dtype=jnp.float64)
+    df_array = jnp.asarray(df, dtype=jnp.float64)
+    target_array = jnp.asarray(target, dtype=jnp.float64)
     z = (target_array - location_array) / scale_array
     x = df_array / (df_array + z**2)
     beta_tail = jsp.special.betainc(df_array / 2.0, 0.5, x)
@@ -92,11 +92,11 @@ def ensemble_crps(
     sample_axis: int = 0,
 ) -> Array:
     """Univariate empirical CRPS in ``O(M log M)`` time and ``O(M)`` memory."""
-    sample_array = jnp.moveaxis(jnp.asarray(samples, dtype=float), sample_axis, 0)
-    count = int(sample_array.shape[0])
+    sample_array = jnp.moveaxis(jnp.asarray(samples, dtype=jnp.float64), sample_axis, 0)
+    count = sample_array.shape[0]
     if count <= 0:
         raise ValueError("samples must contain at least one ensemble member.")
-    target_array = jnp.asarray(target, dtype=float)
+    target_array = jnp.asarray(target, dtype=jnp.float64)
     first = jnp.mean(jnp.abs(sample_array - target_array), axis=0)
     ordered = jnp.sort(sample_array, axis=0)
     coefficients = (2 * jnp.arange(count) - count + 1).reshape(
@@ -128,12 +128,12 @@ def energy_score(
     exponent = float(beta)
     if not 0.0 < exponent <= 2.0:
         raise ValueError("beta must satisfy 0 < beta <= 2.")
-    sample_array = jnp.moveaxis(jnp.asarray(samples, dtype=float), sample_axis, 0)
-    count = int(sample_array.shape[0])
+    sample_array = jnp.moveaxis(jnp.asarray(samples, dtype=jnp.float64), sample_axis, 0)
+    count = sample_array.shape[0]
     if count <= 0:
         raise ValueError("samples must contain at least one ensemble member.")
     flat = sample_array.reshape((count, -1))
-    target_flat = jnp.asarray(target, dtype=float).reshape((-1,))
+    target_flat = jnp.asarray(target, dtype=jnp.float64).reshape((-1,))
     if target_flat.shape[0] != flat.shape[1]:
         raise ValueError("target shape must match one sample's event shape.")
     first = jnp.mean(_powered_euclidean_norm(flat - target_flat, exponent))
@@ -166,11 +166,11 @@ def energy_distance(
     exponent = float(beta)
     if not 0.0 < exponent <= 2.0:
         raise ValueError("beta must satisfy 0 < beta <= 2.")
-    left = jnp.moveaxis(jnp.asarray(left_samples, dtype=float), sample_axis, 0)
-    right = jnp.moveaxis(jnp.asarray(right_samples, dtype=float), sample_axis, 0)
+    left = jnp.moveaxis(jnp.asarray(left_samples, dtype=jnp.float64), sample_axis, 0)
+    right = jnp.moveaxis(jnp.asarray(right_samples, dtype=jnp.float64), sample_axis, 0)
     if left.shape[1:] != right.shape[1:]:
         raise ValueError("Energy-distance ensembles must have equal event shapes.")
-    left_count, right_count = int(left.shape[0]), int(right.shape[0])
+    left_count, right_count = left.shape[0], right.shape[0]
     if left_count <= 0 or right_count <= 0:
         raise ValueError("Energy-distance ensembles must be non-empty.")
     left_flat = left.reshape((left_count, -1))
@@ -181,16 +181,16 @@ def energy_distance(
 
     def pair_mean(first: Array, second: Array) -> Array:
         total = jnp.asarray(0.0, dtype=first.dtype)
-        for start_i in range(0, int(first.shape[0]), block):
+        for start_i in range(0, first.shape[0], block):
             first_block = first[start_i : start_i + block]
-            for start_j in range(0, int(second.shape[0]), block):
+            for start_j in range(0, second.shape[0], block):
                 second_block = second[start_j : start_j + block]
                 distances = _powered_euclidean_norm(
                     first_block[:, None, :] - second_block[None, :, :],
                     exponent,
                 )
                 total = total + jnp.sum(distances)
-        return total / float(int(first.shape[0]) * int(second.shape[0]))
+        return total / float(first.shape[0] * second.shape[0])
 
     cross = pair_mean(left_flat, right_flat)
     within_left = pair_mean(left_flat, left_flat)
@@ -202,7 +202,9 @@ def pinball_loss(prediction: ArrayLike, target: ArrayLike, quantile: float, /) -
     level = float(quantile)
     if not 0.0 < level < 1.0:
         raise ValueError("quantile must lie strictly between zero and one.")
-    error = jnp.asarray(target, dtype=float) - jnp.asarray(prediction, dtype=float)
+    error = jnp.asarray(target, dtype=jnp.float64) - jnp.asarray(
+        prediction, dtype=jnp.float64
+    )
     return jnp.maximum(level * error, (level - 1.0) * error)
 
 
@@ -216,9 +218,11 @@ def interval_coverage(
     mask: ArrayLike | None = None,
     weights: ArrayLike | None = None,
 ) -> Array:
-    target_array = jnp.asarray(target, dtype=float)
+    target_array = jnp.asarray(target, dtype=jnp.float64)
     covered = (target_array >= jnp.asarray(lower)) & (target_array <= jnp.asarray(upper))
-    return _reduce(covered.astype(float), reduction=reduction, mask=mask, weights=weights)
+    return _reduce(
+        covered.astype("float64"), reduction=reduction, mask=mask, weights=weights
+    )
 
 
 def interval_width(
@@ -230,13 +234,13 @@ def interval_width(
     mask: ArrayLike | None = None,
     weights: ArrayLike | None = None,
 ) -> Array:
-    width = jnp.asarray(upper, dtype=float) - jnp.asarray(lower, dtype=float)
+    width = jnp.asarray(upper, dtype=jnp.float64) - jnp.asarray(lower, dtype=jnp.float64)
     return _reduce(width, reduction=reduction, mask=mask, weights=weights)
 
 
 def calibration_error(nominal: ArrayLike, empirical: ArrayLike, /) -> Array:
-    nominal_array = jnp.asarray(nominal, dtype=float)
-    empirical_array = jnp.asarray(empirical, dtype=float)
+    nominal_array = jnp.asarray(nominal, dtype=jnp.float64)
+    empirical_array = jnp.asarray(empirical, dtype=jnp.float64)
     return jnp.mean(jnp.abs(empirical_array - nominal_array))
 
 
@@ -273,9 +277,9 @@ def interval_calibration_diagnostics(
             "lower, upper, and target must be aligned one-dimensional arrays."
         )
 
-    active = jnp.ones(target_array.shape, dtype=bool)
+    active = jnp.ones(target_array.shape, dtype=jnp.bool_)
     if mask is not None:
-        active = jnp.broadcast_to(jnp.asarray(mask, dtype=bool), target_array.shape)
+        active = jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), target_array.shape)
     finite_values = (
         jnp.isfinite(lower_array) & jnp.isfinite(upper_array) & jnp.isfinite(target_array)
     )
@@ -290,7 +294,7 @@ def interval_calibration_diagnostics(
         if not _is_real_dtype(raw_weights):
             raise ValueError("weights must contain real values.")
         weight_array = jnp.broadcast_to(
-            raw_weights.astype(float),
+            raw_weights.astype("float64"),
             target_array.shape,
         )
         if bool(jnp.any(active & ((~jnp.isfinite(weight_array)) | (weight_array < 0.0)))):
@@ -340,7 +344,7 @@ class GaussianScaleCalibrator(StrictModule):
     scale_multiplier: Array
 
     def __init__(self, scale_multiplier: ArrayLike):
-        multiplier = jnp.asarray(scale_multiplier, dtype=float).reshape(())
+        multiplier = jnp.asarray(scale_multiplier, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(multiplier)) or not bool(multiplier > 0.0):
             raise ValueError("scale_multiplier must be finite and positive.")
         self.scale_multiplier = multiplier
@@ -356,11 +360,14 @@ class GaussianScaleCalibrator(StrictModule):
         mask: ArrayLike | None = None,
         weights: ArrayLike | None = None,
     ) -> "GaussianScaleCalibrator":
-        scale_array = jnp.asarray(scale, dtype=float)
+        scale_array = jnp.asarray(scale, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(scale_array))) or bool(jnp.any(scale_array <= 0.0)):
             raise ValueError("scale must be finite and strictly positive.")
         standardized_squared = (
-            (jnp.asarray(target, dtype=float) - jnp.asarray(location, dtype=float))
+            (
+                jnp.asarray(target, dtype=jnp.float64)
+                - jnp.asarray(location, dtype=jnp.float64)
+            )
             / scale_array
         ) ** 2
         mean_square = _reduce(
@@ -375,7 +382,7 @@ class GaussianScaleCalibrator(StrictModule):
         return cls(multiplier)
 
     def transform(self, scale: ArrayLike, /) -> Array:
-        return self.scale_multiplier * jnp.asarray(scale, dtype=float)
+        return self.scale_multiplier * jnp.asarray(scale, dtype=jnp.float64)
 
     def __call__(self, scale: ArrayLike, /) -> Array:
         return self.transform(scale)
@@ -392,7 +399,7 @@ def _as_real_vector(value: ArrayLike, /, *, name: str) -> Array:
     array = jnp.asarray(value)
     if array.ndim != 1 or not _is_real_dtype(array):
         raise ValueError(f"{name} must be a one-dimensional real array.")
-    return array.astype(float)
+    return array.astype("float64")
 
 
 def _validate_nominal_coverage(value: float, /) -> float:
@@ -415,16 +422,16 @@ def _reduce(
     mask: ArrayLike | None,
     weights: ArrayLike | None,
 ) -> Array:
-    value_array = jnp.asarray(values, dtype=float)
+    value_array = jnp.asarray(values, dtype=jnp.float64)
     if reduction == "none":
         if mask is not None or weights is not None:
             raise ValueError("mask and weights require a scalar reduction.")
         return value_array
-    effective_weight = jnp.ones_like(value_array, dtype=float)
+    effective_weight = jnp.ones_like(value_array, dtype=jnp.float64)
     if mask is not None:
-        effective_weight = effective_weight * jnp.asarray(mask, dtype=bool)
+        effective_weight = effective_weight * jnp.asarray(mask, dtype=jnp.bool_)
     if weights is not None:
-        weight_array = jnp.asarray(weights, dtype=float)
+        weight_array = jnp.asarray(weights, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(weight_array))) or bool(
             jnp.any(weight_array < 0.0)
         ):

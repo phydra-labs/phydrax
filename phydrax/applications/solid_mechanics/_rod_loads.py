@@ -75,8 +75,8 @@ class RodLoad(StrictModule, NonTrainableState):
         forces_ = _real_array("forces", forces, 2)
         if forces_.shape[1] not in (2, 3) or forces_.shape[0] < 2:
             raise ValueError("Rod forces must have shape (nodes, 2|3).")
-        dimension = int(forces_.shape[1])
-        segment_count = int(forces_.shape[0] - 1)
+        dimension = forces_.shape[1]
+        segment_count = forces_.shape[0] - 1
         moment_rank = 1 if dimension == 2 else 2
         moments_ = _real_array("moments", moments, moment_rank)
         expected_moments = (segment_count,) if dimension == 2 else (segment_count, 3)
@@ -103,7 +103,7 @@ class RodLoad(StrictModule, NonTrainableState):
         self.force_unit = force_unit_
         self.moment_unit = moment_unit_
         self.dimension = dimension
-        self.node_count = int(forces_.shape[0])
+        self.node_count = forces_.shape[0]
         self.segment_count = segment_count
         self.load_id = canonical_fingerprint(
             {
@@ -253,7 +253,7 @@ class RodLoadLedger(StrictModule, NonTrainableState):
     ) -> RodLoadPowerEvidence:
         self._validate_rod(prepared)
         velocity_ = prepared.velocity_space.validate(velocity)
-        efforts = self.source_efforts(prepared)
+        self.source_efforts(prepared)
         direct = jnp.stack(
             tuple(
                 jnp.sum(load.forces * velocity_[0]) + jnp.sum(load.moments * velocity_[1])
@@ -341,7 +341,7 @@ class ReducedRodLoadBundle(StrictModule, NonTrainableState):
         self.ledger = ledger
         self.source_efforts = jnp.asarray(efforts)
         self.reduction_id = reduction
-        self.reduced_size = int(efforts.shape[1])
+        self.reduced_size = efforts.shape[1]
         self.effort_unit = unit
         self.bundle_id = canonical_fingerprint(
             {

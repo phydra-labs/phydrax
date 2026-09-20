@@ -597,10 +597,10 @@ def prepare_maxwell_modal_sweep(
         jnp.stack(tuple(deembedded_left_to_right)),
         jnp.stack(tuple(deembedded_right_to_left)),
         jnp.stack(tuple(cross_conversion)),
-        jnp.asarray(additional_orders, dtype=bool),
+        jnp.asarray(additional_orders, dtype=jnp.bool_),
         jnp.stack(tuple(grazing)),
-        jnp.asarray(symmetric, dtype=bool),
-        jnp.asarray(physical_layers, dtype=bool),
+        jnp.asarray(symmetric, dtype=jnp.bool_),
+        jnp.asarray(physical_layers, dtype=jnp.bool_),
         jnp.stack(tuple(finite)),
         thickness,
         tuple(left_references),
@@ -628,14 +628,14 @@ def _slab_scattering(
 
 
 def _finite_band_kk_residual(frequencies: Array, values: Array, /) -> Array:
-    count = int(frequencies.shape[0])
+    count = frequencies.shape[0]
     if count < 3:
         return jnp.asarray(jnp.inf, dtype=frequencies.real.dtype)
     omega = jnp.real(frequencies)
     delta = omega[1:] - omega[:-1]
     trapezoid = jnp.concatenate((delta[:1], 0.5 * (delta[:-1] + delta[1:]), delta[-1:]))
     denominator = omega[None, :] ** 2 - omega[:, None] ** 2
-    mask = ~jnp.eye(count, dtype=bool)
+    mask = ~jnp.eye(count, dtype=jnp.bool_)
     kernel = jnp.where(mask, omega[None, :] / denominator, 0.0)
     predicted = (2.0 / jnp.pi) * jnp.sum(
         kernel * trapezoid[None, :] * jnp.imag(values)[None, :], axis=1
@@ -771,7 +771,7 @@ def retrieve_equivalent_slab(
     margins = []
     ambiguous_rows = []
     previous_selected = None
-    for frequency_index in range(int(frequencies.shape[0])):
+    for frequency_index in range(frequencies.shape[0]):
         if frequency_index == 0:
             if plan.anchor == "low-frequency":
                 target = jnp.asarray(1.0 + 0.0j)

@@ -39,7 +39,7 @@ class LocalRootSolveResult(StrictModule):
     ):
         value_ = jnp.asarray(value)
         residual_ = jnp.asarray(residual)
-        converged_ = jnp.asarray(converged, dtype=bool)
+        converged_ = jnp.asarray(converged, dtype=jnp.bool_)
         iterations_ = jnp.asarray(iterations, dtype=jnp.int32)
         if residual_.shape != value_.shape:
             raise ValueError("Local root value and residual must have the same shape.")

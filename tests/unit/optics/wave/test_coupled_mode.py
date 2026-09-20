@@ -25,7 +25,7 @@ def test_uniform_no_grating_has_exact_phase_loss_and_power_closure():
         grid,
         2.0e15,
         jnp.full((8,), 0.4),
-        jnp.zeros((8,), dtype=complex),
+        jnp.zeros((8,), dtype="complex128"),
         jnp.full((8,), 0.3),
         reference_propagation_constant=1.1,
         power_tolerance=1.0e-12,

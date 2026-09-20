@@ -49,7 +49,7 @@ def _parabola_witness(system):
         1,
         np.asarray([[0.0, 1.0]]),
         np.asarray([-1.0]),
-        np.asarray([[-1.0, 1.0], [1.0, 1.0]], dtype=complex),
+        np.asarray([[-1.0, 1.0], [1.0, 1.0]], dtype="complex128"),
         np.asarray([0.0, 0.0]),
     )
 

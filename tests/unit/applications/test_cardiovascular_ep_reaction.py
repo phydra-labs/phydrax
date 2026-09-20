@@ -548,7 +548,7 @@ def test_reaction_ir_compiler_matches_independent_tree_interpreter():
         ReactionIRBinary(ReactionBinaryOperator.MULTIPLY, x, x),
     )
     source = PinnedReactionIR(
-        "n-version-algebra-v1",
+        "n-version-algebra",
         ("x",),
         (ReactionIROutput("value", expression),),
     )
@@ -562,7 +562,7 @@ def test_reaction_ir_compiler_matches_independent_tree_interpreter():
     assert all("eval" not in row[1].lower() for row in compiled.inspect())
     with pytest.raises(ValueError, match="outside"):
         PinnedReactionIR(
-            "invalid-input-v1",
+            "invalid-input",
             ("x",),
             (ReactionIROutput("bad", ReactionIRInput(1)),),
         )

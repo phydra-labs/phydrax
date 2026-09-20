@@ -81,8 +81,7 @@ class TwoTemperatureElectronIonClosure(StrictModule, NonTrainableState):
             raise TypeError("regime must be PlasmaKineticRegime.")
         if regime is not PlasmaKineticRegime.TWO_TEMPERATURE_CALORIC:
             raise NotImplementedError(
-                "Two-temperature fluid exchange does not support anisotropic or "
-                "velocity-space kinetic regimes."
+                "Two-temperature fluid exchange does not support anisotropic or velocity-space kinetic regimes."
             )
         gamma_e = float(electron_adiabatic_index)
         gamma_i = float(ion_adiabatic_index)
@@ -269,8 +268,8 @@ class BoundedNonthermalParticleDistribution(StrictModule, NonTrainableState):
                 "Bounded nonthermal records support isotropic distributions only; "
                 "anisotropic and full phase-space kinetics require a kinetic solver."
             )
-        edges = np.asarray(lorentz_factor_edges, dtype=float)
-        density = np.asarray(bin_number_density, dtype=float)
+        edges = np.asarray(lorentz_factor_edges, dtype=np.float64)
+        density = np.asarray(bin_number_density, dtype=np.float64)
         rest_energy = float(particle_rest_energy)
         species_ = str(species).strip()
         if (
@@ -308,7 +307,7 @@ class BoundedNonthermalParticleDistribution(StrictModule, NonTrainableState):
 
     @property
     def bin_count(self) -> int:
-        return int(self.lorentz_factor_edges.size - 1)
+        return self.lorentz_factor_edges.size - 1
 
     def moments(self, /) -> NonthermalParticleMoments:
         density = self.bin_number_density

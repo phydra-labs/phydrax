@@ -175,7 +175,7 @@ def column_closure_dataset(
         aligned = _bounds(forcing_bounds[name], count, binding.interval_seconds)
         if not np.array_equal(aligned, bounds):
             raise ValueError(f"Forcing {name!r} does not align with the target interval.")
-    coordinates = jnp.arange(levels, dtype=float)[:, None]
+    coordinates = jnp.arange(levels, dtype=jnp.float64)[:, None]
     support_id = canonical_fingerprint(
         {"vertical": binding.vertical_id, "levels": binding.level_ids}
     )
@@ -502,7 +502,7 @@ def admit_column_closure(
         )
     query = FunctionSamples(
         values=None,
-        coordinates=jnp.arange(expected[0], dtype=float)[:, None],
+        coordinates=jnp.arange(expected[0], dtype=jnp.float64)[:, None],
         quadrature_weights=mass,
     )
     corrected = project_operator_conservation(raw, query, budget, case_shape=case_shape)

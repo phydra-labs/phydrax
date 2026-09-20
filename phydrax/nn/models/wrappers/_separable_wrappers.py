@@ -133,7 +133,13 @@ class LatentContractionModel(
     _scan_factor_size_uniform: bool
     _supported_layouts: tuple[
         Literal["auto", "dense_points", "coord_separable", "hybrid", "full_tensor"], ...
-    ] = ("auto", "dense_points", "coord_separable", "hybrid", "full_tensor")
+    ] = (
+        "auto",
+        "dense_points",
+        "coord_separable",
+        "hybrid",
+        "full_tensor",
+    )
 
     def __init__(
         self,
@@ -227,8 +233,7 @@ class LatentContractionModel(
 
     def handle_structured_derivative_fallback(self, reason: str, /) -> None:
         self._auto_fallback(
-            "Falling back to generic derivative evaluation for "
-            f"LatentContractionModel: {reason}"
+            f"Falling back to generic derivative evaluation for LatentContractionModel: {reason}"
         )
 
     def try_structured_partial(
@@ -266,8 +271,7 @@ class LatentContractionModel(
             missing = tuple(sorted(expected - provided))
             extra = tuple(sorted(provided - expected))
             raise ValueError(
-                "factor_inputs must provide exactly one entry for each factor; "
-                f"missing={missing!r}, extra={extra!r}."
+                f"factor_inputs must provide exactly one entry for each factor; missing={missing!r}, extra={extra!r}."
             )
         out: dict[str, tuple[str, ...]] = {}
         for name in self.factor_names:
@@ -451,8 +455,7 @@ class LatentContractionModel(
         out = jnp.asarray(self._finalize(result.data))
         if out.ndim < len(result.axes):
             raise ValueError(
-                "LatentContractionModel axis-batch output rank is smaller than "
-                "the named-axis rank."
+                "LatentContractionModel axis-batch output rank is smaller than the named-axis rank."
             )
         dims = result.axes + (None,) * (out.ndim - len(result.axes))
         return cx.AxisArray(out, dims=dims)
@@ -526,7 +529,7 @@ class LatentContractionModel(
         if not arrays:
             raise ValueError("Cannot pack an empty factor input.")
         axis_rank = len(axes)
-        axis_shape = tuple(int(n) for n in arrays[0].shape[:axis_rank])
+        axis_shape = tuple(arrays[0].shape[:axis_rank])
         parts: list[Array] = []
         for arr_in in arrays:
             arr = jnp.asarray(arr_in)
@@ -534,7 +537,7 @@ class LatentContractionModel(
                 raise ValueError(
                     f"Factor input rank {arr.ndim} is smaller than axis rank {axis_rank}."
                 )
-            if tuple(int(n) for n in arr.shape[:axis_rank]) != axis_shape:
+            if tuple(arr.shape[:axis_rank]) != axis_shape:
                 raise ValueError(
                     "Factor inputs with shared axes must have matching leading shapes."
                 )
@@ -558,11 +561,10 @@ class LatentContractionModel(
     ) -> Array:
         if isinstance(values, tuple):
             latents, batch_shape = self._eval_factor(model, values, name=name, key=key)
-            expected = tuple(int(jnp.asarray(v).shape[0]) for v in values)
+            expected = tuple(jnp.asarray(v).shape[0] for v in values)
             if tuple(batch_shape) != expected or len(batch_shape) != len(axes):
                 raise ValueError(
-                    f"Factor {name!r} coord-separable batch shape {batch_shape!r} "
-                    f"does not match axes {axes!r}."
+                    f"Factor {name!r} coord-separable batch shape {batch_shape!r} does not match axes {axes!r}."
                 )
             return latents
         return self._eval_axis_factor_array(model, values, axes, name=name, key=key)
@@ -585,15 +587,14 @@ class LatentContractionModel(
 
         if arr.ndim < axis_rank:
             raise ValueError(
-                f"Factor {name!r} input rank {arr.ndim} is smaller than axis rank "
-                f"{axis_rank}."
+                f"Factor {name!r} input rank {arr.ndim} is smaller than axis rank {axis_rank}."
             )
-        leading_shape = tuple(int(n) for n in arr.shape[:axis_rank])
+        leading_shape = tuple(arr.shape[:axis_rank])
         in_dim = _get_size(model.in_size)
         if in_dim == 1:
             if arr.ndim == axis_rank:
                 flat = arr.reshape((-1,))
-            elif arr.ndim == axis_rank + 1 and int(arr.shape[-1]) == 1:
+            elif arr.ndim == axis_rank + 1 and arr.shape[-1] == 1:
                 flat = arr.reshape((-1,))
             else:
                 raise ValueError(
@@ -601,10 +602,9 @@ class LatentContractionModel(
                     f"{leading_shape} or {leading_shape + (1,)}, got {arr.shape}."
                 )
         else:
-            if arr.ndim != axis_rank + 1 or int(arr.shape[-1]) != in_dim:
+            if arr.ndim != axis_rank + 1 or arr.shape[-1] != in_dim:
                 raise ValueError(
-                    f"Factor {name!r} expected axis-batch input with trailing size "
-                    f"{in_dim}, got {arr.shape}."
+                    f"Factor {name!r} expected axis-batch input with trailing size {in_dim}, got {arr.shape}."
                 )
             flat = arr.reshape((-1, in_dim))
 
@@ -612,7 +612,7 @@ class LatentContractionModel(
         out = jnp.asarray(out)
         if out.ndim == 1:
             out = out[:, None]
-        out = out.reshape(leading_shape + (int(out.shape[-1]),))
+        out = out.reshape(leading_shape + (out.shape[-1],))
         return self._reshape_latents(out, name=name)
 
     def _call_aligned(self, x: Array, /, *, key: EvalKey = DOC_KEY0) -> Array:
@@ -706,7 +706,7 @@ class LatentContractionModel(
                 )
             points = _stack_separable(coords)
             out = jax.vmap(ft.partial(model, key=key))(points)
-            batch_shape = tuple(int(c.shape[0]) for c in coords)
+            batch_shape = tuple(c.shape[0] for c in coords)
             out = jnp.asarray(out)
             if out.ndim == 1:
                 out = out[:, None]
@@ -738,10 +738,10 @@ class LatentContractionModel(
                 batch_shape = ()
             elif arr.ndim == 1:
                 out = jax.vmap(ft.partial(model, key=key))(arr)
-                batch_shape = (int(arr.shape[0]),)
+                batch_shape = (arr.shape[0],)
             elif arr.ndim == 2 and arr.shape[1] == 1:
                 out = jax.vmap(ft.partial(model, key=key))(arr[:, 0])
-                batch_shape = (int(arr.shape[0]),)
+                batch_shape = (arr.shape[0],)
             else:
                 raise ValueError(
                     f"Factor {name!r} expected scalar input with shape (), (1,), (N,), or (N,1), got {arr.shape}."
@@ -760,7 +760,7 @@ class LatentContractionModel(
                         f"Factor {name!r} expected shape (N,{in_dim}), got {arr.shape}."
                     )
                 out = jax.vmap(ft.partial(model, key=key))(arr)
-                batch_shape = (int(arr.shape[0]),)
+                batch_shape = (arr.shape[0],)
             else:
                 raise ValueError(
                     f"Factor {name!r} expected shape ({in_dim},) or (N,{in_dim}), got {arr.shape}."
@@ -773,7 +773,7 @@ class LatentContractionModel(
         return self._reshape_latents(out, name=name), batch_shape
 
     def _reshape_latents(self, out: Array, /, *, name: str) -> Array:
-        out_dim = int(out.shape[-1])
+        out_dim = out.shape[-1]
         out_size = _get_size(self.out_size)
         latent_size = int(self.latent_size)
         if out_dim == latent_size * out_size:
@@ -786,8 +786,7 @@ class LatentContractionModel(
         if latent_size == 1 and out_dim == out_size:
             return out.reshape(*out.shape[:-1], 1, out_size)
         raise ValueError(
-            f"Factor {name!r} returned {out_dim} features; expected "
-            f"{latent_size} or {latent_size * out_size}."
+            f"Factor {name!r} returned {out_dim} features; expected {latent_size} or {latent_size * out_size}."
         )
 
     def _split_aligned_input(self, x: Array, /) -> list[Array]:
@@ -813,8 +812,7 @@ class LatentContractionModel(
                 start += size
             return splits
         raise ValueError(
-            f"Aligned input expected shape ({self._total_in_size},), got {x_arr.shape}. "
-            "Use vmap for batched inputs."
+            f"Aligned input expected shape ({self._total_in_size},), got {x_arr.shape}. Use vmap for batched inputs."
         )
 
     def _contraction_equation(self, batch_shapes: Sequence[tuple[int, ...]]) -> str:
@@ -847,10 +845,7 @@ class LatentContractionModel(
                     "current execution path only supports grouped; falling back to grouped."
                 ),
             )
-        msg = (
-            "LatentContractionModel requested flat topology but the current "
-            "execution path only supports grouped."
-        )
+        msg = "LatentContractionModel requested flat topology but the current execution path only supports grouped."
         self._auto_fallback(msg)
         return _LatentTopologyPlan(requested=requested, effective="grouped")
 
@@ -883,8 +878,8 @@ class LatentContractionModel(
         for latent, shape in zip(latents, batch_shapes, strict=True):
             latent_arr = jnp.asarray(latent)
             latent_shape = [1] * total_axes + [
-                int(latent_arr.shape[-2]),
-                int(latent_arr.shape[-1]),
+                latent_arr.shape[-2],
+                latent_arr.shape[-1],
             ]
             for i, dim in enumerate(shape):
                 latent_shape[axis_offset + i] = int(dim)
@@ -895,9 +890,9 @@ class LatentContractionModel(
         assert acc is not None
         if total_axes == 0:
             return jnp.sum(acc, axis=-2)
-        flat = acc.reshape((-1, int(acc.shape[-2]), int(acc.shape[-1])))
+        flat = acc.reshape((-1, acc.shape[-2], acc.shape[-1]))
         out = jnp.sum(flat, axis=-2)
-        return out.reshape(leading_shape + (int(acc.shape[-1]),))
+        return out.reshape(leading_shape + (acc.shape[-1],))
 
     def _finalize(self, out: Array) -> Array:
         if jnp.iscomplexobj(out) and not self.keep_outputs_complex:
@@ -1109,8 +1104,7 @@ class Separable(_AbstractStructuredInputModel):
                     x_arr = jnp.squeeze(x_arr, axis=0)
                 if x_arr.ndim != 0:
                     raise ValueError(
-                        f"Invalid input shape {x_arr.shape}. Expected scalar input. "
-                        "Use vmap for batched inputs."
+                        f"Invalid input shape {x_arr.shape}. Expected scalar input. Use vmap for batched inputs."
                     )
                 scan_inputs = jnp.repeat(x_arr, len(self.models))
                 scan_out = _scan_regular(scan_inputs)
@@ -1142,7 +1136,7 @@ class Separable(_AbstractStructuredInputModel):
                 outputs = ft.reduce(jnp.multiply, out_list, jnp.array(1.0))
                 out = contract("lo->o", self._reshape_latents(outputs))
         elif x_arr.ndim >= 2:
-            if int(x_arr.shape[-1]) != in_dim:
+            if x_arr.shape[-1] != in_dim:
                 raise ValueError(
                     f"Expected trailing shape ({in_dim},) got {x_arr.shape}."
                 )
@@ -1150,7 +1144,7 @@ class Separable(_AbstractStructuredInputModel):
             scan_inputs = jnp.repeat(coord_inputs, clones, axis=0)
             scan_out = _scan_regular(scan_inputs)
             if scan_out is not None:
-                leading_shape = tuple(int(i) for i in scan_out.shape[:-1])
+                leading_shape = tuple(scan_out.shape[:-1])
                 latent_shape = leading_shape + (
                     self.latent_size,
                     _get_size(self.out_size),
@@ -1165,7 +1159,7 @@ class Separable(_AbstractStructuredInputModel):
                         out_list.append(self.models[idx](xi, key=keys[idx]))
                         idx += 1
                 outputs = ft.reduce(jnp.multiply, out_list, jnp.array(1.0))
-                leading_shape = tuple(int(i) for i in outputs.shape[:-1])
+                leading_shape = tuple(outputs.shape[:-1])
                 latent_shape = leading_shape + (
                     self.latent_size,
                     _get_size(self.out_size),
@@ -1173,8 +1167,7 @@ class Separable(_AbstractStructuredInputModel):
                 out = contract("...lo->...o", outputs.reshape(latent_shape))
         else:
             raise ValueError(
-                f"Invalid input shape {x_arr.shape}. Expected ({in_dim},). "
-                "Use vmap for batched inputs."
+                f"Invalid input shape {x_arr.shape}. Expected ({in_dim},). Use vmap for batched inputs."
             )
 
         if jnp.iscomplexobj(out) and not self.keep_outputs_complex:
@@ -1306,7 +1299,7 @@ class Separable(_AbstractStructuredInputModel):
                 group_lat = self._reshape_latents(first)
                 dynamic = stack_scan_dynamics(group_models[1:], static_group)
                 if dynamic is not None and static_group is not None:
-                    scan_x = jnp.broadcast_to(xi, (clones - 1, int(xi.shape[0])))
+                    scan_x = jnp.broadcast_to(xi, (clones - 1, xi.shape[0]))
 
                     def _step(
                         carry: Array, layer: Any, data_i: tuple[Array, Array]

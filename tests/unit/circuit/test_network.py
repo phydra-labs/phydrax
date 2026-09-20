@@ -21,7 +21,7 @@ from phydrax.circuit import (
 
 def _component(matrix, name):
     reference = ElectricalWaveReference(50.0)
-    count = int(jnp.asarray(matrix).shape[-1])
+    count = jnp.asarray(matrix).shape[-1]
     return MatrixScatteringComponent(
         jnp.asarray(matrix, dtype=jnp.complex128),
         tuple(WavePort(f"p{index + 1}", reference) for index in range(count)),

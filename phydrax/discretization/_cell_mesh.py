@@ -90,7 +90,7 @@ class CellBlock(StrictModule, NonTrainableState):
             )
         cells = np.asarray(vertices, dtype=np.int32)
         arity = (
-            int(cells.shape[1])
+            cells.shape[1]
             if kind in ("polygon", "polyhedron") and cells.ndim == 2
             else _CELL_ARITIES.get(kind, -1)
         )
@@ -104,9 +104,9 @@ class CellBlock(StrictModule, NonTrainableState):
         ):
             raise ValueError(f"{kind} cell vertices have incompatible arity {arity}.")
         valid = (
-            np.ones_like(cells, dtype=bool)
+            np.ones_like(cells, dtype=np.bool_)
             if vertex_valid is None
-            else np.asarray(vertex_valid, dtype=bool)
+            else np.asarray(vertex_valid, dtype=np.bool_)
         )
         if valid.shape != cells.shape:
             raise ValueError("vertex_valid must match cell vertex storage.")
@@ -153,12 +153,12 @@ class CellBlock(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.vertices.shape[0])
+        return self.vertices.shape[0]
 
     @property
     def arity(self) -> int:
         return (
-            int(self.vertices.shape[1])
+            self.vertices.shape[1]
             if self.cell_kind in ("polygon", "polyhedron")
             else _CELL_ARITIES[self.cell_kind]
         )
@@ -214,7 +214,7 @@ class PolyhedralBlock(StrictModule, NonTrainableState):
             raise ValueError(
                 "Polyhedral global_ids must be unique non-negative integers."
             )
-        valid = np.ones_like(cells, dtype=bool)
+        valid = np.ones_like(cells, dtype=np.bool_)
         self.name = block_name
         self.cell_kind = "polyhedron"
         self.vertices = jnp.asarray(cells)
@@ -231,11 +231,11 @@ class PolyhedralBlock(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.vertices.shape[0])
+        return self.vertices.shape[0]
 
     @property
     def arity(self) -> int:
-        return int(self.vertices.shape[1])
+        return self.vertices.shape[1]
 
     @property
     def topological_dimension(self) -> int:
@@ -276,7 +276,7 @@ class CellMesh(StrictModule, NonTrainableState):
         polyhedral_connectivity: PolyhedralConnectivity | None = None,
         numeric_version: str = "0",
     ):
-        points = np.asarray(coordinates, dtype=float)
+        points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
             raise ValueError("Cell mesh coordinates must have shape (n > 0, d > 0).")
         if not np.all(np.isfinite(points)):
@@ -299,12 +299,11 @@ class CellMesh(StrictModule, NonTrainableState):
         topological_dimension = dimensions.pop()
         if points.shape[1] < topological_dimension:
             raise ValueError(
-                "Cell mesh ambient dimension cannot be smaller than its "
-                "topological dimension."
+                "Cell mesh ambient dimension cannot be smaller than its topological dimension."
             )
         for block in normalized_blocks:
             vertices_ = np.asarray(block.vertices)
-            valid_ = np.asarray(block.vertex_valid, dtype=bool)
+            valid_ = np.asarray(block.vertex_valid, dtype=np.bool_)
             if np.any(vertices_[valid_] >= points.shape[0]):
                 raise ValueError(
                     f"Cell block {block.name!r} indexes undeclared vertices."
@@ -636,7 +635,7 @@ class CellMesh(StrictModule, NonTrainableState):
     ) -> CellMesh:
         """Build a canonical mixed-arity polygon mesh from cyclic vertex loops."""
 
-        points = np.asarray(coordinates, dtype=float)
+        points = np.asarray(coordinates, dtype=np.float64)
         loops = tuple(np.asarray(loop, dtype=np.int32) for loop in polygons)
         if not loops:
             raise ValueError("from_polygons requires at least one cell.")
@@ -665,7 +664,7 @@ class CellMesh(StrictModule, NonTrainableState):
             if not np.isfinite(area2) or area2 == 0.0:
                 raise ValueError("Polygon loops require finite nonzero signed area.")
             oriented = loop[::-1] if area2 < 0.0 else loop
-            grouped.setdefault(int(loop.size), []).append((oriented, int(identifier)))
+            grouped.setdefault(loop.size, []).append((oriented, int(identifier)))
         blocks = []
         for arity in sorted(grouped):
             entries = grouped[arity]
@@ -729,7 +728,7 @@ class CellMesh(StrictModule, NonTrainableState):
     ) -> CellMesh:
         """Build a canonical mesh from closed outward-oriented face loops."""
 
-        points = np.asarray(coordinates, dtype=float)
+        points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] < 3:
             raise ValueError(
                 "Polyhedral coordinates must have shape (vertex_count, d >= 3)."
@@ -771,7 +770,7 @@ class CellMesh(StrictModule, NonTrainableState):
         values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
         blocks = []
         start_cell = 0
-        unique_counts = tuple(int(value) for value in np.unique(ordered_counts))
+        unique_counts = tuple(np.unique(ordered_counts))
         for vertex_count in unique_counts:
             stop_cell = start_cell + int(np.sum(ordered_counts == vertex_count))
             start = int(offsets[start_cell])
@@ -811,7 +810,7 @@ class CellMesh(StrictModule, NonTrainableState):
     ) -> CellMesh:
         """Build one mixed standard/polyhedral three-dimensional mesh."""
 
-        points = np.asarray(coordinates, dtype=float)
+        points = np.asarray(coordinates, dtype=np.float64)
         standard_blocks = tuple(blocks)
         if any(
             block.cell_kind not in ("tetrahedron", "hexahedron", "prism", "pyramid")
@@ -872,7 +871,7 @@ class CellMesh(StrictModule, NonTrainableState):
             ordered_cells = tuple(cells[int(index)] for index in order)
             ordered_ids = ids[order]
             ordered_counts = counts[order]
-            for vertex_count in tuple(int(value) for value in np.unique(ordered_counts)):
+            for vertex_count in tuple(np.unique(ordered_counts)):
                 selected = np.flatnonzero(ordered_counts == vertex_count)
                 selected_cells = tuple(ordered_cells[int(index)] for index in selected)
                 selected_ids = ordered_ids[selected]

@@ -60,7 +60,6 @@ def write_unstructured_fv_archive(
         arrays[f"patch/{name}"] = np.asarray(face_indices, dtype=np.int32)
     metadata = {
         "archive_kind": "unstructured-finite-volume-mesh",
-        "schema_version": 1,
         "topology_id": plan.topology_id,
         "geometry_id": plan.geometry_id,
         "plan_id": plan.plan_id,
@@ -80,7 +79,6 @@ def read_unstructured_fv_archive(path: str | Path, /) -> UnstructuredFiniteVolum
     manifest, arrays = read_array_archive(path)
     required_manifest = {
         "archive_kind",
-        "schema_version",
         "topology_id",
         "geometry_id",
         "plan_id",
@@ -94,10 +92,7 @@ def read_unstructured_fv_archive(path: str | Path, /) -> UnstructuredFiniteVolum
     }
     if set(manifest) != required_manifest:
         raise ValueError("Unstructured mesh archive manifest fields changed.")
-    if (
-        manifest["archive_kind"] != "unstructured-finite-volume-mesh"
-        or manifest["schema_version"] != 1
-    ):
+    if manifest["archive_kind"] != "unstructured-finite-volume-mesh":
         raise ValueError("Unsupported unstructured finite-volume mesh archive.")
     patch_names = tuple(str(name) for name in manifest["patch_names"])
     expected_arrays = {

@@ -19,18 +19,17 @@ from ._estimate import PathIntegralEstimate
 def _inside_mask(paths: ArrayLike, inside: Callable[[Array], ArrayLike], /) -> Array:
     if not callable(inside):
         raise TypeError("inside must be callable as inside(x) -> bool.")
-    q = jnp.asarray(paths, dtype=float)
+    q = jnp.asarray(paths, dtype=jnp.float64)
     if q.ndim < 3:
         raise ValueError("paths must have shape (..., num_paths, num_nodes, state_dim).")
-    if int(q.shape[-3]) < 1 or int(q.shape[-2]) < 1 or int(q.shape[-1]) < 1:
+    if q.shape[-3] < 1 or q.shape[-2] < 1 or q.shape[-1] < 1:
         raise ValueError("path, node, and state dimensions must be non-empty.")
     q = eqx.error_if(q, ~jnp.all(jnp.isfinite(q)), "paths must be finite.")
-    flat = jnp.reshape(q, (-1, int(q.shape[-1])))
+    flat = jnp.reshape(q, (-1, q.shape[-1]))
     mask = jnp.asarray(jax.vmap(inside)(flat))
     if mask.shape != (flat.shape[0],):
         raise ValueError(
-            "inside must return one boolean per state; "
-            f"got {mask.shape}, expected {(flat.shape[0],)}."
+            f"inside must return one boolean per state; got {mask.shape}, expected {(flat.shape[0],)}."
         )
     if mask.dtype != jnp.bool_:
         raise TypeError("inside must return boolean values.")
@@ -75,7 +74,7 @@ def survival_probability(
 ) -> PathIntegralEstimate:
     """Estimate discrete-time survival probability and Bernoulli standard error."""
     index = first_exit_index(paths, inside)
-    count = int(index.shape[-1])
+    count = index.shape[-1]
     survived = index < 0
     probability = jnp.mean(survived, axis=-1)
     if count == 1:

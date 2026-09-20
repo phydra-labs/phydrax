@@ -85,7 +85,7 @@ ControlDynamics = DiscreteControlDynamics | DifferentialControlDynamics
 
 
 def _physical_shape(value: tuple[int, ...], /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape
@@ -93,7 +93,7 @@ def _physical_shape(value: tuple[int, ...], /, *, owner: str) -> tuple[int, ...]
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _case_shape(array: Array, physical_shape: tuple[int, ...], /, *, owner: str):
@@ -132,8 +132,7 @@ def _linearize(
     geometry = state_layout.geometry
     if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
         raise ValueError(
-            "Control linearization requires exact inverse-retraction and "
-            "retraction-differential geometry."
+            "Control linearization requires exact inverse-retraction and retraction-differential geometry."
         )
     states = _inexact(state)
     controls = _inexact(control)
@@ -188,8 +187,7 @@ def _linearize(
     )
     if local_template.size != local_size:
         raise ValueError(
-            "State geometry inverse_retract output size must match "
-            "state_layout.local_size."
+            "State geometry inverse_retract output size must match state_layout.local_size."
         )
     local_shape = local_template.shape
 
@@ -270,8 +268,7 @@ def _linearize(
             )
         if coordinates.size != local_size:
             raise ValueError(
-                "State geometry local dynamics output size must match "
-                "state_layout.local_size."
+                "State geometry local dynamics output size must match state_layout.local_size."
             )
         return coordinates.reshape((local_size,)), successful
 
@@ -386,7 +383,7 @@ def _linearize(
         output_offset,
     )
     valid = (
-        jnp.ones((case_count,), dtype=bool)
+        jnp.ones((case_count,), dtype=jnp.bool_)
         & dynamics_successful
         & local_successful
         & differentiated_successful

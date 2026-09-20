@@ -27,7 +27,7 @@ def qualify() -> dict[str, object]:
         axis, 0.0, 3.0, phx.units.SECOND
     ).prepare(0)
     activity = jnp.asarray((4.0, 2.0, 1.0))
-    integral = integration.evaluate(activity, jnp.ones_like(activity, dtype=bool))
+    integral = integration.evaluate(activity, jnp.ones_like(activity, dtype="bool"))
     integrated_value = float(integral.values)
 
     regional = dosimetry.PreparedRegionalSValuePlan(
@@ -39,20 +39,20 @@ def qualify() -> dict[str, object]:
     ).evaluate(jnp.asarray((integrated_value,)), jnp.asarray((True,)))
     regional_values = np.asarray(regional.dose_gy)
 
-    concentration = np.zeros((3, 3, 3), dtype=float)
+    concentration = np.zeros((3, 3, 3), dtype="float64")
     concentration[1, 1, 1] = integrated_value
     spatial = dosimetry.PreparedSpatialSValueConvolution(
         jnp.ones((1, 1, 1)),
-        jnp.ones((1, 1, 1), dtype=bool),
+        jnp.ones((1, 1, 1), dtype="bool"),
         jnp.asarray(1.0),
         (3, 3, 3),
         "analytic-spatial-s-value",
-    ).evaluate(jnp.asarray(concentration), jnp.ones((3, 3, 3), dtype=bool))
+    ).evaluate(jnp.asarray(concentration), jnp.ones((3, 3, 3), dtype="bool"))
     spatial_values = np.asarray(spatial.dose_gy)
 
     integration_error = abs(integrated_value - 6.0)
     regional_error = float(np.max(np.abs(regional_values - np.asarray((12.0, 3.0)))))
-    expected_spatial = np.zeros((3, 3, 3), dtype=float)
+    expected_spatial = np.zeros((3, 3, 3), dtype="float64")
     expected_spatial[1, 1, 1] = 6.0
     spatial_error = float(np.max(np.abs(spatial_values - expected_spatial)))
     successful = bool(

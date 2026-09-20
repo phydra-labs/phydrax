@@ -65,7 +65,10 @@ def test_ipopt_status_mapping_is_explicit():
     assert _mapped_status(5) == phx.optim.OptimizationStatus.BACKEND_FAILED
     assert _mapped_status(6) == phx.optim.OptimizationStatus.CERTIFICATION_FAILED
     assert _mapped_status(-1) == phx.optim.OptimizationStatus.MAXIMUM_STEPS_REACHED
-    assert _mapped_status(-10) == phx.optim.OptimizationStatus.CONSTRAINT_QUALIFICATION_FAILED
+    assert (
+        _mapped_status(-10)
+        == phx.optim.OptimizationStatus.CONSTRAINT_QUALIFICATION_FAILED
+    )
     assert _mapped_status(-13) == phx.optim.OptimizationStatus.NONFINITE_EVALUATION
     assert _mapped_status(-199) == phx.optim.OptimizationStatus.BACKEND_FAILED
 

@@ -11,8 +11,7 @@ def test_prescribed_immersed_imex_pipeline_accepts_fixed_zero_state():
     count = 8
     grid = phx.discretization.TensorGridPlan(
         tuple(
-            phx.discretization.UniformCellAxisSpec(count, periodic=True)
-            for _ in range(2)
+            phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
         ),
         axis_names=("x", "y"),
     ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
@@ -28,15 +27,11 @@ def test_prescribed_immersed_imex_pipeline_accepts_fixed_zero_state():
     flow = phx.equations.compile_mac_incompressible_flow(
         phx.equations.IncompressibleFlowProblem(2, 0.01), momentum, pressure
     )
-    position = jnp.asarray(
-        [[0.35, 0.35], [0.65, 0.35], [0.65, 0.65], [0.35, 0.65]]
-    )
+    position = jnp.asarray([[0.35, 0.35], [0.65, 0.35], [0.65, 0.65], [0.35, 0.65]])
     markers = phx.discretization.LagrangianMarkerSetPlan(
         jnp.arange(4), position, jnp.full((4,), 0.25)
     ).prepare()
-    transfer = phx.discretization.MACMarkerTransferPlan(
-        operators, markers
-    ).prepare()
+    transfer = phx.discretization.MACMarkerTransferPlan(operators, markers).prepare()
     immersed = phx.solver.MACImmersedBoundaryProjectionPlan(
         operators, transfer, boundaries=boundaries, tolerance=1.0e-8
     )

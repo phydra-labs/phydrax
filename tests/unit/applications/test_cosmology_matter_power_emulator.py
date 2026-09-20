@@ -35,8 +35,8 @@ import numpy as np
 request = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 output = Path(sys.argv[2])
 mode = sys.argv[3]
-scale_factors = np.asarray(request["scale_factors"], dtype=float)
-wavenumbers = np.asarray(request["wavenumbers"], dtype=float)
+scale_factors = np.asarray(request["scale_factors"], dtype="float64")
+wavenumbers = np.asarray(request["wavenumbers"], dtype="float64")
 descriptor = dict(request["descriptor"])
 cosmology = request["cosmology"]
 provider = request["provider_contract"]

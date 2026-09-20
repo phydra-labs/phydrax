@@ -57,7 +57,7 @@ def _validated_components(
 ) -> tuple[int, ...] | None:
     if components is None:
         return None
-    out = tuple(int(component) for component in components)
+    out = tuple(components)
     if not out:
         raise ValueError("components must be non-empty when provided.")
     if any(component < 0 for component in out):
@@ -83,7 +83,7 @@ def _point_axis_and_count(batch: PointBatch, /) -> tuple[str | None, int]:
     for field in batch.points.values():
         if not isinstance(field, cx.AxisArray) or axis not in field.dims:
             continue
-        size = int(field.data.shape[field.dims.index(axis)])
+        size = field.data.shape[field.dims.index(axis)]
         if count is not None and count != size:
             raise ValueError("Point observation fields disagree on sampling-axis size.")
         count = size
@@ -122,7 +122,7 @@ class PointObservationAction(AbstractConditionOperator):
         _, count = _point_axis_and_count(batch)
         action_id = canonical_fingerprint(
             {
-                "kind": "point-observation-action-v1",
+                "kind": "point-observation-action",
                 "field": field_,
                 "components": components_,
                 "batch": array_tree_fingerprint(batch.points),
@@ -169,7 +169,7 @@ class PointObservationAction(AbstractConditionOperator):
                     "Point observation output is missing the declared sampling axis."
                 )
             data = jnp.moveaxis(data, evaluated.dims.index(axis), 0)
-        if int(data.shape[0]) != count:
+        if data.shape[0] != count:
             raise ValueError(
                 f"Point observation output has {data.shape[0]} rows; expected {count}."
             )
@@ -177,7 +177,7 @@ class PointObservationAction(AbstractConditionOperator):
             return data
         if data.ndim < 2:
             raise ValueError("Observation components require a trailing event axis.")
-        width = int(data.shape[-1])
+        width = data.shape[-1]
         if any(component >= width for component in self.components):
             raise ValueError(
                 f"Observation component indices {self.components!r} exceed width {width}."

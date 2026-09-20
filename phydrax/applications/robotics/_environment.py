@@ -20,7 +20,7 @@ from jaxtyping import Array, ArrayLike
 from ..._array_tree import ArrayPyTreeSchema
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._identity import ExecutableSignature, NumericRevision, SemanticProvenance
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics._plant import (
     AbstractDiscretePlant,
@@ -39,14 +39,14 @@ def _identifier(value: str, owner: str, /) -> str:
 
 
 def _shape(value: tuple[int, ...], owner: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape
 
 
 def _case_shape(value: Sequence[int], ndim: int, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if len(shape) != ndim:
         raise ValueError(f"case_shape must contain exactly {ndim} dimensions.")
     if any(size <= 0 for size in shape):
@@ -197,7 +197,7 @@ def _tree_case_all_finite(
     owner: str,
     /,
 ) -> Array:
-    finite = jnp.ones(case_shape, dtype=bool)
+    finite = jnp.ones(case_shape, dtype=jnp.bool_)
     case_ndim = len(case_shape)
     for leaf in jax.tree.leaves(tree):
         array = jnp.asarray(leaf)
@@ -313,10 +313,10 @@ class AbstractRobotTask(StrictModule):
     """Immutable task contract independent of plant mechanics and wrappers."""
 
     __strict_abstract__ = True
-    task_id: AbstractAttribute[str]
-    observation_shape: AbstractAttribute[tuple[int, ...]]
-    reward_component_names: AbstractAttribute[tuple[str, ...]]
-    descriptor_shape: AbstractAttribute[tuple[int, ...]]
+    task_id: eqx.AbstractVar[str]
+    observation_shape: eqx.AbstractVar[tuple[int, ...]]
+    reward_component_names: eqx.AbstractVar[tuple[str, ...]]
+    descriptor_shape: eqx.AbstractVar[tuple[int, ...]]
 
     @abstractmethod
     def initialize(self, plant_state: PlantRuntimeState, key: Array, /) -> Any:
@@ -359,10 +359,10 @@ class AbstractRobotEnvironmentWrapper(StrictModule):
     """Ordered immutable owner of repetition and episode administration."""
 
     __strict_abstract__ = True
-    wrapper_id: AbstractAttribute[str]
-    action_repeat: AbstractAttribute[int]
-    horizon: AbstractAttribute[int | None]
-    auto_reset: AbstractAttribute[bool]
+    wrapper_id: eqx.AbstractVar[str]
+    action_repeat: eqx.AbstractVar[int]
+    horizon: eqx.AbstractVar[int | None]
+    auto_reset: eqx.AbstractVar[bool]
 
     @abstractmethod
     def initialize(
@@ -617,7 +617,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         if not isinstance(evaluation, RobotTaskEvaluation):
             raise TypeError("task.evaluate must return RobotTaskEvaluation.")
         observation = jnp.asarray(evaluation.observation)
-        terminated = jnp.asarray(evaluation.terminated, dtype=bool)
+        terminated = jnp.asarray(evaluation.terminated, dtype=jnp.bool_)
         descriptor = jnp.asarray(evaluation.descriptor)
         if observation.shape != case_shape + self.task.observation_shape:
             raise ValueError(
@@ -641,7 +641,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             raise TypeError("task.transition must return RobotTaskTransition.")
         observation = jnp.asarray(transition.observation)
         rewards = jnp.asarray(transition.reward_components)
-        terminated = jnp.asarray(transition.terminated, dtype=bool)
+        terminated = jnp.asarray(transition.terminated, dtype=jnp.bool_)
         descriptor = jnp.asarray(transition.descriptor)
         if observation.shape != case_shape + self.task.observation_shape:
             raise ValueError(
@@ -871,7 +871,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         safe_task = _finite_or_zero_tree(task)
         outputs_finite = task_outputs_finite
         wrapper_states: list[Any] = []
-        wrapper_truncated = jnp.zeros(case_shape, dtype=bool)
+        wrapper_truncated = jnp.zeros(case_shape, dtype=jnp.bool_)
         for wrapper, wrapper_state, wrapper_key in zip(
             self.wrappers,
             state.wrapper_states,
@@ -896,7 +896,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                 case_shape,
                 "wrapper transition outputs",
             )
-            truncated = jnp.asarray(update.truncated, dtype=bool)
+            truncated = jnp.asarray(update.truncated, dtype=jnp.bool_)
             if truncated.shape != case_shape:
                 raise ValueError("Wrapper truncated must have the plant case shape.")
             wrapper_states.append(update.wrapper_state)
@@ -957,8 +957,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             jnp.uint32
         ):
             raise ValueError(
-                "RobotEnvironmentState episode key must use uint32 key data with "
-                "the plant case shape."
+                "RobotEnvironmentState episode key must use uint32 key data with the plant case shape."
             )
         if state.episode_step_index.shape != case_shape:
             raise ValueError(
@@ -975,7 +974,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         payload_finite = (
             self.plant.state_schema.finite_mask(state.plant_state.payload)
             if self.plant.require_finite_state
-            else jnp.ones(case_shape, dtype=bool)
+            else jnp.ones(case_shape, dtype=jnp.bool_)
         )
         plant_runtime_finite = (
             payload_finite
@@ -1040,10 +1039,10 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             dtype=result_dtype,
         )
         active = initial_valid
-        all_mechanics_successful = jnp.ones(case_shape, dtype=bool)
-        all_outputs_finite = jnp.ones(case_shape, dtype=bool)
-        terminated = jnp.zeros(case_shape, dtype=bool)
-        truncated = jnp.zeros(case_shape, dtype=bool)
+        all_mechanics_successful = jnp.ones(case_shape, dtype=jnp.bool_)
+        all_outputs_finite = jnp.ones(case_shape, dtype=jnp.bool_)
+        terminated = jnp.zeros(case_shape, dtype=jnp.bool_)
+        truncated = jnp.zeros(case_shape, dtype=jnp.bool_)
         last_status = jnp.zeros(case_shape, dtype=jnp.int32)
         attempted_values: list[Array] = []
         successful_values: list[Array] = []
@@ -1056,7 +1055,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             attempted = active & proposal.plant_attempted
             mechanics_successful = jnp.asarray(
                 proposal.mechanics_successful,
-                dtype=bool,
+                dtype=jnp.bool_,
             )
             mechanics_status = jnp.asarray(
                 proposal.mechanics_status,

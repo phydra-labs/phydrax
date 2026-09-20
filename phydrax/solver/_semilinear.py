@@ -144,13 +144,12 @@ def exact_modal_stochastic_convolution(
     """Sample one exactly filtered additive stochastic convolution increment."""
     if not isinstance(noise_basis, SpatialNoiseBasis):
         raise TypeError("noise_basis must be a SpatialNoiseBasis.")
-    eigenvalues = jnp.asarray(linear_eigenvalues, dtype=float).reshape((-1,))
-    normal = jnp.asarray(standard_normal, dtype=float).reshape((-1,))
+    eigenvalues = jnp.asarray(linear_eigenvalues, dtype=jnp.float64).reshape((-1,))
+    normal = jnp.asarray(standard_normal, dtype=jnp.float64).reshape((-1,))
     expected = (noise_basis.rank,)
     if eigenvalues.shape != expected or normal.shape != expected:
         raise ValueError(
-            "linear_eigenvalues and standard_normal must contain one value per "
-            f"noise mode; expected {expected}."
+            f"linear_eigenvalues and standard_normal must contain one value per noise mode; expected {expected}."
         )
     factor = _stochastic_convolution_time_factor(eigenvalues, jnp.asarray(step))
     variances = noise_basis.eigenvalues * factor
@@ -177,12 +176,12 @@ def _step_schedule(
     max_step: float,
     /,
 ) -> tuple[Array, Array, Array]:
-    saved = np.asarray(save_times, dtype=float)
+    saved = np.asarray(save_times, dtype=np.float64)
     if saved.ndim != 1 or saved.size <= 0:
         raise ValueError("save_times must be a non-empty one-dimensional array.")
     if np.any(~np.isfinite(saved)) or np.any(np.diff(saved) <= 0.0):
         raise ValueError("save_times must be finite and strictly increasing.")
-    tolerance = 100.0 * np.finfo(float).eps * max(1.0, abs(start), abs(end))
+    tolerance = 100.0 * np.finfo(np.float64).eps * max(1.0, abs(start), abs(end))
     if float(saved[0]) < start - tolerance or float(saved[-1]) > end + tolerance:
         raise ValueError("save_times must lie within the differential problem interval.")
     current = float(start)
@@ -203,9 +202,9 @@ def _step_schedule(
         current = target_value
         save_indices.append(len(steps))
     return (
-        jnp.asarray(steps, dtype=float),
+        jnp.asarray(steps, dtype=jnp.float64),
         jnp.asarray(save_indices, dtype=jnp.int32),
-        jnp.asarray(saved, dtype=float),
+        jnp.asarray(saved, dtype=jnp.float64),
     )
 
 
@@ -321,8 +320,7 @@ def _diffusion_columns(
         expected = state_shape + term.noise_shape
         if tuple(value.shape) != expected:
             raise ValueError(
-                f"WienerTerm {term.name!r} coefficient must return shape "
-                f"{expected}; got {value.shape}."
+                f"WienerTerm {term.name!r} coefficient must return shape {expected}; got {value.shape}."
             )
         columns.append(value.reshape(state_shape + (term.noise_size,)))
     return jnp.concatenate(columns, axis=-1)
@@ -348,8 +346,8 @@ def _milstein_increment(
         )[1]
 
     derivatives = jax.vmap(differentiate)(directions)
-    noise_size = int(wiener_increment.size)
-    flattened = derivatives.reshape((noise_size, int(state.size), noise_size))
+    noise_size = wiener_increment.size
+    flattened = derivatives.reshape((noise_size, state.size, noise_size))
     iterated = wiener_increment[:, None] * wiener_increment[None, :] - step * jnp.eye(
         noise_size, dtype=wiener_increment.dtype
     )
@@ -481,7 +479,7 @@ def solve_semilinear_spde(
         save_times,
         step_limit,
     )
-    num_steps = int(steps.size)
+    num_steps = steps.size
     initial_state = spde.problem.initial_state
     if isinstance(drift.linear_operator, AbstractLinearOperator) and isinstance(
         drift.linear_operator.source, ArraySpace
@@ -619,10 +617,10 @@ def solve_semilinear_spde(
                 flat_increments,
             )
             states = flat_states.reshape(
-                realization.sample_shape + (int(saved.size),) + spde.state_shape
+                realization.sample_shape + (saved.size,) + spde.state_shape
             )
             matrix_valid = flat_matrix_valid.reshape(
-                realization.sample_shape + (int(saved.size),)
+                realization.sample_shape + (saved.size,)
             )
             times = jnp.broadcast_to(saved, realization.sample_shape + saved.shape)
             sample_shape = realization.sample_shape

@@ -82,37 +82,37 @@ class _CoresetCollocationDiagnostics(StrictModule):
         coverage_guard_triggered: bool | Array = False,
         selection_kernel_evaluations: int | Array = 0,
     ):
-        self.selection_valid = jnp.asarray(selection_valid, dtype=bool)
-        self.selection_accepted = jnp.asarray(selection_accepted, dtype=bool)
-        self.selection_mmd = jnp.asarray(selection_mmd, dtype=float)
+        self.selection_valid = jnp.asarray(selection_valid, dtype=jnp.bool_)
+        self.selection_accepted = jnp.asarray(selection_accepted, dtype=jnp.bool_)
+        self.selection_mmd = jnp.asarray(selection_mmd, dtype=jnp.float64)
         self.importance_effective_sample_size = jnp.asarray(
             importance_effective_sample_size,
-            dtype=float,
+            dtype=jnp.float64,
         )
         self.effective_uniform_fraction = jnp.asarray(
             effective_uniform_fraction,
-            dtype=float,
+            dtype=jnp.float64,
         )
-        self.ess_guard_triggered = jnp.asarray(ess_guard_triggered, dtype=bool)
+        self.ess_guard_triggered = jnp.asarray(ess_guard_triggered, dtype=jnp.bool_)
         self.kernel_length_scale_min = jnp.asarray(
             kernel_length_scale_min,
-            dtype=float,
+            dtype=jnp.float64,
         )
         self.kernel_length_scale_max = jnp.asarray(
             kernel_length_scale_max,
-            dtype=float,
+            dtype=jnp.float64,
         )
         self.coverage_fill_distance = jnp.asarray(
             coverage_fill_distance,
-            dtype=float,
+            dtype=jnp.float64,
         )
         self.coverage_baseline_fill_distance = jnp.asarray(
             coverage_baseline_fill_distance,
-            dtype=float,
+            dtype=jnp.float64,
         )
         self.coverage_guard_triggered = jnp.asarray(
             coverage_guard_triggered,
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         self.selection_kernel_evaluations = jnp.asarray(
             selection_kernel_evaluations,
@@ -204,13 +204,13 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
         self.start_at = activation
         self.sampler = resolve_design(sampler)
         self.candidate_multiplier = multiplier
-        self.exponent = jnp.asarray(exponent_value, dtype=float)
-        self.uniform_fraction = jnp.asarray(uniform, dtype=float)
-        self.minimum_ess_fraction = jnp.asarray(minimum_ess, dtype=float)
-        self.max_fill_distance_ratio = jnp.asarray(fill_ratio, dtype=float)
-        self.epsilon = jnp.asarray(epsilon_value, dtype=float)
+        self.exponent = jnp.asarray(exponent_value, dtype=jnp.float64)
+        self.uniform_fraction = jnp.asarray(uniform, dtype=jnp.float64)
+        self.minimum_ess_fraction = jnp.asarray(minimum_ess, dtype=jnp.float64)
+        self.max_fill_distance_ratio = jnp.asarray(fill_ratio, dtype=jnp.float64)
+        self.epsilon = jnp.asarray(epsilon_value, dtype=jnp.float64)
         self.kernel = kernel
-        self.kernel_scale_factor = jnp.asarray(scale_factor, dtype=float)
+        self.kernel_scale_factor = jnp.asarray(scale_factor, dtype=jnp.float64)
         self.block_size = block
 
     def initialize(
@@ -260,17 +260,19 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
         diagnostics = _coreset_diagnostics(population)
         metrics.update(
             {
-                "coreset_candidate_count": jnp.asarray(candidate_count, dtype=float),
+                "coreset_candidate_count": jnp.asarray(
+                    candidate_count, dtype=jnp.float64
+                ),
                 "coreset_candidate_multiplier": jnp.asarray(
                     self.candidate_multiplier,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
-                "coreset_start_at": jnp.asarray(self.start_at, dtype=float),
+                "coreset_start_at": jnp.asarray(self.start_at, dtype=jnp.float64),
                 "coreset_score_exponent": jnp.asarray(self.exponent),
                 "coreset_uniform_fraction": jnp.asarray(self.uniform_fraction),
                 "coreset_effective_uniform_fraction": jnp.asarray(
                     diagnostics.effective_uniform_fraction,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_minimum_ess_fraction": jnp.asarray(self.minimum_ess_fraction),
                 "coreset_max_fill_distance_ratio": jnp.asarray(
@@ -278,56 +280,56 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
                 ),
                 "coreset_importance_effective_sample_size": jnp.asarray(
                     diagnostics.importance_effective_sample_size,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_importance_effective_sample_fraction": jnp.asarray(
                     diagnostics.importance_effective_sample_size / candidate_count,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_ess_guard_triggered": jnp.asarray(
                     diagnostics.ess_guard_triggered,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_kernel_automatic": jnp.asarray(
                     self.kernel is None,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_kernel_scale_factor": jnp.asarray(self.kernel_scale_factor),
                 "coreset_kernel_length_scale_min": jnp.asarray(
                     diagnostics.kernel_length_scale_min,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_kernel_length_scale_max": jnp.asarray(
                     diagnostics.kernel_length_scale_max,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_coverage_fill_distance": jnp.asarray(
                     diagnostics.coverage_fill_distance,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_coverage_baseline_fill_distance": jnp.asarray(
                     diagnostics.coverage_baseline_fill_distance,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_coverage_guard_triggered": jnp.asarray(
                     diagnostics.coverage_guard_triggered,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_selection_kernel_evaluations": jnp.asarray(
                     diagnostics.selection_kernel_evaluations,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_selection_valid": jnp.asarray(
                     diagnostics.selection_valid,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_selection_accepted": jnp.asarray(
                     diagnostics.selection_accepted,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
                 "coreset_selection_mmd": jnp.asarray(
                     diagnostics.selection_mmd,
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
             }
         )
@@ -378,7 +380,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
             size=candidate_count,
             name="pointwise loss",
         )
-        score_values = jax.lax.stop_gradient(jnp.asarray(scores.data, dtype=float))
+        score_values = jax.lax.stop_gradient(jnp.asarray(scores.data, dtype=jnp.float64))
         importance, importance_ess, effective_uniform, ess_guard_triggered = (
             _normalized_importance(
                 score_values,
@@ -423,7 +425,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
                 <= self.max_fill_distance_ratio * baseline_fill_distance + numerical_slack
             )
         else:
-            proposal_fill_distance = jnp.asarray(jnp.inf, dtype=float)
+            proposal_fill_distance = jnp.asarray(jnp.inf, dtype=jnp.float64)
             coverage_valid = False
         selection_accepted = selection_valid and coverage_valid
         if selection_accepted:
@@ -460,9 +462,9 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
             + fallback_kernel_evaluations
         )
         if isinstance(resolved_kernel, AbstractStationaryKernel):
-            length_scale = jnp.asarray(resolved_kernel.length_scale, dtype=float)
+            length_scale = jnp.asarray(resolved_kernel.length_scale, dtype=jnp.float64)
         else:
-            length_scale = jnp.asarray(jnp.nan, dtype=float)
+            length_scale = jnp.asarray(jnp.nan, dtype=jnp.float64)
         return CollocationPopulation(
             selected_batch,
             age=age,
@@ -515,7 +517,7 @@ def _compiled_weighted_mmd(
 
 @jax.jit
 def _normalize_point_features(features: Array, /) -> Array:
-    values = jnp.asarray(features, dtype=float)
+    values = jnp.asarray(features, dtype=jnp.float64)
     lower = jnp.min(values, axis=0)
     extent = jnp.max(values, axis=0) - lower
     tolerance = jnp.sqrt(jnp.finfo(values.dtype).eps)
@@ -541,7 +543,7 @@ def _resolve_selection_kernel(
 
 @jax.jit
 def _median_pairwise_distance(features: Array, /) -> Array:
-    point_count = int(features.shape[0])
+    point_count = features.shape[0]
     sample_count = min(point_count, 256)
     if sample_count < 2:
         return jnp.asarray(1.0, dtype=features.dtype)
@@ -573,14 +575,14 @@ def _coverage_fill_distance(
     *,
     block_size: int,
 ) -> Array:
-    source = jnp.asarray(points, dtype=float)
-    retained = jnp.asarray(support, dtype=float)
+    source = jnp.asarray(points, dtype=jnp.float64)
+    retained = jnp.asarray(support, dtype=jnp.float64)
     if source.ndim != 2 or retained.ndim != 2:
         raise ValueError("Coverage point arrays must be two-dimensional.")
     if source.shape[1] != retained.shape[1]:
         raise ValueError("Coverage point arrays must have equal coordinate size.")
     source_count, coordinate_size = map(int, source.shape)
-    retained_count = int(retained.shape[0])
+    retained_count = retained.shape[0]
     if source_count == 0 or retained_count == 0:
         raise ValueError("Coverage point arrays must be non-empty.")
     block = min(int(block_size), max(source_count, retained_count))
@@ -649,7 +651,7 @@ def _point_feature_matrix(batch: PointBatch, axis: str, count: int, /) -> Array:
         if not isinstance(leaf, cx.AxisArray) or axis not in leaf.named_dims:
             continue
         position = leaf.dims.index(axis)
-        values = jnp.moveaxis(jnp.asarray(leaf.data, dtype=float), position, 0)
+        values = jnp.moveaxis(jnp.asarray(leaf.data, dtype=jnp.float64), position, 0)
         if values.shape[0] != count:
             raise ValueError("Candidate point fields disagree on sample count.")
         matrices.append(values.reshape((count, -1)))

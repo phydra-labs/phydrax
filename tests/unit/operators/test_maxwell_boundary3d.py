@@ -24,7 +24,7 @@ _OCTAHEDRON_VERTICES = jnp.asarray(
         [0.0, 0.0, 1.0],
         [0.0, 0.0, -1.0],
     ],
-    dtype=float,
+    dtype="float64",
 )
 _OCTAHEDRON_FACES = jnp.asarray(
     [

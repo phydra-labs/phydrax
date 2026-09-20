@@ -102,7 +102,7 @@ def prepare_fuzzy_sphere_matrix_geometry(
         raise TypeError("plan must be FuzzySphereMatrixGeometryPlan.")
     dimension = plan.matrix_dimension
     spin = 0.5 * plan.twice_spin
-    magnetic = np.arange(dimension, dtype=float) - spin
+    magnetic = np.arange(dimension, dtype=np.float64) - spin
     raising = np.zeros((dimension, dimension), dtype=np.complex128)
     for index, value in enumerate(magnetic[:-1]):
         raising[index + 1, index] = math.sqrt((spin - value) * (spin + value + 1.0))
@@ -326,7 +326,7 @@ def sample_fuzzy_scalar_matrix_model(
         fields=fields,
         actions=action_values,
         trace_observables=trace_values,
-        acceptance_rate=jnp.mean(jnp.asarray(accepts, dtype=float)),
+        acceptance_rate=jnp.mean(jnp.asarray(accepts, dtype=jnp.float64)),
         finite=finite,
         plan_id=plan.plan_id,
         evidence_id=evidence_id,

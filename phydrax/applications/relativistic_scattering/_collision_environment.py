@@ -129,8 +129,8 @@ def assign_collision_pileup(
         pileup_pool, ParticleEventBatch
     ):
         raise TypeError("primary and pileup_pool must be ParticleEventBatch values.")
-    event_capacity = int(primary.event_ids.shape[0])
-    pool_capacity = int(pileup_pool.event_ids.shape[0])
+    event_capacity = primary.event_ids.shape[0]
+    pool_capacity = pileup_pool.event_ids.shape[0]
     active_pool_indices = jnp.nonzero(
         pileup_pool.event_active & pileup_pool.valid,
         size=pool_capacity,
@@ -185,7 +185,7 @@ def assign_collision_pileup(
         overflow,
         valid,
         status.astype(jnp.int32),
-        jnp.zeros((event_capacity,), dtype=bool),
+        jnp.zeros((event_capacity,), dtype=jnp.bool_),
         plan.plan_id,
     )
 
