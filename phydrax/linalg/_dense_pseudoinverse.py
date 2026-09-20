@@ -145,22 +145,15 @@ def _pseudoinverse_tangent(
     rows, columns = matrix.shape[-2:]
     pseudoinverse_adjoint = _adjoint(pseudoinverse)
     tangent_adjoint = _adjoint(tangent)
-    result = -pseudoinverse @ tangent @ pseudoinverse
-    if rows >= columns:
-        target_identity = jnp.eye(rows, dtype=matrix.dtype)
-        target_complement = target_identity - matrix @ pseudoinverse
-        result = (
-            result
-            + pseudoinverse @ pseudoinverse_adjoint @ tangent_adjoint @ target_complement
-        )
-    if columns >= rows:
-        source_identity = jnp.eye(columns, dtype=matrix.dtype)
-        source_complement = source_identity - pseudoinverse @ matrix
-        result = (
-            result
-            + source_complement @ tangent_adjoint @ pseudoinverse_adjoint @ pseudoinverse
-        )
-    return result
+    target_identity = jnp.eye(rows, dtype=matrix.dtype)
+    source_identity = jnp.eye(columns, dtype=matrix.dtype)
+    target_complement = target_identity - matrix @ pseudoinverse
+    source_complement = source_identity - pseudoinverse @ matrix
+    return (
+        -pseudoinverse @ tangent @ pseudoinverse
+        + pseudoinverse @ pseudoinverse_adjoint @ tangent_adjoint @ target_complement
+        + source_complement @ tangent_adjoint @ pseudoinverse_adjoint @ pseudoinverse
+    )
 
 
 @jax.custom_jvp

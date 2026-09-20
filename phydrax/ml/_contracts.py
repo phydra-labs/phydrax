@@ -20,6 +20,15 @@ GradientLevel: TypeAlias = Literal["smooth", "almost-everywhere", "conditional",
 FitGradientMode: TypeAlias = Literal[
     "direct", "implicit", "unrolled", "spectral", "relaxed", "stopped"
 ]
+GradientSurface: TypeAlias = Literal["prediction", "fit"]
+GradientInput: TypeAlias = Literal[
+    "inputs",
+    "parameters",
+    "features",
+    "targets",
+    "weights",
+    "hyperparameters",
+]
 _ModelT = TypeVar("_ModelT", bound=AbstractArrayModel)
 
 ML_SUCCESS = 0
@@ -44,6 +53,67 @@ class LogProbabilityModel(Protocol):
     """Structural contract for classifiers exposing normalized log probabilities."""
 
     def predict_log_proba(self, x: Any, /) -> Any: ...
+
+
+class MLGradientRequest(StrictModule):
+    """Explicit admission request for one prediction or fitting gradient surface."""
+
+    surface: GradientSurface = eqx.field(static=True)
+    inputs: tuple[GradientInput, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        surface: GradientSurface,
+        inputs: tuple[GradientInput, ...],
+        /,
+    ):
+        if surface not in ("prediction", "fit"):
+            raise ValueError("Gradient surface must be 'prediction' or 'fit'.")
+        values = tuple(inputs)
+        allowed = (
+            {"inputs", "parameters"}
+            if surface == "prediction"
+            else {"features", "targets", "weights", "hyperparameters"}
+        )
+        if not values or any(value not in allowed for value in values):
+            raise ValueError(
+                f"Gradient inputs {values!r} are invalid for surface {surface!r}."
+            )
+        if len(set(values)) != len(values):
+            raise ValueError("Gradient request inputs must be unique.")
+        self.surface = surface
+        self.inputs = values
+
+
+class MLGradientAdmission(StrictModule):
+    """Audited answer for one explicit ML gradient request."""
+
+    request: MLGradientRequest
+    levels: tuple[GradientLevel, ...] = eqx.field(static=True)
+    fit_mode: FitGradientMode = eqx.field(static=True)
+    supported: bool = eqx.field(static=True)
+    status: int = eqx.field(static=True)
+    conditions: tuple[str, ...] = eqx.field(static=True)
+    nondifferentiable_outputs: tuple[str, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        request: MLGradientRequest,
+        levels: tuple[GradientLevel, ...],
+        /,
+        *,
+        fit_mode: FitGradientMode,
+        conditions: tuple[str, ...],
+        nondifferentiable_outputs: tuple[str, ...],
+    ):
+        supported = all(level != "none" for level in levels)
+        self.request = request
+        self.levels = tuple(levels)
+        self.fit_mode = fit_mode
+        self.supported = supported
+        self.status = ML_SUCCESS if supported else ML_UNSUPPORTED_GRADIENT
+        self.conditions = tuple(conditions)
+        self.nondifferentiable_outputs = tuple(nondifferentiable_outputs)
 
 
 class GradientContract(StrictModule):
@@ -106,6 +176,48 @@ class GradientContract(StrictModule):
             fit_mode="direct",
             conditions=conditions,
         )
+
+    def admit(self, request: MLGradientRequest, /) -> MLGradientAdmission:
+        if not isinstance(request, MLGradientRequest):
+            raise TypeError("request must be an MLGradientRequest.")
+        if request.surface == "prediction":
+            declared = {
+                "inputs": self.prediction_inputs,
+                "parameters": self.prediction_parameters,
+            }
+        else:
+            declared = {
+                "features": self.fit_features,
+                "targets": self.fit_targets,
+                "weights": self.fit_weights,
+                "hyperparameters": self.fit_hyperparameters,
+            }
+        levels = tuple(declared[value] for value in request.inputs)
+        return MLGradientAdmission(
+            request,
+            levels,
+            fit_mode=self.fit_mode,
+            conditions=self.conditions,
+            nondifferentiable_outputs=self.nondifferentiable_outputs,
+        )
+
+    def require(self, request: MLGradientRequest, /) -> MLGradientAdmission:
+        admission = self.admit(request)
+        if not admission.supported:
+            unsupported = tuple(
+                value
+                for value, level in zip(
+                    admission.request.inputs,
+                    admission.levels,
+                    strict=True,
+                )
+                if level == "none"
+            )
+            raise ValueError(
+                "Gradient request is unsupported for inputs "
+                f"{unsupported!r}; inspect GradientContract before transforming."
+            )
+        return admission
 
 
 class FitDiagnostics(StrictModule):
@@ -190,6 +302,20 @@ class FitResult(StrictModule):
             )
         return model
 
+    def gradient_admission(
+        self,
+        request: MLGradientRequest,
+        /,
+    ) -> MLGradientAdmission:
+        return self.gradient_contract.admit(request)
+
+    def require_gradient(
+        self,
+        request: MLGradientRequest,
+        /,
+    ) -> MLGradientAdmission:
+        return self.gradient_contract.require(request)
+
 
 class AbstractRecipe(StrictModule):
     """Immutable configuration for a pure ML fitting operation."""
@@ -204,10 +330,14 @@ __all__ = [
     "DecisionFunctionModel",
     "FitDiagnostics",
     "FitGradientMode",
+    "GradientInput",
+    "GradientLevel",
+    "GradientSurface",
     "FitResult",
     "GradientContract",
     "LogProbabilityModel",
-    "GradientLevel",
+    "MLGradientAdmission",
+    "MLGradientRequest",
     "ML_CAPACITY_EXHAUSTED",
     "ML_INFEASIBLE",
     "ML_INSUFFICIENT_DATA",

@@ -450,6 +450,7 @@ class ConvexDifferentiationPolicy(StrictModule):
 
     mode: ConvexDifferentiationMode = eqx.field(static=True)
     active_tolerance: float = eqx.field(static=True)
+    strict_complementarity_tolerance: float = eqx.field(static=True)
     barrier: float | None = eqx.field(static=True)
     centering_tolerance: float = eqx.field(static=True)
     maximum_centering_steps: int = eqx.field(static=True)
@@ -460,6 +461,7 @@ class ConvexDifferentiationPolicy(StrictModule):
         /,
         *,
         active_tolerance: float = 1e-5,
+        strict_complementarity_tolerance: float = 1e-4,
         barrier: float | None = None,
         centering_tolerance: float = 1e-8,
         maximum_centering_steps: int = 32,
@@ -467,11 +469,20 @@ class ConvexDifferentiationPolicy(StrictModule):
         if mode not in ("active-set-kkt", "barrier-kkt", "algorithmic", "none"):
             raise ValueError("Unknown convex-program differentiation mode.")
         active = float(active_tolerance)
+        strict = float(strict_complementarity_tolerance)
         centering = float(centering_tolerance)
         steps = int(maximum_centering_steps)
         barrier_ = None if barrier is None else float(barrier)
-        if not isfinite(active) or active <= 0.0:
-            raise ValueError("active_tolerance must be finite and positive.")
+        if (
+            not isfinite(active)
+            or active <= 0.0
+            or not isfinite(strict)
+            or strict <= active
+        ):
+            raise ValueError(
+                "strict_complementarity_tolerance must exceed a finite positive "
+                "active_tolerance."
+            )
         if not isfinite(centering) or centering <= 0.0:
             raise ValueError("centering_tolerance must be finite and positive.")
         if steps < 1:
@@ -485,6 +496,7 @@ class ConvexDifferentiationPolicy(StrictModule):
             raise ValueError("barrier is only valid for barrier-kkt differentiation.")
         self.mode = mode
         self.active_tolerance = active
+        self.strict_complementarity_tolerance = strict
         self.barrier = barrier_
         self.centering_tolerance = centering
         self.maximum_centering_steps = steps

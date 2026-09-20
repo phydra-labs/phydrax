@@ -1797,16 +1797,19 @@ the interior.
 
 `solve_quadratic_program_primal` is the differentiable, primal-only surface.
 `ConvexDifferentiationPolicy("active-set-kkt")` differentiates the locally
-fixed active KKT system. `ConvexDifferentiationPolicy("barrier-kkt",
-barrier=...)` differentiates a finite, explicitly centered primal-dual barrier
-system. `prepare_qp_sensitivity` retains reusable JVP and VJP actions. MPAX
-exposes only explicitly requested algorithmic differentiation: the selected
-method must use `unroll=True` and the differentiation policy must be
-`"algorithmic"`.
+fixed active KKT system in both forward and reverse mode. Every inequality
+must be either strictly active or strictly inactive under the separate active
+and strict-complementarity tolerances, and the resulting KKT matrix must be
+numerically full rank. Weakly active or dependent active systems return NaN
+derivatives rather than a selected minimum-norm generalized derivative.
 
-The active-set derivative is valid only at a successful regular KKT point with
-an unambiguous strictly complementary active set. Barrier differentiation
-returns the finite-barrier solution and never hides its smoothing scale.
+`ConvexDifferentiationPolicy("barrier-kkt", barrier=...)` differentiates a
+finite, explicitly centered primal-dual barrier system. It returns the
+finite-barrier solution and never hides its smoothing scale.
+`prepare_qp_sensitivity` retains one prepared linearization with reusable JVP
+and VJP actions and reports whether the solution map is regular. MPAX exposes
+only explicitly requested algorithmic differentiation: the selected method
+must use `unroll=True` and the differentiation policy must be `"algorithmic"`.
 
 ### Results, audits, and certificates
 
@@ -1995,12 +1998,14 @@ bound has one valid tangent, so JVP inputs require equal lower and upper perturb
 The VJP splits its cotangent equally between the two public bound arrays. Infinite
 bounds accept only zero tangents and receive zero cotangents.
 
-The derivative solve currently requires undamped `DenseSVD`, so full-rank and condition
-evidence are available before any derivative is accepted. Tikhonov damping would change
-the derivative equation and is rejected; regularize the executed convex program through
-`ConvexSolvePolicy.regularization` instead. Existing materialization and resource
-budgets bound this dense path. Matrix-free sensitivity is deferred until its regularity
-contract can certify more than convergence and a small residual.
+The dense derivative solve requires undamped `DenseSVD`, so full-rank and
+condition evidence are available before any derivative is accepted. Tikhonov
+damping would change the derivative equation and is rejected; regularize the
+executed convex program through `ConvexSolvePolicy.regularization` instead.
+Existing materialization and resource budgets bound this dense path.
+Matrix-free conic sensitivity is separately available through
+`prepare_conic_sensitivity(..., representation="matrix-free")` when its
+operator-stability and preconditioning evidence passes.
 
 Preparation and Clarabel execution remain host operations. Once prepared,
 `conic_primal_jvp` and `conic_primal_vjp` are JIT-compatible JAX kernels, but this does

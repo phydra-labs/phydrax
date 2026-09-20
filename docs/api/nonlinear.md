@@ -340,17 +340,21 @@ that merely happens to be sharded.
 ## Solution-map derivatives
 
 `SensitivityPolicy` selects implicit forward/reverse, unrolled, truncated, or
-direct-loss-minimization semantics. `root_solution_jvp` and
-`root_solution_vjp` solve the final physical linearization;
-`root_solution_second_jvp` applies the second-order implicit-function formula
-without constructing a third-order tensor. Singular, ill-conditioned, and
-nonfinite derivative systems return explicit `SensitivityEvidence`.
+direct-loss-minimization semantics. `root_solution_jvp`,
+`root_solution_vjp`, and `minimizer_solution_jvp` first certify that the
+supplied state satisfies the declared residual or stationarity tolerance.
+`SensitivityStatus.PRIMAL_FAILED` is returned before any derivative can be
+accepted. `root_solution_second_jvp` preserves a failed first-order status
+rather than relabeling it as a conditioning failure.
 
-Implicit sensitivity systems, constrained solution maps, scalar roots, batched
-small roots, quasi-Newton methods, spectral residual methods, pseudo-transient
-continuation, higher-order roots, and root portfolios use the same policy.
-Sensitivity evidence retains the executed linear plan ID and the primal precision
-envelope; portfolio envelopes retain every attempted child solve.
+The final physical linearization is retained through
+`prepare_linearization` and `JacobianLinearOperator`; directional actions and
+solves do not construct a private dense Jacobian. The selected native linear
+policy may still permit bounded materialization. Singular, ill-conditioned,
+nonfinite, and failed derivative solves remain distinct
+`SensitivityEvidence`. Evidence includes the primal residual norm and
+tolerance, primal validity, native linear status, executed linear plan ID, and
+the primal precision envelope.
 
 ## Implicit root differentiation
 

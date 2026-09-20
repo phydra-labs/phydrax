@@ -18,8 +18,28 @@ def test_derivative_execution_plan_preserves_exact_strategy_boundaries():
         == "forward"
     )
     assert plan_derivative_execution(laplacian).strategy == "jvp"
-    assert plan_derivative_execution(high_order).strategy == "jet"
+    assert plan_derivative_execution(high_order).strategy == "jvp"
     assert plan_derivative_execution(first, directional=True).strategy == "jvp"
+
+    explicit_jet = (
+        DerivativeRequest(
+            "u",
+            "x",
+            (0, 0, 0),
+            variable_path=("x", "x", "x"),
+            backends=("jet", "jet", "jet"),
+        ),
+    )
+    mixed = (
+        DerivativeRequest(
+            "u",
+            "t",
+            (0, None),
+            variable_path=("x", "t"),
+        ),
+    )
+    assert plan_derivative_execution(explicit_jet).strategy == "jet"
+    assert plan_derivative_execution(mixed).variable_count == 2
 
 
 def test_fused_coordinate_derivatives_match_analytic_vector_derivatives():

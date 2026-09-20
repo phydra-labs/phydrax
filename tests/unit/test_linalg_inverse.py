@@ -111,6 +111,88 @@ def test_pseudoinverse_handles_tall_wide_and_rank_deficient_batches():
         )
 
 
+@pytest.mark.parametrize("transpose", (False, True))
+def test_rank_deficient_rectangular_pseudoinverse_jvp_is_fixed_rank_complete(
+    transpose,
+):
+    left = jnp.asarray((1.0, -0.5, 2.0))
+    right = jnp.asarray((0.75, -1.25))
+    left_tangent = jnp.asarray((0.2, 0.4, -0.3))
+    right_tangent = jnp.asarray((-0.1, 0.35))
+
+    def matrix_at(parameter):
+        matrix = jnp.outer(
+            left + parameter * left_tangent,
+            right + parameter * right_tangent,
+        )
+        return matrix.T if transpose else matrix
+
+    def pseudoinverse_at(parameter):
+        return la.pseudoinverse(matrix_at(parameter)).value
+
+    parameter = jnp.asarray(0.0)
+    value, derivative = jax.jvp(
+        pseudoinverse_at,
+        (parameter,),
+        (jnp.asarray(1.0),),
+    )
+    step = jnp.asarray(1.0e-5)
+    finite_difference = (
+        pseudoinverse_at(parameter + step) - pseudoinverse_at(parameter - step)
+    ) / (2.0 * step)
+
+    assert jnp.all(jnp.isfinite(value))
+    assert jnp.allclose(derivative, finite_difference, rtol=2e-9, atol=2e-10)
+
+    matrix = matrix_at(parameter)
+    matrix_tangent = jax.jvp(
+        matrix_at,
+        (parameter,),
+        (jnp.asarray(1.0),),
+    )[1]
+    cotangent = jnp.arange(value.size, dtype=value.dtype).reshape(value.shape) / 7.0
+    _, pullback = jax.vjp(lambda argument: la.pseudoinverse(argument).value, matrix)
+    matrix_cotangent = pullback(cotangent)[0]
+    assert jnp.allclose(
+        jnp.vdot(cotangent, derivative),
+        jnp.vdot(matrix_cotangent, matrix_tangent),
+        rtol=2e-10,
+        atol=2e-11,
+    )
+
+
+@pytest.mark.parametrize("transpose", (False, True))
+def test_complex_rank_deficient_rectangular_pseudoinverse_jvp_matches_difference(
+    transpose,
+):
+    left = jnp.asarray((1.0 + 0.2j, -0.5j, 2.0 - 0.3j))
+    right = jnp.asarray((0.75 - 0.1j, -1.25 + 0.4j))
+    left_tangent = jnp.asarray((0.2j, 0.4 - 0.1j, -0.3))
+    right_tangent = jnp.asarray((-0.1 + 0.05j, 0.35j))
+
+    def pseudoinverse_at(parameter):
+        matrix = jnp.outer(
+            left + parameter * left_tangent,
+            jnp.conj(right + parameter * right_tangent),
+        )
+        if transpose:
+            matrix = jnp.swapaxes(matrix, -1, -2)
+        return la.pseudoinverse(matrix).value
+
+    parameter = jnp.asarray(0.0)
+    _, derivative = jax.jvp(
+        pseudoinverse_at,
+        (parameter,),
+        (jnp.asarray(1.0),),
+    )
+    step = jnp.asarray(1.0e-5)
+    finite_difference = (
+        pseudoinverse_at(parameter + step) - pseudoinverse_at(parameter - step)
+    ) / (2.0 * step)
+
+    assert jnp.allclose(derivative, finite_difference, rtol=3e-9, atol=3e-10)
+
+
 def test_pseudoinverse_combines_absolute_and_relative_rank_cutoffs():
     matrix = jnp.diag(jnp.asarray((10.0, 1.0e-3, 1.0e-7)))
     policy = la.FactorizationPolicy(

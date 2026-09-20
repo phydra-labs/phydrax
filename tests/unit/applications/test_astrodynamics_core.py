@@ -97,3 +97,21 @@ def test_invalid_two_body_inputs_return_status_without_shape_change():
     assert not bool(result.valid)
     assert int(result.status) == int(astro.AstrodynamicsStatus.INVALID_DOMAIN)
     assert result.state.position.shape == (3,)
+    tangent = jax.jvp(
+        lambda mu: (
+            astro.propagate_universal_kepler(
+                state,
+                1.0,
+                mu,
+            ).state.position
+        ),
+        (jnp.asarray(-1.0),),
+        (jnp.asarray(1.0),),
+    )[1]
+    reverse = jax.grad(
+        lambda mu: jnp.sum(
+            astro.propagate_universal_kepler(state, 1.0, mu).state.position
+        )
+    )(jnp.asarray(-1.0))
+    assert jnp.all(jnp.isnan(tangent))
+    assert jnp.isnan(reverse)

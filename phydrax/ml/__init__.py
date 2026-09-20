@@ -19,6 +19,8 @@ from ._contracts import (
     ML_RANK_DEFICIENT,
     ML_SUCCESS,
     ML_UNSUPPORTED_GRADIENT,
+    MLGradientAdmission,
+    MLGradientRequest,
 )
 from ._fit import fit
 from ._overlap import (
@@ -135,6 +137,8 @@ __all__ = [
     "RelaxedDiscreteSample",
     "relaxed_top_k",
     "GradientContract",
+    "MLGradientAdmission",
+    "MLGradientRequest",
     "MLBatch",
     "ML_CAPACITY_EXHAUSTED",
     "ML_INFEASIBLE",

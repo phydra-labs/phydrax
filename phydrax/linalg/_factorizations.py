@@ -27,6 +27,7 @@ from ._policies import (
     DenseSVD,
     DifferentiationPolicy,
     FailurePolicy,
+    LinearDerivativeSolvePolicy,
     LinearSolvePolicy,
     MixedPrecisionPolicy,
     RankPolicy,
@@ -67,6 +68,7 @@ class FactorizationPolicy(StrictModule):
     tolerance: TolerancePolicy
     materialization: MaterializationPolicy
     differentiation: DifferentiationPolicy
+    derivative_solve: LinearDerivativeSolvePolicy
     failure: FailurePolicy
     resources: SolveResourcePolicy
     precision: MixedPrecisionPolicy | None
@@ -80,6 +82,7 @@ class FactorizationPolicy(StrictModule):
         tolerance: TolerancePolicy | None = None,
         materialization: MaterializationPolicy | None = None,
         differentiation: DifferentiationPolicy | None = None,
+        derivative_solve: LinearDerivativeSolvePolicy | None = None,
         failure: FailurePolicy | None = None,
         resources: SolveResourcePolicy | None = None,
         precision: MixedPrecisionPolicy | None = None,
@@ -100,6 +103,15 @@ class FactorizationPolicy(StrictModule):
         if not isinstance(differentiation_, DifferentiationPolicy):
             raise TypeError("differentiation must be a DifferentiationPolicy or None.")
         self.differentiation = differentiation_
+        self.derivative_solve = (
+            LinearDerivativeSolvePolicy()
+            if derivative_solve is None
+            else derivative_solve
+        )
+        if not isinstance(self.derivative_solve, LinearDerivativeSolvePolicy):
+            raise TypeError(
+                "derivative_solve must be a LinearDerivativeSolvePolicy or None."
+            )
         self.failure = FailurePolicy() if failure is None else failure
         self.resources = SolveResourcePolicy() if resources is None else resources
         self.precision = precision
@@ -119,6 +131,7 @@ def factorization_policy_from_linear_solve(
         tolerance=policy.tolerance,
         materialization=policy.materialization,
         differentiation=policy.differentiation,
+        derivative_solve=policy.derivative_solve,
         failure=policy.failure,
         resources=policy.resources,
         precision=policy.precision,
@@ -310,6 +323,7 @@ def factorize(
         rank=policy_.rank,
         materialization=policy_.materialization,
         differentiation=policy_.differentiation,
+        derivative_solve=policy_.derivative_solve,
         failure=policy_.failure,
         resources=policy_.resources,
         precision=policy_.precision,
@@ -381,6 +395,7 @@ def pseudoinverse(
             tolerance=policy_.tolerance,
             materialization=policy_.materialization,
             differentiation=policy_.differentiation,
+            derivative_solve=policy_.derivative_solve,
             failure=policy_.failure,
             resources=policy_.resources,
             precision=policy_.precision,

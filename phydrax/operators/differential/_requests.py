@@ -31,6 +31,10 @@ class DerivativeRequest:
     variable: str
     axes: tuple[int | None, ...]
     laplacian_count: int = 0
+    variable_path: tuple[str, ...] = ()
+    backends: tuple[DerivativeBackend, ...] = ()
+    laplacian_variables: tuple[str, ...] = ()
+    laplacian_backends: tuple[DerivativeBackend, ...] = ()
 
     @property
     def contracted_laplacian(self) -> bool:
@@ -39,6 +43,14 @@ class DerivativeRequest:
     @property
     def order(self) -> int:
         return len(self.axes) + 2 * self.laplacian_count
+
+    @property
+    def variables(self) -> frozenset[str]:
+        return frozenset((self.variable, *self.variable_path, *self.laplacian_variables))
+
+    @property
+    def explicitly_uses_jet(self) -> bool:
+        return "jet" in (*self.backends, *self.laplacian_backends)
 
 
 class _RequestRecorderRule(DerivativeRule):
@@ -49,19 +61,28 @@ class _RequestRecorderRule(DerivativeRule):
         field: str,
         requests: list[DerivativeRequest],
         prefix: tuple[int | None, ...] = (),
-        prefix_laplacians: int = 0,
+        prefix_variables: tuple[str, ...] = (),
+        prefix_backends: tuple[DerivativeBackend, ...] = (),
+        prefix_laplacian_variables: tuple[str, ...] = (),
+        prefix_laplacian_backends: tuple[DerivativeBackend, ...] = (),
     ):
         self.source = source
         self.field = field
         self.requests = requests
         self.prefix = prefix
-        self.prefix_laplacians = int(prefix_laplacians)
+        self.prefix_variables = prefix_variables
+        self.prefix_backends = prefix_backends
+        self.prefix_laplacian_variables = prefix_laplacian_variables
+        self.prefix_laplacian_backends = prefix_laplacian_backends
 
     def _result(
         self,
         *,
         prefix: tuple[int | None, ...],
-        prefix_laplacians: int,
+        prefix_variables: tuple[str, ...],
+        prefix_backends: tuple[DerivativeBackend, ...],
+        prefix_laplacian_variables: tuple[str, ...],
+        prefix_laplacian_backends: tuple[DerivativeBackend, ...],
     ) -> DomainFunction:
         return DomainFunction(
             domain=self.source.domain,
@@ -73,7 +94,10 @@ class _RequestRecorderRule(DerivativeRule):
                 field=self.field,
                 requests=self.requests,
                 prefix=prefix,
-                prefix_laplacians=prefix_laplacians,
+                prefix_variables=prefix_variables,
+                prefix_backends=prefix_backends,
+                prefix_laplacian_variables=prefix_laplacian_variables,
+                prefix_laplacian_backends=prefix_laplacian_backends,
             ),
         )
 
@@ -88,18 +112,28 @@ class _RequestRecorderRule(DerivativeRule):
         basis: DerivativeBasis,
         periodic: bool,
     ) -> DomainFunction | None:
-        del mode, backend, basis, periodic
-        axes = self.prefix + (axis,) * int(order)
+        del mode, basis, periodic
+        order_ = int(order)
+        axes = self.prefix + (axis,) * order_
+        variables = self.prefix_variables + (var,) * order_
+        backends = self.prefix_backends + (backend,) * order_
         request = DerivativeRequest(
             field=self.field,
             variable=var,
             axes=axes,
-            laplacian_count=self.prefix_laplacians,
+            laplacian_count=len(self.prefix_laplacian_variables),
+            variable_path=variables,
+            backends=backends,
+            laplacian_variables=self.prefix_laplacian_variables,
+            laplacian_backends=self.prefix_laplacian_backends,
         )
         self.requests.append(request)
         return self._result(
             prefix=axes,
-            prefix_laplacians=self.prefix_laplacians,
+            prefix_variables=variables,
+            prefix_backends=backends,
+            prefix_laplacian_variables=self.prefix_laplacian_variables,
+            prefix_laplacian_backends=self.prefix_laplacian_backends,
         )
 
     def derive_laplacian(
@@ -111,17 +145,26 @@ class _RequestRecorderRule(DerivativeRule):
         basis: DerivativeBasis,
         periodic: bool,
     ) -> DomainFunction | None:
-        del mode, backend, basis, periodic
+        del mode, basis, periodic
+        laplacian_variables = self.prefix_laplacian_variables + (var,)
+        laplacian_backends = self.prefix_laplacian_backends + (backend,)
         request = DerivativeRequest(
             field=self.field,
             variable=var,
             axes=self.prefix,
-            laplacian_count=self.prefix_laplacians + 1,
+            laplacian_count=len(laplacian_variables),
+            variable_path=self.prefix_variables,
+            backends=self.prefix_backends,
+            laplacian_variables=laplacian_variables,
+            laplacian_backends=laplacian_backends,
         )
         self.requests.append(request)
         return self._result(
             prefix=self.prefix,
-            prefix_laplacians=self.prefix_laplacians + 1,
+            prefix_variables=self.prefix_variables,
+            prefix_backends=self.prefix_backends,
+            prefix_laplacian_variables=laplacian_variables,
+            prefix_laplacian_backends=laplacian_backends,
         )
 
 
@@ -184,7 +227,9 @@ class DerivativeExecutionPlan(StrictModule):
         self.requests = tuple(requests)
         self.strategy = strategy
         self.maximum_order = max(request.order for request in requests)
-        self.variable_count = len({request.variable for request in requests})
+        self.variable_count = len(
+            set().union(*(request.variables for request in requests))
+        )
         self.contracted_laplacian = any(
             request.contracted_laplacian for request in requests
         )
@@ -205,9 +250,9 @@ def plan_derivative_execution(
         raise ValueError("At least one derivative request is required.")
     maximum_order = max(request.order for request in values)
     contracted = any(request.contracted_laplacian for request in values)
-    if maximum_order > 2:
+    if any(request.explicitly_uses_jet for request in values):
         strategy: DerivativeExecutionStrategy = "jet"
-    elif directional or contracted or maximum_order == 2:
+    elif directional or contracted or maximum_order >= 2:
         strategy = "jvp"
     elif (
         output_size is not None

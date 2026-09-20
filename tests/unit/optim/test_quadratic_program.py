@@ -331,8 +331,7 @@ def test_active_set_gradients_match_piecewise_analytic_sensitivities():
         return phx.optim.solve_quadratic_program_primal(problem)
 
     duplicate_jacobian = jax.jacrev(duplicate_active_solution)(jnp.array([2.0]))
-    assert jnp.all(jnp.isfinite(duplicate_jacobian))
-    np.testing.assert_allclose(duplicate_jacobian, jnp.zeros((1, 1)), atol=1e-7)
+    assert jnp.all(jnp.isnan(duplicate_jacobian))
 
     def equality_solution(rhs):
         problem = phx.optim.QuadraticProgram(
@@ -348,6 +347,46 @@ def test_active_set_gradients_match_piecewise_analytic_sensitivities():
         jnp.array([[0.5], [0.5]]),
         atol=1e-7,
     )
+
+
+def test_active_set_jvp_matches_regular_piecewise_solution_map():
+    def solution(linear):
+        return phx.optim.solve_quadratic_program_primal(
+            phx.optim.QuadraticProgram(
+                jnp.eye(2),
+                linear,
+                inequality_matrix=-jnp.eye(2),
+                inequality_rhs=jnp.zeros(2),
+            )
+        )
+
+    linear = jnp.asarray((-2.0, 2.0))
+    direction = jnp.asarray((0.5, -0.25))
+    _, tangent = jax.jvp(solution, (linear,), (direction,))
+
+    np.testing.assert_allclose(tangent, jnp.asarray((-0.5, 0.0)), atol=1e-7)
+
+
+def test_active_set_derivative_rejects_weak_complementarity():
+    def solution(linear):
+        return phx.optim.solve_quadratic_program_primal(
+            phx.optim.QuadraticProgram(
+                jnp.ones((1, 1)),
+                linear.reshape((1,)),
+                inequality_matrix=jnp.asarray([[-1.0]]),
+                inequality_rhs=jnp.zeros((1,)),
+            )
+        )[0]
+
+    _, tangent = jax.jvp(
+        solution,
+        (jnp.asarray(0.0),),
+        (jnp.asarray(1.0),),
+    )
+    reverse = jax.grad(solution)(jnp.asarray(0.0))
+
+    assert jnp.isnan(tangent)
+    assert jnp.isnan(reverse)
 
 
 def test_barrier_kkt_primal_and_gradient_match_scalar_central_path():
@@ -394,6 +433,20 @@ def test_prepared_qp_sensitivity_reuses_primal_jvp_and_vjp_actions():
     np.testing.assert_allclose(prepared.jvp(tangent), jnp.asarray((-1.0, 0.0)))
     pullback = prepared.vjp(jnp.asarray((1.0, 0.0)))
     np.testing.assert_allclose(pullback.linear, jnp.asarray((-1.0, 0.0)))
+    assert bool(prepared.regular)
+
+
+def test_prepared_qp_sensitivity_reports_degenerate_active_set():
+    problem = phx.optim.QuadraticProgram(
+        jnp.ones((1, 1)),
+        jnp.asarray((2.0,)),
+        inequality_matrix=jnp.asarray([[-1.0], [-1.0]]),
+        inequality_rhs=jnp.zeros(2),
+    )
+
+    prepared = phx.optim.prepare_qp_sensitivity(problem)
+
+    assert not bool(prepared.regular)
 
 
 def test_explicit_regularization_is_recorded_and_not_hidden_in_raw_kkt_data():

@@ -7,11 +7,14 @@ import jax.numpy as jnp
 import pytest
 
 from phydrax.ml import (
+    fit,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    ML_UNSUPPORTED_GRADIENT,
     MLBatch,
+    MLGradientRequest,
 )
 from phydrax.ml.clustering import (
     HardClusterModel,
@@ -149,6 +152,35 @@ def test_soft_kmeans_exercises_declared_prediction_and_fit_gradients():
     assert jnp.all(jnp.isfinite(feature_gradient))
     assert jnp.all(jnp.isfinite(weight_gradient))
     assert jnp.isfinite(temperature_gradient)
+
+
+def test_ml_gradient_admission_distinguishes_hard_and_soft_fits():
+    features = jnp.asarray([[-2.0], [2.0], [-1.5], [1.5]])
+    request = MLGradientRequest("fit", ("features",))
+    hard = KMeans(2, initialization="first").fit_batch(MLBatch(features))
+    soft = SoftKMeans(
+        2,
+        temperature=0.8,
+        max_iterations=4,
+        tolerance=1e6,
+        initialization="first",
+    ).fit_batch(MLBatch(features))
+
+    hard_admission = hard.gradient_admission(request)
+    soft_admission = soft.require_gradient(request)
+
+    assert not hard_admission.supported
+    assert hard_admission.status == ML_UNSUPPORTED_GRADIENT
+    assert soft_admission.supported
+    assert soft_admission.levels == ("conditional",)
+    with pytest.raises(ValueError, match="unsupported"):
+        hard.require_gradient(request)
+    with pytest.raises(ValueError, match="unsupported"):
+        fit(
+            KMeans(2, initialization="first"),
+            features,
+            gradient_request=request,
+        )
 
 
 def test_kmedoids_returns_observations_and_uses_deterministic_manhattan_ties():

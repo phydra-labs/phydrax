@@ -80,8 +80,10 @@ point_tangent = -field_parameter_tangent * field_gradient
 ```
 
 The derivative is valid only when the returned root residual, field-gradient
-margin, and trust-region evidence pass. Failed proposals return finite reference
-points and zero accepted motion.
+margin, and trust-region evidence pass. Failed proposals return finite
+reference points and zero accepted motion, but their forward and reverse
+sensitivities are NaN. The finite rollback is diagnostic state, not a
+zero-sensitivity physical solution.
 
 ```python
 projection = phx.geometry.ImplicitPointProjectionPlan(

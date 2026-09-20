@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Fixed
+- Corrected rectangular rank-deficient pseudoinverse derivatives; certified
+  mathematical linear and nonlinear solution-map derivatives against primal
+  and tangent residuals; made regular QP sensitivities bidirectional and
+  fail-closed at weak or singular active sets; made derivative planning
+  preserve mixed variables and reserve Jet for explicit requests; added a
+  native Pallas pair-acceleration JVP, explicit ML gradient admission, and
+  shared invalid-derivative guards for finite diagnostic fallbacks.
 - Preserved tiny Gegenbauer parameters through the first recurrence step by
   avoiding cancellation in the `2*alpha` coefficient. The isolated `z=1`
   polylogarithm branch was removed from its differentiated contract; callers

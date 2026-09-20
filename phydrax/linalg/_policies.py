@@ -675,10 +675,11 @@ class LinearSolveCheckPolicy(StrictModule):
 
 
 class LinearDerivativeSolvePolicy(StrictModule):
-    """Independent acceptance requirements for an adjoint derivative solve."""
+    """Independent work and acceptance requirements for implicit derivative solves."""
 
     relative_tolerance: float = eqx.field(static=True)
     absolute_tolerance: float = eqx.field(static=True)
+    maximum_steps: int | None = eqx.field(static=True)
     nullspace_tolerance: float = eqx.field(static=True)
     stability_lower_bound: StabilityLowerBound | None
     require_nullspace: bool = eqx.field(static=True)
@@ -688,6 +689,7 @@ class LinearDerivativeSolvePolicy(StrictModule):
         *,
         relative_tolerance: float = 1e-8,
         absolute_tolerance: float = 1e-10,
+        maximum_steps: int | None = None,
         nullspace_tolerance: float = 1e-10,
         stability_lower_bound: StabilityLowerBound | None = None,
         require_nullspace: bool = False,
@@ -703,6 +705,10 @@ class LinearDerivativeSolvePolicy(StrictModule):
             nullspace_tolerance,
             stability_lower_bound,
         )
+        steps = None if maximum_steps is None else int(maximum_steps)
+        if steps is not None and steps < 1:
+            raise ValueError("maximum_steps must be positive or None.")
+        self.maximum_steps = steps
         self.require_nullspace = bool(require_nullspace)
 
 
@@ -716,6 +722,7 @@ class LinearSolvePolicy(StrictModule):
     preconditioning: PreconditioningPolicy | None
     recycling: RecyclingPolicy | None
     differentiation: DifferentiationPolicy
+    derivative_solve: LinearDerivativeSolvePolicy
     failure: FailurePolicy
     resources: SolveResourcePolicy
     precision: MixedPrecisionPolicy | None
@@ -732,6 +739,7 @@ class LinearSolvePolicy(StrictModule):
         preconditioning: PreconditioningPolicy | None = None,
         recycling: RecyclingPolicy | None = None,
         differentiation: DifferentiationPolicy | None = None,
+        derivative_solve: LinearDerivativeSolvePolicy | None = None,
         failure: FailurePolicy | None = None,
         resources: SolveResourcePolicy | None = None,
         precision: MixedPrecisionPolicy | None = None,
@@ -752,6 +760,11 @@ class LinearSolvePolicy(StrictModule):
         differentiation_ = (
             DifferentiationPolicy() if differentiation is None else differentiation
         )
+        derivative_solve_ = (
+            LinearDerivativeSolvePolicy()
+            if derivative_solve is None
+            else derivative_solve
+        )
         failure_ = FailurePolicy() if failure is None else failure
         resources_ = SolveResourcePolicy() if resources is None else resources
         if precision is not None and not isinstance(precision, MixedPrecisionPolicy):
@@ -766,6 +779,10 @@ class LinearSolvePolicy(StrictModule):
             raise TypeError("materialization must be a MaterializationPolicy.")
         if not isinstance(differentiation_, DifferentiationPolicy):
             raise TypeError("differentiation must be a DifferentiationPolicy.")
+        if not isinstance(derivative_solve_, LinearDerivativeSolvePolicy):
+            raise TypeError(
+                "derivative_solve must be a LinearDerivativeSolvePolicy or None."
+            )
         if not isinstance(failure_, FailurePolicy):
             raise TypeError("failure must be a FailurePolicy.")
         if not isinstance(resources_, SolveResourcePolicy):
@@ -777,6 +794,7 @@ class LinearSolvePolicy(StrictModule):
         self.preconditioning = preconditioning
         self.recycling = recycling
         self.differentiation = differentiation_
+        self.derivative_solve = derivative_solve_
         self.failure = failure_
         self.precision = precision
         self.resources = resources_

@@ -55,7 +55,7 @@ def test_trace_derivative_requests_retains_high_order_for_generic_planning():
     requests = trace_derivative_requests(condition.residual, {"u": u})
 
     assert tuple(request.order for request in requests) == (1, 2, 3)
-    assert plan_derivative_execution(requests).strategy == "jet"
+    assert plan_derivative_execution(requests).strategy == "jvp"
 
 
 def test_trace_derivative_requests_retains_nested_laplacians():
@@ -76,4 +76,4 @@ def test_trace_derivative_requests_retains_nested_laplacians():
     requests = trace_derivative_requests(condition.residual, {"u": u})
 
     assert tuple(request.order for request in requests) == (2, 4)
-    assert plan_derivative_execution(requests).strategy == "jet"
+    assert plan_derivative_execution(requests).strategy == "jvp"

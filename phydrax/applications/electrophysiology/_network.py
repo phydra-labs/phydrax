@@ -17,6 +17,7 @@ import numpy as np
 from equinox.internal import while_loop
 from jaxtyping import Array
 
+from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -1430,17 +1431,12 @@ def _clock_transition(runtime, state, target, inputs):
     )
 
 
-@jax.custom_jvp
 def _sensitivity_gate(value, valid):
-    return value
-
-
-@_sensitivity_gate.defjvp
-def _sensitivity_gate_jvp(primals, tangents):
-    value, valid = primals
-    tangent, _ = tangents
-    return value, tangent * jnp.where(
-        valid, jnp.ones_like(value), jnp.full_like(value, jnp.nan)
+    return guard_derivative_validity(
+        value,
+        valid,
+        failure="status",
+        message="Neural-network sensitivity is invalid for this accepted state.",
     )
 
 

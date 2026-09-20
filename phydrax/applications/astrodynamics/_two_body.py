@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -290,6 +291,20 @@ def propagate_universal_kepler(
     valid = domain & converged & output_finite
     accepted_position = jnp.where(valid, next_position, state.position)
     accepted_velocity = jnp.where(valid, next_velocity, state.velocity)
+    accepted_position = guard_derivative_validity(
+        accepted_position,
+        valid,
+        dependencies=(time, coupling, state.position, state.velocity),
+        failure="status",
+        message="Universal Kepler propagation has no valid derivative.",
+    )
+    accepted_velocity = guard_derivative_validity(
+        accepted_velocity,
+        valid,
+        dependencies=(time, coupling, state.position, state.velocity),
+        failure="status",
+        message="Universal Kepler propagation has no valid derivative.",
+    )
     energy_before = 0.5 * jnp.sum(state.velocity**2) - coupling / jnp.where(
         radius > 0.0, radius, 1.0
     )

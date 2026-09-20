@@ -5,8 +5,10 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
+from phydrax._admissibility import guard_derivative_validity
 
 
 def test_admissibility_normalizes_nonfinite_and_composes_reasons():
@@ -82,3 +84,41 @@ def test_combined_admissibility_preserves_worst_margin_and_reason_union():
     assert int(combined.reason_bits[1]) & int(
         phx.AdmissibilityReason.CAPACITY_INSUFFICIENT
     )
+
+
+def test_derivative_validity_guard_preserves_primal_and_poisons_both_orientations():
+    value = jnp.asarray((1.0, -2.0))
+    primal, valid_tangent = jax.jvp(
+        lambda argument: guard_derivative_validity(argument, jnp.asarray(True)),
+        (value,),
+        (jnp.ones_like(value),),
+    )
+    _, invalid_tangent = jax.jvp(
+        lambda argument: guard_derivative_validity(argument, jnp.asarray(False)),
+        (value,),
+        (jnp.ones_like(value),),
+    )
+    invalid_reverse = jax.grad(
+        lambda argument: jnp.sum(guard_derivative_validity(argument, jnp.asarray(False)))
+    )(value)
+
+    np.testing.assert_allclose(primal, value)
+    np.testing.assert_allclose(valid_tangent, jnp.ones_like(value))
+    assert jnp.all(jnp.isnan(invalid_tangent))
+    assert jnp.all(jnp.isnan(invalid_reverse))
+
+
+def test_derivative_validity_guard_error_mode_rejects_transformed_use():
+    value = jnp.asarray((1.0, -2.0))
+    with pytest.raises(Exception, match="invalid test derivative"):
+        _, tangent = jax.jvp(
+            lambda argument: guard_derivative_validity(
+                argument,
+                jnp.asarray(False),
+                failure="error",
+                message="invalid test derivative",
+            ),
+            (value,),
+            (jnp.ones_like(value),),
+        )
+        jax.block_until_ready(tangent)

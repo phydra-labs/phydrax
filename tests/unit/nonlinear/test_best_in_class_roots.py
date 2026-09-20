@@ -596,6 +596,59 @@ def test_first_second_and_truncated_solution_map_derivatives():
     assert jnp.allclose(truncated.value, jnp.asarray([0.25]), atol=1e-7)
 
 
+def test_explicit_solution_map_sensitivities_reject_a_nonroot_state():
+    problem = nl.NonlinearSystemProblem(lambda state, argument: state * state - argument)
+    state = jnp.asarray([1.5])
+    argument = jnp.asarray([4.0])
+    policy = nl.SensitivityPolicy(
+        "implicit-forward",
+        primal_residual_tolerance=1.0e-10,
+    )
+
+    forward = nl.root_solution_jvp(
+        problem,
+        state,
+        argument,
+        jnp.ones_like(argument),
+        policy=policy,
+    )
+    reverse = nl.root_solution_vjp(
+        problem,
+        state,
+        argument,
+        jnp.ones_like(state),
+        policy=nl.SensitivityPolicy(
+            "implicit-reverse",
+            primal_residual_tolerance=1.0e-10,
+        ),
+    )
+
+    assert forward.evidence.status == int(nl.SensitivityStatus.PRIMAL_FAILED)
+    assert reverse.evidence.status == int(nl.SensitivityStatus.PRIMAL_FAILED)
+    assert not bool(forward.evidence.primal_valid)
+    assert not bool(reverse.evidence.primal_valid)
+    assert forward.evidence.primal_residual_norm > 1.0
+    assert jnp.all(jnp.isnan(forward.value))
+    assert jnp.all(jnp.isnan(reverse.value))
+
+
+def test_minimizer_solution_sensitivity_rejects_a_nonstationary_point():
+    derivative = nl.minimizer_solution_jvp(
+        lambda state, target: 0.5 * jnp.sum((state - target) ** 2),
+        jnp.asarray([0.0]),
+        jnp.asarray([2.0]),
+        jnp.asarray([1.0]),
+        policy=nl.SensitivityPolicy(
+            "implicit-forward",
+            primal_residual_tolerance=1.0e-10,
+        ),
+    )
+
+    assert derivative.evidence.status == int(nl.SensitivityStatus.PRIMAL_FAILED)
+    assert not bool(derivative.evidence.primal_valid)
+    assert jnp.all(jnp.isnan(derivative.value))
+
+
 def test_small_batch_mixed_precision_and_sharding_contracts():
     starts = jnp.ones((4, 2))
     arguments = jnp.asarray([[4.0, 9.0], [1.0, 16.0], [0.25, 0.36], [25.0, 36.0]])
