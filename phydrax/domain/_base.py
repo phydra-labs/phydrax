@@ -14,11 +14,12 @@ import jax.numpy as jnp
 from jaxtyping import Array, Bool, Float, Key
 
 from .._doc import DOC_KEY0
+from .._mass import ExactMass, Mass, UnknownMass
 from .._strict import StrictModule
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
-from ._measure import BaseMeasure, ExactMass, UnknownMass
+from ._measure import BaseMeasure
 from ._selection import Boundary, Interior, Selection
 
 
@@ -227,6 +228,16 @@ class AbstractGeometry(JointFactor):
         raise NotImplementedError
 
     @property
+    def interior_mass(self) -> Mass:
+        """Return interior measure with exactness evidence."""
+        return ExactMass(self.volume)
+
+    @property
+    def boundary_mass(self) -> Mass:
+        """Return boundary measure with exactness evidence."""
+        return ExactMass(self.boundary_measure_value)
+
+    @property
     @abstractmethod
     def spatial_dim(self) -> int:
         raise NotImplementedError
@@ -266,12 +277,12 @@ class AbstractGeometry(JointFactor):
         if isinstance(selection, Interior):
             measure = BaseMeasure(
                 "lebesgue" if self.spatial_dim == 1 else "hausdorff",
-                ExactMass(self.volume),
+                self.interior_mass,
             )
         elif isinstance(selection, Boundary):
             if selection.tags is None and selection.entity_ids is None:
                 kind = "counting" if self.spatial_dim == 1 else "hausdorff"
-                measure = BaseMeasure(kind, ExactMass(self.boundary_measure_value))
+                measure = BaseMeasure(kind, self.boundary_mass)
             else:
                 from ._geometry import GeometryDomain
 

@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array
 
 from .._strict import StrictModule
+from ..linalg import orthonormal_frame
 
 
 class AbstractBoundaryMap(StrictModule):
@@ -91,12 +92,40 @@ class BoundaryFrame(StrictModule):
     tangents: Array
     normal: Array
     jacobian: Array
+    rank: Array
+    condition_estimate: Array
+    regularity_margin: Array
+    finite: Array
+    regular: Array
+    jacobian_consistent: Array
 
-    def __init__(self, *, origin: Array, tangents: Array, normal: Array, jacobian: Array):
+    def __init__(
+        self,
+        *,
+        origin: Array,
+        tangents: Array,
+        normal: Array,
+        jacobian: Array,
+        rank: Array,
+        condition_estimate: Array,
+        regularity_margin: Array,
+        finite: Array,
+        regular: Array,
+        jacobian_consistent: Array,
+    ):
         self.origin = jnp.asarray(origin, dtype=jnp.float64)
         self.tangents = jnp.asarray(tangents, dtype=jnp.float64)
         self.normal = jnp.asarray(normal, dtype=jnp.float64)
         self.jacobian = jnp.asarray(jacobian, dtype=jnp.float64)
+        self.rank = jnp.asarray(rank, dtype=jnp.int32)
+        self.condition_estimate = jnp.asarray(condition_estimate, dtype=jnp.float64)
+        self.regularity_margin = jnp.asarray(regularity_margin, dtype=jnp.float64)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.regular = jnp.asarray(regular, dtype=jnp.bool_)
+        self.jacobian_consistent = jnp.asarray(
+            jacobian_consistent,
+            dtype=jnp.bool_,
+        )
 
 
 class BoundaryAtlas(StrictModule):
@@ -239,35 +268,104 @@ class BoundaryAtlas(StrictModule):
 
     def frame(self, chart_indices: Array, reference: Array, /) -> BoundaryFrame:
         indices, reference_ = self._validate_inputs(chart_indices, reference)
+        if self.reference_dimension + 1 != self.ambient_dimension:
+            raise NotImplementedError(
+                "BoundaryFrame represents codimension-one charts only."
+            )
         origin = self.mapping.map(indices, reference_)
         differential = self.differential(indices, reference_)
         if self.reference_dimension == 1 and self.ambient_dimension == 2:
             tangent = differential[..., :, 0]
-            tangent = tangent / jnp.linalg.norm(tangent, axis=-1, keepdims=True)
-            normal = jnp.stack((tangent[..., 1], -tangent[..., 0]), axis=-1)
-            tangents = tangent[..., None, :]
+            tangent_norm = jnp.linalg.norm(tangent, axis=-1)
+            tangent_unit = tangent / jnp.maximum(
+                tangent_norm[..., None],
+                jnp.finfo(tangent.dtype).tiny,
+            )
+            tangents = tangent_unit[..., None, :]
+            normal = jnp.stack((tangent_unit[..., 1], -tangent_unit[..., 0]), axis=-1)
+            singular_values = tangent_norm[..., None]
+            derived_jacobian = tangent_norm
         elif self.reference_dimension == 2 and self.ambient_dimension == 3:
             first = differential[..., :, 0]
             second = differential[..., :, 1]
-            first_unit = first / jnp.linalg.norm(first, axis=-1, keepdims=True)
+            first_norm = jnp.linalg.norm(first, axis=-1)
+            first_unit = first / jnp.maximum(
+                first_norm[..., None],
+                jnp.finfo(first.dtype).tiny,
+            )
             second_orthogonal = (
                 second - jnp.sum(second * first_unit, axis=-1, keepdims=True) * first_unit
             )
-            second_unit = second_orthogonal / jnp.linalg.norm(
-                second_orthogonal, axis=-1, keepdims=True
+            second_norm = jnp.linalg.norm(second_orthogonal, axis=-1)
+            second_unit = second_orthogonal / jnp.maximum(
+                second_norm[..., None],
+                jnp.finfo(second.dtype).tiny,
             )
             tangents = jnp.stack((first_unit, second_unit), axis=-2)
             normal = jnp.cross(first_unit, second_unit)
+            singular_values = jnp.stack((first_norm, second_norm), axis=-1)
+            derived_jacobian = first_norm * second_norm
         else:
-            raise NotImplementedError(
-                "Boundary frames currently support curves in 2D and surfaces in 3D."
-            )
+            orthogonal = orthonormal_frame(differential)
+            tangents = jnp.swapaxes(orthogonal.tangents, -1, -2)
+            normal = orthogonal.normal_basis[..., :, 0]
+            singular_values = orthogonal.singular_values
+            derived_jacobian = jnp.prod(singular_values, axis=-1)
         normal = normal * self.orientation[indices][..., None]
+        jacobian = self.mapping.jacobian(indices, reference_)
+        evidence_jacobian = jax.lax.stop_gradient(jacobian)
+        evidence_derived = jax.lax.stop_gradient(derived_jacobian)
+        evidence_singular = jax.lax.stop_gradient(singular_values)
+        scale = jnp.maximum(
+            jnp.maximum(jnp.abs(evidence_jacobian), jnp.abs(evidence_derived)),
+            1.0,
+        )
+        tolerance = 256.0 * jnp.finfo(jacobian.dtype).eps * scale
+        minimum_singular = jnp.min(evidence_singular, axis=-1)
+        maximum_singular = jnp.max(evidence_singular, axis=-1)
+        rank = jnp.sum(
+            evidence_singular > tolerance[..., None],
+            axis=-1,
+            dtype=jnp.int32,
+        )
+        condition_estimate = maximum_singular / jnp.maximum(
+            minimum_singular,
+            jnp.finfo(maximum_singular.dtype).tiny,
+        )
+        regularity_margin = minimum_singular - tolerance
+        jacobian_consistent = jnp.abs(evidence_jacobian - evidence_derived) <= tolerance
+        finite = (
+            jnp.all(
+                jnp.isfinite(jax.lax.stop_gradient(differential)),
+                axis=(-2, -1),
+            )
+            & jnp.all(
+                jnp.isfinite(jax.lax.stop_gradient(tangents)),
+                axis=(-2, -1),
+            )
+            & jnp.all(
+                jnp.isfinite(jax.lax.stop_gradient(normal)),
+                axis=-1,
+            )
+            & jnp.isfinite(evidence_jacobian)
+        )
+        regular = (
+            (rank == self.reference_dimension)
+            & finite
+            & (evidence_jacobian > 0.0)
+            & jacobian_consistent
+        )
         return BoundaryFrame(
             origin=origin,
             tangents=tangents,
             normal=normal,
-            jacobian=self.mapping.jacobian(indices, reference_),
+            jacobian=jacobian,
+            rank=rank,
+            condition_estimate=condition_estimate,
+            regularity_margin=regularity_margin,
+            finite=finite,
+            regular=regular,
+            jacobian_consistent=jacobian_consistent,
         )
 
     def select(

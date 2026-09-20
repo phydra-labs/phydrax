@@ -52,12 +52,12 @@ belong in `phx.geometry`; the domain layer is deliberately a thin adapter.
 ## Affine simplex maps
 
 `AffineSimplexMap` prepares segments, triangles, and tetrahedra with intrinsic
-dimension one through three in ambient dimension up to three. It owns
+dimension one through three in any ambient dimension at least as large. It owns
 barycentric coordinates, physical gradients, reference reconstruction,
-containment, measure, orientation where defined, and explicit degeneracy
-evidence. Full-dimensional maps use the small linear substrate; embedded maps
-use the induced Gram system. Degenerate maps retain evidence and fail
-containment rather than silently substituting a pseudoinverse.
+containment, simplex measure, Jacobian measure scale, orientation where defined,
+and explicit degeneracy evidence. Full-dimensional maps use the small linear
+substrate; embedded maps use the induced Gram system. Degenerate maps retain
+evidence and fail containment rather than silently substituting a pseudoinverse.
 
 ::: phydrax.geometry.AffineSimplexMap
 
@@ -117,6 +117,22 @@ remain caller-owned and must be identical across compared interfaces.
 Analytic sources provide closed-form fields, measures, samplers, and boundary
 atlases. Sources compose before compilation:
 
+`Ball`, `Orthotope`, and `AxisAlignedEllipsoid` are dimension-neutral radial
+and axis-aligned region owners. `Circle`/`Sphere`, `Rectangle`/`Box`, and
+`Ellipse`/`Ellipsoid` retain explicit low-dimensional frontends. Interior and
+boundary masses retain `ExactMass`, `EstimatedMass`, or `UnknownMass`; fixed
+numerical perimeter or surface-area quadrature is never labeled exact.
+
+::: phydrax.geometry.Ball
+
+---
+
+::: phydrax.geometry.Orthotope
+
+---
+
+::: phydrax.geometry.AxisAlignedEllipsoid
+
 ```python
 left = phx.geometry.Sphere((-0.4, 0.0, 0.0), 1.0, feature_id="left")
 right = phx.geometry.Sphere((0.4, 0.0, 0.0), 1.0, feature_id="right")
@@ -156,9 +172,9 @@ point queries. `MeshRegion` and `PlanarMeshRegion` lower watertight 3D meshes an
 planar triangulations to the common geometry kernel.
 
 `discrete_operators(...)` constructs matrix-free DDG incidence, mass, Laplacian,
-and gradient operators from the same topology. Mesh adapters accept build123d,
-meshio, PyVista, and trimesh inputs through the canonical import functions instead
-of maintaining representation-specific query code.
+and gradient operators from the same topology. Mesh adapters accept native
+triangle arrays, `TriangleMesh`, Meshio data, or Meshio-supported paths through
+the canonical import functions.
 
 ## Boundary atlases and measure partitions
 
@@ -212,11 +228,11 @@ surface Jacobians and boundary frames remain finite instead of collapsing to a
 constant endpoint branch.
 
 ```python
-import build123d as bd
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
 coordinate_contract = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 model = phx.geometry.model_from_occt_shape(
-    bd.Box(1.0, 2.0, 3.0).wrapped,
+    BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
     coordinate_contract=coordinate_contract,
     linear_deflection=0.1,
 )
@@ -356,12 +372,13 @@ candidates become explicit invalid objective evaluations.
 
 ## Exact sweeps and fixed-topology realization
 
-`Extrusion` and `Revolution` lift two-dimensional region sources into local-frame
-three-dimensional fields while propagating field certificates conservatively.
+`Extrusion` lifts any full-dimensional region in R-d into a centered region in
+R-(d+1). `Revolution` remains the explicitly axisymmetric 2D-to-3D operation.
 `CompiledGeometry.validity()` exposes parameter and representation validity as
 `GeometryValidityEvidence`.
 
 `ImplicitPointProjectionPlan` supplies fixed-shape normal-gauge boundary motion.
+`discover_implicit_curve` discovers an oriented closed planar segment topology.
 `discover_implicit_surface` creates a host-side `ImplicitSurfacePlan` whose JAX
 runtime preserves triangle connectivity and reports sign, root, QEF, orientation,
 and intersection evidence.
@@ -420,6 +437,14 @@ a primitive constructor.
 ---
 
 ::: phydrax.geometry.Revolution
+
+---
+
+::: phydrax.geometry.discover_implicit_curve
+
+---
+
+::: phydrax.geometry.ImplicitCurvePlan
 
 ---
 

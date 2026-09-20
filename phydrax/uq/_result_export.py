@@ -214,8 +214,10 @@ def to_arviz(result: MCMCResult | FlowNUTSResult | SGMCMCResult, /):
         )
     try:
         import arviz as az
-    except ImportError as error:  # pragma: no cover - dependency is declared
-        raise ImportError("ArviZ is required for to_arviz().") from error
+    except ImportError as error:
+        raise ImportError(
+            "ArviZ export requires the optional 'uq-arviz' dependency group."
+        ) from error
 
     posterior: dict[str, np.ndarray] = {}
     dimensions: dict[str, list[str]] = {}

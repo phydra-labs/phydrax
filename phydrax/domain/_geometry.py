@@ -12,6 +12,7 @@ import jax.random as jr
 from jaxtyping import Array, Bool, Key
 
 from .._doc import DOC_KEY0
+from .._mass import Mass
 from ..geometry import (
     BoundaryAtlas,
     bounded_rejection_sample,
@@ -68,6 +69,14 @@ class GeometryDomain(AbstractGeometry):
         return self.geometry.bounds
 
     @property
+    def interior_mass(self) -> Mass:
+        return self.geometry.interior_mass
+
+    @property
+    def boundary_mass(self) -> Mass:
+        return self.geometry.boundary_mass
+
+    @property
     def volume(self) -> Array:
         return self.geometry.measure
 
@@ -118,19 +127,27 @@ class GeometryDomain(AbstractGeometry):
     def cubature_atlas(self, component: CubatureComponent, /) -> CubatureAtlas:
         return self.geometry.cubature_atlas(component)
 
-    def adf(self, points: Array, /) -> Array:
-        """Evaluate the certified negative-inside boundary field."""
+    def _point_argument(self, points: Array, /) -> Array:
         points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim == 0:
-            points_ = jnp.repeat(points_[None], self.spatial_dim)
-        return self.geometry.boundary_field(points_)
+            if self.spatial_dim != 1:
+                raise ValueError(
+                    "Scalar geometry points are valid only in one spatial dimension."
+                )
+            return points_.reshape((1,))
+        if points_.shape[-1] != self.spatial_dim:
+            raise ValueError(
+                f"Geometry points must have trailing dimension {self.spatial_dim}."
+            )
+        return points_
+
+    def adf(self, points: Array, /) -> Array:
+        """Evaluate the certified negative-inside boundary field."""
+        return self.geometry.boundary_field(self._point_argument(points))
 
     def closest_point(self, points: Array, /) -> ClosestPointResult:
         """Evaluate a capability-certified closest-point map."""
-        points_ = jnp.asarray(points, dtype=jnp.float64)
-        if points_.ndim == 0:
-            points_ = jnp.repeat(points_[None], self.spatial_dim)
-        return self.geometry.closest_point(points_)
+        return self.geometry.closest_point(self._point_argument(points))
 
     @property
     def boundary_ansatz_factor(self) -> Callable[[Array], Array]:

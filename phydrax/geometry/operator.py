@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
+from .._mass import require_exact_mass
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..graph._operator_topology import OperatorTopology
@@ -379,10 +380,16 @@ def function_samples_from_geometry(
         raise ValueError("num_points must be positive.")
     if component == "interior":
         coordinates = geometry.sample_interior(count, sampler=sampler, key=key)
-        measure = geometry.volume
+        measure = require_exact_mass(
+            geometry.interior_mass,
+            operation="Uniform interior geometry sampling",
+        )
     elif component == "boundary":
         coordinates = geometry.sample_boundary(count, sampler=sampler, key=key)
-        measure = geometry.boundary_measure_value
+        measure = require_exact_mass(
+            geometry.boundary_mass,
+            operation="Uniform boundary geometry sampling",
+        )
     else:
         raise ValueError("component must be 'interior' or 'boundary'.")
     coordinates = jnp.asarray(coordinates, dtype=jnp.float64)

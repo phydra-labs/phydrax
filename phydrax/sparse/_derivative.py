@@ -741,7 +741,7 @@ def _compile_sparse_derivative(
     coordinate_identity: Any,
     plan_id: str | None,
 ) -> SparseDerivativePlan:
-    if compiler not in ("auto", "native", "asdex"):
+    if compiler not in ("auto", "native"):
         raise ValueError(f"Unknown sparse derivative compiler {compiler!r}.")
     chunk = None if chunk_size is None else int(chunk_size)
     if chunk is not None and chunk < 1:
@@ -847,8 +847,6 @@ def _resolve_coloring(
     symmetric: bool,
 ) -> SparseColoring:
     if isinstance(structure, SparseColoring):
-        if compiler == "asdex":
-            raise ValueError("compiler must be 'auto' or 'native' for a reused coloring.")
         _validate_reused_coloring(structure, derivative_kind, mode, symmetric)
         return structure
     if isinstance(structure, EdgeRelation):
@@ -868,30 +866,25 @@ def _resolve_coloring(
             "structure must be an EdgeRelation, SparsePattern, SparseColoring, or None."
         )
 
-    selected_compiler = compiler
-    if selected_compiler == "auto":
-        selected_compiler = "native" if pattern is not None else "asdex"
-    if selected_compiler == "native":
-        if pattern is None:
+    if pattern is None:
+        if compiler == "native":
             raise ValueError("Native sparse compilation requires a declared pattern.")
-        return native_coloring(
-            pattern,
+        from ._structural_trace import trace_sparse_pattern
+
+        pattern = trace_sparse_pattern(
+            function,
+            coordinates,
+            sample_args,
+            source_size=source.size,
+            target_size=target.size,
             derivative_kind=derivative_kind,
-            mode=mode,
         )
-
-    from ._asdex import compile_asdex_coloring
-
-    return compile_asdex_coloring(
-        function,
-        coordinates,
-        sample_args,
-        source=source,
-        target=target,
-        pattern=pattern,
+        if symmetric and not pattern.symmetric:
+            raise ValueError("Structurally traced sparse pattern is not symmetric.")
+    return native_coloring(
+        pattern,
         derivative_kind=derivative_kind,
         mode=mode,
-        symmetric=symmetric,
     )
 
 

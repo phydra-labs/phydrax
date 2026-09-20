@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any, cast, Never
 
 import numpy as np
-from shapely.geometry import Polygon as ShapelyPolygon
 
 from .._external_resource import (
     account_bounded_resource,
@@ -30,6 +29,7 @@ from .._external_resource import (
 )
 from .._fingerprint import canonical_fingerprint
 from .._physical import SpatialCoordinateContract
+from ..geometry._polygon import signed_area2, validate_simple_polygon
 from ..geometry.simplicial import PlanarMeshRegion
 from ..units import METER
 from ._report import (
@@ -864,23 +864,14 @@ def _canonical_polygon(points: np.ndarray) -> np.ndarray:
     values = values[keep]
     if values.shape[0] < 3 or len({tuple(row) for row in values}) < 3:
         _fail(AdapterStatus.MALFORMED_SOURCE, "Layout polygons are degenerate.")
-    shape = ShapelyPolygon(values)
-    if (
-        shape.is_empty
-        or not shape.is_valid
-        or not math.isfinite(shape.area)
-        or shape.area <= 0.0
-    ):
+    try:
+        validate_simple_polygon(values, require_counter_clockwise=False)
+    except ValueError:
         _fail(
             AdapterStatus.MALFORMED_SOURCE,
             "Layout polygon is invalid or self-intersecting.",
         )
-    signed_area = 0.5 * float(
-        np.sum(
-            values[:, 0] * np.roll(values[:, 1], -1)
-            - np.roll(values[:, 0], -1) * values[:, 1]
-        )
-    )
+    signed_area = 0.5 * signed_area2(values)
     if not math.isfinite(signed_area) or signed_area == 0.0:
         _fail(
             AdapterStatus.MALFORMED_SOURCE,

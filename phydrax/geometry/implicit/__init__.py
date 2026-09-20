@@ -2,6 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._curve_discovery import (
+    discover_implicit_curve,
+    ImplicitCurveEvidence,
+    ImplicitCurvePlan,
+    ImplicitCurveRealization,
+)
 from ._discovery import discover_implicit_surface
 from ._policy import (
     ImplicitProjectionPolicy,
@@ -22,6 +28,9 @@ from ._realization import (
 
 
 __all__ = [
+    "ImplicitCurveEvidence",
+    "ImplicitCurvePlan",
+    "ImplicitCurveRealization",
     "ImplicitPointProjectionEvidence",
     "ImplicitPointProjectionPlan",
     "ImplicitPointProjectionResult",
@@ -32,5 +41,6 @@ __all__ = [
     "ImplicitSurfacePolicy",
     "ImplicitSurfaceRealization",
     "ImplicitSurfaceStatus",
+    "discover_implicit_curve",
     "discover_implicit_surface",
 ]

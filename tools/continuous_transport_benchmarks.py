@@ -16,7 +16,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from flowjax.distributions import Normal as FlowJAXNormal
 
 import phydrax as phx
 from benchmarks._runtime import (
@@ -165,12 +164,12 @@ def benchmark_translation_case(
         (flow, key),
         repetitions=repetitions,
     )
-    flowjax = FlowJAXNormal(offset, jnp.ones((dimension,)))
+    native_flow = phx.nn.flows.NormalFlowDistribution(offset, jnp.ones((dimension,)))
     baseline, baseline_timing = _timings(
         lambda distribution, current_key: distribution.sample(
             current_key, sample_shape=(sample_count,)
         ),
-        (flowjax, key),
+        (native_flow, key),
         repetitions=repetitions,
     )
     expected = transported.source_states + offset
@@ -181,12 +180,12 @@ def benchmark_translation_case(
         "dimension": dimension,
         "sample_count": sample_count,
         "continuous_transport_timing": transport_timing,
-        "flowjax_analytic_baseline_timing": baseline_timing,
+        "native_analytic_baseline_timing": baseline_timing,
         "maximum_endpoint_error": float(
             jnp.max(jnp.abs(transported.final_states - expected))
         ),
         "continuous_sample_mean_error": float(jnp.linalg.norm(transported_mean - offset)),
-        "flowjax_sample_mean_error": float(jnp.linalg.norm(baseline_mean - offset)),
+        "native_flow_sample_mean_error": float(jnp.linalg.norm(baseline_mean - offset)),
         "all_solves_valid": bool(transported.successful),
     }
 

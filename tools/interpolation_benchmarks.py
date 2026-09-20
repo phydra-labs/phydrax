@@ -114,6 +114,17 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
         ),
         axis=-1,
     )
+    axis_4d = jnp.linspace(-1.0, 1.0, 8)
+    mesh_4d = jnp.meshgrid(*(axis_4d,) * 4, indexing="ij")
+    rectilinear_4d_values = sum(
+        (axis + 1.0) * coordinate for axis, coordinate in enumerate(mesh_4d)
+    )[..., None]
+    rectilinear_4d_query = jax.random.uniform(
+        jax.random.key(24),
+        (1024, 4),
+        minval=-0.99,
+        maxval=0.99,
+    )
 
     fourier_values = jnp.stack(
         (
@@ -180,6 +191,20 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
                 ).values
             ),
             rectilinear_query,
+            repeats=repeats,
+        ),
+        "rectilinear_4d": _benchmark(
+            lambda query: (
+                apply_gather_stencil(
+                    rectilinear_4d_values.reshape((-1, 1)),
+                    rectilinear_stencil(
+                        (axis_4d,) * 4,
+                        query,
+                        boundary=("clamp",) * 4,
+                    ),
+                ).values
+            ),
+            rectilinear_4d_query,
             repeats=repeats,
         ),
         "fourier_2d_odd_even": _benchmark(

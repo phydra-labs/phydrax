@@ -14,10 +14,10 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
-from shapely.geometry import Polygon as ShapelyPolygon
 
 from phydrax._interpolation import linear_interpolate
 
+from ..._mass import EstimatedMass
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import GeometryCapability
@@ -30,6 +30,7 @@ from .._certificate import (
     ZeroSetAccuracy,
 )
 from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._polygon import signed_area2, validate_simple_polygon
 from .._sampling import (
     bounded_rejection_sample,
     complete_sampling_result,
@@ -44,8 +45,10 @@ from ..design._schema import (
 )
 from ._primitives import (
     _check_points,
+    _compile_orthotope,
     _feature_id,
     _finite_norm,
+    _validate_nonempty_vector,
     _validate_positive_scalar,
     _validate_vector,
 )
@@ -55,7 +58,8 @@ _REGION_CAPABILITIES = frozenset(
     {
         GeometryCapability.REGION_QUERY,
         GeometryCapability.BOUNDARY_NORMAL,
-        GeometryCapability.MEASURE,
+        GeometryCapability.INTERIOR_MEASURE,
+        GeometryCapability.BOUNDARY_MEASURE,
         GeometryCapability.INTERIOR_SAMPLING,
         GeometryCapability.BOUNDARY_SAMPLING,
         GeometryCapability.BOUNDARY_ATLAS,
@@ -76,6 +80,9 @@ _TWO_PI = 2.0 * jnp.pi
 _GL_RULE = gauss_legendre_data(48)
 _GL_NODES = jnp.asarray(_GL_RULE.nodes, dtype=jnp.float64)
 _GL_WEIGHTS = jnp.asarray(_GL_RULE.weights, dtype=jnp.float64)
+_GL_LOW_RULE = gauss_legendre_data(24)
+_GL_LOW_NODES = jnp.asarray(_GL_LOW_RULE.nodes, dtype=jnp.float64)
+_GL_LOW_WEIGHTS = jnp.asarray(_GL_LOW_RULE.weights, dtype=jnp.float64)
 
 
 def _validate_positive_vector(value: Any, dimension: int, *, name: str) -> Array:
@@ -301,6 +308,21 @@ class _EllipseKernel(GeometryKernel):
         )
         return jnp.pi * jnp.sum(_GL_WEIGHTS * speed)
 
+    def boundary_mass(self, state: DesignState, /) -> EstimatedMass:
+        _, radii = self._parameters(state)
+        theta = jnp.pi * (_GL_LOW_NODES + 1.0)
+        speed = jnp.sqrt(
+            (radii[0] * jnp.sin(theta)) ** 2 + (radii[1] * jnp.cos(theta)) ** 2
+        )
+        low = jnp.pi * jnp.sum(_GL_LOW_WEIGHTS * speed)
+        high = self.boundary_measure(state)
+        return EstimatedMass(
+            high,
+            jnp.abs(high - low),
+            evaluations=_GL_NODES.size + _GL_LOW_NODES.size,
+            provenance="ellipse_boundary_gauss_legendre",
+        )
+
     def sample_interior(
         self,
         state: DesignState,
@@ -408,110 +430,11 @@ class Rectangle(GeometrySource):
         self.feature_id = _feature_id(feature_id, "rectangle")
 
     def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
-        center = context.bind(
-            ParameterId(self.feature_id, "center"), self.center, role="position"
-        )
-        size = context.bind(
-            ParameterId(self.feature_id, "size"),
+        return _compile_orthotope(
+            context,
+            self.center,
             self.size,
-            role="length",
-            physical_scale=float(jnp.min(self.size)),
-            bounds=(0.0, None),
-        )
-        return _RectangleKernel(center, size, source_id=self.feature_id)
-
-
-class _RectangleKernel(GeometryKernel):
-    center: ParameterBinding = eqx.field(static=True)
-    size: ParameterBinding = eqx.field(static=True)
-    source_id: str = eqx.field(static=True)
-
-    def __init__(
-        self, center: ParameterBinding, size: ParameterBinding, *, source_id: str
-    ):
-        self.center = center
-        self.size = size
-        self.source_id = source_id
-
-    @property
-    def ambient_dimension(self) -> int:
-        return 2
-
-    @property
-    def intrinsic_dimension(self) -> int:
-        return 2
-
-    @property
-    def kind(self) -> GeometryKind:
-        return GeometryKind.REGION
-
-    @property
-    def capabilities(self) -> frozenset[GeometryCapability]:
-        return _EXACT_REGION_CAPABILITIES
-
-    @property
-    def field_certificate(self) -> FieldCertificate:
-        return exact_signed_distance_certificate(smooth=False)
-
-    def _parameters(self, state: DesignState) -> tuple[Array, Array]:
-        return self.center.read(state), self.size.read(state)
-
-    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
-        points_ = _check_points(points, 2)
-        center, size = self._parameters(state)
-        offset = jnp.abs(points_ - center) - 0.5 * size
-        maximum = jnp.max(offset, axis=-1)
-        outside = _finite_norm(jnp.maximum(offset, 0.0))
-        return jnp.where(maximum <= 0.0, maximum, outside)
-
-    def contains(self, state: DesignState, points: Array, /) -> Array:
-        return self.boundary_field(state, points) <= 0.0
-
-    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
-        return _normal_from_field(self, state, points)
-
-    def bounds(self, state: DesignState, /) -> Array:
-        center, size = self._parameters(state)
-        return jnp.stack((center - 0.5 * size, center + 0.5 * size))
-
-    def measure(self, state: DesignState, /) -> Array:
-        _, size = self._parameters(state)
-        return jnp.prod(size)
-
-    def boundary_measure(self, state: DesignState, /) -> Array:
-        _, size = self._parameters(state)
-        return 2.0 * jnp.sum(size)
-
-    def sample_interior(self, state, num_points, /, *, key, plan=None) -> SamplingResult:
-        del plan
-        bounds = self.bounds(state)
-        return complete_sampling_result(
-            jr.uniform(
-                key,
-                (int(num_points), 2),
-                minval=bounds[0],
-                maxval=bounds[1],
-                dtype=bounds.dtype,
-            )
-        )
-
-    def sample_boundary(self, state, num_points, /, *, key) -> SamplingResult:
-        center, size = self._parameters(state)
-        count = int(num_points)
-        edge_key, coordinate_key = jr.split(key)
-        lengths = jnp.asarray([size[0], size[1], size[0], size[1]])
-        edge = jr.choice(edge_key, 4, (count,), p=lengths / jnp.sum(lengths))
-        coordinate = jr.uniform(coordinate_key, (count,), dtype=center.dtype)
-        atlas = _RectangleBoundaryMap(center, size)
-        return complete_sampling_result(atlas.map(edge, coordinate[:, None]))
-
-    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
-        center, size = self._parameters(state)
-        return BoundaryAtlas(
-            _RectangleBoundaryMap(center, size),
-            physical_tags=("y_min", "x_max", "y_max", "x_min"),
-            source_entity_ids=jnp.arange(4, dtype=jnp.int32),
-            source_id=self.source_id,
+            source_id=self.feature_id,
         )
 
 
@@ -564,10 +487,13 @@ class Polygon(GeometrySource):
             raise ValueError("vertices must contain only finite values.")
         if np.unique(host, axis=0).shape[0] != host.shape[0]:
             raise ValueError("Non-unique vertices are not allowed.")
-        polygon = ShapelyPolygon(host)
-        if not polygon.is_valid or polygon.area <= 0.0:
-            raise ValueError("Self-intersection or zero-area polygon detected.")
-        if not polygon.exterior.is_ccw:
+        try:
+            validate_simple_polygon(host, require_counter_clockwise=False)
+        except ValueError as error:
+            raise ValueError(
+                "Self-intersection or zero-area polygon detected."
+            ) from error
+        if signed_area2(host) < 0.0:
             host = host[::-1].copy()
         self.vertices = jnp.asarray(host, dtype=jnp.float64)
         self.feature_id = _feature_id(feature_id, "polygon")
@@ -850,6 +776,31 @@ class _EllipsoidKernel(GeometryKernel):
         density = jnp.prod(radii) * jnp.linalg.norm(direction / radii, axis=-1)
         return jnp.pi * jnp.sum(_GL_WEIGHTS[:, None] * _GL_WEIGHTS[None, :] * density)
 
+    def boundary_mass(self, state, /):
+        _, radii = self._parameters(state)
+        z = _GL_LOW_NODES
+        phi = jnp.pi * (_GL_LOW_NODES + 1.0)
+        radial = jnp.sqrt(jnp.maximum(1.0 - z[:, None] ** 2, 0.0))
+        direction = jnp.stack(
+            (
+                radial * jnp.cos(phi)[None, :],
+                radial * jnp.sin(phi)[None, :],
+                jnp.broadcast_to(z[:, None], (z.shape[0], phi.shape[0])),
+            ),
+            axis=-1,
+        )
+        density = jnp.prod(radii) * jnp.linalg.norm(direction / radii, axis=-1)
+        low = jnp.pi * jnp.sum(
+            _GL_LOW_WEIGHTS[:, None] * _GL_LOW_WEIGHTS[None, :] * density
+        )
+        high = self.boundary_measure(state)
+        return EstimatedMass(
+            high,
+            jnp.abs(high - low),
+            evaluations=_GL_NODES.size**2 + _GL_LOW_NODES.size**2,
+            provenance="ellipsoid_boundary_tensor_gauss_legendre",
+        )
+
     def sample_interior(self, state, num_points, /, *, key, plan=None):
         del plan
         center, radii = self._parameters(state)
@@ -883,6 +834,157 @@ class _EllipsoidKernel(GeometryKernel):
             orientation=-jnp.ones((1,), dtype=jnp.float64),
             source_entity_ids=jnp.asarray([0], dtype=jnp.int32),
             source_id=self.source_id,
+        )
+
+
+class AxisAlignedEllipsoid(GeometrySource):
+    """Axis-aligned ellipsoid with an all-dimensional interior contract."""
+
+    center: Array
+    radii: Array
+    feature_id: str = eqx.field(static=True)
+
+    def __init__(self, center: Any, radii: Any, *, feature_id: str | None = None):
+        center_ = _validate_nonempty_vector(center, name="center")
+        radii_ = _validate_nonempty_vector(radii, name="radii")
+        if radii_.shape != center_.shape or np.any(np.asarray(radii_) <= 0.0):
+            raise ValueError("center and positive radii must have the same shape.")
+        self.center = center_
+        self.radii = radii_
+        self.feature_id = _feature_id(feature_id, "axis-aligned-ellipsoid")
+
+    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+        center = context.bind(
+            ParameterId(self.feature_id, "center"),
+            self.center,
+            role="position",
+        )
+        radii = context.bind(
+            ParameterId(self.feature_id, "radii"),
+            self.radii,
+            role="length",
+            physical_scale=float(jnp.min(self.radii)),
+            bounds=(0.0, None),
+        )
+        match self.center.shape[0]:
+            case 2:
+                return _EllipseKernel(center, radii, source_id=self.feature_id)
+            case 3:
+                return _EllipsoidKernel(center, radii, source_id=self.feature_id)
+            case dimension:
+                return _AxisAlignedEllipsoidKernel(
+                    center,
+                    radii,
+                    dimension=dimension,
+                    source_id=self.feature_id,
+                )
+
+
+class _AxisAlignedEllipsoidKernel(GeometryKernel):
+    center: ParameterBinding = eqx.field(static=True)
+    radii: ParameterBinding = eqx.field(static=True)
+    dimension: int = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
+
+    def __init__(self, center, radii, *, dimension: int, source_id: str):
+        self.center = center
+        self.radii = radii
+        self.dimension = dimension
+        self.source_id = source_id
+
+    @property
+    def ambient_dimension(self) -> int:
+        return self.dimension
+
+    @property
+    def intrinsic_dimension(self) -> int:
+        return self.dimension
+
+    @property
+    def kind(self) -> GeometryKind:
+        return GeometryKind.REGION
+
+    @property
+    def capabilities(self) -> frozenset[GeometryCapability]:
+        return frozenset(
+            {
+                GeometryCapability.REGION_QUERY,
+                GeometryCapability.BOUNDARY_NORMAL,
+                GeometryCapability.INTERIOR_MEASURE,
+                GeometryCapability.INTERIOR_SAMPLING,
+            }
+        )
+
+    @property
+    def field_certificate(self) -> FieldCertificate:
+        return _LEVEL_SET_CERTIFICATE
+
+    def _parameters(self, state):
+        return self.center.read(state), self.radii.read(state)
+
+    def boundary_field(self, state, points, /):
+        points_ = _check_points(points, self.dimension)
+        center, radii = self._parameters(state)
+        return (_finite_norm((points_ - center) / radii) - 1.0) * jnp.min(radii)
+
+    def contains(self, state, points, /):
+        return self.boundary_field(state, points) <= 0.0
+
+    def boundary_normal(self, state, points, /):
+        points_ = _check_points(points, self.dimension)
+        center, radii = self._parameters(state)
+        gradient = (points_ - center) / radii**2
+        norm = jnp.linalg.norm(gradient, axis=-1, keepdims=True)
+        return gradient / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
+
+    def bounds(self, state, /):
+        center, radii = self._parameters(state)
+        return jnp.stack((center - radii, center + radii))
+
+    def measure(self, state, /):
+        _, radii = self._parameters(state)
+        half_dimension = jnp.asarray(0.5 * self.dimension, dtype=radii.dtype)
+        unit_measure = jnp.exp(
+            half_dimension * jnp.log(jnp.asarray(jnp.pi, dtype=radii.dtype))
+            - jax.scipy.special.gammaln(half_dimension + 1.0)
+        )
+        return unit_measure * jnp.prod(radii)
+
+    def boundary_measure(self, state, /):
+        del state
+        raise NotImplementedError(
+            "ND ellipsoid boundary measure requires an explicit estimator."
+        )
+
+    def sample_interior(self, state, num_points, /, *, key, plan=None):
+        del plan
+        center, radii = self._parameters(state)
+        direction_key, radial_key = jr.split(key)
+        count = int(num_points)
+        directions = jr.normal(
+            direction_key,
+            (count, self.dimension),
+            dtype=center.dtype,
+        )
+        directions = directions / jnp.maximum(
+            jnp.linalg.norm(directions, axis=-1, keepdims=True),
+            jnp.finfo(center.dtype).eps,
+        )
+        radial = jr.uniform(radial_key, (count, 1), dtype=center.dtype) ** (
+            1.0 / self.dimension
+        )
+        return complete_sampling_result(center + radii * radial * directions)
+
+    def sample_boundary(self, state, num_points, /, *, key):
+        del state, num_points, key
+        raise NotImplementedError(
+            "ND ellipsoid boundary sampling requires an explicit area sampler."
+        )
+
+    def boundary_atlas(self, state, /):
+        del state
+        raise NotImplementedError(
+            "ND ellipsoid boundary atlas requires a selected chart construction."
         )
 
 
@@ -1880,6 +1982,7 @@ class _WedgeKernel(GeometryKernel):
 
 
 __all__ = [
+    "AxisAlignedEllipsoid",
     "Cone",
     "Cylinder",
     "Ellipse",

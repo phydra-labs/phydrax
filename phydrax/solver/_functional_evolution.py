@@ -7,13 +7,12 @@ from __future__ import annotations
 import time
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, cast, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from evosax.algorithms.distribution_based.base import DistributionBasedAlgorithm
 from jax import core as jcore
 
 from .._frozendict import frozendict
@@ -29,6 +28,7 @@ from .._training import (
     TrainingSignalGuard as _TrainingSignalGuard,
 )
 from ..logging import is_enabled as _logging_enabled
+from ..optim._evolution_strategy import AbstractDistributionEvolutionMethod
 from ._functional_objective import (
     evaluate_prepared_objective,
     prepared_data_metrics,
@@ -48,11 +48,11 @@ if TYPE_CHECKING:
     from ._functional_solver import FunctionalSolver
 
 
-def _solve_evosax_distribution(
+def _solve_distribution_evolution(
     self: "FunctionalSolver",
     *,
     num_iter: int,
-    algo: DistributionBasedAlgorithm,
+    algo: AbstractDistributionEvolutionMethod,
     seed: int,
     jit: bool,
     keep_best: bool,
@@ -93,8 +93,7 @@ def _solve_evosax_distribution(
     model_loss_names = function_model_loss_labels(self.functions)
     evaluation_term_names = tuple(_term_label(c) for c in self.evaluation_terms)
 
-    algo_runtime = cast(Any, algo)
-    algo_params = algo_runtime.default_params
+    algo_runtime = algo
 
     def _loss_for_params(p, non_trainable_, prepared_):
         functions = combine_trainable(p, non_trainable_)
@@ -120,7 +119,7 @@ def _solve_evosax_distribution(
     terms_fn = eqx.filter_jit(_values_for_params) if jit else _values_for_params
 
     key = jr.key(seed)
-    evo_state = algo_runtime.init(key, mean=params, params=algo_params)
+    evo_state = algo_runtime.init(key, params)
 
     control = TrainingController(
         total_steps=int(num_iter),
@@ -149,7 +148,7 @@ def _solve_evosax_distribution(
                 break
             if signal_guard.stop_requested:
                 _emit_training_signal_stop(
-                    "evosax",
+                    "native-evolution",
                     signal_guard,
                     completed=epoch,
                     total=int(num_iter),
@@ -158,10 +157,8 @@ def _solve_evosax_distribution(
             completed = epoch
             try:
                 iter_start = time.perf_counter()
-                control.key, ask_key, eval_key, tell_key, cand_key = jr.split(
-                    control.key, 5
-                )
-                population, evo_state = algo_runtime.ask(ask_key, evo_state, algo_params)
+                control.key, ask_key, eval_key = jr.split(control.key, 3)
+                population, evo_state = algo_runtime.ask(ask_key, evo_state)
                 popsize = None
                 for leaf in jax.tree_util.tree_leaves(population):
                     if (
@@ -172,7 +169,7 @@ def _solve_evosax_distribution(
                         break
                 if popsize is None:
                     raise ValueError(
-                        "Could not infer population size from evosax population."
+                        "Could not infer population size from the evolution population."
                     )
 
                 iter_ = jnp.asarray(epoch + 1, dtype=jnp.float64)
@@ -209,10 +206,8 @@ def _solve_evosax_distribution(
                         prepared,
                     )
                 )(population)
-                evo_state, _ = algo_runtime.tell(
-                    tell_key, population, losses, evo_state, algo_params
-                )
-                cand_params = algo_runtime.get_mean(evo_state)
+                evo_state = algo_runtime.tell(population, losses, evo_state)
+                cand_params = algo_runtime.mean(evo_state)
                 cand_loss = loss_fn(
                     cand_params,
                     non_trainable,
@@ -309,7 +304,7 @@ def _solve_evosax_distribution(
                     if log_step:
                         _emit_training_scalars(
                             scalars,
-                            backend="evosax",
+                            backend="native-evolution",
                             step=step,
                             total_steps=int(num_iter),
                         )
@@ -321,7 +316,7 @@ def _solve_evosax_distribution(
                     break
                 if signal_guard.stop_requested:
                     _emit_training_signal_stop(
-                        "evosax",
+                        "native-evolution",
                         signal_guard,
                         completed=step,
                         total=int(num_iter),
@@ -330,7 +325,7 @@ def _solve_evosax_distribution(
             except (KeyboardInterrupt, InterruptedError) as exc:
                 signal_guard.request_stop_from_exception(exc)
                 _emit_training_signal_stop(
-                    "evosax",
+                    "native-evolution",
                     signal_guard,
                     completed=completed,
                     total=int(num_iter),
@@ -366,4 +361,4 @@ def _solve_evosax_distribution(
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)
 
 
-__all__ = ["_solve_evosax_distribution"]
+__all__ = ["_solve_distribution_evolution"]

@@ -162,6 +162,18 @@ safety, lifetime, fast-charge, or arbitrary-cell predictive claim is made.
 
 ::: phydrax.applications.battery.BatteryTermination
 
+## Spatial DFN development
+
+::: phydrax.applications.battery.SpatialBatteryCellPlan
+
+---
+
+::: phydrax.applications.battery.SpatialBatteryCellState
+
+---
+
+::: phydrax.applications.battery.SpatialBatteryCellStepResult
+
 ## Exact support and release admission
 
 Persisted criterion, campaign, observation, evidence, and gate times are UTC

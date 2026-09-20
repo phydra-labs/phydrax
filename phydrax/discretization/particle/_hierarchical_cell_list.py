@@ -90,8 +90,6 @@ class HierarchicalRadiusParticleNeighborhoodPlan(AbstractParticleNeighborhoodPla
             raise ValueError("skin must be finite and nonnegative.")
         if not isinstance(box, ParticleBox):
             raise TypeError("box must be a ParticleBox.")
-        if box.ambient_dimension not in (1, 2, 3):
-            raise ValueError("Hierarchical neighborhoods support dimensions 1 through 3.")
         levels = np.searchsorted(edges[1:-1], radii, side="right").astype(np.int32)
         key = DiscretizationKey(
             name,
@@ -193,13 +191,13 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
             widths.append(width)
             strides.append(_cell_strides(shape))
             cell_counts.append(prod(shape))
-        offsets = np.asarray(tuple(product((-1, 0, 1), repeat=dimension)), dtype=np.int32)
+        neighbor_cell_capacity = 3**dimension
         level_population = np.bincount(np.asarray(plan.level_ids), minlength=level_count)
         candidate_slots = int(
             sum(
                 int(level_population[level])
                 * (level_count - level)
-                * offsets.shape[0]
+                * neighbor_cell_capacity
                 * plan.maximum_particles_per_cell
                 for level in range(level_count)
             )
@@ -209,6 +207,10 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
                 f"Hierarchical relation requires {candidate_slots} candidate slots, "
                 f"exceeding maximum_candidate_slots={plan.maximum_candidate_slots}."
             )
+        offsets = np.asarray(
+            tuple(product((-1, 0, 1), repeat=dimension)),
+            dtype=np.int32,
+        )
         relation_schema_id = canonical_fingerprint(
             {
                 "kind": "hierarchical-radius-pair-relation-schema",

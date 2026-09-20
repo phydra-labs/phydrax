@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 import trimesh
 
@@ -72,7 +73,10 @@ def test_canonical_triangle_mesh_builds_graph_and_simplicial_operator_topologies
 
 def test_mesh_region_uses_surface_vertex_measure():
     host_mesh = trimesh.creation.box(extents=(1.0, 2.0, 3.0))
-    region = phx.geometry.mesh_region_from_source(host_mesh, recenter=False)
+    region = phx.geometry.mesh_region_from_source(
+        (np.asarray(host_mesh.vertices), np.asarray(host_mesh.faces)),
+        recenter=False,
+    )
 
     samples = phx.nn.operator.function_samples_from_mesh(region)
     assert samples.coordinates is not None

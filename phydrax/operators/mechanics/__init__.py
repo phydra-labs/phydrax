@@ -42,6 +42,7 @@ from ._hamiltonian import (
     poisson_bracket,
 )
 from ._lagrangian import canonical_momentum, euler_lagrange
+from ._linear_elasticity import LinearElasticityTensor
 
 
 __all__ = [
@@ -50,6 +51,7 @@ __all__ = [
     "HyperelasticResponse",
     "NansonResponse",
     "NeoHookeanLaw",
+    "LinearElasticityTensor",
     "NeoHookeanParameters",
     "VolumetricConstraint",
     "VolumetricConstraintKind",

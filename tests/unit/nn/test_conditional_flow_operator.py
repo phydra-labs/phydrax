@@ -67,7 +67,7 @@ def _model(dataset, *, seed=0):
     )
 
 
-def test_flowjax_operator_distribution_batches_samples_logs_and_differentiates():
+def test_native_flow_operator_distribution_batches_samples_logs_and_differentiates():
     dataset = _dataset()
     model = _model(dataset)
     batch = dataset.batch
@@ -89,7 +89,7 @@ def test_flowjax_operator_distribution_batches_samples_logs_and_differentiates()
     )
 
     assert isinstance(
-        distribution, phx.nn.operator.architectures.FlowJAXOperatorDistribution
+        distribution, phx.nn.operator.architectures.ConditionalFlowOperatorDistribution
     )
     assert distribution.event_shape == (4,)
     assert distribution.uncertainty_source == "process"
@@ -117,7 +117,7 @@ def test_flowjax_operator_distribution_batches_samples_logs_and_differentiates()
     assert model.operator_contract.capabilities.topology == "unused"
 
 
-def test_flowjax_fixed_query_accepts_loader_broadcast_but_rejects_changed_geometry():
+def test_native_flow_fixed_query_accepts_loader_broadcast_but_rejects_changed_geometry():
     dataset = _dataset()
     model = _model(dataset)
     loader = phx.nn.operator.training.OperatorBatchLoader(
@@ -145,7 +145,7 @@ def test_flowjax_fixed_query_accepts_loader_broadcast_but_rejects_changed_geomet
         jax.block_until_ready(model.distribution(changed).location)
 
 
-def test_flowjax_operator_trains_through_fit_operator():
+def test_native_flow_operator_trains_through_fit_operator():
     dataset = _dataset()
     result = phx.nn.operator.training.fit_operator(
         _model(dataset),
@@ -168,7 +168,7 @@ def test_flowjax_operator_trains_through_fit_operator():
     )
 
 
-def test_flowjax_fit_checkpoint_resume_is_bitwise_exact(tmp_path):
+def test_native_flow_fit_checkpoint_resume_is_bitwise_exact(tmp_path):
     dataset = _dataset(cases=4)
     model = _model(dataset, seed=20)
     common: dict[str, Any] = {
@@ -177,7 +177,7 @@ def test_flowjax_fit_checkpoint_resume_is_bitwise_exact(tmp_path):
         "batch_size": 2,
         "seed": 13,
         "checkpoint_every": 1,
-        "configuration": {"test_contract": "flowjax-exact-resume"},
+        "configuration": {"test_contract": "native-flow-exact-resume"},
         "jit": True,
     }
     uninterrupted = phx.nn.operator.training.fit_operator(

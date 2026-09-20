@@ -25,6 +25,7 @@ from ._geometry import (
     CrackProjection,
     SharpCrackTopology,
 )
+from ._geometry3d import CrackSurfaceGeometry3D
 from ._growth import (
     CrackGrowthProposal,
     CrackGrowthTransaction,
@@ -41,6 +42,7 @@ from ._quadrature import (
     CrackVolumeQuadrature,
     SharpCrackQuadrature,
 )
+from ._quadrature3d import SharpCrackQuadrature3D
 from ._topology import diffuse_fracture_topology_plan
 
 
@@ -49,6 +51,7 @@ __all__ = [
     "CrackEnrichmentValues",
     "CrackFaceContactAdapter",
     "CrackFaceQuadrature",
+    "CrackSurfaceGeometry3D",
     "CrackFrontGeometry",
     "CrackGrowthProposal",
     "CrackGrowthTransaction",
@@ -63,6 +66,7 @@ __all__ = [
     "PhaseFieldFractureParameters",
     "PhaseFieldHistoryState",
     "PhaseFieldHistoryTransaction",
+    "SharpCrackQuadrature3D",
     "SharpCrackQuadrature",
     "SharpCrackTopology",
     "SharpFractureState",

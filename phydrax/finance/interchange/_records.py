@@ -10,7 +10,6 @@ from types import MappingProxyType
 from typing import Any
 
 import equinox as eqx
-import polars as pl
 
 from ..._fingerprint import canonical_fingerprint, canonical_json
 from ..._strict import StrictModule
@@ -200,35 +199,4 @@ class FinanceRecordBatch(StrictModule, NonTrainableState):
         return value
 
 
-def polars_to_market_records(
-    frame: pl.DataFrame,
-    /,
-    *,
-    primary_key: Sequence[str],
-    context: Mapping[str, Any] | None = None,
-) -> FinanceRecordBatch:
-    """Detach a Polars table into canonical market records."""
-    if not isinstance(frame, pl.DataFrame):
-        raise TypeError("frame must be a polars.DataFrame.")
-    return FinanceRecordBatch(
-        "market-observation",
-        frame.to_dicts(),
-        primary_key=primary_key,
-        context=context,
-    )
-
-
-def market_records_to_polars(batch: FinanceRecordBatch, /) -> pl.DataFrame:
-    """Materialize canonical market records as a new Polars dataframe."""
-    if not isinstance(batch, FinanceRecordBatch):
-        raise TypeError("batch must be a FinanceRecordBatch.")
-    if batch.record_kind != "market-observation":
-        raise ValueError("Only market-observation batches can become market tables.")
-    return pl.DataFrame([dict(record) for record in batch.to_records()])
-
-
-__all__ = [
-    "FinanceRecordBatch",
-    "market_records_to_polars",
-    "polars_to_market_records",
-]
+__all__ = ["FinanceRecordBatch"]

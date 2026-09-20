@@ -168,11 +168,17 @@ model/mesh admission, storage semantics, qualification, and examples.
 
 ::: phydrax.applications.semiconductor.quantum.EffectiveMass1D
 
+::: phydrax.applications.semiconductor.quantum.EffectiveMassND
+
+::: phydrax.applications.semiconductor.quantum.DenseHamiltonianND
+
 ::: phydrax.applications.semiconductor.quantum.DensityGradient1D
 
 ::: phydrax.applications.semiconductor.quantum.solve_schrodinger
 
 ::: phydrax.applications.semiconductor.quantum.QuantumPoisson1D
+
+::: phydrax.applications.semiconductor.quantum.QuantumPoissonND
 
 ::: phydrax.applications.semiconductor.quantum.solve_schrodinger_poisson
 

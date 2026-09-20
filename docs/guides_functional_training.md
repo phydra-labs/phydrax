@@ -69,11 +69,11 @@ benefit. Term reporting averages each term only over microsteps in which that
 term was selected.
 
 Values greater than one fail before objective sampling for line searches,
-least-squares/GGN, KFAC, mirror or Riemannian optimizers, Evosax, pseudo-
-transient/causal/balancing policies, and gradient/NTK diagnostics. Those methods
-require aggregate candidate-value, residual/Jacobian, curvature, or population
-statistics; raw-gradient averaging is not a substitute. Optimizer-side delayed
-updates are likewise not lifecycle-equivalent.
+least-squares/GGN, KFAC, mirror or Riemannian optimizers, distribution evolution,
+pseudo-transient/causal/balancing policies, and gradient/NTK diagnostics. Those
+methods require aggregate candidate-value, residual/Jacobian, curvature, or
+population statistics; raw-gradient averaging is not a substitute.
+Optimizer-side delayed updates are likewise not lifecycle-equivalent.
 
 ## Residual blocks
 
@@ -305,9 +305,9 @@ that physical cone. Positive component rescaling cannot change a halfspace sign,
 so balancing and update alignment are complementary rather than substitutes.
 
 Initial training integration requires standard Optax, all terms active, one
-microstep, and no attached model losses. KFAC, Evosax, line-search, iterative,
-mirror, and Riemannian backends fail before training rather than ignoring the
-policy. A zero aligned direction can be a valid local Pareto-stationary result.
+microstep, and no attached model losses. KFAC, distribution evolution,
+line-search, iterative, mirror, and Riemannian backends fail before training
+rather than ignoring the policy.
 
 The guarantee is first order and realization-local. Curvature can increase a
 component after a finite step, noisy batch gradients need not represent the

@@ -16,12 +16,14 @@ from phydrax.operators.differential import (
     hydrostatic_stress,
     linear_elastic_cauchy_stress_2d,
     linear_elastic_orthotropic_stress_2d,
+    linear_elastic_stress,
     maxwell_stress,
     neo_hookean_cauchy,
     neo_hookean_pk1,
     neo_hookean_reference_energy,
     svk_pk2_stress,
     viscous_stress,
+    von_mises_stress,
 )
 
 
@@ -142,6 +144,35 @@ def test_orthotropic_reduces_isotropic():
         jnp.asarray(sig_ortho(pts).data),
         atol=1e-6,
     )
+
+
+def test_dimension_declared_elasticity_and_equivalent_stress_are_explicit():
+    geom = phx.domain.GeometryDomain(phx.geometry.Ball(jnp.zeros((4,)), 1.0).compile())
+    material = phx.operators.LinearElasticityTensor.isotropic(
+        4,
+        lame_lambda=2.0,
+        shear_modulus=3.0,
+    )
+
+    @geom.Function("x")
+    def displacement(x):
+        return jnp.asarray((x[0], 0.0, 0.0, 0.0))
+
+    stress = linear_elastic_stress(displacement, material)
+    point = frozendict({"x": cx.AxisArray(jnp.zeros((4,)), dims=(None,))})
+    stress_value = jnp.asarray(stress(point).data)
+
+    @geom.Function("x")
+    def uniaxial(x):
+        del x
+        return jnp.diag(jnp.asarray((5.0, 0.0, 0.0, 0.0)))
+
+    intrinsic = von_mises_stress(uniaxial, convention="intrinsic")
+    assert bool(material.successful)
+    assert stress_value.shape == (4, 4)
+    assert jnp.allclose(jnp.asarray(intrinsic(point).data), 5.0)
+    with pytest.raises(ValueError, match="supports only two- and three-dimensional"):
+        von_mises_stress(uniaxial)
 
 
 def test_finite_strain_shapes_zero_disp():

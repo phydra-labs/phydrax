@@ -5,12 +5,10 @@
 from typing import cast
 
 import jax.numpy as jnp
-import polars as pl
 import pytest
 from jaxtyping import Array
 
-from phydrax.data_utils import CSVReader
-from phydrax.data_utils._utils import _is_numeric_dtype
+from phydrax.data_utils import CSVReader, CSVReadPolicy
 
 
 def test_csv_reader_reads_numeric_columns(tmp_path):
@@ -61,25 +59,21 @@ def test_csv_reader_raises_for_missing_file():
         CSVReader("missing.csv")
 
 
-def test_csv_reader_forwards_polars_read_csv_kwargs(tmp_path):
+def test_csv_reader_uses_explicit_header_policy(tmp_path):
     path = tmp_path / "no_header.csv"
     path.write_text("1,2,3\n4,5,6\n")
 
-    reader = CSVReader(path, has_header=False)
+    reader = CSVReader(path, policy=CSVReadPolicy(has_header=False))
     assert reader.columns == ["column_1", "column_2", "column_3"]
 
-    named = CSVReader(path, has_header=False, new_columns=["a", "b", "c"])
+    named = CSVReader(
+        path,
+        policy=CSVReadPolicy(
+            has_header=False,
+            column_names=("a", "b", "c"),
+        ),
+    )
     assert named.columns == ["a", "b", "c"]
     values = named[["a", "b", "c"]]
     assert not isinstance(values, dict)
     assert jnp.allclose(values, jnp.asarray([[1, 2, 3], [4, 5, 6]]))
-
-
-def test_is_numeric_dtype_for_polars_series_and_frame():
-    numeric_frame = pl.DataFrame({"a": [1, 2, 3], "b": [4.0, 5.0, 6.0]})
-    mixed_frame = pl.DataFrame({"a": [1, 2, 3], "name": ["a", "b", "c"]})
-
-    assert _is_numeric_dtype(numeric_frame) is True
-    assert _is_numeric_dtype(mixed_frame) is False
-    assert _is_numeric_dtype(numeric_frame.get_column("a")) is True
-    assert _is_numeric_dtype(mixed_frame.get_column("name")) is False

@@ -1,4 +1,5 @@
-import manifold3d
+from importlib.util import find_spec
+
 import numpy as np
 import pytest
 
@@ -8,11 +9,48 @@ from phydrax.meshing import MeshingFailure
 from phydrax.meshing.providers._manifold import ManifoldProvider, SurfaceBooleanOperation
 
 
+pytestmark = [
+    pytest.mark.meshing_manifold,
+    pytest.mark.skipif(
+        find_spec("manifold3d") is None,
+        reason="optional manifold3d package is not installed",
+    ),
+]
+
+
 def _cube(offset):
-    arrays = manifold3d.Manifold.cube().translate(offset).to_mesh64()
+    vertices = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 1.0),
+            (1.0, 1.0, 1.0),
+            (0.0, 1.0, 1.0),
+        )
+    )
+    faces = np.asarray(
+        (
+            (0, 2, 1),
+            (0, 3, 2),
+            (4, 5, 6),
+            (4, 6, 7),
+            (0, 1, 5),
+            (0, 5, 4),
+            (3, 7, 6),
+            (3, 6, 2),
+            (0, 4, 7),
+            (0, 7, 3),
+            (1, 2, 6),
+            (1, 6, 5),
+        ),
+        dtype=np.int64,
+    )
     return SurfaceModel.from_triangles(
-        arrays.vert_properties[:, :3],
-        arrays.tri_verts,
+        vertices + np.asarray(offset, dtype=float),
+        faces,
         SurfaceMetadata(
             source_id=str(offset),
             source_revision="0",

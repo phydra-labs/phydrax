@@ -3,6 +3,9 @@ from importlib.util import find_spec
 import build123d as bd
 import numpy as np
 import pytest
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+from OCP.gp import gp_Pnt
 
 import phydrax as phx
 
@@ -15,12 +18,19 @@ pytestmark = [
 ]
 
 
+def _planar_face(points):
+    polygon = BRepBuilderAPI_MakePolygon()
+    for x, y in points:
+        polygon.Add(gp_Pnt(float(x), float(y), 0.0))
+    polygon.Close()
+    return BRepBuilderAPI_MakeFace(polygon.Wire()).Face()
+
+
 def _source(path, shape=None):
-    bd.export_step(
-        bd.Box(1.0, 1.0, 1.0) if shape is None else shape, path, unit=bd.Unit.MM
-    )
-    model = phx.geometry.import_brep(
-        path,
+    persisted = path.with_suffix(".brep")
+    model = phx.geometry.persist_occt_shape(
+        BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape() if shape is None else shape,
+        persisted,
         coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
         linear_deflection=0.05,
         angular_deflection=0.2,
@@ -173,7 +183,8 @@ def test_real_periodic_planar_and_volume_meshes_match_all_quadratic_nodes(
 ):
     provider = _provider()
     source = _source(
-        tmp_path / "periodic.step", bd.Rectangle(1, 1) if dimension == 2 else None
+        tmp_path / "periodic.step",
+        bd.Rectangle(1, 1).wrapped if dimension == 2 else None,
     )
     selector = _edge_scope if dimension == 2 else _face_scope
     transform = np.eye(4)
@@ -219,9 +230,9 @@ def test_real_planar_quadrilateral_and_mixed_output_keeps_quadratic_maps(tmp_pat
     # An odd boundary subdivision admits mixed recombination; the rectangle
     # can legitimately become all-quadrilateral even with partial recombination.
     shape = (
-        bd.Polygon((0.0, 0.0), (0.6, 0.0), (0.3, np.sqrt(3.0) * 0.3))
+        _planar_face(((0.0, 0.0), (0.6, 0.0), (0.3, np.sqrt(3.0) * 0.3)))
         if mixed
-        else bd.Rectangle(1.0, 0.8)
+        else _planar_face(((0.0, 0.0), (1.0, 0.0), (1.0, 0.8), (0.0, 0.8)))
     )
     source = _source(tmp_path / "surface.step", shape)
     policy = (
@@ -334,7 +345,10 @@ def test_open_cad_model_is_rejected_for_volume_meshing_without_weakening_solid_s
     tmp_path,
 ):
     provider = _provider()
-    model = _source(tmp_path / "open-sheet.step", bd.Rectangle(1, 1))
+    model = _source(
+        tmp_path / "open-sheet.brep",
+        _planar_face(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+    )
     scope = _scope(model, 3, (0,))
     specification = phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(

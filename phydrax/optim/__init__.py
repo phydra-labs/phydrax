@@ -84,6 +84,11 @@ from ._differential_evolution import (
     DifferentialEvolutionValidityMode,
     search_differential_evolution,
 )
+from ._evolution_strategy import (
+    AbstractDistributionEvolutionMethod,
+    OpenEvolutionState,
+    OpenEvolutionStrategy,
+)
 from ._external_backends import (
     ceres_least_squares,
     NLoptMinimize,
@@ -540,6 +545,7 @@ __all__ = [
     "polynomial",
     "AbstractConvexCone",
     "AbstractMixedIntegerMethod",
+    "AbstractDistributionEvolutionMethod",
     "AbstractBranchAndBoundProblem",
     "AbstractConvexProgramMethod",
     "ConicCut",
@@ -728,6 +734,8 @@ __all__ = [
     "DifferentialEvolutionSpace",
     "DifferentialEvolutionStatus",
     "DifferentialEvolutionValidityMode",
+    "OpenEvolutionState",
+    "OpenEvolutionStrategy",
     "search_differential_evolution",
     "DenseNewtonDogleg",
     "DenseNewtonDoglegState",

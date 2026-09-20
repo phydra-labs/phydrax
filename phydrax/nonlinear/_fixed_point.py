@@ -205,7 +205,6 @@ def _anderson_candidate(
     linear_plan = plan_linear(linear_problem, linear_policy)
     if maximum_linear_iterations is not None and linear_plan.backend in (
         "lineax",
-        "matfree",
         "native-block-krylov",
     ):
         raise ValueError(

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import operator
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax
 import jax.core as jax_core
@@ -29,6 +29,11 @@ from phydrax.domain import (
 from ..._doc import DOC_KEY0
 from ..._model import StructuredDerivativeProvider
 from ..._strict import StrictModule
+
+
+if TYPE_CHECKING:
+    from ..mechanics._linear_elasticity import LinearElasticityTensor
+
 from ...domain._evaluation import evaluate_pointwise_callable
 from ._array_ops import (
     _basis_nth_derivative,
@@ -1297,6 +1302,85 @@ def curl(
     return DomainFunction(domain=u.domain, deps=u.deps, func=_curl, metadata=u.metadata)
 
 
+def vector_curl_2d(
+    u: DomainFunction,
+    /,
+    *,
+    var: str | None = None,
+    mode: Literal["reverse", "forward"] = "reverse",
+    backend: Literal["ad", "jet", "fd", "basis"] = "ad",
+    basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
+    periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
+) -> DomainFunction:
+    """Return the scalar curl of a two-dimensional vector field."""
+    var = _resolve_var(u, var)
+    factor, var_dim = _factor_and_dim(u, var)
+    if factor.kind == "scalar" or var_dim != 2:
+        raise ValueError("vector_curl_2d requires a two-dimensional geometry variable.")
+    derivative = grad(
+        u,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine,
+    )
+
+    def _curl(*args, key=None, **kwargs):
+        jacobian = jnp.asarray(derivative.func(*args, key=key, **kwargs))
+        if jacobian.ndim < 2 or jacobian.shape[-2:] != (2, 2):
+            raise ValueError(
+                "vector_curl_2d expects grad(u) to have trailing shape (2, 2)."
+            )
+        return jacobian[..., 1, 0] - jacobian[..., 0, 1]
+
+    return DomainFunction(domain=u.domain, deps=u.deps, func=_curl, metadata=u.metadata)
+
+
+def scalar_curl_2d(
+    value: DomainFunction,
+    /,
+    *,
+    var: str | None = None,
+    mode: Literal["reverse", "forward"] = "reverse",
+    backend: Literal["ad", "jet", "fd", "basis"] = "ad",
+    basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
+    periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
+) -> DomainFunction:
+    """Return the clockwise rotated gradient of a two-dimensional scalar field."""
+    var = _resolve_var(value, var)
+    factor, var_dim = _factor_and_dim(value, var)
+    if factor.kind == "scalar" or var_dim != 2:
+        raise ValueError("scalar_curl_2d requires a two-dimensional geometry variable.")
+    derivative = grad(
+        value,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine,
+    )
+
+    def _curl(*args, key=None, **kwargs):
+        gradient = jnp.asarray(derivative.func(*args, key=key, **kwargs))
+        if gradient.ndim < 1 or gradient.shape[-1] != 2:
+            raise ValueError(
+                "scalar_curl_2d expects grad(value) to have trailing shape (2,)."
+            )
+        return jnp.stack((gradient[..., 1], -gradient[..., 0]), axis=-1)
+
+    return DomainFunction(
+        domain=value.domain,
+        deps=value.deps,
+        func=_curl,
+        metadata=value.metadata,
+    )
+
+
 def div_tensor(
     T: DomainFunction,
     /,
@@ -1576,6 +1660,51 @@ def cauchy_stress(
     tr = _trace_last2(strain, keepdims=True)
     I = jnp.eye(var_dim)
     return 2.0 * mu_fn * strain + lambda_fn * tr * I
+
+
+def linear_elastic_stress(
+    u: DomainFunction,
+    material: LinearElasticityTensor,
+    /,
+    *,
+    var: str | None = None,
+    mode: Literal["reverse", "forward"] = "reverse",
+    backend: Literal["ad", "fd", "basis"] = "ad",
+    basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
+    periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
+) -> DomainFunction:
+    """Apply a verified dimension-declared linear-elastic stiffness tensor."""
+    from ..mechanics._linear_elasticity import LinearElasticityTensor
+
+    if not isinstance(material, LinearElasticityTensor):
+        raise TypeError("material must be a LinearElasticityTensor.")
+    var = _resolve_var(u, var)
+    factor, var_dim = _factor_and_dim(u, var)
+    if factor.kind == "scalar" or var_dim != material.dimension:
+        raise ValueError(
+            "Displacement geometry dimension must match the elasticity tensor."
+        )
+    strain = cauchy_strain(
+        u,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine,
+    )
+
+    def _stress(*args, key=None, **kwargs):
+        value = strain.func(*args, key=key, **kwargs)
+        return material.stress(value)
+
+    return DomainFunction(
+        domain=u.domain,
+        deps=u.deps,
+        func=_stress,
+        metadata=u.metadata,
+    )
 
 
 def div_cauchy_stress(
@@ -3891,11 +4020,15 @@ def hydrostatic_stress(
     return (tr / float(var_dim)) * I
 
 
+EquivalentStressConvention = Literal["embedded-3d", "intrinsic"]
+
+
 def von_mises_stress(
     sigma: DomainFunction,
     /,
     *,
     var: str | None = None,
+    convention: EquivalentStressConvention = "embedded-3d",
 ) -> DomainFunction:
     r"""Von Mises equivalent stress.
 
@@ -3916,28 +4049,41 @@ def von_mises_stress(
 
     - A `DomainFunction` representing the scalar von Mises equivalent stress.
     """
+    if convention not in ("embedded-3d", "intrinsic"):
+        raise ValueError("convention must be 'embedded-3d' or 'intrinsic'.")
     var = _resolve_var(sigma, var)
     factor, var_dim = _factor_and_dim(sigma, var)
     if factor.kind == "scalar":
         raise ValueError(
             "von_mises_stress(var=...) requires a geometry variable, not a scalar variable."
         )
+    if convention == "embedded-3d" and var_dim not in (2, 3):
+        raise ValueError(
+            "embedded-3d von Mises stress supports only two- and three-dimensional geometry."
+        )
 
     def _op(*args, key=None, **kwargs):
         sig = jnp.asarray(sigma.func(*args, key=key, **kwargs))
-        if var_dim == 2:
+        if convention == "embedded-3d" and var_dim == 2:
             sx = sig[..., 0, 0]
             sy = sig[..., 1, 1]
             txy = sig[..., 0, 1]
             vm2 = sx * sx - sx * sy + sy * sy + 3.0 * (txy * txy)
             return jnp.sqrt(jnp.maximum(vm2, 0.0))
+        if convention == "intrinsic" and var_dim == 1:
+            return jnp.abs(sig[..., 0, 0])
 
         tr = jnp.trace(sig, axis1=-2, axis2=-1)[..., None, None]
-        I = jnp.eye(var_dim)
-        I = jnp.broadcast_to(I, sig.shape)
-        s = sig - (tr / float(var_dim)) * I
-        j2 = 0.5 * jnp.sum(s * s, axis=(-1, -2))
-        return jnp.sqrt(jnp.maximum(3.0 * j2, 0.0))
+        identity = jnp.eye(var_dim, dtype=sig.dtype)
+        identity = jnp.broadcast_to(identity, sig.shape)
+        deviatoric = sig - (tr / float(var_dim)) * identity
+        j2 = 0.5 * jnp.sum(deviatoric * deviatoric, axis=(-1, -2))
+        coefficient = (
+            3.0
+            if convention == "embedded-3d"
+            else 2.0 * float(var_dim) / float(var_dim - 1)
+        )
+        return jnp.sqrt(jnp.maximum(coefficient * j2, 0.0))
 
     return DomainFunction(
         domain=sigma.domain,

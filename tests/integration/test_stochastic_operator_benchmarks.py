@@ -98,7 +98,7 @@ def test_stochastic_heat_reference_transition_is_one_coherent_process():
     assert result.predictive_process_axis
 
 
-def test_allen_cahn_flowjax_benchmark_retains_distributional_gain_in_two_of_three_seeds():
+def test_allen_cahn_native_flow_benchmark_retains_distributional_gain_in_two_of_three_seeds():
     data = allen_cahn_transition_data(
         jr.key(3),
         grid_size=6,

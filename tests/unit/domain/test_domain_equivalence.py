@@ -6,7 +6,6 @@ import jax.numpy as jnp
 import meshio
 import numpy as np
 import pytest
-import trimesh
 
 import phydrax as phx
 from phydrax.domain import (
@@ -110,18 +109,18 @@ def test_geometry3d_equivalence_strong():
     )
     faces = np.array(
         [
-            [0, 1, 2],
+            [0, 2, 1],
             [0, 1, 3],
-            [0, 2, 3],
             [1, 2, 3],
+            [2, 0, 3],
         ],
         dtype=np.int64,
     )
-    mesh1 = trimesh.Trimesh(vertices=points, faces=faces, process=False)
+    mesh1 = (points, faces)
 
     perm = np.array([2, 0, 3, 1], dtype=np.int64)
     points2, faces2 = _permute_mesh(points, faces, perm)
-    mesh2 = trimesh.Trimesh(vertices=points2, faces=faces2, process=False)
+    mesh2 = (points2, faces2)
 
     geom1 = phx.domain.GeometryDomain(
         phx.geometry.mesh_region_from_source(mesh1, recenter=False).compile()
@@ -133,7 +132,7 @@ def test_geometry3d_equivalence_strong():
 
     points3 = points.copy()
     points3[1, 2] += 1e-3
-    mesh3 = trimesh.Trimesh(vertices=points3, faces=faces, process=False)
+    mesh3 = (points3, faces)
     geom3 = phx.domain.GeometryDomain(
         phx.geometry.mesh_region_from_source(mesh3, recenter=False).compile()
     )

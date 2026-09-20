@@ -2,7 +2,20 @@
 
 ## Unreleased
 
+### Changed
+- Replaced required ModePy nodal preparation, Matfree least-squares and low-rank
+  routes, Polars CSV ingestion, TensorBoard scalar writing, ASDEX structural
+  tracing, Evosax distribution search, SymPy exact algebra, and FlowJAX density
+  models with Phydrax-native substrates. Triangle import and planar boundary
+  extraction no longer require Trimesh or Shapely; PyVista, ArviZ, and Manifold
+  are explicit optional providers. Build123d was replaced by the directly
+  consumed no-VTK OCCT binding.
+
 ### Fixed
+- Geometry domains now preserve exact, estimated, and unknown mass evidence,
+  reject scalar-to-diagonal coercion outside one dimension, and distinguish
+  interior from boundary-measure capabilities. Von Mises stress now requires
+  an explicit convention outside its 2D/3D physical envelope.
 - Corrected rectangular rank-deficient pseudoinverse derivatives; certified
   mathematical linear and nonlinear solution-map derivatives against primal
   and tangent residuals; made regular QP sensitivities bidirectional and
@@ -28,6 +41,14 @@
   finite-element persistence, canonical material-point and replay archives,
   and staged validation for mesh, surface, imaging, deployment, and domain
   interchange routes.
+- Added dimension-generic balls, orthotopes, straight extrusions,
+  arbitrary-ambient low-dimensional simplices, codimension-one boundary frames,
+  bounded ND cochains, cell-list neighborhoods, interpolation, wavelet/Fourier
+  resource policies, and explicit planar curl operators.
+- Added planar modified-Helmholtz, Stokes, elasticity, and periodic spectral
+  boundary kernels; topology-generic compact U(1); native PIC qualification;
+  bounded spatial DFN lanes; ND effective-mass/Poisson confinement; planar
+  implicit-curve discovery; and oriented 3D crack-surface/front quadrature.
 - Added 21 exact fixed-topology omniphysics candidate tuples spanning spatial
   materials and manufacturing, conservative population and interface transport,
   coupled electrohydrodynamics, smart and chemo-mechanics, EHL and thermal

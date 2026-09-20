@@ -5,10 +5,11 @@
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
-from phydrax.operators.differential import curl
+from phydrax.operators.differential import curl, scalar_curl_2d, vector_curl_2d
 
 
 def test_curl_point(box3d):
@@ -71,6 +72,27 @@ def test_curl_preserves_metadata(box3d):
         **{"k": 1}
     )
     assert curl(u, var="x").metadata == u.metadata
+
+
+def test_explicit_planar_curls_have_unambiguous_value_shapes():
+    box2d = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+
+    @box2d.Function("x")
+    def vector(x):
+        return jnp.asarray((-x[1], x[0]))
+
+    @box2d.Function("x")
+    def scalar(x):
+        return x[0] ** 2 + x[1] ** 2
+
+    points = frozendict({"x": cx.AxisArray(jnp.asarray((0.5, -0.25)), dims=(None,))})
+    assert jnp.allclose(jnp.asarray(vector_curl_2d(vector)(points).data), 2.0)
+    assert jnp.allclose(
+        jnp.asarray(scalar_curl_2d(scalar)(points).data),
+        jnp.asarray((-0.5, -1.0)),
+    )
 
 
 def test_curl_ad_engine_jvp_matches_default(box3d):

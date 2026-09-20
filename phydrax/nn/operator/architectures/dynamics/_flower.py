@@ -620,8 +620,13 @@ class Flower(AbstractOperatorModel):
         self.minimum_route_scale = float(minimum_route_scale)
         self.route_scale_factor = float(route_scale_factor)
         self.conserve_mass = bool(conserve_mass)
-        if self.spatial_ndim not in (1, 2, 3):
-            raise ValueError("Flower supports one, two, or three spatial dimensions.")
+        if self.spatial_ndim <= 0:
+            raise ValueError("Flower spatial_ndim must be positive.")
+        if self.spatial_ndim > 3 and self.transition_mode == "learned":
+            raise ValueError(
+                "Flower learned transitions support at most three spatial dimensions; "
+                "use transition_mode='resolution_consistent' for higher dimensions."
+            )
         if self.width <= 0 or self.levels <= 0:
             raise ValueError("width and levels must be positive.")
         if self.num_heads <= 0 or self.groups <= 0:

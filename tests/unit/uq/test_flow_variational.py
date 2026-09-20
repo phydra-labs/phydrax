@@ -33,7 +33,6 @@ def _config():
         ),
         initialization_samples=64,
         flow_layers=2,
-        num_knots=4,
         nn_width=8,
         nn_depth=1,
     )
@@ -52,7 +51,7 @@ def test_flow_variational_family_preserves_pytree_sample_density_contract():
         sample_shape=(16,),
     )
 
-    assert result.family.family_id == "flowjax-spline"
+    assert result.family.family_id == "native-coupling-flow"
     assert samples.shape == (16,)
     assert sampled_log_prob.shape == (16,)
     assert jnp.allclose(sampled_log_prob, result.family.log_prob(samples))
@@ -79,5 +78,5 @@ def test_flow_variational_reuses_explicit_mean_field_initialization():
     )
 
     assert result.initialization is initialization
-    assert result.approximation_id == "reverse-kl/flowjax-spline"
+    assert result.approximation_id == "reverse-kl/native-coupling-flow"
     assert jnp.all(result.diagnostics.finite)
