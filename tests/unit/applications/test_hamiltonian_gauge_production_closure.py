@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from phydrax.applications.lattice_field._hamiltonian_gauge import (
     compact_u1_gauss_network,
     compact_u1_hamiltonian,
-    CompactU1GaugeModel2D,
+    CompactU1GaugeModel,
     compile_gauge_preserving_product_formula,
     estimate_gauge_hamiltonian_resources,
     execute_gauge_preserving_program,
@@ -18,7 +18,10 @@ from phydrax.applications.lattice_field._hamiltonian_gauge import (
     periodic_schwinger_hamiltonian,
     PeriodicSchwingerModel,
 )
-from phydrax.discretization._cell_complex import polygonal_cell_complex
+from phydrax.discretization._cell_complex import (
+    polygonal_cell_complex,
+    tetrahedral_cell_complex,
+)
 from phydrax.linalg._materialization import MaterializationPolicy
 from phydrax.operators.quantum._gauge_constraints import (
     gauss_commutator_evidence,
@@ -82,9 +85,9 @@ def test_periodic_theta_shift_matches_neighboring_global_flux_sector():
     assert jnp.allclose(first_dense, shifted_dense)
 
 
-def test_compact_2d_dense_mpo_mps_and_gauss_evolution_agree():
+def test_compact_two_skeleton_dense_mpo_mps_and_gauss_evolution_agree():
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
-    model = CompactU1GaugeModel2D(
+    model = CompactU1GaugeModel(
         topology,
         maximum_flux=1,
         electric_coupling=0.8,
@@ -147,10 +150,27 @@ def test_compact_2d_dense_mpo_mps_and_gauss_evolution_agree():
     assert result.evidence.final_leakage <= 1e-12
 
 
+def test_compact_u1_uses_the_two_skeleton_of_three_dimensional_topology():
+    topology = tetrahedral_cell_complex(jnp.asarray(((0, 1, 2, 3),)), 4)
+    model = CompactU1GaugeModel(
+        topology,
+        maximum_flux=1,
+        electric_coupling=0.8,
+        magnetic_coupling=0.4,
+        electric_flux_offset=0.1,
+    )
+    hamiltonian = compact_u1_hamiltonian(model)
+
+    assert topology.dimension == 3
+    assert model.plaquette_count == topology.entities(2).count
+    assert len(hamiltonian.terms) == model.link_count + model.plaquette_count
+    assert compact_u1_gauss_network(model).vertex_count == topology.entities(0).count
+
+
 def test_product_formula_lcu_and_qubitization_counts_are_explicit():
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     hamiltonian = compact_u1_hamiltonian(
-        CompactU1GaugeModel2D(
+        CompactU1GaugeModel(
             topology,
             maximum_flux=1,
             electric_coupling=0.8,

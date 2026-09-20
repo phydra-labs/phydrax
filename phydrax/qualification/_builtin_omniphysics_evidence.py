@@ -131,6 +131,7 @@ def _controls_and_applications():
         acoustics,
         chemo_mechanics,
         correlation,
+        discretization,
         electrochemistry,
         electrohydrodynamics,
         frequency,
@@ -140,11 +141,11 @@ def _controls_and_applications():
         membranes,
         optomechanics,
         phoresis,
-        plasma,
         population_balance,
         process_systems,
         rheology,
         smart_materials,
+        solver,
         structural_dynamics,
         surface_chemistry,
         system_modeling,
@@ -503,28 +504,53 @@ def _controls_and_applications():
         ),
         "closed-form constant-rate integration",
     )
-    maxwell_pic = plasma.ElectrostaticPIC1D(1.0, 16, 1.0).advance(
-        plasma.ElectrostaticPICState(
-            jnp.asarray((0.25, 0.75)), jnp.zeros(2), jnp.asarray(0.0)
+    pic_grid = discretization.TensorGridPlan(
+        (discretization.UniformCellAxisSpec(16, periodic=True),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    pic_bridge = discretization.StructuredCochainBridge(pic_grid)
+    pic_transfers = []
+    for identifier, charge, name in (
+        (0, -1.0, "negative"),
+        (1, 1.0, "positive"),
+    ):
+        particles = discretization.ParticleSetPlan(
+            jnp.asarray([identifier]),
+            jnp.ones((1,)),
+            ambient_dimension=1,
+        ).prepare()
+        charged = discretization.ChargedParticlePlan(
+            jnp.asarray([charge]),
+            name,
+        ).prepare(particles)
+        pic_transfers.append(
+            discretization.pic.PICParticleCochainTransferPlan(pic_bridge).prepare(charged)
+        )
+    pic_plan = solver.ElectrostaticPICPlan(
+        solver.CochainElectrostaticPlan(
+            pic_bridge,
+            solver.CochainElectrostaticBoundaryPlan.periodic(pic_bridge),
         ),
-        jnp.asarray((1.0, -1.0)),
-        jnp.ones(2),
-        jnp.ones(2),
-        1e-3,
+        tuple(pic_transfers),
     )
+    pic_state = pic_plan.initialize(
+        (jnp.asarray([[0.25]]), jnp.asarray([[0.75]])),
+        (jnp.zeros((1, 1)), jnp.zeros((1, 1))),
+    )
+    maxwell_pic = pic_plan.step_detailed(pic_state, 1e-3)
     plasma_application = ApplicationValidationEvidence(
         "electrostatic-pic",
         "periodic-neutral-dipole",
         (
             (
                 "neutralized-charge-c",
-                _float(maxwell_pic.neutralized_charge_residual_c),
+                _float(maxwell_pic.diagnostics.charge_balance_defect),
                 0.0,
                 1e-12,
             ),
             (
                 "gauss-residual-c-m",
-                _float(maxwell_pic.gauss_residual_norm_c_m),
+                _float(maxwell_pic.diagnostics.gauss_defect),
                 0.0,
                 1e-10,
             ),

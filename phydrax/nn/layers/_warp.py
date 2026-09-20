@@ -211,8 +211,8 @@ class MultiheadWarp(StrictModule):
         self.conditioning_size = int(conditioning_size)
         self.fill_value = float(fill_value)
         self.mask_mode = mask_mode
-        if self.spatial_ndim not in (1, 2, 3):
-            raise ValueError("MultiheadWarp supports one, two, or three dimensions.")
+        if self.spatial_ndim <= 0:
+            raise ValueError("MultiheadWarp spatial_ndim must be positive.")
         if self.in_channels <= 0 or self.out_channels <= 0:
             raise ValueError("in_channels and out_channels must be positive.")
         if self.conditioning_size < 0:

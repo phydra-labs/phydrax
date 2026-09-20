@@ -48,7 +48,7 @@ The modules below expose exact fixed-topology, single-host CPU candidate tuples.
 
 ::: phydrax.electromagnetics
 
-::: phydrax.plasma
+::: phydrax.discretization.pic
 
 ::: phydrax.applications.additive_manufacturing
 

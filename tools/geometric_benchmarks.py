@@ -188,7 +188,24 @@ def run_benchmarks(
     phase_points = jnp.linspace(0.1, 0.8, batch_size * even_dimension).reshape(
         batch_size, even_dimension
     )
+    ball = phx.geometry.Ball((0.0,) * dimension, 1.0).compile()
+    orthotope = phx.geometry.Orthotope(
+        (0.0,) * dimension,
+        tuple(float(index + 1) for index in range(dimension)),
+    ).compile()
+    analytic_geometry = lambda values: (
+        ball.boundary_field(values),
+        ball.boundary_normal(values),
+        orthotope.boundary_field(values),
+        orthotope.boundary_normal(values),
+    )
     records = [
+        _benchmark(
+            "analytic_geometry_nd",
+            analytic_geometry,
+            points,
+            repeats=repeats,
+        ),
         _benchmark("metric_jet", _metric_jet_case, points, repeats=repeats),
         _benchmark("differential_forms", _form_case, points, repeats=repeats),
         _benchmark("riemannian_map", _map_geometry_case, points, repeats=repeats),

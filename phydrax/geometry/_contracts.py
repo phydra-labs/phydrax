@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, Key
 
+from .._mass import ExactMass, known_mass_value, Mass
 from .._strict import StrictModule
 from ._capabilities import (
     ClosestPointProvider,
@@ -183,6 +184,7 @@ class ContactCurvatureResult(StrictModule):
     principal_curvatures: Array
     valid: Array
     regularity_margin: Array
+    ambient_dimension: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -190,19 +192,26 @@ class ContactCurvatureResult(StrictModule):
         valid: Array,
         regularity_margin: Array,
         /,
+        *,
+        ambient_dimension: int,
     ):
+        if ambient_dimension <= 0:
+            raise ValueError("ambient_dimension must be positive.")
         curvature = jnp.asarray(principal_curvatures)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         margin = jnp.asarray(regularity_margin, dtype=curvature.dtype)
-        if curvature.ndim != 2 or curvature.shape[1] not in (1, 2):
+        expected = ambient_dimension - 1
+        if curvature.ndim != 2 or curvature.shape[1] != expected:
             raise ValueError(
-                "Principal curvatures must have shape (points, dimension-1)."
+                "Principal curvatures must have shape "
+                f"(points, {expected}) for ambient dimension {ambient_dimension}."
             )
         if valid_.shape != curvature.shape[:1] or margin.shape != valid_.shape:
             raise ValueError("Curvature validity and margins must have point shape.")
         self.principal_curvatures = curvature
         self.valid = valid_
         self.regularity_margin = margin
+        self.ambient_dimension = ambient_dimension
 
 
 class AbstractGeometryKernel(StrictModule):
@@ -260,6 +269,14 @@ class AbstractGeometryKernel(StrictModule):
         raise NotImplementedError(
             f"{type(self).__name__} does not provide boundary measure."
         )
+
+    def interior_mass(self, state: DesignState, /) -> Mass:
+        """Return interior measure with exactness evidence."""
+        return ExactMass(self.measure(state))
+
+    def boundary_mass(self, state: DesignState, /) -> Mass:
+        """Return boundary measure with exactness evidence."""
+        return ExactMass(self.boundary_measure(state))
 
     @abstractmethod
     def sample_interior(
@@ -420,14 +437,25 @@ class CompiledGeometry(StrictModule):
         return self.kernel.bounds(self.state)
 
     @property
+    def interior_mass(self) -> Mass:
+        self.require(GeometryCapability.INTERIOR_MEASURE)
+        return self.kernel.interior_mass(self.state)
+
+    @property
+    def boundary_mass(self) -> Mass:
+        self.require(GeometryCapability.BOUNDARY_MEASURE)
+        return self.kernel.boundary_mass(self.state)
+
+    @property
     def measure(self) -> Array:
-        self.require(GeometryCapability.MEASURE)
-        return self.kernel.measure(self.state)
+        return known_mass_value(self.interior_mass, operation="Geometry measure")
 
     @property
     def boundary_measure(self) -> Array:
-        self.require(GeometryCapability.MEASURE)
-        return self.kernel.boundary_measure(self.state)
+        return known_mass_value(
+            self.boundary_mass,
+            operation="Geometry boundary measure",
+        )
 
     @property
     def boundary_atlas(self) -> BoundaryAtlas:

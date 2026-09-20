@@ -155,8 +155,8 @@ class PeriodicSchwingerModel(StrictModule):
         )
 
 
-class CompactU1GaugeModel2D(StrictModule):
-    """Finite 2+1-dimensional compact U(1) Kogut--Susskind Hamiltonian."""
+class CompactU1GaugeModel(StrictModule):
+    """Compact U(1) Kogut--Susskind Hamiltonian on a cell-complex two-skeleton."""
 
     topology: CellComplexTopology
     layout: HilbertRegisterLayout
@@ -165,7 +165,7 @@ class CompactU1GaugeModel2D(StrictModule):
     plaquette_link_incidence: Array
     electric_coupling: Array
     magnetic_coupling: Array
-    theta_angle: Array
+    electric_flux_offset: Array
     valid: Array
     link_count: int = eqx.field(static=True)
     plaquette_count: int = eqx.field(static=True)
@@ -180,15 +180,19 @@ class CompactU1GaugeModel2D(StrictModule):
         maximum_flux: int,
         electric_coupling: float,
         magnetic_coupling: float,
-        theta_angle: float = 0.0,
+        electric_flux_offset: float = 0.0,
     ):
-        if not isinstance(topology, CellComplexTopology) or topology.dimension != 2:
-            raise TypeError("topology must be a two-dimensional CellComplexTopology.")
+        if not isinstance(topology, CellComplexTopology):
+            raise TypeError("topology must be a CellComplexTopology.")
+        if topology.dimension < 2:
+            raise ValueError("Compact U(1) topology must have dimension at least two.")
         electric = float(electric_coupling)
         magnetic = float(magnetic_coupling)
-        theta = float(theta_angle)
-        if not all(isfinite(value) for value in (electric, magnetic, theta)):
-            raise ValueError("Compact U(1) couplings and theta_angle must be finite.")
+        offset = float(electric_flux_offset)
+        if not all(isfinite(value) for value in (electric, magnetic, offset)):
+            raise ValueError(
+                "Compact U(1) couplings and electric_flux_offset must be finite."
+            )
         if electric < 0.0 or magnetic < 0.0:
             raise ValueError("Compact U(1) couplings must be non-negative.")
         link_space = TruncatedU1LinkHilbertSpace(int(maximum_flux))
@@ -204,12 +208,12 @@ class CompactU1GaugeModel2D(StrictModule):
         layout = HilbertRegisterLayout(link_ids, (link_space.dimension,) * len(link_ids))
         model_id = canonical_fingerprint(
             {
-                "kind": "compact-u1-gauge-model-2d",
+                "kind": "compact-u1-gauge-model",
                 "topology": topology.topology_id,
                 "link_space": link_space.space_id,
                 "electric_coupling": electric,
                 "magnetic_coupling": magnetic,
-                "theta_angle": theta,
+                "electric_flux_offset": offset,
             }
         )
         chain_residual = vertex_link @ plaquette_link.T
@@ -220,7 +224,7 @@ class CompactU1GaugeModel2D(StrictModule):
         self.plaquette_link_incidence = jnp.asarray(plaquette_link, dtype=jnp.int8)
         self.electric_coupling = jnp.asarray(electric)
         self.magnetic_coupling = jnp.asarray(magnetic)
-        self.theta_angle = jnp.asarray(theta)
+        self.electric_flux_offset = jnp.asarray(offset)
         self.valid = link_space.algebra.valid & jnp.asarray(
             np.count_nonzero(chain_residual) == 0
         )
@@ -228,10 +232,6 @@ class CompactU1GaugeModel2D(StrictModule):
         self.plaquette_count = plaquette_link.shape[0]
         self.link_wire_ids = link_ids
         self.model_id = model_id
-
-    @property
-    def theta_flux(self) -> Array:
-        return self.theta_angle / (2.0 * pi)
 
 
 class GaugeHamiltonianMPOEvidence(StrictModule):
@@ -509,9 +509,9 @@ def periodic_schwinger_flux_values(
     return model.link_space.electric_levels[levels] + model.theta_flux
 
 
-def compact_u1_gauss_network(model: CompactU1GaugeModel2D, /) -> GaussConstraintNetwork:
-    if not isinstance(model, CompactU1GaugeModel2D):
-        raise TypeError("model must be CompactU1GaugeModel2D.")
+def compact_u1_gauss_network(model: CompactU1GaugeModel, /) -> GaussConstraintNetwork:
+    if not isinstance(model, CompactU1GaugeModel):
+        raise TypeError("model must be CompactU1GaugeModel.")
     electric = model.link_space.electric_field[None, :, :]
     link_generators = tuple(electric for _ in range(model.link_count))
     return GaussConstraintNetwork(
@@ -523,20 +523,20 @@ def compact_u1_gauss_network(model: CompactU1GaugeModel2D, /) -> GaussConstraint
 
 
 def compact_u1_hamiltonian(
-    model: CompactU1GaugeModel2D,
+    model: CompactU1GaugeModel,
     /,
     *,
     maximum_term_elements: int = 1 << 26,
 ) -> LocalHamiltonian:
     """Build electric Casimirs and oriented magnetic plaquette terms."""
 
-    if not isinstance(model, CompactU1GaugeModel2D):
-        raise TypeError("model must be CompactU1GaugeModel2D.")
+    if not isinstance(model, CompactU1GaugeModel):
+        raise TypeError("model must be CompactU1GaugeModel.")
     maximum = int(maximum_term_elements)
     if maximum <= 0 or model.link_space.dimension**2 > maximum:
         raise ValueError("Compact U(1) electric term exceeds maximum_term_elements.")
     identity = jnp.eye(model.link_space.dimension, dtype=jnp.complex128)
-    shifted = model.link_space.electric_field + model.theta_flux * identity
+    shifted = model.link_space.electric_field + model.electric_flux_offset * identity
     terms = [
         LocalHamiltonianTerm.from_product(
             (0.5 * model.electric_coupling * shifted @ shifted,),
@@ -1030,7 +1030,7 @@ def estimate_gauge_hamiltonian_resources(
 
 
 __all__ = [
-    "CompactU1GaugeModel2D",
+    "CompactU1GaugeModel",
     "GaugeCompilationStatus",
     "GaugeHamiltonianMPOEvidence",
     "GaugeHamiltonianMPOResult",

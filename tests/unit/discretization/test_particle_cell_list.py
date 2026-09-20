@@ -120,6 +120,30 @@ def test_cell_list_handles_periodic_seams_and_nonperiodic_domain_status():
     assert not upper_boundary.successful
 
 
+def test_cell_list_supports_bounded_four_dimensional_neighborhoods():
+    particles = _particles([0, 1, 2], dimension=4)
+    box = phx.discretization.ParticleBox(jnp.zeros((4,)), jnp.ones((4,)))
+    prepared = phx.discretization.CellListParticleNeighborhoodPlan(
+        0.25,
+        3,
+        3,
+        box,
+    ).prepare(particles)
+    state = prepared.build(
+        jnp.asarray(
+            (
+                (0.1, 0.1, 0.1, 0.1),
+                (0.2, 0.1, 0.1, 0.1),
+                (0.8, 0.8, 0.8, 0.8),
+            )
+        )
+    )
+
+    assert state.successful
+    assert prepared.neighbor_cell_capacity == 81
+    assert _stable_pairs(state) == {(0, 1)}
+
+
 def test_cell_and_pair_overflow_are_independent_and_fail_closed():
     particles = _particles(range(4))
     box = phx.discretization.ParticleBox([0.0], [1.0])

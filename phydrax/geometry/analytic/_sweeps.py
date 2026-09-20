@@ -13,6 +13,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
 
+from ..._mass import ExactMass, product_mass, scale_mass, sum_mass
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -75,7 +76,7 @@ def _revolution_certificate(certificate: FieldCertificate) -> FieldCertificate:
 
 
 class Extrusion(GeometrySource):
-    """Centered straight extrusion of a two-dimensional region along local z."""
+    """Centered straight extrusion of a full-dimensional region into one higher dimension."""
 
     profile: GeometrySource
     height: Array
@@ -102,11 +103,10 @@ class Extrusion(GeometrySource):
     def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
         profile = self.profile._compile(context)
         if (
-            profile.ambient_dimension != 2
-            or profile.intrinsic_dimension != 2
+            profile.ambient_dimension != profile.intrinsic_dimension
             or profile.kind is not GeometryKind.REGION
         ):
-            raise ValueError("Extrusion requires a two-dimensional region profile.")
+            raise ValueError("Extrusion requires a full-dimensional region profile.")
         height = context.bind(
             ParameterId(self.feature_id, "height"),
             self.height,
@@ -126,11 +126,11 @@ class _ExtrusionKernel(GeometryKernel):
 
     @property
     def ambient_dimension(self) -> int:
-        return 3
+        return self.profile.ambient_dimension + 1
 
     @property
     def intrinsic_dimension(self) -> int:
-        return 3
+        return self.profile.intrinsic_dimension + 1
 
     @property
     def kind(self) -> GeometryKind:
@@ -144,12 +144,15 @@ class _ExtrusionKernel(GeometryKernel):
         }
         if GeometryCapability.SIGNED_DISTANCE in self.profile.capabilities:
             capabilities.add(GeometryCapability.SIGNED_DISTANCE)
-        if GeometryCapability.MEASURE in self.profile.capabilities:
-            capabilities.add(GeometryCapability.MEASURE)
+        if GeometryCapability.INTERIOR_MEASURE in self.profile.capabilities:
+            capabilities.add(GeometryCapability.INTERIOR_MEASURE)
+        if GeometryCapability.BOUNDARY_MEASURE in self.profile.capabilities:
+            capabilities.add(GeometryCapability.BOUNDARY_MEASURE)
         if GeometryCapability.INTERIOR_SAMPLING in self.profile.capabilities:
             capabilities.add(GeometryCapability.INTERIOR_SAMPLING)
         boundary_requirements = {
-            GeometryCapability.MEASURE,
+            GeometryCapability.INTERIOR_MEASURE,
+            GeometryCapability.BOUNDARY_MEASURE,
             GeometryCapability.INTERIOR_SAMPLING,
             GeometryCapability.BOUNDARY_SAMPLING,
         }
@@ -180,24 +183,24 @@ class _ExtrusionKernel(GeometryKernel):
         return self.height.read(state)
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
-        points_ = _check_points(points, 3)
-        radial = self.profile.boundary_field(state, points_[..., :2])
-        axial = jnp.abs(points_[..., 2]) - 0.5 * self._height(state)
+        points_ = _check_points(points, self.ambient_dimension)
+        radial = self.profile.boundary_field(state, points_[..., :-1])
+        axial = jnp.abs(points_[..., -1]) - 0.5 * self._height(state)
         pair = jnp.stack((radial, axial), axis=-1)
         inside = jnp.minimum(jnp.maximum(radial, axial), 0.0)
         outside = _finite_norm(jnp.maximum(pair, 0.0))
         return inside + outside
 
     def contains(self, state: DesignState, points: Array, /) -> Array:
-        points_ = _check_points(points, 3)
-        return self.profile.contains(state, points_[..., :2]) & (
-            jnp.abs(points_[..., 2]) <= 0.5 * self._height(state)
+        points_ = _check_points(points, self.ambient_dimension)
+        return self.profile.contains(state, points_[..., :-1]) & (
+            jnp.abs(points_[..., -1]) <= 0.5 * self._height(state)
         )
 
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
-        points_ = _check_points(points, 3)
+        points_ = _check_points(points, self.ambient_dimension)
         leading = points_.shape[:-1]
-        flat = points_.reshape((-1, 3))
+        flat = points_.reshape((-1, self.ambient_dimension))
 
         def field(point):
             return self.boundary_field(state, point[None, :])[0]
@@ -205,7 +208,7 @@ class _ExtrusionKernel(GeometryKernel):
         gradient = jax.vmap(jax.grad(field))(flat)
         norm = _finite_norm(gradient).reshape((-1, 1))
         normal = gradient / jnp.maximum(norm, jnp.finfo(gradient.dtype).eps)
-        return normal.reshape((*leading, 3))
+        return normal.reshape((*leading, self.ambient_dimension))
 
     def bounds(self, state: DesignState, /) -> Array:
         profile_bounds = self.profile.bounds(state)
@@ -225,6 +228,30 @@ class _ExtrusionKernel(GeometryKernel):
         return 2.0 * self.profile.measure(state) + self.profile.boundary_measure(
             state
         ) * self._height(state)
+
+    def interior_mass(self, state: DesignState, /):
+        return product_mass(
+            (
+                self.profile.interior_mass(state),
+                ExactMass(self._height(state)),
+            )
+        )
+
+    def boundary_mass(self, state: DesignState, /):
+        return sum_mass(
+            (
+                scale_mass(
+                    self.profile.interior_mass(state),
+                    2.0,
+                    provenance="extrusion_caps",
+                ),
+                scale_mass(
+                    self.profile.boundary_mass(state),
+                    self._height(state),
+                    provenance="extrusion_side",
+                ),
+            )
+        )
 
     def sample_interior(
         self,

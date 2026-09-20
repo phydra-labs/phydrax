@@ -60,6 +60,7 @@ from ._tensor_bspline import TensorBSplineJetPlan
 from ._types import (
     BoundsMode,
     InterpolationCapabilities,
+    InterpolationResourcePolicy,
     InterpolationResult,
     MaskMode,
     NearestTiePolicy,
@@ -86,6 +87,7 @@ __all__ = [
     "AxisBound",
     "GatherStencil",
     "InterpolationCapabilities",
+    "InterpolationResourcePolicy",
     "InterpolationResult",
     "MaskMode",
     "NearestTiePolicy",

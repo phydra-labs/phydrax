@@ -121,6 +121,12 @@ class _ReconstructedGeometryKernel(GeometryKernel):
     def boundary_measure(self, state, /):
         return self.child.boundary_measure(state)
 
+    def interior_mass(self, state, /):
+        return self.child.interior_mass(state)
+
+    def boundary_mass(self, state, /):
+        return self.child.boundary_mass(state)
+
     def sample_interior(self, state, num_points, /, *, key, plan=None):
         return self.child.sample_interior(
             state,

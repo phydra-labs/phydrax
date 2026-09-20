@@ -139,6 +139,7 @@ from .spectral._fno import (
     IFNOConvergence,
     MultiScaleSpectralConvND,
     SpectralConvND,
+    SpectralConvolutionResourcePolicy,
 )
 from .spectral._hofno import HOFNO
 from .spectral._laplace import LaplaceTemporalOperator
@@ -153,6 +154,7 @@ from .spectral._wavelet import (
     MultiwaveletOperator,
     WaveletDecodePolicy,
     WaveletNeuralOperator,
+    WaveletResourcePolicy,
 )
 
 
@@ -283,6 +285,7 @@ __all__ = [
     "IFNO",
     "IFNOConvergence",
     "MultiScaleSpectralConvND",
+    "SpectralConvolutionResourcePolicy",
     "SpectralConvND",
     "GAOT",
     "GeometryInformedFlower",
@@ -328,5 +331,6 @@ __all__ = [
     "UPT",
     "MultiwaveletOperator",
     "WaveletDecodePolicy",
+    "WaveletResourcePolicy",
     "WaveletNeuralOperator",
 ]

@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- Geometry domains now preserve exact, estimated, and unknown mass evidence,
+  reject scalar-to-diagonal coercion outside one dimension, and distinguish
+  interior from boundary-measure capabilities. Von Mises stress now requires
+  an explicit convention outside its 2D/3D physical envelope.
 - Corrected rectangular rank-deficient pseudoinverse derivatives; certified
   mathematical linear and nonlinear solution-map derivatives against primal
   and tangent residuals; made regular QP sensitivities bidirectional and
@@ -21,6 +25,14 @@
   consumed by XLA's CPU thread-pool sizing.
 
 ### Added
+- Added dimension-generic balls, orthotopes, straight extrusions,
+  arbitrary-ambient low-dimensional simplices, codimension-one boundary frames,
+  bounded ND cochains, cell-list neighborhoods, interpolation, wavelet/Fourier
+  resource policies, and explicit planar curl operators.
+- Added planar modified-Helmholtz, Stokes, elasticity, and periodic spectral
+  boundary kernels; topology-generic compact U(1); native PIC qualification;
+  bounded spatial DFN lanes; ND effective-mass/Poisson confinement; planar
+  implicit-curve discovery; and oriented 3D crack-surface/front quadrature.
 - Added 21 exact fixed-topology omniphysics candidate tuples spanning spatial
   materials and manufacturing, conservative population and interface transport,
   coupled electrohydrodynamics, smart and chemo-mechanics, EHL and thermal

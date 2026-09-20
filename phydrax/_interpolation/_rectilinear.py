@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ._stencil import GatherStencil
-from ._types import InterpolationCapabilities
+from ._types import InterpolationCapabilities, InterpolationResourcePolicy
 
 
 RectilinearBoundaryMode: TypeAlias = Literal[
@@ -122,6 +122,7 @@ def rectilinear_stencil(
     batch_shape: Sequence[int] = (),
     periods: Sequence[float | Array | None] | None = None,
     axis_bounds: Sequence[AxisBound] | None = None,
+    resources: InterpolationResourcePolicy | None = None,
 ) -> GatherStencil:
     """Build a multilinear gather map for a batch of rectilinear grids."""
     nodes_input = tuple(axis_nodes)
@@ -157,6 +158,30 @@ def rectilinear_stencil(
         "Rectilinear query coordinates must be finite.",
     )
     query_shape = tuple(query.shape[len(batch) : -1])
+    resource_policy = InterpolationResourcePolicy() if resources is None else resources
+    if not isinstance(resource_policy, InterpolationResourcePolicy):
+        raise TypeError("resources must be an InterpolationResourcePolicy.")
+    batch_count = prod(batch) if batch else 1
+    query_count = prod(query_shape) if query_shape else 1
+    route_count = batch_count * query_count * (1 << dimensions)
+    index_dtype = jnp.int64 if bool(jax.config.read("jax_enable_x64")) else jnp.int32
+    index_bytes = route_count * jnp.dtype(index_dtype).itemsize
+    weight_bytes = route_count * jnp.dtype(dtype).itemsize
+    if route_count > resource_policy.maximum_routes:
+        raise ValueError(
+            "Rectilinear interpolation exceeds maximum_routes: "
+            f"required {route_count}, allowed {resource_policy.maximum_routes}."
+        )
+    if index_bytes > resource_policy.maximum_index_bytes:
+        raise ValueError(
+            "Rectilinear interpolation exceeds maximum_index_bytes: "
+            f"required {index_bytes}, allowed {resource_policy.maximum_index_bytes}."
+        )
+    if weight_bytes > resource_policy.maximum_weight_bytes:
+        raise ValueError(
+            "Rectilinear interpolation exceeds maximum_weight_bytes: "
+            f"required {weight_bytes}, allowed {resource_policy.maximum_weight_bytes}."
+        )
 
     period_values = (None,) * dimensions if periods is None else tuple(periods)
     bounds = (None,) * dimensions if axis_bounds is None else tuple(axis_bounds)
@@ -188,7 +213,6 @@ def rectilinear_stencil(
 
     spatial_shape = tuple(values.size for values in nodes)
     spatial_count = prod(spatial_shape)
-    index_dtype = jnp.int64 if bool(jax.config.read("jax_enable_x64")) else jnp.int32
     if spatial_count > jnp.iinfo(index_dtype).max:
         raise ValueError("Rectilinear grid is too large for JAX gather indices.")
 
@@ -277,7 +301,6 @@ def rectilinear_stencil(
         corner_indices.append(linear_index)
         corner_weights.append(weight)
 
-    batch_count = prod(batch) if batch else 1
     batch_index = jnp.arange(batch_count, dtype=index_dtype).reshape(
         batch + (1,) * len(query_shape)
     )
