@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, PyTree
 
+from .._admissibility import guard_derivative_validity
 from .._iteration import (
     bind_iteration_scope,
     finalize_iteration,
@@ -83,6 +84,14 @@ class _PackedRHSLayout(NamedTuple):
     rhs_shape: tuple[int, ...]
     batch_shape: tuple[int, ...]
     broadcast_batch: bool
+
+
+class _CallableLinearSolve(NamedTuple):
+    value: Array
+    residual_norm: Array
+    iterations: Array
+    breakdown: Array
+    valid: Array
 
 
 def prepare_template(
@@ -894,6 +903,16 @@ def solve(
         deflated_rhs_count_out = _restore_rhs_axes(
             jnp.zeros(status.shape, dtype=jnp.int32),
             layout,
+        )
+    if prepared.plan.policy.differentiation.mode in ("mathematical", "rhs-only"):
+        canonical_value = guard_derivative_validity(
+            canonical_value,
+            converged[..., None, :],
+            failure=prepared.plan.policy.failure.mode,
+            message=(
+                "A failed linear solve has no valid mathematical derivative; "
+                "inspect status-mode diagnostics."
+            ),
         )
     value = _unpack_value(problem.operator.source, canonical_value, layout)
     diagnostics = LinearSolveDiagnostics(
@@ -1958,7 +1977,13 @@ def _implicit_root_value(
             if prepared.plan.backend == "jax-structured"
             else _prepare_tree(problem.operator)
         )
-        return _implicit_tree_value(problem.operator, rhs, initial, factor)
+        return _implicit_tree_value(
+            problem.operator,
+            rhs,
+            initial,
+            factor,
+            failure_mode=prepared.plan.policy.failure.mode,
+        )
     initial = jax.lax.stop_gradient(initial)
     if isinstance(problem, LinearSystem):
 
@@ -2164,6 +2189,22 @@ def _dense_svd_active_projection(
     return jnp.matmul(basis, coefficients)
 
 
+def _checked_callable_value(
+    result: _CallableLinearSolve,
+    failure_mode: str,
+    /,
+    *,
+    message: str,
+) -> Array:
+    if failure_mode == "error":
+        return eqx.error_if(result.value, ~result.valid, message)
+    return jnp.where(
+        result.valid,
+        result.value,
+        jnp.full_like(result.value, jnp.nan),
+    )
+
+
 def _callable_gmres(
     action,
     rhs: Array,
@@ -2171,28 +2212,28 @@ def _callable_gmres(
     /,
 ) -> Array:
     dimension = int(rhs.shape[0])
-    if plan.backend == "native-block-krylov":
-        # A full, unrestarted Krylov basis is the conservative fixed-capacity
-        # contract for exact implicit tangents. The primal block iteration
-        # limit cannot safely bound a lower-rank independent-column tangent.
-        return _run_callable_gmres(
-            action,
-            rhs,
-            max_steps=dimension,
-            restart=dimension,
-            stagnation_iterations=dimension + 1,
-            relative=0.0,
-            absolute=0.0,
-        )
-    max_steps = plan.policy.tolerance.max_steps or dimension
-    return _run_callable_gmres(
+    policy = plan.policy.derivative_solve
+    max_steps = policy.maximum_steps or dimension
+    restart = (
+        min(max_steps, dimension)
+        if plan.backend == "native-block-krylov"
+        else min(30, max_steps, dimension)
+    )
+    result = _run_callable_gmres(
         action,
         rhs,
         max_steps=max_steps,
-        restart=min(30, max_steps, dimension),
-        stagnation_iterations=max_steps,
-        relative=plan.policy.tolerance.relative,
-        absolute=plan.policy.tolerance.absolute,
+        restart=restart,
+        stagnation_iterations=max_steps + 1,
+        relative=policy.relative_tolerance,
+        absolute=policy.absolute_tolerance,
+    )
+    return _checked_callable_value(
+        result,
+        plan.policy.failure.mode,
+        message=(
+            "Implicit linear derivative solve failed its independent residual contract."
+        ),
     )
 
 
@@ -2207,7 +2248,7 @@ def _callable_gmres_for_policy(
         raise TypeError("Callable GMRES requires an explicit GMRES or FGMRES policy.")
     dimension = int(rhs.shape[0])
     max_steps = policy.tolerance.max_steps or dimension
-    return _run_callable_gmres(
+    result = _run_callable_gmres(
         action,
         rhs,
         max_steps=max_steps,
@@ -2215,6 +2256,11 @@ def _callable_gmres_for_policy(
         stagnation_iterations=method.stagnation_iterations,
         relative=policy.tolerance.relative,
         absolute=policy.tolerance.absolute,
+    )
+    return _checked_callable_value(
+        result,
+        policy.failure.mode,
+        message="Callable linear derivative solve failed its residual contract.",
     )
 
 
@@ -2228,7 +2274,7 @@ def _run_callable_gmres(
     stagnation_iterations: int,
     relative: float,
     absolute: float,
-) -> Array:
+) -> _CallableLinearSolve:
     from .backends._native_krylov import _fgmres_raw
 
     def inner(left, right):
@@ -2237,7 +2283,7 @@ def _run_callable_gmres(
     def identity(vector, _):
         return vector
 
-    value, _, _ = _fgmres_raw(
+    value, auxiliary, _ = _fgmres_raw(
         action,
         rhs,
         jnp.zeros_like(rhs),
@@ -2250,7 +2296,31 @@ def _run_callable_gmres(
         jnp.asarray(absolute, dtype=rhs.real.dtype),
         identity_preconditioner=True,
     )
-    return value
+    iterations = auxiliary[0]
+    residual_norm = auxiliary[1]
+    breakdown = auxiliary[4]
+    rhs_norm = jnp.linalg.norm(rhs)
+    threshold = (
+        jnp.asarray(absolute, dtype=rhs.real.dtype)
+        + jnp.asarray(
+            relative,
+            dtype=rhs.real.dtype,
+        )
+        * rhs_norm
+    )
+    finite = (
+        jnp.all(jnp.isfinite(rhs))
+        & jnp.all(jnp.isfinite(value))
+        & jnp.isfinite(residual_norm)
+    )
+    valid = finite & (residual_norm <= threshold)
+    return _CallableLinearSolve(
+        value,
+        residual_norm,
+        iterations,
+        breakdown,
+        valid,
+    )
 
 
 def _stop_problem_arrays(problem: _ProblemT, /) -> _ProblemT:

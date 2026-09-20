@@ -1042,6 +1042,78 @@ def test_matrix_free_jit_and_implicit_gradients_track_dynamic_coefficients():
     )
 
 
+def test_mathematical_derivative_solve_fails_closed_when_work_is_insufficient():
+    matrix = jnp.asarray([[2.0, 1.0], [0.5, 4.0]])
+    problem = la.LinearSystem(la.DenseLinearOperator(matrix))
+    policy = la.LinearSolvePolicy(
+        la.DenseLU(),
+        derivative_solve=la.LinearDerivativeSolvePolicy(
+            relative_tolerance=0.0,
+            absolute_tolerance=1.0e-12,
+            maximum_steps=1,
+        ),
+        failure=la.FailurePolicy("status"),
+    )
+    rhs = jnp.asarray([1.0, -2.0])
+    direction = jnp.asarray([0.5, 1.5])
+
+    result = la.solve(problem, rhs, policy=policy)
+    _, tangent = jax.jvp(
+        lambda value: la.solve(problem, value, policy=policy).value,
+        (rhs,),
+        (direction,),
+    )
+
+    assert result.successful
+    assert jnp.all(jnp.isfinite(result.value))
+    assert jnp.all(jnp.isnan(tangent))
+
+
+def test_mathematical_derivative_error_mode_raises_on_failed_tangent_solve():
+    matrix = jnp.asarray([[2.0, 1.0], [0.5, 4.0]])
+    problem = la.LinearSystem(la.DenseLinearOperator(matrix))
+    policy = la.LinearSolvePolicy(
+        la.DenseLU(),
+        derivative_solve=la.LinearDerivativeSolvePolicy(
+            relative_tolerance=0.0,
+            absolute_tolerance=1.0e-12,
+            maximum_steps=1,
+        ),
+        failure=la.FailurePolicy("error"),
+    )
+    rhs = jnp.asarray([1.0, -2.0])
+    direction = jnp.asarray([0.5, 1.5])
+
+    with pytest.raises(
+        Exception,
+        match="Implicit linear derivative solve failed",
+    ):
+        _, tangent = jax.jvp(
+            lambda value: la.solve(problem, value, policy=policy).value,
+            (rhs,),
+            (direction,),
+        )
+        jax.block_until_ready(tangent)
+
+
+def test_linear_plan_identity_includes_derivative_solve_contract():
+    problem = la.LinearSystem(la.DenseLinearOperator(jnp.eye(2)))
+    first = la.plan(
+        problem,
+        la.LinearSolvePolicy(
+            derivative_solve=la.LinearDerivativeSolvePolicy(maximum_steps=1)
+        ),
+    )
+    second = la.plan(
+        problem,
+        la.LinearSolvePolicy(
+            derivative_solve=la.LinearDerivativeSolvePolicy(maximum_steps=2)
+        ),
+    )
+
+    assert first.plan_id != second.plan_id
+
+
 def test_complex_iterative_transposes_and_normal_residuals_use_conjugation():
     matrix = jnp.asarray([[2.0, 1.0j], [-1.0j, 2.0]])
     space = la.ArraySpace((2,), dtype=matrix.dtype)

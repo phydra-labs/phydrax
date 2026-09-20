@@ -244,7 +244,27 @@ class LinearSolvePlan(StrictModule):
                         "refresh": policy.recycling.refresh,
                     }
                 ),
-                "differentiation": policy.differentiation.mode,
+                "differentiation": {
+                    "mode": policy.differentiation.mode,
+                    "derivative_solve": {
+                        "relative_tolerance": (
+                            policy.derivative_solve.relative_tolerance
+                        ),
+                        "absolute_tolerance": (
+                            policy.derivative_solve.absolute_tolerance
+                        ),
+                        "maximum_steps": policy.derivative_solve.maximum_steps,
+                        "nullspace_tolerance": (
+                            policy.derivative_solve.nullspace_tolerance
+                        ),
+                        "require_nullspace": (policy.derivative_solve.require_nullspace),
+                        "stability_certificate": (
+                            None
+                            if policy.derivative_solve.stability_lower_bound is None
+                            else policy.derivative_solve.stability_lower_bound.certificate_id
+                        ),
+                    },
+                },
                 "failure": policy.failure.mode,
                 "require_device_binding": policy.require_device_binding,
                 "materialization": {
@@ -1577,13 +1597,13 @@ def _krylov_storage_bytes(
     recycling = _recycling_krylov_bytes(problem, method, policy, itemsize)
     if policy.differentiation.mode not in ("mathematical", "rhs-only"):
         return batch_count * max(primal, recycling)
+    derivative_steps = policy.derivative_solve.maximum_steps or columns
     if isinstance(method, (BlockCG, BlockGMRES)):
-        # Native block differentiation uses one full unrestarted scalar Krylov
+        # Native block differentiation uses one independent scalar Krylov
         # basis per tangent column, independent of the primal block-step limit.
         restart = columns
     else:
-        max_steps = policy.tolerance.max_steps or columns
-        restart = min(30, max_steps, columns)
+        restart = min(30, derivative_steps, columns)
     tangent = ((2 * restart + 1) * columns + (restart + 1) * restart) * itemsize
     return batch_count * max(primal, tangent, recycling)
 
@@ -1642,7 +1662,7 @@ def _implicit_storage_bytes(
     dimension = problem.operator.source.size
     if isinstance(problem, MinimumNormProblem):
         dimension += problem.operator.target.size
-    max_steps = policy.tolerance.max_steps or dimension
+    max_steps = policy.derivative_solve.maximum_steps or dimension
     restart = min(30, max_steps, dimension)
     per_problem = ((2 * restart + 1) * dimension + (restart + 1) * restart) * itemsize
     return prod(problem.operator.batch_shape or (1,)) * per_problem

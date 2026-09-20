@@ -22,9 +22,14 @@ from ...linalg import (
     DenseLinearOperator,
     DenseLU,
     DenseSVD,
+    DifferentiationPolicy,
+    FactorizationPolicy,
+    factorize,
     LeastSquaresProblem,
     LinearSolvePolicy,
     LinearSystem,
+    prepare_linearization,
+    RankPolicy,
     solve as solve_linear,
 )
 from ._policy import (
@@ -322,6 +327,7 @@ class PreparedQPSensitivity(StrictModule):
     primal: Array
     pushforward: Callable[[QuadraticProgram], Array]
     pullback: Callable[[Array], QuadraticProgram]
+    regular: Array
     differentiation: ConvexDifferentiationPolicy = eqx.field(static=True)
 
     def jvp(self, tangent: QuadraticProgram, /) -> Array:
@@ -1796,27 +1802,88 @@ def _barrier_kkt(
     )
 
 
-def _barrier_adjoint_single(
+def _regular_kkt_solve(matrix: Array, rhs: Array, /) -> tuple[Array, Array]:
+    factorization = factorize(
+        DenseLinearOperator(matrix),
+        FactorizationPolicy(
+            "svd",
+            rank=RankPolicy(require_full_rank=True),
+            differentiation=DifferentiationPolicy("rhs-only"),
+        ),
+    )
+    result = factorization.solve(rhs)
+    regular = (
+        (factorization.rank() == matrix.shape[0])
+        & jnp.all(jnp.isfinite(matrix))
+        & jnp.all(jnp.isfinite(factorization.singular_values()))
+    )
+    return result.value, regular
+
+
+def _barrier_tangent_single(
     quadratic: Array,
     linear: Array,
     equality_matrix: Array,
     equality_rhs: Array,
     inequality_matrix: Array,
     inequality_rhs: Array,
+    quadratic_tangent: Array,
+    linear_tangent: Array,
+    equality_matrix_tangent: Array,
+    equality_rhs_tangent: Array,
+    inequality_matrix_tangent: Array,
+    inequality_rhs_tangent: Array,
     primal: Array,
     slack: Array,
     inequality_dual: Array,
     equality_dual: Array,
-    cotangent: Array,
-    valid: Array,
+    primal_valid: Array,
     /,
     *,
+    barrier: float,
     regularization: float,
-) -> tuple[Array, Array, Array, Array, Array, Array]:
-    del linear, equality_rhs, inequality_rhs
-    variables = quadratic.shape[0]
-    equalities = equality_matrix.shape[0]
-    inequalities = inequality_matrix.shape[0]
+) -> Array:
+    quadratic_tangent = 0.5 * (
+        quadratic_tangent + jnp.swapaxes(quadratic_tangent, -1, -2)
+    )
+
+    def equation(q, c, a, b, g, h):
+        return jnp.concatenate(
+            _barrier_residuals(
+                q,
+                c,
+                a,
+                b,
+                g,
+                h,
+                primal,
+                slack,
+                inequality_dual,
+                equality_dual,
+                barrier=barrier,
+                regularization=regularization,
+            )
+        )
+
+    _, forcing = jax.jvp(
+        equation,
+        (
+            quadratic,
+            linear,
+            equality_matrix,
+            equality_rhs,
+            inequality_matrix,
+            inequality_rhs,
+        ),
+        (
+            quadratic_tangent,
+            linear_tangent,
+            equality_matrix_tangent,
+            equality_rhs_tangent,
+            inequality_matrix_tangent,
+            inequality_rhs_tangent,
+        ),
+    )
     kkt = _barrier_kkt(
         quadratic,
         equality_matrix,
@@ -1825,51 +1892,23 @@ def _barrier_adjoint_single(
         inequality_dual,
         regularization=regularization,
     )
-    rhs = jnp.concatenate(
-        (
-            cotangent,
-            jnp.zeros((equalities + 2 * inequalities,), dtype=quadratic.dtype),
-        )
+    safe_kkt = jnp.where(
+        primal_valid,
+        kkt,
+        jnp.eye(kkt.shape[0], dtype=kkt.dtype),
     )
-    solve_result = solve_linear(
-        LeastSquaresProblem(DenseLinearOperator(kkt.T)),
-        rhs,
-        policy=LinearSolvePolicy(DenseSVD()),
+    safe_rhs = -forcing
+    tangent, linear_valid = _regular_kkt_solve(safe_kkt, safe_rhs)
+    valid = primal_valid & linear_valid
+    tangent_scale = jnp.where(
+        valid,
+        jnp.asarray(1.0, dtype=primal.dtype),
+        jnp.asarray(jnp.nan, dtype=primal.dtype),
     )
-    adjoint = solve_result.value
-    primal_adjoint = adjoint[:variables]
-    equality_end = variables + equalities
-    inequality_end = equality_end + inequalities
-    equality_adjoint = adjoint[variables:equality_end]
-    inequality_adjoint = adjoint[equality_end:inequality_end]
-    valid = valid & jnp.all(solve_result.successful)
-    quadratic_gradient = -0.5 * (
-        jnp.outer(primal_adjoint, primal) + jnp.outer(primal, primal_adjoint)
-    )
-    linear_gradient = -primal_adjoint
-    equality_matrix_gradient = -(
-        jnp.outer(equality_dual, primal_adjoint) + jnp.outer(equality_adjoint, primal)
-    )
-    equality_rhs_gradient = equality_adjoint
-    inequality_matrix_gradient = -(
-        jnp.outer(inequality_dual, primal_adjoint) + jnp.outer(inequality_adjoint, primal)
-    )
-    inequality_rhs_gradient = inequality_adjoint
-
-    def masked(gradient: Array, /) -> Array:
-        return jnp.where(valid, gradient, jnp.full_like(gradient, jnp.nan))
-
-    return (
-        masked(quadratic_gradient),
-        masked(linear_gradient),
-        masked(equality_matrix_gradient),
-        masked(equality_rhs_gradient),
-        masked(inequality_matrix_gradient),
-        masked(inequality_rhs_gradient),
-    )
+    return tangent_scale * tangent[: primal.shape[0]]
 
 
-@partial(jax.custom_vjp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12))
+@partial(jax.custom_jvp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12))
 def _barrier_primal_implicit(
     quadratic: Array,
     linear: Array,
@@ -1920,28 +1959,36 @@ def _barrier_primal_implicit(
     return primal
 
 
-def _barrier_primal_forward(
-    quadratic: Array,
-    linear: Array,
-    equality_matrix: Array,
-    equality_rhs: Array,
-    inequality_matrix: Array,
-    inequality_rhs: Array,
-    max_iterations: int,
-    tolerance: float,
-    regularization: float,
-    step_fraction: float,
-    barrier: float,
-    centering_tolerance: float,
-    maximum_centering_steps: int,
+@_barrier_primal_implicit.defjvp
+def _barrier_primal_implicit_jvp(
+    max_iterations,
+    tolerance,
+    regularization,
+    step_fraction,
+    barrier,
+    centering_tolerance,
+    maximum_centering_steps,
+    primals,
+    tangents,
 ):
-    primal, slack, inequality_dual, equality_dual, _, _ = _solve_dense_arrays(
+    (
         quadratic,
         linear,
         equality_matrix,
         equality_rhs,
         inequality_matrix,
         inequality_rhs,
+    ) = primals
+    (
+        quadratic_tangent,
+        linear_tangent,
+        equality_matrix_tangent,
+        equality_rhs_tangent,
+        inequality_matrix_tangent,
+        inequality_rhs_tangent,
+    ) = tangents
+    primal, slack, inequality_dual, equality_dual, _, _ = _solve_dense_arrays(
+        *primals,
         tolerance=tolerance,
         max_iterations=max_iterations,
         regularization=regularization,
@@ -1967,74 +2014,45 @@ def _barrier_primal_forward(
         inequality_dual,
         equality_dual,
     )
-    return primal, (
+    tangent = jax.vmap(
+        partial(
+            _barrier_tangent_single,
+            barrier=barrier,
+            regularization=regularization,
+        )
+    )(
         quadratic,
         linear,
         equality_matrix,
         equality_rhs,
         inequality_matrix,
         inequality_rhs,
+        quadratic_tangent,
+        linear_tangent,
+        equality_matrix_tangent,
+        equality_rhs_tangent,
+        inequality_matrix_tangent,
+        inequality_rhs_tangent,
         primal,
         slack,
         inequality_dual,
         equality_dual,
         valid,
     )
+    return primal, tangent
 
 
-def _barrier_primal_backward(
-    max_iterations: int,
-    tolerance: float,
-    regularization: float,
-    step_fraction: float,
-    barrier: float,
-    centering_tolerance: float,
-    maximum_centering_steps: int,
-    saved,
-    cotangent: Array,
-):
-    del (
-        max_iterations,
-        tolerance,
-        step_fraction,
-        barrier,
-        centering_tolerance,
-        maximum_centering_steps,
-    )
-    adjoint = partial(
-        _barrier_adjoint_single,
-        regularization=regularization,
-    )
-    return jax.vmap(adjoint)(*saved[:-1], cotangent, saved[-1])
-
-
-_barrier_primal_implicit.defvjp(
-    _barrier_primal_forward,
-    _barrier_primal_backward,
-)
-
-
-def _active_set_adjoint_single(
+def _active_set_kkt(
     quadratic: Array,
-    linear: Array,
     equality_matrix: Array,
-    equality_rhs: Array,
     inequality_matrix: Array,
-    inequality_rhs: Array,
-    primal: Array,
-    equality_dual: Array,
-    inequality_dual: Array,
-    slack: Array,
-    cotangent: Array,
-    valid: Array,
+    active: Array,
+    /,
     *,
     regularization: float,
-    active_set_tolerance: float,
-) -> tuple[Array, Array, Array, Array, Array, Array]:
-    del linear, equality_rhs, inequality_rhs
+) -> Array:
     variables = quadratic.shape[0]
     equalities = equality_matrix.shape[0]
-    active = (slack <= active_set_tolerance) & (inequality_dual > active_set_tolerance)
     active_scalar = active.astype(quadratic.dtype)
     active_matrix = active_scalar[:, None] * inequality_matrix
     constraint = jnp.concatenate((equality_matrix, active_matrix), axis=0)
@@ -2044,50 +2062,183 @@ def _active_set_adjoint_single(
             1.0 - active_scalar,
         )
     )
-    regularized = quadratic + regularization * jnp.eye(variables, dtype=quadratic.dtype)
-    kkt = jnp.block(
+    regularized = quadratic + regularization * jnp.eye(
+        variables,
+        dtype=quadratic.dtype,
+    )
+    return jnp.block(
         [
             [regularized, constraint.T],
             [constraint, -jnp.diag(inactive_diagonal)],
         ]
     )
-    # Degenerate active sets may contain dependent rows even when the primal
-    # sensitivity is unique; select the consistent minimum-norm adjoint.
-    adjoint = solve_linear(
-        LeastSquaresProblem(DenseLinearOperator(kkt.T)),
-        jnp.concatenate((cotangent, jnp.zeros_like(inactive_diagonal))),
-        policy=LinearSolvePolicy(DenseSVD()),
-    ).value
-    primal_adjoint = adjoint[:variables]
-    constraint_adjoint = adjoint[variables:]
-    equality_adjoint = constraint_adjoint[:equalities]
-    inequality_adjoint = constraint_adjoint[equalities:] * active_scalar
-    active_dual = inequality_dual * active_scalar
-    quadratic_gradient = -jnp.outer(primal_adjoint, primal)
-    linear_gradient = -primal_adjoint
-    equality_matrix_gradient = -(
-        jnp.outer(equality_dual, primal_adjoint) + jnp.outer(equality_adjoint, primal)
-    )
-    equality_rhs_gradient = equality_adjoint
-    inequality_matrix_gradient = -(
-        jnp.outer(active_dual, primal_adjoint) + jnp.outer(inequality_adjoint, primal)
-    )
-    inequality_rhs_gradient = inequality_adjoint
 
-    def masked(gradient: Array, /) -> Array:
-        return jnp.where(valid, gradient, jnp.full_like(gradient, jnp.nan))
 
+def _active_set_equation(
+    quadratic: Array,
+    linear: Array,
+    equality_matrix: Array,
+    equality_rhs: Array,
+    inequality_matrix: Array,
+    inequality_rhs: Array,
+    primal: Array,
+    equality_dual: Array,
+    inequality_dual: Array,
+    active: Array,
+    /,
+    *,
+    regularization: float,
+) -> Array:
+    active_dual = jnp.where(active, inequality_dual, 0.0)
+    stationarity = (
+        quadratic @ primal
+        + regularization * primal
+        + linear
+        + equality_matrix.T @ equality_dual
+        + inequality_matrix.T @ active_dual
+    )
+    equality = equality_matrix @ primal - equality_rhs
+    inequality = jnp.where(
+        active,
+        inequality_matrix @ primal - inequality_rhs,
+        inequality_dual,
+    )
+    return jnp.concatenate((stationarity, equality, inequality))
+
+
+def _active_set_tangent_single(
+    quadratic: Array,
+    linear: Array,
+    equality_matrix: Array,
+    equality_rhs: Array,
+    inequality_matrix: Array,
+    inequality_rhs: Array,
+    quadratic_tangent: Array,
+    linear_tangent: Array,
+    equality_matrix_tangent: Array,
+    equality_rhs_tangent: Array,
+    inequality_matrix_tangent: Array,
+    inequality_rhs_tangent: Array,
+    primal: Array,
+    equality_dual: Array,
+    inequality_dual: Array,
+    slack: Array,
+    primal_valid: Array,
+    /,
+    *,
+    regularization: float,
+    active_tolerance: float,
+    strict_complementarity_tolerance: float,
+) -> Array:
+    active = (slack <= active_tolerance) & (
+        inequality_dual >= strict_complementarity_tolerance
+    )
+    inactive = (slack >= strict_complementarity_tolerance) & (
+        inequality_dual <= active_tolerance
+    )
+    unambiguous = jnp.all(active | inactive)
+    quadratic_tangent = 0.5 * (
+        quadratic_tangent + jnp.swapaxes(quadratic_tangent, -1, -2)
+    )
+
+    def equation(q, c, a, b, g, h):
+        return _active_set_equation(
+            q,
+            c,
+            a,
+            b,
+            g,
+            h,
+            primal,
+            equality_dual,
+            inequality_dual,
+            active,
+            regularization=regularization,
+        )
+
+    _, forcing = jax.jvp(
+        equation,
+        (
+            quadratic,
+            linear,
+            equality_matrix,
+            equality_rhs,
+            inequality_matrix,
+            inequality_rhs,
+        ),
+        (
+            quadratic_tangent,
+            linear_tangent,
+            equality_matrix_tangent,
+            equality_rhs_tangent,
+            inequality_matrix_tangent,
+            inequality_rhs_tangent,
+        ),
+    )
+    kkt = _active_set_kkt(
+        quadratic,
+        equality_matrix,
+        inequality_matrix,
+        active,
+        regularization=regularization,
+    )
+    eligible = primal_valid & unambiguous
+    safe_kkt = jnp.where(eligible, kkt, jnp.eye(kkt.shape[0], dtype=kkt.dtype))
+    safe_rhs = -forcing
+    tangent, linear_valid = _regular_kkt_solve(safe_kkt, safe_rhs)
+    valid = eligible & linear_valid
+    tangent_scale = jnp.where(
+        valid,
+        jnp.asarray(1.0, dtype=primal.dtype),
+        jnp.asarray(jnp.nan, dtype=primal.dtype),
+    )
+    return tangent_scale * tangent[: primal.shape[0]]
+
+
+def _active_set_primal_valid_single(
+    quadratic: Array,
+    linear: Array,
+    equality_matrix: Array,
+    equality_rhs: Array,
+    inequality_matrix: Array,
+    inequality_rhs: Array,
+    primal: Array,
+    slack: Array,
+    inequality_dual: Array,
+    equality_dual: Array,
+    backend_converged: Array,
+    /,
+    *,
+    tolerance: float,
+    regularization: float,
+) -> Array:
+    stationarity = (
+        quadratic @ primal
+        + regularization * primal
+        + linear
+        + equality_matrix.T @ equality_dual
+        + inequality_matrix.T @ inequality_dual
+    )
+    equality = equality_matrix @ primal - equality_rhs
+    inequality = inequality_matrix @ primal + slack - inequality_rhs
+    complementarity = slack * inequality_dual
+    residual = jnp.maximum(
+        jnp.maximum(_max_abs(stationarity), _max_abs(equality)),
+        jnp.maximum(_max_abs(inequality), _max_abs(complementarity)),
+    )
     return (
-        masked(quadratic_gradient),
-        masked(linear_gradient),
-        masked(equality_matrix_gradient),
-        masked(equality_rhs_gradient),
-        masked(inequality_matrix_gradient),
-        masked(inequality_rhs_gradient),
+        backend_converged
+        & jnp.all(jnp.isfinite(primal))
+        & jnp.all(jnp.isfinite(slack))
+        & jnp.all(jnp.isfinite(inequality_dual))
+        & jnp.all(jnp.isfinite(equality_dual))
+        & (_min_value(slack) >= -tolerance)
+        & (_min_value(inequality_dual) >= -tolerance)
+        & (residual <= tolerance)
     )
 
 
-@partial(jax.custom_vjp, nondiff_argnums=(6, 7, 8, 9, 10))
+@partial(jax.custom_jvp, nondiff_argnums=(6, 7, 8, 9, 10, 11))
 def _dense_primal_implicit(
     quadratic: Array,
     linear: Array,
@@ -2100,7 +2251,9 @@ def _dense_primal_implicit(
     regularization: float,
     step_fraction: float,
     active_set_tolerance: float,
+    strict_complementarity_tolerance: float,
 ) -> Array:
+    del active_set_tolerance, strict_complementarity_tolerance
     primal, _, _, _, _, _ = _solve_dense_arrays(
         quadratic,
         linear,
@@ -2116,83 +2269,17 @@ def _dense_primal_implicit(
     return primal
 
 
-def _dense_primal_forward(
-    quadratic: Array,
-    linear: Array,
-    equality_matrix: Array,
-    equality_rhs: Array,
-    inequality_matrix: Array,
-    inequality_rhs: Array,
-    max_iterations: int,
-    tolerance: float,
-    regularization: float,
-    step_fraction: float,
-    active_set_tolerance: float,
+@_dense_primal_implicit.defjvp
+def _dense_primal_implicit_jvp(
+    max_iterations,
+    tolerance,
+    regularization,
+    step_fraction,
+    active_set_tolerance,
+    strict_complementarity_tolerance,
+    primals,
+    tangents,
 ):
-    primal, slack, inequality_dual, equality_dual, _, _ = _solve_dense_arrays(
-        quadratic,
-        linear,
-        equality_matrix,
-        equality_rhs,
-        inequality_matrix,
-        inequality_rhs,
-        tolerance=tolerance,
-        max_iterations=max_iterations,
-        regularization=regularization,
-        step_fraction=step_fraction,
-    )
-    stationarity = (
-        ein.contract("...ij,...j->...i", quadratic, primal)
-        + regularization * primal
-        + linear
-        + ein.contract("...ji,...j->...i", equality_matrix, equality_dual)
-        + ein.contract("...ji,...j->...i", inequality_matrix, inequality_dual)
-    )
-    equality_residual = (
-        ein.contract("...ij,...j->...i", equality_matrix, primal) - equality_rhs
-    )
-    inequality_residual = (
-        ein.contract("...ij,...j->...i", inequality_matrix, primal)
-        + slack
-        - inequality_rhs
-    )
-    complementarity = slack * inequality_dual
-    residual = jnp.maximum(
-        jnp.maximum(_max_abs(stationarity), _max_abs(equality_residual)),
-        jnp.maximum(_max_abs(inequality_residual), _max_abs(complementarity)),
-    )
-    valid = (
-        jnp.all(jnp.isfinite(primal), axis=-1)
-        & (_min_value(slack) >= -tolerance)
-        & (_min_value(inequality_dual) >= -tolerance)
-        & (residual <= tolerance)
-    )
-    saved = (
-        quadratic,
-        linear,
-        equality_matrix,
-        equality_rhs,
-        inequality_matrix,
-        inequality_rhs,
-        primal,
-        equality_dual,
-        inequality_dual,
-        slack,
-        valid,
-    )
-    return primal, saved
-
-
-def _dense_primal_backward(
-    max_iterations: int,
-    tolerance: float,
-    regularization: float,
-    step_fraction: float,
-    active_set_tolerance: float,
-    saved,
-    cotangent: Array,
-):
-    del max_iterations, tolerance, step_fraction
     (
         quadratic,
         linear,
@@ -2200,18 +2287,29 @@ def _dense_primal_backward(
         equality_rhs,
         inequality_matrix,
         inequality_rhs,
-        primal,
-        equality_dual,
-        inequality_dual,
-        slack,
-        valid,
-    ) = saved
-    adjoint = partial(
-        _active_set_adjoint_single,
+    ) = primals
+    (
+        quadratic_tangent,
+        linear_tangent,
+        equality_matrix_tangent,
+        equality_rhs_tangent,
+        inequality_matrix_tangent,
+        inequality_rhs_tangent,
+    ) = tangents
+    primal, slack, inequality_dual, equality_dual, converged, _ = _solve_dense_arrays(
+        *primals,
+        tolerance=tolerance,
+        max_iterations=max_iterations,
         regularization=regularization,
-        active_set_tolerance=active_set_tolerance,
+        step_fraction=step_fraction,
     )
-    return jax.vmap(adjoint)(
+    valid = jax.vmap(
+        partial(
+            _active_set_primal_valid_single,
+            tolerance=tolerance,
+            regularization=regularization,
+        )
+    )(
         quadratic,
         linear,
         equality_matrix,
@@ -2219,15 +2317,38 @@ def _dense_primal_backward(
         inequality_matrix,
         inequality_rhs,
         primal,
+        slack,
+        inequality_dual,
+        equality_dual,
+        converged,
+    )
+    tangent = jax.vmap(
+        partial(
+            _active_set_tangent_single,
+            regularization=regularization,
+            active_tolerance=active_set_tolerance,
+            strict_complementarity_tolerance=strict_complementarity_tolerance,
+        )
+    )(
+        quadratic,
+        linear,
+        equality_matrix,
+        equality_rhs,
+        inequality_matrix,
+        inequality_rhs,
+        quadratic_tangent,
+        linear_tangent,
+        equality_matrix_tangent,
+        equality_rhs_tangent,
+        inequality_matrix_tangent,
+        inequality_rhs_tangent,
+        primal,
         equality_dual,
         inequality_dual,
         slack,
-        cotangent,
         valid,
     )
-
-
-_dense_primal_implicit.defvjp(_dense_primal_forward, _dense_primal_backward)
+    return primal, tangent
 
 
 def solve_quadratic_program_primal(
@@ -2296,6 +2417,7 @@ def solve_quadratic_program_primal(
             regularization,
             step_fraction,
             derivative.active_tolerance,
+            derivative.strict_complementarity_tolerance,
         )
     else:
         assert derivative.mode == "barrier-kkt"
@@ -2336,23 +2458,30 @@ def prepare_qp_sensitivity(
             differentiation=derivative,
         )
 
-    primal, raw_pullback = jax.vjp(solution, problem)
-
-    def pullback(cotangent):
-        return raw_pullback(cotangent)[0]
-
-    transposed_pullback = jax.linear_transpose(
-        pullback,
-        jnp.zeros_like(primal),
+    linearization = prepare_linearization(
+        solution,
+        problem,
+        linearization_id="quadratic-program-sensitivity",
     )
+    primal = linearization.primal
 
     def pushforward(tangent):
-        return transposed_pullback(tangent)[0]
+        return linearization.jvp(tangent)
+
+    def pullback(cotangent):
+        return linearization.vjp(cotangent)
+
+    zero_tangent = jax.tree.map(
+        lambda value: jnp.zeros_like(value) if eqx.is_inexact_array(value) else value,
+        problem,
+    )
+    regular = jnp.all(jnp.isfinite(pushforward(zero_tangent)))
 
     return PreparedQPSensitivity(
         primal,
         pushforward,
         pullback,
+        regular,
         derivative,
     )
 

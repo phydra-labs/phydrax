@@ -162,15 +162,19 @@ Full `grad` and `hessian` requests still materialize their documented outputs.
 Existing derivative rules and structured model providers take precedence over
 generic JVP execution.
 
-`plan_derivative_execution` reports the exact strategy selected from a traced
-request set. `evaluate_fused_coordinate_derivatives` returns that plan together
-with the primal value and requested coordinate actions. Deterministic automatic
-selection never chooses a randomized trace estimator.
+`plan_derivative_execution` returns a static recommendation from the traced
+request shape. Contracted and automatic higher-order AD use nested JVPs.
+Taylor-mode Jet is selected only when a request explicitly asks for
+`backend="jet"`; unsupported Jet primitives fail honestly rather than causing
+an unreported backend change. `evaluate_fused_coordinate_derivatives` returns
+the route it actually executes together with the primal value and coordinate
+actions. Deterministic automatic selection never chooses a randomized trace
+estimator.
 
-`ResidualPenalty` traces and deduplicates requests by field and variable before
-constructing its residual graph. The resulting per-group strategies are bound
-during operator construction, so a contracted second-order residual selects
-the same JVP route reported by the planner.
+`ResidualPenalty` traces and deduplicates requests by field and every variable
+in the ordered derivative path. It binds only execution overrides consumed by
+the operator runtime. Mixed-variable chains therefore retain each variable
+identity instead of being attributed solely to the outer derivative.
 
 !!! note
     For `LatentContractionModel` wrapped via `domain.Model(...)`, `partial`,

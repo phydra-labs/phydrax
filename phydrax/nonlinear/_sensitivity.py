@@ -6,23 +6,31 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
-from typing import Any, Callable, Literal, TypeAlias
+from typing import Any, Callable, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from .._tree_math import (
+    tree_add,
+    tree_allfinite,
+    tree_negative,
+    tree_subtract,
+)
 from ..linalg import (
-    DenseLinearOperator,
     DenseSVD,
+    JacobianLinearOperator,
     LeastSquaresProblem,
     LinearSolvePolicy,
     prepare as prepare_linear,
+    prepare_linearization,
+    PyTreeSpace,
     solve as solve_linear,
+    transpose,
 )
 from ._precision import NonlinearPrecisionPolicy
 from ._types import NonlinearSystemProblem
@@ -45,6 +53,7 @@ class SensitivityStatus(IntEnum):
     CONDITION_LIMIT = 3
     NONFINITE = 4
     UNSUPPORTED = 5
+    LINEAR_FAILED = 6
 
 
 class SensitivityPolicy(StrictModule):
@@ -53,6 +62,7 @@ class SensitivityPolicy(StrictModule):
     truncation: int = eqx.field(static=True)
     condition_limit: float = eqx.field(static=True)
     perturbation: float = eqx.field(static=True)
+    primal_residual_tolerance: float = eqx.field(static=True)
     linear: LinearSolvePolicy
     precision: NonlinearPrecisionPolicy
 
@@ -65,6 +75,7 @@ class SensitivityPolicy(StrictModule):
         truncation: int = 4,
         condition_limit: float = 1e12,
         perturbation: float = 1e-3,
+        primal_residual_tolerance: float = 1e-8,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
     ):
@@ -81,23 +92,28 @@ class SensitivityPolicy(StrictModule):
         truncation_ = int(truncation)
         limit = float(condition_limit)
         perturbation_ = float(perturbation)
+        primal_tolerance = float(primal_residual_tolerance)
         if iterations_ < 1 or not 0 <= truncation_ <= iterations_:
             raise ValueError("Sensitivity iteration/truncation counts are invalid.")
         if not isfinite(limit) or limit <= 1.0:
             raise ValueError("condition_limit must be finite and exceed one.")
         if not isfinite(perturbation_) or perturbation_ <= 0.0:
             raise ValueError("perturbation must be finite and positive.")
+        if not isfinite(primal_tolerance) or primal_tolerance < 0.0:
+            raise ValueError("primal_residual_tolerance must be finite and non-negative.")
         linear_ = LinearSolvePolicy(DenseSVD()) if linear is None else linear
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(linear_, LinearSolvePolicy):
             raise TypeError("linear must be LinearSolvePolicy or None.")
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+        precision_.validate_tolerance(primal_tolerance)
         self.mode = mode
         self.iterations = iterations_
         self.truncation = truncation_
         self.condition_limit = limit
         self.perturbation = perturbation_
+        self.primal_residual_tolerance = primal_tolerance
         self.linear = linear_
         self.precision = precision_
 
@@ -107,6 +123,10 @@ class SensitivityEvidence(StrictModule):
     condition_estimate: Array
     residual_norm: Array
     finite: Array
+    primal_residual_norm: Array
+    primal_residual_tolerance: Array
+    primal_valid: Array
+    linear_status: Array
     mode: SensitivityMode = eqx.field(static=True)
     precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
     linear_plan_id: str = eqx.field(static=True)
@@ -122,6 +142,10 @@ class SensitivityEvidence(StrictModule):
         mode: SensitivityMode,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         linear_plan_id: str = "",
+        primal_residual_norm: Any = jnp.nan,
+        primal_residual_tolerance: Any = jnp.nan,
+        primal_valid: Any = True,
+        linear_status: Any = -1,
     ):
         if precision_evidence is not None and not isinstance(
             precision_evidence,
@@ -137,6 +161,10 @@ class SensitivityEvidence(StrictModule):
         self.mode = mode
         self.precision_evidence = precision_evidence
         self.linear_plan_id = str(linear_plan_id)
+        self.primal_residual_norm = jnp.asarray(primal_residual_norm)
+        self.primal_residual_tolerance = jnp.asarray(primal_residual_tolerance)
+        self.primal_valid = jnp.asarray(primal_valid, dtype=bool)
+        self.linear_status = jnp.asarray(linear_status, dtype=jnp.int32)
 
     @property
     def successful(self):
@@ -152,28 +180,84 @@ def _coordinate_norm(value: Array, precision: NonlinearPrecisionPolicy, /) -> Ar
     return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
 
 
+class _RootSystem(NamedTuple):
+    linearization: Any
+    operator: JacobianLinearOperator
+    prepared: Any
+    residual: PyTree[Array]
+    primal_residual_norm: Array
+    primal_finite: Array
+    primal_valid: Array
+
+
 def _root_system(problem, state, args, policy):
-    coordinates, unflatten = ravel_pytree(state)
-    residual_tree = problem.residual(state, args)
+    source = PyTreeSpace(state) if problem.state_space is None else problem.state_space
+    linearization = prepare_linearization(
+        lambda candidate: problem.residual(candidate, args),
+        state,
+        source=source,
+        target=problem.residual_space,
+        linearization_id=f"{problem.problem_id}:sensitivity-linearization",
+    )
+    residual_tree = linearization.primal
     policy.precision.validate_trees(state, residual_tree)
-
-    def coordinate_residual(value, current_args):
-        residual = problem.residual(unflatten(value), current_args)
-        return ravel_pytree(residual)[0]
-
-    matrix = jax.jacfwd(lambda value: coordinate_residual(value, args))(coordinates)
+    if linearization.source.size != linearization.target.size:
+        raise ValueError("Implicit root sensitivity requires a square Jacobian.")
+    operator = JacobianLinearOperator(
+        linearization,
+        operator_id=f"{problem.problem_id}:sensitivity-jacobian",
+    )
     prepared = prepare_linear(
-        LeastSquaresProblem(DenseLinearOperator(matrix)),
+        LeastSquaresProblem(operator),
         policy.precision.bind_linear(policy.linear),
     )
-    return (
-        coordinates,
-        unflatten,
-        coordinate_residual,
-        matrix,
-        residual_tree,
-        prepared,
+    primal_residual_norm = _coordinate_norm(
+        linearization.target.flatten(residual_tree),
+        policy.precision,
     )
+    primal_finite = tree_allfinite(residual_tree) & jnp.isfinite(primal_residual_norm)
+    primal_valid = primal_finite & (
+        primal_residual_norm <= policy.primal_residual_tolerance
+    )
+    return _RootSystem(
+        linearization,
+        operator,
+        prepared,
+        residual_tree,
+        primal_residual_norm,
+        primal_finite,
+        primal_valid,
+    )
+
+
+def _implicit_status(system, linear_result, finite, condition, policy):
+    linear_ok = (
+        jnp.all(linear_result.successful)
+        & jnp.all(linear_result.diagnostics.finite)
+        & jnp.all(linear_result.diagnostics.converged)
+    )
+    condition_finite = jnp.isfinite(condition)
+    return jnp.where(
+        ~system.primal_valid,
+        int(SensitivityStatus.PRIMAL_FAILED),
+        jnp.where(
+            ~finite,
+            int(SensitivityStatus.NONFINITE),
+            jnp.where(
+                ~linear_ok,
+                int(SensitivityStatus.LINEAR_FAILED),
+                jnp.where(
+                    ~condition_finite,
+                    int(SensitivityStatus.SINGULAR),
+                    jnp.where(
+                        condition > policy.condition_limit,
+                        int(SensitivityStatus.CONDITION_LIMIT),
+                        int(SensitivityStatus.SUCCESS),
+                    ),
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
 
 
 def root_solution_jvp(
@@ -188,40 +272,30 @@ def root_solution_jvp(
     policy_ = SensitivityPolicy("implicit-forward") if policy is None else policy
     if policy_.mode not in ("implicit-forward", "implicit-reverse"):
         raise ValueError("root_solution_jvp requires an implicit sensitivity mode.")
-    (
-        coordinates,
-        unflatten,
-        residual,
-        matrix,
-        residual_tree,
-        prepared,
-    ) = _root_system(problem, state, args, policy_)
+    system = _root_system(problem, state, args, policy_)
     _, argument_action = jax.jvp(
-        lambda current_args: residual(coordinates, current_args),
+        lambda current_args: problem.residual(state, current_args),
         (args,),
         (tangent_args,),
     )
-    linear_result = solve_linear(prepared, -argument_action)
-    tangent_coordinates = policy_.precision.direction(linear_result.value)
-    tangent = unflatten(tangent_coordinates)
-    finite = jnp.all(jnp.isfinite(tangent_coordinates))
-    condition = policy_.precision.decision(linear_result.diagnostics.condition_estimate)
-    regular = jnp.isfinite(condition) & (condition <= policy_.condition_limit)
-    status = jnp.where(
-        ~finite,
-        int(SensitivityStatus.NONFINITE),
-        jnp.where(
-            ~jnp.isfinite(condition),
-            int(SensitivityStatus.SINGULAR),
-            jnp.where(
-                ~regular,
-                int(SensitivityStatus.CONDITION_LIMIT),
-                int(SensitivityStatus.SUCCESS),
-            ),
-        ),
-    ).astype(jnp.int32)
+    linear_result = solve_linear(
+        system.prepared,
+        tree_negative(argument_action),
+    )
+    tangent = policy_.precision.direction(linear_result.value)
+    derivative_residual = tree_add(system.operator.mv(tangent), argument_action)
+    finite = tree_allfinite(tangent) & tree_allfinite(derivative_residual)
+    condition = policy_.precision.decision(
+        jnp.max(linear_result.diagnostics.condition_estimate)
+    )
+    status = _implicit_status(system, linear_result, finite, condition, policy_)
+    successful = status == int(SensitivityStatus.SUCCESS)
     tangent = jax.tree.map(
-        lambda value: jnp.where(regular & finite, value, jnp.full_like(value, jnp.nan)),
+        lambda value: jnp.where(
+            successful,
+            value,
+            jnp.full_like(value, jnp.nan),
+        ),
         tangent,
     )
     return SolutionMapDerivative(
@@ -230,16 +304,20 @@ def root_solution_jvp(
             status,
             condition,
             _coordinate_norm(
-                matrix @ tangent_coordinates + argument_action,
+                system.linearization.target.flatten(derivative_residual),
                 policy_.precision,
             ),
             finite,
             mode="implicit-forward",
             precision_evidence=policy_.precision.evidence_for(
                 state,
-                residual_tree,
+                system.residual,
             ),
             linear_plan_id=linear_result.provenance.plan_id,
+            primal_residual_norm=system.primal_residual_norm,
+            primal_residual_tolerance=policy_.primal_residual_tolerance,
+            primal_valid=system.primal_valid,
+            linear_status=jnp.max(linear_result.status),
         ),
     )
 
@@ -254,45 +332,38 @@ def root_solution_vjp(
     policy: SensitivityPolicy | None = None,
 ) -> SolutionMapDerivative:
     policy_ = SensitivityPolicy("implicit-reverse") if policy is None else policy
-    (
-        coordinates,
-        _,
-        residual,
-        matrix,
-        residual_tree,
-        prepared,
-    ) = _root_system(problem, state, args, policy_)
-    cotangent, _ = ravel_pytree(cotangent_state)
-    linear_result = solve_linear(
-        LeastSquaresProblem(DenseLinearOperator(jnp.conj(matrix.T))),
+    if policy_.mode not in ("implicit-forward", "implicit-reverse"):
+        raise ValueError("root_solution_vjp requires an implicit sensitivity mode.")
+    system = _root_system(problem, state, args, policy_)
+    cotangent = system.linearization.source.validate(cotangent_state)
+    transposed = transpose(system.operator)
+    prepared_transpose = prepare_linear(
+        LeastSquaresProblem(transposed),
+        policy_.precision.bind_linear(policy_.linear),
+    )
+    linear_result = solve_linear(prepared_transpose, cotangent)
+    adjoint_value = policy_.precision.direction(linear_result.value)
+    condition = policy_.precision.decision(
+        jnp.max(linear_result.diagnostics.condition_estimate)
+    )
+    _, pullback = jax.vjp(
+        lambda current_args: problem.residual(state, current_args),
+        args,
+    )
+    argument_cotangent = jax.tree.map(jnp.negative, pullback(adjoint_value)[0])
+    derivative_residual = tree_subtract(
+        transposed.mv(adjoint_value),
         cotangent,
-        policy=policy_.precision.bind_linear(policy_.linear),
     )
-    adjoint = policy_.precision.direction(linear_result.value)
-    condition = policy_.precision.decision(linear_result.diagnostics.condition_estimate)
-    _, pullback = jax.vjp(lambda current_args: residual(coordinates, current_args), args)
-    argument_cotangent = jax.tree.map(jnp.negative, pullback(adjoint)[0])
-    finite = jax.tree.reduce(
-        lambda left, right: left & right,
-        jax.tree.map(lambda value: jnp.all(jnp.isfinite(value)), argument_cotangent),
-        jnp.asarray(True),
-    )
-    regular = jnp.isfinite(condition) & (condition <= policy_.condition_limit)
-    status = jnp.where(
-        finite & regular,
-        int(SensitivityStatus.SUCCESS),
-        jnp.where(
-            ~jnp.isfinite(condition),
-            int(SensitivityStatus.SINGULAR),
-            jnp.where(
-                ~regular,
-                int(SensitivityStatus.CONDITION_LIMIT),
-                int(SensitivityStatus.NONFINITE),
-            ),
-        ),
-    ).astype(jnp.int32)
+    finite = tree_allfinite(argument_cotangent) & tree_allfinite(derivative_residual)
+    status = _implicit_status(system, linear_result, finite, condition, policy_)
+    successful = status == int(SensitivityStatus.SUCCESS)
     argument_cotangent = jax.tree.map(
-        lambda value: jnp.where(finite & regular, value, jnp.full_like(value, jnp.nan)),
+        lambda value: jnp.where(
+            successful,
+            value,
+            jnp.full_like(value, jnp.nan),
+        ),
         argument_cotangent,
     )
     return SolutionMapDerivative(
@@ -301,16 +372,20 @@ def root_solution_vjp(
             status,
             condition,
             _coordinate_norm(
-                jnp.conj(matrix.T) @ adjoint - cotangent,
+                transposed.target.flatten(derivative_residual),
                 policy_.precision,
             ),
             finite,
             mode="implicit-reverse",
             precision_evidence=policy_.precision.evidence_for(
                 state,
-                residual_tree,
+                system.residual,
             ),
             linear_plan_id=linear_result.provenance.plan_id,
+            primal_residual_norm=system.primal_residual_norm,
+            primal_residual_tolerance=policy_.primal_residual_tolerance,
+            primal_valid=system.primal_valid,
+            linear_status=jnp.max(linear_result.status),
         ),
     )
 
@@ -448,28 +523,33 @@ def root_solution_second_jvp(
         (zero,),
         (jnp.asarray(1.0),),
     )[1]
-    (
-        _,
-        unflatten,
-        _,
-        matrix,
-        residual_tree,
-        prepared,
-    ) = _root_system(problem, state, args, policy_)
-    forcing_coordinates, _ = ravel_pytree(forcing)
-    linear_result = solve_linear(prepared, -forcing_coordinates)
-    second_coordinates = policy_.precision.direction(linear_result.value)
-    second = unflatten(second_coordinates)
-    finite = jnp.all(jnp.isfinite(second_coordinates))
-    condition = policy_.precision.decision(linear_result.diagnostics.condition_estimate)
-    regular = (
-        first.evidence.successful
-        & jnp.isfinite(condition)
-        & (condition <= policy_.condition_limit)
+    system = _root_system(problem, state, args, policy_)
+    linear_result = solve_linear(
+        system.prepared,
+        tree_negative(forcing),
     )
+    second = policy_.precision.direction(linear_result.value)
+    derivative_residual = tree_add(system.operator.mv(second), forcing)
+    finite = tree_allfinite(second) & tree_allfinite(derivative_residual)
+    condition = policy_.precision.decision(
+        jnp.max(linear_result.diagnostics.condition_estimate)
+    )
+    local_status = _implicit_status(
+        system,
+        linear_result,
+        finite,
+        condition,
+        policy_,
+    )
+    status = jnp.where(
+        first.evidence.successful,
+        local_status,
+        first.evidence.status,
+    ).astype(jnp.int32)
+    successful = status == int(SensitivityStatus.SUCCESS)
     second = jax.tree.map(
         lambda value: jnp.where(
-            finite & regular,
+            successful,
             value,
             jnp.full_like(value, jnp.nan),
         ),
@@ -478,23 +558,23 @@ def root_solution_second_jvp(
     return SolutionMapDerivative(
         second,
         SensitivityEvidence(
-            jnp.where(
-                finite & regular,
-                int(SensitivityStatus.SUCCESS),
-                int(SensitivityStatus.CONDITION_LIMIT),
-            ),
+            status,
             condition,
             _coordinate_norm(
-                matrix @ second_coordinates + forcing_coordinates,
+                system.linearization.target.flatten(derivative_residual),
                 policy_.precision,
             ),
             finite,
             mode="implicit-forward",
             precision_evidence=policy_.precision.evidence_for(
                 state,
-                residual_tree,
+                system.residual,
             ),
             linear_plan_id=linear_result.provenance.plan_id,
+            primal_residual_norm=system.primal_residual_norm,
+            primal_residual_tolerance=policy_.primal_residual_tolerance,
+            primal_valid=system.primal_valid,
+            linear_status=jnp.max(linear_result.status),
         ),
     )
 
@@ -511,38 +591,58 @@ def minimizer_solution_jvp(
     policy_ = SensitivityPolicy("implicit-forward") if policy is None else policy
     if policy_.mode not in ("implicit-forward", "implicit-reverse"):
         raise ValueError("minimizer_solution_jvp requires an implicit mode.")
-    coordinates, unflatten = ravel_pytree(solution)
 
-    def gradient_coordinates(value, current_args):
-        point = unflatten(value)
-        gradient = jax.grad(lambda item: objective(item, current_args))(point)
-        return ravel_pytree(gradient)[0]
+    def gradient_function(point, current_args):
+        return jax.grad(lambda item: objective(item, current_args))(point)
 
-    gradient_tree = jax.grad(lambda item: objective(item, args))(solution)
+    source = PyTreeSpace(solution)
+    linearization = prepare_linearization(
+        lambda point: gradient_function(point, args),
+        solution,
+        source=source,
+        linearization_id="minimizer-sensitivity-linearization",
+    )
+    gradient_tree = linearization.primal
     policy_.precision.validate_trees(solution, gradient_tree)
-
-    hessian = jax.jacfwd(lambda value: gradient_coordinates(value, args))(coordinates)
+    operator = JacobianLinearOperator(
+        linearization,
+        operator_id="minimizer-sensitivity-hessian",
+    )
+    prepared = prepare_linear(
+        LeastSquaresProblem(operator),
+        policy_.precision.bind_linear(policy_.linear),
+    )
+    primal_residual_norm = _coordinate_norm(
+        linearization.target.flatten(gradient_tree),
+        policy_.precision,
+    )
+    primal_finite = tree_allfinite(gradient_tree) & jnp.isfinite(primal_residual_norm)
+    system = _RootSystem(
+        linearization,
+        operator,
+        prepared,
+        gradient_tree,
+        primal_residual_norm,
+        primal_finite,
+        primal_finite & (primal_residual_norm <= policy_.primal_residual_tolerance),
+    )
     _, forcing = jax.jvp(
-        lambda current_args: gradient_coordinates(
-            coordinates,
-            current_args,
-        ),
+        lambda current_args: gradient_function(solution, current_args),
         (args,),
         (tangent_args,),
     )
-    prepared = prepare_linear(
-        LeastSquaresProblem(DenseLinearOperator(hessian)),
-        policy_.precision.bind_linear(policy_.linear),
+    linear_result = solve_linear(prepared, tree_negative(forcing))
+    tangent = policy_.precision.direction(linear_result.value)
+    derivative_residual = tree_add(operator.mv(tangent), forcing)
+    finite = tree_allfinite(tangent) & tree_allfinite(derivative_residual)
+    condition = policy_.precision.decision(
+        jnp.max(linear_result.diagnostics.condition_estimate)
     )
-    linear_result = solve_linear(prepared, -forcing)
-    tangent_coordinates = policy_.precision.direction(linear_result.value)
-    condition = policy_.precision.decision(linear_result.diagnostics.condition_estimate)
-    finite = jnp.all(jnp.isfinite(tangent_coordinates))
-    regular = jnp.isfinite(condition) & (condition <= policy_.condition_limit)
-    tangent = unflatten(tangent_coordinates)
+    status = _implicit_status(system, linear_result, finite, condition, policy_)
+    successful = status == int(SensitivityStatus.SUCCESS)
     tangent = jax.tree.map(
         lambda value: jnp.where(
-            finite & regular,
+            successful,
             value,
             jnp.full_like(value, jnp.nan),
         ),
@@ -551,14 +651,10 @@ def minimizer_solution_jvp(
     return SolutionMapDerivative(
         tangent,
         SensitivityEvidence(
-            jnp.where(
-                finite & regular,
-                int(SensitivityStatus.SUCCESS),
-                int(SensitivityStatus.CONDITION_LIMIT),
-            ),
+            status,
             condition,
             _coordinate_norm(
-                hessian @ tangent_coordinates + forcing,
+                linearization.target.flatten(derivative_residual),
                 policy_.precision,
             ),
             finite,
@@ -568,6 +664,10 @@ def minimizer_solution_jvp(
                 gradient_tree,
             ),
             linear_plan_id=linear_result.provenance.plan_id,
+            primal_residual_norm=system.primal_residual_norm,
+            primal_residual_tolerance=policy_.primal_residual_tolerance,
+            primal_valid=system.primal_valid,
+            linear_status=jnp.max(linear_result.status),
         ),
     )
 

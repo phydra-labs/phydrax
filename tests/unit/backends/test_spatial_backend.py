@@ -91,6 +91,57 @@ def test_pallas_particle_pair_acceleration_matches_jax_and_gradients() -> None:
     )
     np.testing.assert_allclose(accelerated, reference)
     np.testing.assert_allclose(accelerated_gradient, reference_gradient)
+    relative_tangent = jnp.asarray([[0.1, 0.2, -0.3], [-0.4, 0.1, 0.2], [0.3, -0.2, 0.1]])
+    mass_tangent = jnp.asarray([0.2, -0.1, 0.4])
+
+    def evaluate_both(current_relative, current_mass, backend):
+        return spatial_pair_acceleration(
+            current_relative,
+            current_mass,
+            valid,
+            softening=0.04,
+            coefficient=1.7,
+            backend=backend,
+            pallas_interpret=backend == "pallas",
+            block_size=2,
+        )
+
+    _, reference_tangent = jax.jvp(
+        lambda current_relative, current_mass: evaluate_both(
+            current_relative,
+            current_mass,
+            "jax",
+        ),
+        (relative, mass),
+        (relative_tangent, mass_tangent),
+    )
+    _, accelerated_tangent = jax.jvp(
+        lambda current_relative, current_mass: evaluate_both(
+            current_relative,
+            current_mass,
+            "pallas",
+        ),
+        (relative, mass),
+        (relative_tangent, mass_tangent),
+    )
+    np.testing.assert_allclose(accelerated_tangent, reference_tangent)
+
+    cotangent = jnp.arange(relative.size, dtype=relative.dtype).reshape(relative.shape)
+    _, pullback = jax.vjp(
+        lambda current_relative, current_mass: evaluate_both(
+            current_relative,
+            current_mass,
+            "pallas",
+        ),
+        relative,
+        mass,
+    )
+    relative_cotangent, mass_cotangent = pullback(cotangent)
+    np.testing.assert_allclose(
+        jnp.vdot(cotangent, accelerated_tangent),
+        jnp.vdot(relative_cotangent, relative_tangent)
+        + jnp.vdot(mass_cotangent, mass_tangent),
+    )
 
 
 def test_pallas_uniform_fmm_near_kernel_matches_jax() -> None:

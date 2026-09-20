@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "755aa730c7894e815fc0c7e40b5b75c8329d681d8af0ddbb3025b5b09b65417d",
+  "manifest_id": "054f2b5146bdfb5f21cf5d2622e2aa8a57bd7d831d13c1ff912f933dd639f928",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -22201,6 +22201,8 @@
       "phydrax.ml.FitResult",
       "phydrax.ml.GradientContract",
       "phydrax.ml.MLBatch",
+      "phydrax.ml.MLGradientAdmission",
+      "phydrax.ml.MLGradientRequest",
       "phydrax.ml.ML_CAPACITY_EXHAUSTED",
       "phydrax.ml.ML_INFEASIBLE",
       "phydrax.ml.ML_INSUFFICIENT_DATA",

@@ -6,29 +6,22 @@
 
 from __future__ import annotations
 
-import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._admissibility import guard_derivative_validity
 from ..._strict import StrictModule
 from ...nonlinear import NonlinearResult
 
 
-@jax.custom_jvp
 def _successful_root_value(value, successful):
     """Keep failed primal candidates inspectable, never differentiate them."""
-    return value
-
-
-@_successful_root_value.defjvp
-def _successful_root_value_jvp(primals, tangents):
-    value, successful = primals
-    tangent, _ = tangents
-    tangent = eqx.error_if(
-        tangent, ~successful, "Porous step failed; derivatives require a successful root."
+    return guard_derivative_validity(
+        value,
+        successful,
+        failure="error",
+        message="Porous step failed; derivatives require a successful root.",
     )
-    return value, tangent
 
 
 class PorousFluxes(StrictModule):

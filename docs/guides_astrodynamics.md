@@ -28,10 +28,12 @@ result = astro.propagate_universal_kepler(initial, 0.25, 1.0)
 assert bool(result.valid)
 ```
 
-Universal propagation covers elliptic, near-parabolic, and hyperbolic conics using
-stable Stumpff functions and a bounded universal-anomaly solve. A custom JVP
-implicitly differentiates the converged equation; convergence and the chosen conic
-regime remain explicit evidence.
+Universal propagation covers elliptic, near-parabolic, and hyperbolic conics
+using stable Stumpff functions and a bounded universal-anomaly solve. A custom
+JVP implicitly differentiates the converged equation; convergence and the
+chosen conic regime remain explicit evidence. Invalid propagation keeps the
+finite input state available for inspection but poisons forward and reverse
+derivatives rather than differentiating the rollback branch.
 
 ## Numerical and geometric propagation
 

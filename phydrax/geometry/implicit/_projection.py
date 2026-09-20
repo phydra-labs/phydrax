@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from .._contracts import CompiledGeometry, GeometryKernel, GeometryTolerance
@@ -74,7 +75,12 @@ def _attach_normal_gauge_jvp(primals, tangents):
             jnp.finfo(points.dtype).tiny,
         )
     )
-    tangent = jnp.where(usable[..., None], tangent, jnp.zeros_like(tangent))
+    tangent_scale = jnp.where(
+        usable[..., None],
+        jnp.asarray(1.0, dtype=tangent.dtype),
+        jnp.asarray(jnp.nan, dtype=tangent.dtype),
+    )
+    tangent = tangent_scale * tangent
     return points, tangent
 
 
@@ -356,12 +362,33 @@ class ImplicitPointProjectionPlan(StrictModule):
             status=status,
             plan_id=self.plan_id,
         )
+        proposed = guard_derivative_validity(
+            proposed,
+            evidence.accepted,
+            dependencies=state,
+            failure="status",
+            message="Implicit point projection has no valid derivative.",
+        )
         safe_points = jnp.where(evidence.accepted, proposed, self.anchors)
         safe_gradient = jnp.where(evidence.accepted, gradient, jnp.zeros_like(gradient))
         safe_norm = jnp.sqrt(jnp.sum(safe_gradient * safe_gradient, axis=-1))
         normals = safe_gradient / jnp.maximum(
             safe_norm[..., None],
             jnp.finfo(safe_gradient.dtype).eps,
+        )
+        safe_points = guard_derivative_validity(
+            safe_points,
+            evidence.accepted,
+            dependencies=state,
+            failure="status",
+            message="Implicit point projection has no valid derivative.",
+        )
+        normals = guard_derivative_validity(
+            normals,
+            evidence.accepted,
+            dependencies=state,
+            failure="status",
+            message="Implicit point projection has no valid derivative.",
         )
         return ImplicitPointProjectionResult(
             proposed,

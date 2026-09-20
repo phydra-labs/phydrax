@@ -9,7 +9,7 @@ from typing import Any
 from jaxtyping import ArrayLike
 
 from ._batch import MLBatch
-from ._contracts import AbstractRecipe, FitResult
+from ._contracts import AbstractRecipe, FitResult, MLGradientRequest
 from ._schema import FeatureSchema, TargetSchema
 from ._sparse_features import SparseFeatures
 
@@ -29,6 +29,7 @@ def fit(
     feature_schema: FeatureSchema | None = None,
     target_schema: TargetSchema | None = None,
     key: Any = None,
+    gradient_request: MLGradientRequest | None = None,
 ) -> FitResult:
     """Fit one immutable recipe to a canonical batch or raw feature arrays."""
     if not isinstance(recipe, AbstractRecipe):
@@ -61,7 +62,10 @@ def fit(
             feature_schema=feature_schema,
             target_schema=target_schema,
         )
-    return recipe.fit_batch(batch, key=key)
+    result = recipe.fit_batch(batch, key=key)
+    if gradient_request is not None:
+        result.require_gradient(gradient_request)
+    return result
 
 
 __all__ = ["fit"]

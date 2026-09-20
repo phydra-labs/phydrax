@@ -294,7 +294,8 @@ def _planned_residual(
     requests = trace_derivative_requests(condition.residual, functions)
     grouped: dict[tuple[str, str], list[Any]] = {}
     for request in requests:
-        grouped.setdefault((request.field, request.variable), []).append(request)
+        for variable in request.variables:
+            grouped.setdefault((request.field, variable), []).append(request)
     strategies = {
         (id(functions[field].func), variable): plan_derivative_execution(
             tuple(group)

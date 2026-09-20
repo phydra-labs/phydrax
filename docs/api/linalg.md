@@ -477,6 +477,11 @@ Mathematical differentiation of an inverse uses
 Moore-Penrose derivative. Rank masks are locally constant; a cutoff crossing is
 a nondifferentiable boundary.
 
+For rectangular rank-deficient matrices, both source- and target-complement
+terms of the fixed-rank Moore-Penrose derivative are retained. A term may be
+elided only when full row or full column rank makes its projector identically
+zero; matrix shape alone is not rank evidence.
+
 `DifferentiationPolicy("algorithmic")` differentiates the selected numerical
 factorization. `"none"` stops output gradients. `"rhs-only"` is rejected for
 matrix materialization because there is no independent user right-hand side.
@@ -861,6 +866,14 @@ The implicit rule supports one or many right-hand sides and operator-batched
 dense solves. `rhs-only` stops every problem coefficient while retaining the
 right-hand-side derivative. Minimum-norm differentiation uses the same
 source-space pairing and active numerical-rank subspace as the forward solve.
+
+Implicit tangent and adjoint systems have an independent
+`LinearDerivativeSolvePolicy`. Its tolerances and bounded step capacity are
+checked against the true derivative residual. In status mode an unsuccessful
+primal or derivative solve leaves the primal result inspectable but produces
+NaN derivatives; error mode raises. Matrix-free implicit actions use the
+checked native callable Krylov route; tree factorizations retain their native
+direct tangent and transpose solves.
 
 Prepared nonlinear linearizations use `prepare_linearization`, then
 `JacobianLinearOperator`. The artifact stores one primal evaluation plus JVP and

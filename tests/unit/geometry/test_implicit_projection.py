@@ -68,3 +68,17 @@ def test_projection_rejects_trust_region_expiry_with_finite_fallback():
     assert bool(result.refresh_required)
     assert jnp.all(jnp.isfinite(result.proposed_points))
     assert jnp.array_equal(result.points, plan.anchors)
+    tangent = jax.jvp(
+        lambda radius: (
+            plan.realize(geometry.state.replace_at(radius_index, radius)).points
+        ),
+        (jnp.asarray(1.5),),
+        (jnp.asarray(1.0),),
+    )[1]
+    reverse = jax.grad(
+        lambda radius: jnp.sum(
+            plan.realize(geometry.state.replace_at(radius_index, radius)).points
+        )
+    )(jnp.asarray(1.5))
+    assert jnp.all(jnp.isnan(tangent))
+    assert jnp.isnan(reverse)

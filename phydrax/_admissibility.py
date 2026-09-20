@@ -6,8 +6,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import Enum, IntFlag
+from functools import partial
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -37,6 +40,89 @@ class DerivativeAvailability(str, Enum):
     WITHIN_FIXED_MODEL = "within-fixed-model"
     ALGORITHMIC_FIXED_MODEL = "algorithmic-fixed-model"
     IMPLICIT_FIXED_MODEL = "implicit-fixed-model"
+
+
+DerivativeFailureMode: TypeAlias = Literal["status", "error"]
+
+
+@partial(jax.custom_jvp, nondiff_argnums=(3, 4))
+def _guard_derivative_leaf(
+    value: Array,
+    dependency: Array,
+    valid: Array,
+    failure: DerivativeFailureMode,
+    message: str,
+    /,
+) -> Array:
+    del dependency, valid, failure, message
+    return value
+
+
+@_guard_derivative_leaf.defjvp
+def _guard_derivative_leaf_jvp(failure, message, primals, tangents):
+    value, _, valid = primals
+    value_tangent, dependency_tangent, _ = tangents
+    valid_ = jnp.asarray(valid, dtype=bool)
+    if failure == "error":
+        value_tangent = eqx.error_if(
+            value_tangent,
+            ~jnp.all(valid_),
+            message,
+        )
+    else:
+        value_scale = jnp.where(
+            valid_,
+            jnp.asarray(1.0, dtype=value_tangent.dtype),
+            jnp.asarray(jnp.nan, dtype=value_tangent.dtype),
+        )
+        dependency_scale = jnp.where(
+            valid_,
+            jnp.asarray(0.0, dtype=value_tangent.dtype),
+            jnp.asarray(jnp.nan, dtype=value_tangent.dtype),
+        )
+        value_tangent = value_scale * value_tangent + dependency_scale * jnp.asarray(
+            dependency_tangent, dtype=value_tangent.dtype
+        )
+    return value, value_tangent
+
+
+def guard_derivative_validity(
+    tree: Any,
+    valid: ArrayLike,
+    /,
+    *,
+    dependencies: Any = (),
+    failure: DerivativeFailureMode = "status",
+    message: str = "Derivative is invalid for the accepted primal result.",
+) -> Any:
+    """Keep a primal inspectable while poisoning or rejecting invalid derivatives."""
+    if failure not in ("status", "error"):
+        raise ValueError("Derivative failure mode must be 'status' or 'error'.")
+    message_ = str(message).strip()
+    if not message_:
+        raise ValueError("Derivative failure message must be non-empty.")
+    valid_ = jnp.asarray(valid, dtype=bool)
+    dependency_leaves = tuple(
+        leaf for leaf in jax.tree.leaves(dependencies) if eqx.is_inexact_array(leaf)
+    )
+    dependency = sum(
+        (jnp.sum(jnp.real(leaf)) for leaf in dependency_leaves),
+        start=jnp.asarray(0.0),
+    )
+    return jax.tree.map(
+        lambda leaf: (
+            _guard_derivative_leaf(
+                leaf,
+                dependency,
+                valid_,
+                failure,
+                message_,
+            )
+            if eqx.is_inexact_array(leaf)
+            else leaf
+        ),
+        tree,
+    )
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -197,6 +283,8 @@ __all__ = [
     "AdmissibilityReason",
     "AdmissibilityTransitionRequest",
     "DerivativeAvailability",
+    "DerivativeFailureMode",
     "combine_admissibility",
+    "guard_derivative_validity",
     "reason_bits_where",
 ]

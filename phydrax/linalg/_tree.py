@@ -257,6 +257,8 @@ def _implicit_tree_value(
     initial: Array,
     factor: _TreeFactorization,
     /,
+    *,
+    failure_mode: str,
 ) -> Array:
     """Mathematical root derivative with linear-storage primal/transpose actions."""
     fixed_operator = jax.tree.map(jax.lax.stop_gradient, operator)
@@ -265,14 +267,27 @@ def _implicit_tree_value(
     def residual(value):
         return operator.mv_block(value) - rhs
 
+    def solve_tree(right, *, transposed=False):
+        value, failed = _solve_tree(
+            fixed_operator,
+            fixed_factor,
+            right,
+            transposed=transposed,
+        )
+        if failure_mode == "error":
+            value = eqx.error_if(
+                value,
+                failed,
+                "Implicit tree derivative solve failed.",
+            )
+        return value
+
     def tangent_solve(linearized, target):
         return jax.lax.custom_linear_solve(
             linearized,
             target,
-            solve=lambda _, right: _solve_tree(fixed_operator, fixed_factor, right)[0],
-            transpose_solve=lambda _, right: _solve_tree(
-                fixed_operator, fixed_factor, right, transposed=True
-            )[0],
+            solve=lambda _, right: solve_tree(right),
+            transpose_solve=lambda _, right: solve_tree(right, transposed=True),
         )
 
     return jax.lax.custom_root(

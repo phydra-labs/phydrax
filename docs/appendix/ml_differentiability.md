@@ -26,6 +26,13 @@ levels are:
 - `conditional`: valid only while listed regularity or active-set conditions hold;
 - `none`: no mathematical derivative is provided.
 
+`MLGradientRequest` makes the intended surface and differentiated inputs
+explicit. `GradientContract.admit` and `FitResult.gradient_admission` return
+`MLGradientAdmission`; `require_gradient` rejects an unsupported request
+before a transformed workflow is entered. The top-level `fit` helper accepts
+the same optional request. Raw calls to a recipe's low-level `fit_batch`
+remain expert surfaces and are not magically intercepted by JAX.
+
 ## Direct differentiation
 
 Closed-form and fixed array programs use ordinary JAX differentiation. Examples
@@ -205,10 +212,11 @@ Before using a fitting gradient, inspect:
 5. every listed condition and nondifferentiable output;
 6. family-specific eigengap, active-set, temperature, or topology evidence.
 
-A result with `ML_UNSUPPORTED_GRADIENT` has not produced the requested gradient
-contract. Changing the solver, adding regularization, fixing rank/capacity, or using
-an explicit relaxed model may create a valid contract; suppressing the status does
-not.
+`ML_UNSUPPORTED_GRADIENT` belongs to `MLGradientAdmission.status`, not the
+primal fit status. It means at least one explicitly requested input has level
+`none`. Changing the solver, adding regularization, fixing rank/capacity, or
+using an explicit relaxed model may create a valid contract; suppressing the
+admission does not.
 
 ## Family contract matrix
 
@@ -275,8 +283,9 @@ family-level rule, not a substitute for reading the returned conditions.
 
 ## Status and derivative precedence
 
-Status is evidence about the primal fit. It is not inferred from whether `jax.grad`
-returns an array. Implementations apply the following conceptual precedence:
+`FitResult.status` is evidence about the primal fit. It is not inferred from
+whether `jax.grad` returns an array. Implementations apply this conceptual
+primal precedence:
 
 1. incompatible static configuration or unsupported storage/dtype raises;
 2. empty or underfull effective data reports `ML_INSUFFICIENT_DATA`;
@@ -285,9 +294,11 @@ returns an array. Implementations apply the following conceptual precedence:
 5. numerical rank failure reports `ML_RANK_DEFICIENT`;
 6. an unfinished finite iteration reports `ML_NONCONVERGED`;
 7. exhausted structural storage reports `ML_CAPACITY_EXHAUSTED`;
-8. a requested derivative outside the mathematical contract reports
-   `ML_UNSUPPORTED_GRADIENT`;
-9. otherwise the fit reports `ML_SUCCESS`.
+8. otherwise the fit reports `ML_SUCCESS`.
+
+Derivative admission is separate. An explicit request outside the mathematical
+contract reports `ML_UNSUPPORTED_GRADIENT` without rewriting successful primal
+fit evidence.
 
 A family can refine precedence when one condition makes another undefined, but its
 diagnostics must retain the underlying evidence. Regularization can resolve a
