@@ -1,7 +1,6 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-
 from __future__ import annotations
 
 import hashlib
@@ -10,15 +9,12 @@ from typing import Any
 
 import meshio
 import numpy as np
-import pyvista as pv
-import trimesh
-from shapely.geometry import Polygon as ShapelyPolygon
-from shapely.geometry.polygon import orient
-from shapely.ops import unary_union
 
 import phydrax.ein as ein
 
+from ._mesh import TriangleMesh
 from ._regions import MeshRegion, PlanarMeshRegion
+from ._topology import TriangleTopology
 
 
 def _canonical_faces(faces: np.ndarray) -> np.ndarray:
@@ -39,15 +35,16 @@ def _canonical_triangle_arrays(
 ) -> tuple[np.ndarray, np.ndarray]:
     vertices_ = np.asarray(vertices, dtype=np.float64)
     faces_ = np.asarray(faces, dtype=np.int32)
-    if vertices_.ndim != 2 or faces_.ndim != 2 or faces_.shape[1] != 3:
-        return vertices_, faces_
-    if (
-        vertices_.shape[0] == 0
-        or faces_.size == 0
-        or np.any(faces_ < 0)
-        or np.any(faces_ >= vertices_.shape[0])
-    ):
-        return vertices_, faces_
+    if vertices_.ndim != 2 or vertices_.shape[0] == 0 or vertices_.shape[1] < 2:
+        raise ValueError(
+            "Mesh vertices must have shape (num_vertices > 0, dimension >= 2)."
+        )
+    if not np.all(np.isfinite(vertices_)):
+        raise ValueError("Mesh vertices must contain only finite values.")
+    if faces_.ndim != 2 or faces_.shape[0] == 0 or faces_.shape[1] != 3:
+        raise ValueError("Mesh faces must have shape (num_faces > 0, 3).")
+    if np.any(faces_ < 0) or np.any(faces_ >= vertices_.shape[0]):
+        raise ValueError("Mesh faces contain an out-of-range vertex index.")
 
     referenced = np.unique(faces_.reshape((-1,)))
     old_to_referenced = np.full(vertices_.shape[0], -1, dtype=np.int32)
@@ -61,8 +58,37 @@ def _canonical_triangle_arrays(
         return_inverse=True,
     )
     faces_ = referenced_to_unique[faces_].astype(np.int32)
-    faces_ = _canonical_faces(faces_)
+    if np.any(
+        (faces_[:, 0] == faces_[:, 1])
+        | (faces_[:, 1] == faces_[:, 2])
+        | (faces_[:, 2] == faces_[:, 0])
+    ):
+        raise ValueError("Vertex canonicalization produced a degenerate triangle.")
+    if np.unique(np.sort(faces_, axis=1), axis=0).shape[0] != faces_.shape[0]:
+        raise ValueError("Mesh input contains duplicate triangle faces.")
+    triangles = vertices_[faces_]
+    if vertices_.shape[1] == 2:
+        doubled_area = (triangles[:, 1, 0] - triangles[:, 0, 0]) * (
+            triangles[:, 2, 1] - triangles[:, 0, 1]
+        ) - (triangles[:, 1, 1] - triangles[:, 0, 1]) * (
+            triangles[:, 2, 0] - triangles[:, 0, 0]
+        )
+        scale = max(float(np.max(np.abs(vertices_))), 1.0)
+        if np.any(np.abs(doubled_area) <= 128.0 * np.finfo(np.float64).eps * scale**2):
+            raise ValueError("Mesh input contains a zero-area triangle.")
+    else:
+        cross = np.cross(
+            triangles[:, 1, :3] - triangles[:, 0, :3],
+            triangles[:, 2, :3] - triangles[:, 0, :3],
+        )
+        scale = max(float(np.max(np.abs(vertices_[:, :3]))), 1.0)
+        if np.any(
+            np.sum(cross * cross, axis=1)
+            <= (128.0 * np.finfo(np.float64).eps * scale**2) ** 2
+        ):
+            raise ValueError("Mesh input contains a zero-area triangle.")
 
+    faces_ = _canonical_faces(faces_)
     if vertices_.shape[1] >= 3:
         triangles = vertices_[faces_, :3]
         signed_volume = np.sum(
@@ -93,8 +119,19 @@ def _canonical_feature_id(
     return f"{prefix}-{digest.hexdigest()[:24]}"
 
 
-def _canonical_ring(points: np.ndarray) -> np.ndarray:
+def _signed_area2(points: np.ndarray, /) -> float:
+    return float(
+        np.sum(
+            points[:, 0] * np.roll(points[:, 1], -1)
+            - np.roll(points[:, 0], -1) * points[:, 1]
+        )
+    )
+
+
+def _canonical_ring(points: np.ndarray, /, *, counter_clockwise: bool) -> np.ndarray:
     points_ = np.asarray(points, dtype=np.float64)
+    if (_signed_area2(points_) > 0.0) != counter_clockwise:
+        points_ = points_[::-1]
     start = int(np.lexsort((points_[:, 1], points_[:, 0]))[0])
     return np.roll(points_, -start, axis=0)
 
@@ -110,58 +147,21 @@ def _meshio_triangles(mesh: meshio.Mesh) -> tuple[np.ndarray, np.ndarray]:
     return np.asarray(mesh.points, dtype=np.float64), np.concatenate(blocks, axis=0)
 
 
-def _pyvista_triangles(mesh: pv.PolyData) -> tuple[np.ndarray, np.ndarray]:
-    triangulated = mesh.extract_surface().triangulate()
-    packed = np.asarray(triangulated.faces, dtype=np.int64)
-    if packed.size == 0 or packed.size % 4 != 0:
-        raise ValueError("PolyData contains no triangle faces.")
-    records = packed.reshape((-1, 4))
-    if np.any(records[:, 0] != 3):
-        raise ValueError("Triangulated PolyData contains a non-triangle cell.")
-    return (
-        np.asarray(triangulated.points, dtype=np.float64),
-        records[:, 1:].astype(np.int32),
-    )
-
-
-def _trimesh_arrays(mesh: trimesh.Trimesh) -> tuple[np.ndarray, np.ndarray]:
-    vertices = np.asarray(mesh.vertices, dtype=np.float64)
-    faces = np.asarray(mesh.faces)
-    if not np.all(np.isfinite(vertices)):
-        raise ValueError("Mesh vertices must contain only finite values.")
-    if faces.ndim != 2 or faces.shape[1] != 3:
-        raise ValueError("Mesh faces must have shape (num_faces, 3).")
-    mesh_ = mesh.copy()
-    mesh_.update_faces(mesh_.unique_faces() & mesh_.nondegenerate_faces())
-    mesh_.remove_unreferenced_vertices()
-    mesh_.merge_vertices()
-    mesh_.fix_normals(multibody=True)
-    return np.asarray(mesh_.vertices, dtype=np.float64), np.asarray(
-        mesh_.faces, dtype=np.int32
-    )
-
-
 def triangle_arrays(source: Any, /) -> tuple[np.ndarray, np.ndarray]:
-    """Canonicalize a mesh object or mesh file into triangle arrays."""
+    """Canonicalize native arrays, a TriangleMesh, Meshio data, or a mesh file."""
 
+    if isinstance(source, TriangleMesh):
+        return _canonical_triangle_arrays(source.vertices, source.faces)
     if isinstance(source, meshio.Mesh):
         return _canonical_triangle_arrays(*_meshio_triangles(source))
-    if isinstance(source, trimesh.Trimesh):
-        return _canonical_triangle_arrays(*_trimesh_arrays(source))
-    if isinstance(source, pv.PolyData):
-        return _canonical_triangle_arrays(*_pyvista_triangles(source))
+    if isinstance(source, tuple) and len(source) == 2:
+        return _canonical_triangle_arrays(source[0], source[1])
     if isinstance(source, (str, Path)):
-        loaded = trimesh.load_mesh(Path(source).expanduser(), process=True)
-        if isinstance(loaded, trimesh.Scene):
-            geometries = tuple(loaded.geometry.values())
-            if not geometries:
-                raise ValueError("Mesh scene contains no geometry.")
-            loaded = trimesh.util.concatenate(geometries)
-        if not isinstance(loaded, trimesh.Trimesh):
-            raise TypeError("Mesh file did not resolve to triangular surface geometry.")
-        return _canonical_triangle_arrays(*_trimesh_arrays(loaded))
+        return _canonical_triangle_arrays(
+            *_meshio_triangles(meshio.read(Path(source).expanduser()))
+        )
     raise TypeError(
-        "Mesh input must be a path, meshio.Mesh, trimesh.Trimesh, or pyvista.PolyData."
+        "Mesh input must be a path, meshio.Mesh, TriangleMesh, or (vertices, faces) pair."
     )
 
 
@@ -175,7 +175,7 @@ def mesh_region_from_source(
     """Build one watertight 3D simplicial region from a mesh source."""
 
     vertices, faces = triangle_arrays(source)
-    if vertices.ndim != 2 or vertices.shape[1] < 3:
+    if vertices.shape[1] < 3:
         raise ValueError("A 3D mesh must provide three-dimensional vertices.")
     vertices = vertices[:, :3]
     if recenter:
@@ -192,29 +192,28 @@ def planar_region_from_triangles(
     recenter: bool = True,
     feature_id: str | None = None,
 ) -> PlanarMeshRegion:
-    """Recover oriented polygon loops from one triangulated planar region."""
+    """Recover oriented boundary loops from one connected triangle complex."""
 
-    vertices_ = np.asarray(vertices, dtype=np.float64)
-    faces_ = np.asarray(faces, dtype=np.int32)
-    if vertices_.ndim != 2 or vertices_.shape[1] < 2:
-        raise ValueError("Planar vertices must have at least two coordinates.")
-    if faces_.ndim != 2 or faces_.shape[1] != 3:
-        raise ValueError("faces must have shape (num_triangles, 3).")
+    vertices_, faces_ = _canonical_triangle_arrays(vertices, faces)
     coordinates = vertices_[:, :2]
-    polygons: list[ShapelyPolygon] = []
-    for face in faces_:
-        polygon = ShapelyPolygon(coordinates[face])
-        if polygon.area > 0.0:
-            polygons.append(polygon)
-    region = unary_union(polygons)
-    if region.geom_type != "Polygon":
+    topology = TriangleTopology(faces_, num_vertices=coordinates.shape[0])
+    if topology.num_face_components != 1:
         raise ValueError("Planar mesh must represent one connected polygonal region.")
-    region = orient(region, sign=1.0)
-    exterior = _canonical_ring(np.asarray(region.exterior.coords[:-1], dtype=np.float64))
+    offsets = np.asarray(topology.boundary_loop_offsets, dtype=np.int32)
+    loop_vertices = np.asarray(topology.boundary_loop_vertices, dtype=np.int32)
+    if offsets.shape[0] <= 1:
+        raise ValueError("Planar mesh has no boundary loops.")
+    raw_loops = [
+        coordinates[loop_vertices[offsets[index] : offsets[index + 1]]]
+        for index in range(offsets.shape[0] - 1)
+    ]
+    exterior_index = int(np.argmax([abs(_signed_area2(loop)) for loop in raw_loops]))
+    exterior = _canonical_ring(raw_loops[exterior_index], counter_clockwise=True)
     interiors = sorted(
         (
-            _canonical_ring(np.asarray(interior.coords[:-1], dtype=np.float64))
-            for interior in region.interiors
+            _canonical_ring(loop, counter_clockwise=False)
+            for index, loop in enumerate(raw_loops)
+            if index != exterior_index
         ),
         key=lambda points: tuple(points.reshape((-1,))),
     )

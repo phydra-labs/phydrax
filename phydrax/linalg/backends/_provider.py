@@ -24,7 +24,6 @@ from ._jax_sparse import (
 )
 from ._jax_structured import prepare_structured, solve_structured
 from ._lineax import prepare_lineax, solve_lineax
-from ._matfree import prepare_matfree, solve_matfree
 from ._native_block_krylov import (
     prepare_native_block_krylov,
     solve_native_block_krylov,
@@ -356,33 +355,6 @@ class _NativeKrylovProvider(AbstractLinearProvider):
         )
 
 
-class _MatfreeProvider(AbstractLinearProvider):
-    backends = ("matfree",)
-    accepts_initial_guess = True
-    supports_implicit_differentiation = True
-
-    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
-        del symbolic_state
-        if preconditioner is not None:
-            raise ValueError("Matfree binding rejects preconditioning.")
-        return prepare_matfree(problem, plan)
-
-    def solve(
-        self,
-        state,
-        rhs,
-        plan,
-        /,
-        *,
-        initial_guess=None,
-        control=None,
-        iteration=None,
-        iteration_state=None,
-    ):
-        del iteration, iteration_state
-        return solve_matfree(state, rhs, plan, initial_guess=initial_guess)
-
-
 class _LineaxProvider(AbstractLinearProvider):
     backends = ("lineax",)
     supports_implicit_differentiation = True
@@ -415,7 +387,6 @@ _PROVIDERS: tuple[AbstractLinearProvider, ...] = (
     _SpineaxProvider(),
     _NativeBlockKrylovProvider(),
     _NativeKrylovProvider(),
-    _MatfreeProvider(),
     _LineaxProvider(),
 )
 

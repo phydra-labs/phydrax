@@ -31,12 +31,11 @@ time-window behavior is covered by
       by `solve(...)`.
     - `solve(...)` accepts standard and line-search Optax transformations,
       Phydrax-native [`soap(...)`](../optim.md#stateful-orthogonal-adaptive-preconditioning-soap),
-      native scalar, least-squares, composite least-squares, and Riemannian
-      methods, Evosax distribution-based algorithms, and
-      `phydrax.optim.kfac(...)`. Native residual methods receive the same
-      partitioned Equinox parameter tree returned by
-      `partition_functions()`. Population-based Evosax algorithms require a separate
-      finite search-space contract and are rejected.
+      native scalar, least-squares, composite least-squares, Riemannian, and
+      distribution-evolution methods, plus `phydrax.optim.kfac(...)`. Native
+      methods receive the same partitioned Equinox parameter tree returned by
+      `partition_functions()`. Population methods requiring a finite
+      search-space contract remain owned by `DesignConstraintSystem.search(...)`.
     - `solve_linear_trial_space(...)` assembles directly bound
       `LinearTrefftzField` coefficients against fixed quadratic residual
       realizations, audits residual affinity, and routes the least-squares system
@@ -194,8 +193,8 @@ contraction precision around every prepared objective evaluation, including
 training loss, term diagnostics, data metrics, and final objective settling.
 This experiment is deliberately restricted to standard Optax transformations;
 line-search ExtraArgs transforms, native iterative/least-squares methods, KFAC,
-Riemannian methods, and Evosax are rejected rather than receiving a partial
-policy. Trainable inexact leaves must share one dtype.
+Riemannian methods, and distribution evolution are rejected rather than
+receiving a partial policy. Trainable inexact leaves must share one dtype.
 
 The returned solver retains the policy and a content-addressed precision
 evidence envelope. Its functional discretization records include that evidence

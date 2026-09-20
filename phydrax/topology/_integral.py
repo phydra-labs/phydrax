@@ -8,12 +8,15 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import numpy as np
-from sympy import Matrix, ZZ
-from sympy.matrices.normalforms import smith_normal_decomp
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..algebraic._exact_integer import (
+    invert_unimodular,
+    smith_normal_decomposition,
+    smith_rank,
+)
 from ._complex import CellSubcomplex, compact_boundary
 from ._resources import TopologyResourceError, TopologyResourcePolicy
 
@@ -76,7 +79,7 @@ class IntegralHomologyResult(StrictModule, NonTrainableState):
 
 def _matrix(complex: CellSubcomplex, degree: int, /):
     boundary = compact_boundary(complex, degree)
-    values = Matrix.zeros(boundary.row_count, boundary.column_count)
+    values = np.zeros((boundary.row_count, boundary.column_count), dtype=object)
     for row, column, coefficient in zip(
         np.asarray(boundary.row_indices),
         np.asarray(boundary.column_indices),
@@ -87,10 +90,8 @@ def _matrix(complex: CellSubcomplex, degree: int, /):
     return values
 
 
-def _rank_from_smith(smith: Matrix, /) -> int:
-    return sum(
-        1 for index in range(min(smith.rows, smith.cols)) if int(smith[index, index]) != 0
-    )
+def _rank_from_smith(smith: np.ndarray, /) -> int:
+    return smith_rank(smith)
 
 
 def compute_integral_homology(
@@ -113,32 +114,28 @@ def compute_integral_homology(
     )
     results = []
     for degree, boundary in enumerate(boundaries):
-        if boundary.rows == 0:
+        if boundary.shape[0] == 0:
             smith = boundary
-            right = Matrix.eye(boundary.cols)
+            right = np.eye(boundary.shape[1], dtype=object)
             rank_boundary = 0
         else:
-            smith, _, right = smith_normal_decomp(boundary, domain=ZZ)
+            smith, _, right = smith_normal_decomposition(boundary)
             rank_boundary = _rank_from_smith(smith)
-        kernel_dimension = boundary.cols - rank_boundary
+        kernel_dimension = boundary.shape[1] - rank_boundary
         incoming = (
             boundaries[degree + 1]
             if degree < complex.max_degree
-            else Matrix.zeros(boundary.cols, 0)
+            else np.zeros((boundary.shape[1], 0), dtype=object)
         )
-        transformed = right.inv() * incoming
-        if any(
-            transformed[row, column] != 0
-            for row in range(rank_boundary)
-            for column in range(transformed.cols)
-        ):
+        transformed = invert_unimodular(right) @ incoming
+        if np.any(transformed[:rank_boundary, :] != 0):
             raise RuntimeError("Incoming boundary does not lie in the exact kernel.")
         quotient = transformed[rank_boundary:, :]
-        if quotient.rows == 0 or quotient.cols == 0:
+        if quotient.shape[0] == 0 or quotient.shape[1] == 0:
             quotient_smith = quotient
             rank_incoming = 0
         else:
-            quotient_smith, _, _ = smith_normal_decomp(quotient, domain=ZZ)
+            quotient_smith, _, _ = smith_normal_decomposition(quotient)
             rank_incoming = _rank_from_smith(quotient_smith)
         torsion = tuple(
             int(quotient_smith[index, index])
@@ -155,7 +152,7 @@ def compute_integral_homology(
     return IntegralHomologyResult(
         results,
         source_id=complex.subcomplex_id,
-        backend="sympy-smith-normal-decomposition",
+        backend="phydrax-exact-smith-normal-decomposition",
     )
 
 

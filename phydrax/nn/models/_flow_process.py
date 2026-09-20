@@ -11,17 +11,17 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from flowjax.distributions import (
-    AbstractDistribution as FlowJAXDistribution,
-    Normal as FlowJAXNormal,
-)
-from flowjax.flows import coupling_flow
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._strict import StrictModule
 from ...stochastic._process import (
     AbstractMarginalTransitionLaw,
     AbstractProcessDistribution,
+)
+from ..flows import (
+    AbstractFlowDistribution,
+    coupling_flow,
+    NormalFlowDistribution,
 )
 
 
@@ -35,7 +35,7 @@ def _shape(values: Sequence[int], /, *, name: str) -> tuple[int, ...]:
 def _sample_shape(values: Sequence[int], /) -> tuple[int, ...]:
     result = tuple(values)
     if any(size <= 0 for size in result):
-        raise ValueError("FlowJAX process sample dimensions must be positive.")
+        raise ValueError("Flow process sample dimensions must be positive.")
     return result
 
 
@@ -45,19 +45,19 @@ def _check_state_shape(array: Array, state_shape: tuple[int, ...], /) -> None:
         or tuple(array.shape[-len(state_shape) :]) != state_shape
     ):
         raise ValueError(
-            f"FlowJAX coefficient states must end in shape {state_shape}; got {array.shape}."
+            f"Flow coefficient states must end in shape {state_shape}; got {array.shape}."
         )
 
 
 def _flow_process_fingerprint(
-    flow: FlowJAXDistribution,
+    flow: AbstractFlowDistribution,
     /,
     *,
     state_shape: tuple[int, ...],
     label: str | None,
 ) -> str:
     digest = hashlib.sha256()
-    digest.update(b"phydrax-flowjax-coefficient-process\0")
+    digest.update(b"phydrax-native-flow-coefficient-process\0")
     digest.update(repr(state_shape).encode("ascii"))
     digest.update(repr(label).encode("utf-8"))
     for leaf in jax.tree_util.tree_leaves(flow):
@@ -119,11 +119,11 @@ class IdentityCoefficientTransition(StrictModule):
         return values
 
 
-class FlowJAXProcessDistribution(AbstractProcessDistribution):
-    """Conditional FlowJAX marginal over one latent coefficient state."""
+class FlowProcessDistribution(AbstractProcessDistribution):
+    """Conditional native flow marginal over one latent coefficient state."""
 
     center: Array
-    flow: FlowJAXDistribution
+    flow: AbstractFlowDistribution
     condition: Array
     event_shape: tuple[int, ...] = eqx.field(static=True)
     batch_shape: tuple[int, ...] = eqx.field(static=True)
@@ -134,21 +134,21 @@ class FlowJAXProcessDistribution(AbstractProcessDistribution):
         self,
         *,
         center: ArrayLike,
-        flow: FlowJAXDistribution,
+        flow: AbstractFlowDistribution,
         condition: ArrayLike,
         event_shape: Sequence[int],
         process_id: str,
     ):
-        if not isinstance(flow, FlowJAXDistribution):
-            raise TypeError("flow must be a FlowJAX AbstractDistribution.")
+        if not isinstance(flow, AbstractFlowDistribution):
+            raise TypeError("flow must be an AbstractFlowDistribution.")
         events = _shape(event_shape, name="event_shape")
         event_size = prod(events)
         if tuple(flow.shape) != (event_size,):
             raise ValueError(
-                f"FlowJAX process flow.shape must be {(event_size,)}; got {flow.shape}."
+                f"Process flow.shape must be {(event_size,)}; got {flow.shape}."
             )
         if flow.cond_shape is None:
-            raise ValueError("FlowJAX process marginals must be conditional.")
+            raise ValueError("Flow process marginals must be conditional.")
         center_array = jnp.asarray(center)
         _check_state_shape(center_array, events)
         batches = tuple(center_array.shape[: -len(events)])
@@ -156,7 +156,7 @@ class FlowJAXProcessDistribution(AbstractProcessDistribution):
         expected_condition = batches + tuple(flow.cond_shape)
         if condition_array.shape != expected_condition:
             raise ValueError(
-                f"FlowJAX process condition must have shape {expected_condition}; got {condition_array.shape}."
+                f"Flow process condition must have shape {expected_condition}; got {condition_array.shape}."
             )
         if not isinstance(process_id, str) or not process_id:
             raise ValueError("process_id must be a non-empty string.")
@@ -190,7 +190,7 @@ class FlowJAXProcessDistribution(AbstractProcessDistribution):
         values = jnp.asarray(value, dtype=self.center.dtype)
         if values.shape != self.center.shape:
             raise ValueError(
-                f"FlowJAX process value must have shape {self.center.shape}; got {values.shape}."
+                f"Flow process value must have shape {self.center.shape}; got {values.shape}."
             )
         residual = values.reshape(self.batch_shape + (prod(self.event_shape),))
         residual = residual - self.center.reshape(
@@ -199,7 +199,7 @@ class FlowJAXProcessDistribution(AbstractProcessDistribution):
         return self.flow.log_prob(residual, condition=self.condition)
 
 
-class LatentFlowJAXCoefficientProcess(AbstractMarginalTransitionLaw):
+class LatentFlowCoefficientProcess(AbstractMarginalTransitionLaw):
     """A learned conditional marginal law in finite coefficient space.
 
     This class intentionally exposes no pathwise ``realize`` method: repeated marginal
@@ -207,7 +207,7 @@ class LatentFlowJAXCoefficientProcess(AbstractMarginalTransitionLaw):
     cocycle contract by construction.
     """
 
-    flow: FlowJAXDistribution
+    flow: AbstractFlowDistribution
     conditioner: Callable[[ArrayLike, ArrayLike, ArrayLike], Array]
     location_transition: Callable[[ArrayLike, ArrayLike, ArrayLike], Array]
     state_shape: tuple[int, ...] = eqx.field(static=True)
@@ -216,7 +216,7 @@ class LatentFlowJAXCoefficientProcess(AbstractMarginalTransitionLaw):
 
     def __init__(
         self,
-        flow: FlowJAXDistribution,
+        flow: AbstractFlowDistribution,
         conditioner: Callable[[ArrayLike, ArrayLike, ArrayLike], Array],
         location_transition: Callable[[ArrayLike, ArrayLike, ArrayLike], Array],
         /,
@@ -225,17 +225,17 @@ class LatentFlowJAXCoefficientProcess(AbstractMarginalTransitionLaw):
         process_id: str | None = None,
         label: str | None = None,
     ):
-        if not isinstance(flow, FlowJAXDistribution):
-            raise TypeError("flow must be a FlowJAX AbstractDistribution.")
+        if not isinstance(flow, AbstractFlowDistribution):
+            raise TypeError("flow must be an AbstractFlowDistribution.")
         if not callable(conditioner) or not callable(location_transition):
             raise TypeError("conditioner and location_transition must be callable.")
         states = _shape(state_shape, name="state_shape")
         if tuple(flow.shape) != (prod(states),):
             raise ValueError(
-                "FlowJAX event size must equal the flattened coefficient state size."
+                "Flow event size must equal the flattened coefficient state size."
             )
         if flow.cond_shape is None:
-            raise ValueError("A FlowJAX coefficient process requires a conditional flow.")
+            raise ValueError("A coefficient process requires a conditional flow.")
         if label is not None and (not isinstance(label, str) or not label):
             raise ValueError("label must be non-empty or None.")
         resolved_id = (
@@ -259,27 +259,27 @@ class LatentFlowJAXCoefficientProcess(AbstractMarginalTransitionLaw):
         *,
         t0: ArrayLike,
         t1: ArrayLike,
-    ) -> FlowJAXProcessDistribution:
+    ) -> FlowProcessDistribution:
         values = jnp.asarray(state)
         _check_state_shape(values, self.state_shape)
         start = jnp.asarray(t0, dtype=values.dtype)
         end = jnp.asarray(t1, dtype=values.dtype)
         if start.shape != () or end.shape != ():
-            raise ValueError("FlowJAX process transition times must be scalar.")
+            raise ValueError("Flow process transition times must be scalar.")
         duration = end - start
         duration = eqx.error_if(
             duration,
             ~jnp.isfinite(duration) | (duration <= 0.0),
-            "FlowJAX process transitions require finite t1 > t0.",
+            "Flow process transitions require finite t1 > t0.",
         )
         del duration
         center = jnp.asarray(self.location_transition(values, start, end))
         condition = jnp.asarray(self.conditioner(values, start, end))
         if center.shape != values.shape:
             raise ValueError(
-                "FlowJAX location_transition must preserve the coefficient state shape."
+                "Flow location_transition must preserve the coefficient state shape."
             )
-        return FlowJAXProcessDistribution(
+        return FlowProcessDistribution(
             center=center,
             flow=self.flow,
             condition=condition,
@@ -299,7 +299,7 @@ def conditional_coupling_flow_process(
     nn_width: int = 50,
     nn_depth: int = 1,
     invert: bool = True,
-) -> LatentFlowJAXCoefficientProcess:
+) -> LatentFlowCoefficientProcess:
     """Build a state-and-time-conditioned residual coupling flow process."""
     states = _shape(state_shape, name="state_shape")
     layers = int(flow_layers)
@@ -312,9 +312,9 @@ def conditional_coupling_flow_process(
         raise ValueError("Coupling-flow coefficient processes need at least two states.")
     conditioner = StateTimeProcessConditioner(states)
     location = IdentityCoefficientTransition(states)
-    base = FlowJAXNormal(
-        loc=jnp.zeros((event_size,), dtype=jnp.float64),
-        scale=jnp.ones((event_size,), dtype=jnp.float64),
+    base = NormalFlowDistribution(
+        jnp.zeros((event_size,), dtype=jnp.float64),
+        jnp.ones((event_size,), dtype=jnp.float64),
     )
     flow = coupling_flow(
         key,
@@ -325,7 +325,7 @@ def conditional_coupling_flow_process(
         nn_depth=depth,
         invert=bool(invert),
     )
-    return LatentFlowJAXCoefficientProcess(
+    return LatentFlowCoefficientProcess(
         flow,
         conditioner,
         location,
@@ -336,9 +336,9 @@ def conditional_coupling_flow_process(
 
 
 __all__ = [
-    "FlowJAXProcessDistribution",
+    "FlowProcessDistribution",
     "IdentityCoefficientTransition",
-    "LatentFlowJAXCoefficientProcess",
+    "LatentFlowCoefficientProcess",
     "StateTimeProcessConditioner",
     "conditional_coupling_flow_process",
 ]

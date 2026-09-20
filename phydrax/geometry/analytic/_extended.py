@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
-from shapely.geometry import Polygon as ShapelyPolygon
 
 from phydrax._interpolation import linear_interpolate
 
@@ -31,6 +30,7 @@ from .._certificate import (
     ZeroSetAccuracy,
 )
 from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._polygon import signed_area2, validate_simple_polygon
 from .._sampling import (
     bounded_rejection_sample,
     complete_sampling_result,
@@ -487,10 +487,13 @@ class Polygon(GeometrySource):
             raise ValueError("vertices must contain only finite values.")
         if np.unique(host, axis=0).shape[0] != host.shape[0]:
             raise ValueError("Non-unique vertices are not allowed.")
-        polygon = ShapelyPolygon(host)
-        if not polygon.is_valid or polygon.area <= 0.0:
-            raise ValueError("Self-intersection or zero-area polygon detected.")
-        if not polygon.exterior.is_ccw:
+        try:
+            validate_simple_polygon(host, require_counter_clockwise=False)
+        except ValueError as error:
+            raise ValueError(
+                "Self-intersection or zero-area polygon detected."
+            ) from error
+        if signed_area2(host) < 0.0:
             host = host[::-1].copy()
         self.vertices = jnp.asarray(host, dtype=jnp.float64)
         self.feature_id = _feature_id(feature_id, "polygon")

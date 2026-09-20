@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import signal
 import threading
-import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import IntEnum
@@ -31,6 +30,7 @@ from ._iteration import (
     IterationSessionState,
 )
 from ._strict import StrictModule
+from ._tensorboard import ScalarEventWriter
 from ._trainable import NonTrainableState
 from .logging import emit
 
@@ -674,15 +674,7 @@ class TensorBoardLogger:
     """Small context-managed scalar writer shared by training frontends."""
 
     def __init__(self, log_dir: str | Path):
-        from tensorboard.compat.proto.event_pb2 import Event
-        from tensorboard.compat.proto.summary_pb2 import Summary
-        from tensorboard.summary.writer.event_file_writer import EventFileWriter
-
-        path = Path(log_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        self._event_cls = Event
-        self._summary_cls = Summary
-        self._writer = EventFileWriter(str(path))
+        self._writer = ScalarEventWriter(log_dir)
 
     def __enter__(self) -> "TensorBoardLogger":
         return self
@@ -696,20 +688,7 @@ class TensorBoardLogger:
         if array.shape != () or jnp.issubdtype(array.dtype, jnp.complexfloating):
             raise ValueError("TensorBoard scalar values must be real scalars.")
         host_value = np.asarray(jax.device_get(array))
-        summary = self._summary_cls(
-            value=[
-                {
-                    "tag": str(tag),
-                    "simple_value": float(host_value),
-                }
-            ]
-        )
-        event = self._event_cls(
-            wall_time=time.time(),
-            step=int(step),
-            summary=summary,
-        )
-        self._writer.add_event(event)
+        self._writer.scalar(str(tag), float(host_value), int(step))
 
     def flush(self) -> None:
         self._writer.flush()

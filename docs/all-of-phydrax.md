@@ -94,9 +94,9 @@ status, diagnostics, and provenance. Standard and generalized nonsymmetric
 eigenproblems use the same spaces, operators, prepared transforms, cost models,
 and failure semantics; dense QZ and native restarted-Arnoldi/Krylov--Schur paths
 are explicit backend choices. Provider-neutral sparse derivative plans compile
-known structural patterns natively or use ASDEX once for global pattern
-detection and optimized coloring. Repeated Jacobian and Hessian evaluation is
-native JAX and produces ordinary sparse coordinate operators. See
+known structural patterns natively or trace global JAXPR dependencies once when
+the structure is omitted. Repeated Jacobian and Hessian evaluation is native JAX
+and produces ordinary sparse coordinate operators. See
 [API → Linear algebra runtime](api/linalg.md) and
 [API → Sparse derivatives](api/sparse_derivatives.md).
 

@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "5c063613e398009cca0185d8abb87e73a6a77ab07071c1c449cc4c054574609c",
+  "manifest_id": "e49c07b57df5b0946a34d6715e0638b7960854b32a4c1080062612a5864f010f",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -11108,6 +11108,7 @@
     ],
     "phydrax.data_utils": [
       "phydrax.data_utils.AffineScaler",
+      "phydrax.data_utils.CSVReadPolicy",
       "phydrax.data_utils.CSVReader",
       "phydrax.data_utils.CasePartitionManifest",
       "phydrax.data_utils.MaxAbsScaler",
@@ -18507,9 +18508,7 @@
       "phydrax.finance.interchange.FpMLImportResult",
       "phydrax.finance.interchange.export_fpml_contract",
       "phydrax.finance.interchange.import_fpml_contract",
-      "phydrax.finance.interchange.market_records_to_polars",
       "phydrax.finance.interchange.market_snapshot_to_records",
-      "phydrax.finance.interchange.polars_to_market_records",
       "phydrax.finance.interchange.records_to_market_snapshot"
     ],
     "phydrax.finance.market": [
@@ -22902,6 +22901,7 @@
     "phydrax.nn": [
       "phydrax.nn.activations",
       "phydrax.nn.atomistic",
+      "phydrax.nn.flows",
       "phydrax.nn.latent",
       "phydrax.nn.layers",
       "phydrax.nn.models",
@@ -22918,6 +22918,15 @@
     "phydrax.nn.atomistic": [
       "phydrax.nn.atomistic.NequIPPotential",
       "phydrax.nn.atomistic.PaiNNPotential"
+    ],
+    "phydrax.nn.flows": [
+      "phydrax.nn.flows.AbstractFlowDistribution",
+      "phydrax.nn.flows.AffineCouplingLayer",
+      "phydrax.nn.flows.CouplingFlowDistribution",
+      "phydrax.nn.flows.NormalFlowDistribution",
+      "phydrax.nn.flows.coupling_flow",
+      "phydrax.nn.flows.fit_flow_to_data",
+      "phydrax.nn.flows.triangular_flow"
     ],
     "phydrax.nn.latent": [
       "phydrax.nn.latent.AbstractLatentRepresentation",
@@ -23031,7 +23040,7 @@
       "phydrax.nn.models.FeynmaNN",
       "phydrax.nn.models.FixedSubspaceOnsagerModel",
       "phydrax.nn.models.FixedSubspaceProjectionReport",
-      "phydrax.nn.models.FlowJAXProcessDistribution",
+      "phydrax.nn.models.FlowProcessDistribution",
       "phydrax.nn.models.FunctionalStateDecoder",
       "phydrax.nn.models.HolomorphicMLP",
       "phydrax.nn.models.IdentityCoefficientTransition",
@@ -23044,7 +23053,7 @@
       "phydrax.nn.models.KANGridAdaptationReport",
       "phydrax.nn.models.LatentContractionModel",
       "phydrax.nn.models.LatentExecutionPolicy",
-      "phydrax.nn.models.LatentFlowJAXCoefficientProcess",
+      "phydrax.nn.models.LatentFlowCoefficientProcess",
       "phydrax.nn.models.LinearDifferentialTransform",
       "phydrax.nn.models.LinearRecurrentModel",
       "phydrax.nn.models.MLP",
@@ -23347,6 +23356,7 @@
       "phydrax.nn.operator.architectures.CoDAOperatorState",
       "phydrax.nn.operator.architectures.CochainNeuralOperator",
       "phydrax.nn.operator.architectures.ConditionalFlowFunctionOperator",
+      "phydrax.nn.operator.architectures.ConditionalFlowOperatorDistribution",
       "phydrax.nn.operator.architectures.ConditionalFunctionFrameFlowOperator",
       "phydrax.nn.operator.architectures.ConditionalHarmonicOperator2D",
       "phydrax.nn.operator.architectures.ConditionalHolomorphicDeepONet",
@@ -23372,7 +23382,6 @@
       "phydrax.nn.operator.architectures.FiLMCoordinateDecoder",
       "phydrax.nn.operator.architectures.FidelityCorrectionOperator",
       "phydrax.nn.operator.architectures.FixedBranchEncoder",
-      "phydrax.nn.operator.architectures.FlowJAXOperatorDistribution",
       "phydrax.nn.operator.architectures.Flower",
       "phydrax.nn.operator.architectures.FlowerDiagnostics",
       "phydrax.nn.operator.architectures.FlowerQueryMode",
@@ -26607,6 +26616,7 @@
       "phydrax.optim.AbstractCompositeLeastSquaresMethod",
       "phydrax.optim.AbstractConvexCone",
       "phydrax.optim.AbstractConvexProgramMethod",
+      "phydrax.optim.AbstractDistributionEvolutionMethod",
       "phydrax.optim.AbstractLeastSquaresMethod",
       "phydrax.optim.AbstractMinimizationMethod",
       "phydrax.optim.AbstractMixedIntegerMethod",
@@ -26829,6 +26839,8 @@
       "phydrax.optim.NonlinearLeastSquaresProblem",
       "phydrax.optim.NonnegativeCone",
       "phydrax.optim.NuclearNormFunctional",
+      "phydrax.optim.OpenEvolutionState",
+      "phydrax.optim.OpenEvolutionStrategy",
       "phydrax.optim.OptimistixMethod",
       "phydrax.optim.OptimizationCapabilities",
       "phydrax.optim.OptimizationCertificate",
@@ -32479,6 +32491,7 @@
       "phydrax.uq.AbstractStochasticGradientEstimator",
       "phydrax.uq.AbstractVariationalFamily",
       "phydrax.uq.AdvancedSGMCMCResult",
+      "phydrax.uq.AffineFlowBijector",
       "phydrax.uq.AmortizedGaussianMarkovEncoder",
       "phydrax.uq.AmortizedGaussianMarkovFamily",
       "phydrax.uq.AmortizedStateSpaceVariationalConfig",
@@ -32715,7 +32728,6 @@
       "phydrax.uq.FixedOperatorObservationLikelihood",
       "phydrax.uq.FixedResidualLikelihood",
       "phydrax.uq.FixedSupervisedLikelihood",
-      "phydrax.uq.FlowJAXBijectionAdapter",
       "phydrax.uq.FlowNUTSConfig",
       "phydrax.uq.FlowNUTSEvidenceResult",
       "phydrax.uq.FlowNUTSModeInitialization",

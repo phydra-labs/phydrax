@@ -110,10 +110,10 @@ from .geometric._orthogonal_point_cno import (
     OrthogonalPointTopology,
 )
 from .geometric._rigno import RIGNO
-from .probabilistic._flowjax_operator import (
+from .probabilistic._conditional_flow_operator import (
     conditional_coupling_flow_operator,
     ConditionalFlowFunctionOperator,
-    FlowJAXOperatorDistribution,
+    ConditionalFlowOperatorDistribution,
     OperatorBatchConditioner,
 )
 from .probabilistic._function_frame_flow import (
@@ -278,7 +278,7 @@ __all__ = [
     "ConditionalFunctionFrameFlowOperator",
     "FunctionFrameCoefficientFlowState",
     "FunctionFrameProjectedLogProb",
-    "FlowJAXOperatorDistribution",
+    "ConditionalFlowOperatorDistribution",
     "OperatorBatchConditioner",
     "AxialFactorizedFNO",
     "FNO",

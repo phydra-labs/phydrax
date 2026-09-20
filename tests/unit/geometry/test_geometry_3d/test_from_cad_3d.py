@@ -21,7 +21,10 @@ def simple_cube_mesh():
 def geometry_from_cube(simple_cube_mesh):
     # Compile the mesh source and adapt it to the domain algebra.
     return phx.domain.GeometryDomain(
-        phx.geometry.mesh_region_from_source(simple_cube_mesh, recenter=False).compile()
+        phx.geometry.mesh_region_from_source(
+            (np.asarray(simple_cube_mesh.vertices), np.asarray(simple_cube_mesh.faces)),
+            recenter=False,
+        ).compile()
     )
 
 
@@ -40,7 +43,10 @@ def test_initialization_rejects_open_surface_mesh():
 
     with pytest.raises(ValueError, match="watertight"):
         phx.domain.GeometryDomain(
-            phx.geometry.mesh_region_from_source(mesh, recenter=False).compile()
+            phx.geometry.mesh_region_from_source(
+                (np.asarray(mesh.vertices), np.asarray(mesh.faces)),
+                recenter=False,
+            ).compile()
         )
 
 
@@ -48,11 +54,11 @@ def test_initialization_rejects_nonfinite_vertices():
     mesh = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
     vertices = np.asarray(mesh.vertices).copy()
     vertices[0, 0] = np.nan
-    invalid = trimesh.Trimesh(vertices=vertices, faces=mesh.faces, process=False)
-
     with pytest.raises(ValueError, match="finite"):
         phx.domain.GeometryDomain(
-            phx.geometry.mesh_region_from_source(invalid, recenter=False).compile()
+            phx.geometry.mesh_region_from_source(
+                (vertices, np.asarray(mesh.faces)), recenter=False
+            ).compile()
         )
 
 
@@ -358,7 +364,12 @@ def test_boundary_factor_is_scale_covariant_with_unit_face_gradient():
     for scale in scales:
         geometry = phx.domain.GeometryDomain(
             phx.geometry.mesh_region_from_source(
-                trimesh.creation.box(extents=(scale, scale, scale)),
+                (
+                    np.asarray(
+                        trimesh.creation.box(extents=(scale, scale, scale)).vertices
+                    ),
+                    np.asarray(trimesh.creation.box(extents=(scale, scale, scale)).faces),
+                ),
                 recenter=False,
             ).compile()
         )

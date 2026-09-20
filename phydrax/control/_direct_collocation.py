@@ -80,7 +80,7 @@ DIRECT_COLLOCATION_CONSTRAINT_FAILED = 4
 DIRECT_COLLOCATION_RECONSTRUCTION_FAILED = 5
 
 DirectCollocationHessianMode: TypeAlias = Literal["limited-memory", "exact-sparse"]
-SparseDerivativeCompiler: TypeAlias = Literal["auto", "native", "asdex"]
+SparseDerivativeCompiler: TypeAlias = Literal["auto", "native"]
 _DEFAULT_ARGS = object()
 
 
@@ -199,8 +199,8 @@ class DirectCollocationDerivativePolicy(StrictModule):
         verify: bool = True,
         num_verification_probes: int = 3,
     ):
-        if compiler not in ("auto", "native", "asdex"):
-            raise ValueError("compiler must be 'auto', 'native', or 'asdex'.")
+        if compiler not in ("auto", "native"):
+            raise ValueError("compiler must be 'auto' or 'native'.")
         if hessian not in ("limited-memory", "exact-sparse"):
             raise ValueError("hessian must be 'limited-memory' or 'exact-sparse'.")
         chunk = None if chunk_size is None else int(chunk_size)

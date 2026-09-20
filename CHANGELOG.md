@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+- Replaced required ModePy nodal preparation, Matfree least-squares and low-rank
+  routes, Polars CSV ingestion, TensorBoard scalar writing, ASDEX structural
+  tracing, Evosax distribution search, SymPy exact algebra, and FlowJAX density
+  models with Phydrax-native substrates. Triangle import and planar boundary
+  extraction no longer require Trimesh or Shapely; PyVista, ArviZ, and Manifold
+  are explicit optional providers. Build123d was replaced by the directly
+  consumed no-VTK OCCT binding.
+
 ### Fixed
 - Geometry domains now preserve exact, estimated, and unknown mass evidence,
   reject scalar-to-diagonal coercion outside one dimension, and distinguish

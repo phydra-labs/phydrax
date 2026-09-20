@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from importlib.metadata import version
+from importlib.util import find_spec
 
 import numpy as np
 
@@ -47,7 +48,9 @@ class ManifoldProvider:
     def info() -> MeshingProviderInfo:
         return MeshingProviderInfo(
             "manifold",
-            version("manifold3d"),
+            version("manifold3d")
+            if find_spec("manifold3d") is not None
+            else "unavailable",
             "Apache-2.0",
             operations=(MeshingOperation.BOOLEAN_SURFACE,),
             source_kinds=(MeshingSourceKind.SURFACE,),
@@ -64,6 +67,12 @@ class ManifoldProvider:
         operation: SurfaceBooleanOperation,
         /,
     ) -> CellMeshingResult:
+        if find_spec("manifold3d") is None:
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_UNAVAILABLE,
+                "Manifold booleans require the optional 'meshing-manifold' "
+                "dependency group.",
+            )
         import manifold3d
 
         if not isinstance(left, SurfaceModel) or not isinstance(right, SurfaceModel):

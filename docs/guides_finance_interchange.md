@@ -4,14 +4,10 @@
 
 `FinanceRecordBatch` stores finite JSON cells, canonical column order, an explicit primary key, and a content address. Row order at input is irrelevant; duplicate primary keys are rejected. `market_snapshot_to_records` retains quote-key, timestamp-policy, lineage, and snapshot identities. `records_to_market_snapshot` reconstructs typed records and verifies every content address.
 
-Polars is only a table surface:
+The batch itself is the canonical table surface:
 
 ```python
-from phydrax.finance.interchange import (
-    FinanceRecordBatch,
-    market_records_to_polars,
-    polars_to_market_records,
-)
+from phydrax.finance.interchange import FinanceRecordBatch
 
 batch = FinanceRecordBatch(
     "market-observation",
@@ -22,16 +18,14 @@ batch = FinanceRecordBatch(
     primary_key=("observation_id",),
     context={"source": "authored-synthetic"},
 )
-frame = market_records_to_polars(batch)
-restored_batch = polars_to_market_records(
-    frame,
-    primary_key=("observation_id",),
-    context=batch.context(),
-)
+restored_batch = FinanceRecordBatch.from_record(batch.to_record())
 assert restored_batch.batch_id == batch.batch_id
 ```
 
-Dataframes do not enter compiled finance kernels. Convert on the host, validate identity, then prepare a `MarketState` with fixed-shape JAX arrays, masks, and status.
+Generic host consumers can use `to_records()` or `to_record()`. Dataframe
+implementations do not enter compiled finance kernels. Validate the native
+record identity, then prepare a `MarketState` with fixed-shape JAX arrays,
+masks, and status.
 
 ## Supported FpML subset
 

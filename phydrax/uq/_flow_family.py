@@ -5,10 +5,14 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from flowjax.bijections import RationalQuadraticSpline
-from flowjax.distributions import AbstractDistribution, Normal
-from flowjax.flows import coupling_flow, triangular_spline_flow
 from jaxtyping import Array
+
+from ..nn.flows import (
+    AbstractFlowDistribution,
+    coupling_flow,
+    NormalFlowDistribution,
+    triangular_flow,
+)
 
 
 def build_default_flow(
@@ -17,10 +21,9 @@ def build_default_flow(
     /,
     *,
     flow_layers: int,
-    num_knots: int,
     nn_width: int,
     nn_depth: int,
-) -> AbstractDistribution:
+) -> AbstractFlowDistribution:
     """Initialize one unconditional spline flow from a sample matrix."""
 
     samples = jnp.asarray(data)
@@ -33,21 +36,17 @@ def build_default_flow(
     tolerance = jnp.sqrt(jnp.finfo(samples.dtype).eps) * jnp.maximum(
         jnp.ones_like(location), jnp.abs(location)
     )
-    base = Normal(location, jnp.maximum(scale, tolerance))
+    base = NormalFlowDistribution(location, jnp.maximum(scale, tolerance))
     dimension = samples.shape[1]
     if dimension == 1:
-        return triangular_spline_flow(
+        return triangular_flow(
             key,
             base_dist=base,
             flow_layers=int(flow_layers),
-            knots=int(num_knots),
-            invert=True,
         )
-    transformer = RationalQuadraticSpline(knots=int(num_knots), interval=3.0)
     return coupling_flow(
         key,
         base_dist=base,
-        transformer=transformer,
         flow_layers=int(flow_layers),
         nn_width=int(nn_width),
         nn_depth=int(nn_depth),
@@ -56,7 +55,7 @@ def build_default_flow(
 
 
 def validate_flow(
-    flow: AbstractDistribution,
+    flow: AbstractFlowDistribution,
     data: Array,
     key: Array,
     /,

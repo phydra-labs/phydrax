@@ -1,7 +1,10 @@
 # CSV Reader
 
-`CSVReader` is a thin Polars-backed CSV helper. Numeric columns are returned as
-JAX arrays; non-numeric columns are returned as Python lists.
+`CSVReader` uses Python's bounded host CSV parser with an explicit
+`CSVReadPolicy`. Numeric columns are returned as JAX arrays; non-numeric columns
+are returned as Python lists.
+
+::: phydrax.data_utils.CSVReadPolicy
 
 ::: phydrax.data_utils.CSVReader
     options:

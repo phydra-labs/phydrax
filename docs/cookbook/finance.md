@@ -86,18 +86,19 @@ pricing_law = PricingLaw(
 
 ```python
 from phydrax.finance.interchange import (
-    market_records_to_polars,
+    FinanceRecordBatch,
     market_snapshot_to_records,
     records_to_market_snapshot,
 )
 
 records = market_snapshot_to_records(snapshot)
-frame = market_records_to_polars(records)
-restored = records_to_market_snapshot(records)
+detached = FinanceRecordBatch.from_record(records.to_record())
+restored = records_to_market_snapshot(detached)
 assert restored.snapshot_id == snapshot.snapshot_id
 ```
 
-The dataframe is a host interchange surface. It is not captured by a compiled valuation.
+The immutable record batch is the host interchange surface. It is not captured
+by a compiled valuation.
 
 ## Exact route qualification
 

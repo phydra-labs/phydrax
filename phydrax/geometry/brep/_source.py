@@ -179,7 +179,17 @@ class _BRepKernel(GeometryKernel):
             + jnp.sum(third * first, axis=-1) * jnp.linalg.norm(second, axis=-1)
         )
         winding = jnp.sum(2.0 * jnp.arctan2(numerator, denominator), axis=-1)
-        return jnp.abs(winding / (4.0 * jnp.pi)) > 0.5
+        inside = jnp.isfinite(winding) & (jnp.abs(winding / (4.0 * jnp.pi)) > 0.5)
+        query = self._query(points_)
+        span = jnp.max(
+            jnp.max(self.mesh.vertices, axis=0) - jnp.min(self.mesh.vertices, axis=0)
+        )
+        tolerance = (
+            64.0
+            * jnp.finfo(points_.dtype).eps
+            * jnp.maximum(span, jnp.asarray(1.0, dtype=points_.dtype))
+        )
+        return inside | (query.distance <= tolerance)
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = jnp.asarray(points, dtype=jnp.float64)

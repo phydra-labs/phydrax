@@ -18,7 +18,7 @@ from .._trainable import NonTrainableState
 from ._relation import EdgeRelation
 
 
-SparsePatternOrigin: TypeAlias = Literal["declared", "structural", "asdex"]
+SparsePatternOrigin: TypeAlias = Literal["declared", "structural"]
 
 
 class SparsePattern(StrictModule, NonTrainableState):
@@ -39,7 +39,7 @@ class SparsePattern(StrictModule, NonTrainableState):
     ):
         if not isinstance(relation, EdgeRelation):
             raise TypeError("relation must be an EdgeRelation.")
-        if origin not in ("declared", "structural", "asdex"):
+        if origin not in ("declared", "structural"):
             raise ValueError(f"Unknown sparse-pattern origin {origin!r}.")
 
         source = np.asarray(relation.source_indices, dtype=np.int64)

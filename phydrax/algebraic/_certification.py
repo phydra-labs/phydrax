@@ -13,7 +13,6 @@ from math import factorial, sqrt
 import jax
 import jax.numpy as jnp
 import numpy as np
-import sympy as sp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -26,6 +25,7 @@ from ..linalg import (
     prepare,
     solve,
 )
+from ._exact_univariate import isolate_real_roots
 from ._system import SparsePolynomialSystem
 
 
@@ -60,7 +60,7 @@ def smale_alpha_certificate(
     residual = system.evaluate(point_)
     operator = DenseLinearOperator(
         jacobian,
-        properties=OperatorProperties(square=True),
+        properties=OperatorProperties(),
     )
     prepared = prepare(
         LinearSystem(operator),
@@ -255,27 +255,13 @@ def isolate_univariate_real_roots(
         raise ValueError("A nonzero coefficient sequence is required.")
     if tolerance <= 0:
         raise ValueError("tolerance must be positive.")
-    variable = sp.Symbol("x")
-    expression = sum(
-        sp.Rational(value.numerator, value.denominator) * variable**index
-        if isinstance(value, Fraction)
-        else sp.Integer(value) * variable**index
-        for index, value in enumerate(coefficients)
-    )
-    polynomial = sp.Poly(expression, variable, domain=sp.QQ)
-    intervals = polynomial.intervals(
-        eps=sp.Rational(tolerance.numerator, tolerance.denominator)
-    )
-    result = []
-    for (lower, upper), multiplicity in intervals:
-        result.append(
-            ExactRealRootInterval(
-                Fraction(int(lower.p), int(lower.q)),
-                Fraction(int(upper.p), int(upper.q)),
-                int(multiplicity),
-            )
+    return tuple(
+        ExactRealRootInterval(lower, upper, multiplicity)
+        for lower, upper, multiplicity in isolate_real_roots(
+            coefficients,
+            tolerance=tolerance,
         )
-    return tuple(result)
+    )
 
 
 __all__ = [

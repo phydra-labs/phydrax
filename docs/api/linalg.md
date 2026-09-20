@@ -299,8 +299,7 @@ before any numeric setup runs.
 | `SparseLU(provider="jax-cpu")` | `jax-sparse` | Canonical CSR square system through JAX's JIT-compatible CPU lowering to SciPy sparse LU; mathematical solve derivatives are supported, algorithmic factorization derivatives are not |
 | `SparseLDLT(provider="spineax-cudss")` | `spineax-cudss` | Optional Linux x86-64 CUDA 13 symmetric-indefinite factorization, shared-pattern value batches, numerical refactorization, multiple RHS, reported inertia, and explicit release |
 | `SparseLU`, `SparseCholesky`, `SparseQR(provider="spqr")` | `host-sparse` | Explicit non-JIT host sparse direct providers |
-| `GMRES`, `PCG`, `MINRES`, `FGMRES`, `GeneralizedLSMR` | `native-krylov` | Pairing-aware native JAX Krylov methods |
-| `LSMR` | `matfree` | Real Euclidean unweighted least squares or minimum norm |
+| `GMRES`, `PCG`, `MINRES`, `FGMRES`, `LSMR`, `GeneralizedLSMR` | `native-krylov` | Pairing-aware native JAX Krylov methods; `LSMR` retains the real Euclidean unweighted envelope |
 | `ConjugateGradient`, `BiCGStab` | `lineax` | Lineax-backed Euclidean or diagonal-metric methods; CG additionally requires real coordinates |
 
 `DenseLU` solves canonical coordinates and accepts any declared Hilbert pairing.
@@ -347,7 +346,7 @@ Auto selection is deterministic:
 5. MINRES for certified self-adjoint indefinite systems;
 6. FGMRES when a general square system has a preconditioner, otherwise GMRES;
 7. dense SVD for explicit rectangular problems when budgets permit;
-8. Matfree LSMR for its real-Euclidean envelope;
+8. native LSMR for its real-Euclidean envelope;
 9. generalized pairing-aware LSMR otherwise.
 
 An explicit infeasible method raises during planning. Phydrax does not silently
@@ -828,8 +827,8 @@ compiled_solve = jax.jit(lambda rhs: phx.linalg.solve(prepared, rhs).value)
 value = compiled_solve(jnp.array([1.0, 2.0]))
 ```
 
-Device dense, structured, native Krylov, Matfree, Lineax, native CUDA sparse
-QR, and optional Spineax/cuDSS execution are JIT-compatible. Host sparse
+Device dense, structured, native Krylov, Lineax, native CUDA sparse QR, and
+optional Spineax/cuDSS execution are JIT-compatible. Host sparse
 providers are intentionally non-JIT and require
 `DifferentiationPolicy("none")`. Spineax preparation retains provider-owned
 factor resources; call `phx.linalg.release(prepared)` when their lifetime ends.
@@ -1498,8 +1497,8 @@ updates coefficients without rebuilding routes.
 
 
 `compile_sparse_jacobian` and `compile_sparse_hessian` return reusable derivative
-plans. A supplied structural pattern uses the native compiler; omitting it can
-invoke ASDEX once for global structure detection and optimized coloring.
+plans. A supplied structural pattern uses native coloring; omitting it invokes
+native global JAXPR dependency tracing and coloring once during preparation.
 Repeated coefficient evaluation and operator application remain native JAX.
 The evaluated sparse operators enter the same exact-system, least-squares,
 preconditioner, planning, and diagnostics APIs as every other operator.

@@ -18,8 +18,8 @@ interoperability operation.
 ## Declared structural pattern
 
 Use a declared pattern when domain structure already determines the possible
-nonzeros. With `compiler="native"`, neither compilation nor evaluation calls
-ASDEX.
+nonzeros. With `compiler="native"`, compilation colors the declared routes and
+evaluation remains native JAX.
 
 ```python
 import jax
@@ -69,11 +69,11 @@ compilation; expose changing values through `point` or `args`.
 
 ## Automatic global detection
 
-ASDEX is a base dependency and the automatic compiler for an omitted pattern.
-It analyzes the sample computation graph, detects a global structural pattern,
-and supplies optimized coloring. Phydrax immediately normalizes that output to
-`SparsePattern` and `SparseColoring`; the returned plan retains no ASDEX object
-and repeated evaluation is native JAX.
+With `compiler="auto"` and no supplied structure, Phydrax analyzes the JAXPR
+computation graph, propagates global element dependencies, constructs a
+`SparsePattern(origin="structural")`, and colors it natively. Unsupported JAX
+primitives fail explicitly rather than silently assuming either dense or sparse
+structure.
 
 ```python
 space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
@@ -88,7 +88,7 @@ hessian_plan = phx.sparse.compile_sparse_hessian(
     energy,
     point,
     space=space,
-    compiler="auto",  # ASDEX detection/coloring because structure is omitted
+    compiler="auto",  # native global JAXPR tracing because structure is omitted
     properties=phx.linalg.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -106,31 +106,31 @@ result = phx.linalg.solve(
 )
 ```
 
-ASDEX is imported lazily by sparse compilation, not by `import phydrax` or by
-`phydrax.linalg`. Its detection and graph-coloring cost is therefore paid once,
-not in the training or solve loop.
+Structural tracing and graph coloring happen once during plan construction.
+Repeated coefficient evaluation and operator application remain compiled native
+JAX execution.
 
 ## Structure and compiler resolution
 
 `structure` accepts one of:
 
-- `None`: detect and color automatically with ASDEX,
+- `None`: trace and color a global structural pattern automatically,
 - `EdgeRelation`: canonicalize and color the declared routes,
 - `SparsePattern`: color the supplied canonical pattern,
 - `SparseColoring`: reuse the complete precompiled artifact without recoloring.
 
 Compiler resolution is deterministic:
 
-| `structure` | `compiler="auto"` | `compiler="native"` | `compiler="asdex"` |
-| --- | --- | --- | --- |
-| `None` | ASDEX detection and coloring | rejected | ASDEX detection and coloring |
-| relation or pattern | native greedy coloring | native greedy coloring | ASDEX optimized coloring |
-| coloring | exact reuse | exact reuse | rejected |
+| `structure` | `compiler="auto"` | `compiler="native"` |
+| --- | --- | --- |
+| `None` | native structural tracing and coloring | rejected |
+| relation or pattern | native greedy coloring | native greedy coloring |
+| coloring | exact reuse | exact reuse |
 
 Native automatic Jacobian coloring evaluates row and column candidates and uses
 the smaller color count, breaking ties toward forward mode. Native Hessian
-coloring uses ordinary collision-free column coloring. ASDEX may use optimized
-symmetric star coloring for Hessians.
+coloring uses deterministic collision-free column coloring over the symmetric
+structural pattern.
 
 ## Modes and chunking
 
@@ -178,9 +178,8 @@ assert verification.passed
 
 Verification compares sparse operator actions with direct JVPs or HVPs without
 materializing a dense derivative. Its scope is the supplied point and arguments;
-it does not prove that a user-declared pattern is globally valid. ASDEX-origin
-patterns retain separate provenance that their structure came from global graph
-analysis.
+it does not prove that a user-declared pattern is globally valid. Structurally
+traced patterns retain separate provenance from caller-declared routes.
 
 ## Mathematical restrictions and explicit extensions
 
